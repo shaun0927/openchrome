@@ -10,13 +10,21 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
+import { prependHeaderText } from './_shared/state-header';
+import {
+  formatNodeRefToken,
+  getCurrentLoaderId,
+  mintNodeRefSync,
+} from '../core/perception/node-ref';
 
 const definition: MCPToolDefinition = {
   name: 'inspect',
-  description: 'Extract focused page state by query.',
+  description: 'Extract focused page state by query. Returns headings, form fields, errors, tabs, and interactive counts scoped to the query intent.\n\nWhen to use: Checking focused aspects of page state (forms, errors, tabs) without loading the full DOM.\nWhen NOT to use: Use read_page for full DOM/AX tree, or find to locate a specific element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -33,9 +41,14 @@ const definition: MCPToolDefinition = {
         enum: ['interactive', 'all', 'visible'],
         description: 'Element scope. Default: visible',
       },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, append approximate returned size/token metrics to text output. Default: false.',
+      },
     },
     required: ['tabId', 'query'],
   },
+  annotations: TOOL_ANNOTATIONS.inspect,
 };
 
 /**
@@ -100,6 +113,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const query = args.query as string;
   const scope = (args.scope as string) || 'visible';
+  const includeMetrics = args.include_metrics === true;
 
   const sessionManager = getSessionManager();
 
@@ -451,8 +465,52 @@ const handler: ToolHandler = async (
       console.error('[inspect] CDP shadow pass error (non-fatal):', cdpErr);
     }
 
+    // #844 — resolve a stable backend-node uid for the focused element so
+    // callers can pipe it straight back into `interact({nodeRef})` without
+    // a fresh `read_page`. P2 parity: the `nodeRef=` token is always
+    // emitted (literal `null` when off, when no focused element exists,
+    // when CDP resolution fails, or when the element has no backendNodeId).
+    let focusedNodeRef: string | null = null;
+    if (categories.has('focus') && inspectResult.focusedInfo) {
+      try {
+        const cdpClient = sessionManager.getCDPClient();
+        // Grab the focused element via CDP. `Runtime.evaluate` with the
+        // expression `document.activeElement` lets us resolve it back to a
+        // remote object id, which `DOM.requestNode` (or `DOM.describeNode`
+        // via objectId) converts to a backendNodeId.
+        const evalRes = (await cdpClient.send(page, 'Runtime.evaluate', {
+          expression: 'document.activeElement',
+          returnByValue: false,
+        })) as { result?: { objectId?: string } };
+        const objectId = evalRes?.result?.objectId;
+        if (objectId) {
+          const desc = (await cdpClient.send(page, 'DOM.describeNode', {
+            objectId,
+          })) as { node?: { backendNodeId?: number } };
+          const backendNodeId = desc?.node?.backendNodeId;
+          if (backendNodeId && backendNodeId > 0) {
+            try {
+              const loaderId = await getCurrentLoaderId(page, cdpClient);
+              focusedNodeRef = mintNodeRefSync(page, loaderId, backendNodeId);
+            } catch {
+              focusedNodeRef = null;
+            }
+          }
+          // Best-effort cleanup of the remote object reference so it does
+          // not pin the focused element in V8's heap.
+          try {
+            await cdpClient.send(page, 'Runtime.releaseObject', { objectId });
+          } catch {
+            // non-fatal
+          }
+        }
+      } catch {
+        focusedNodeRef = null;
+      }
+    }
+
     // Format the output — only include sections for requested categories
-    const lines: string[] = [`[Inspect: "${query}"]`];
+    const lines: string[] = [`[Inspect: "${query}"]`, formatNodeRefToken(focusedNodeRef)];
 
     // Tab state
     if (categories.has('tabs') && inspectResult.tabs.length > 0) {
@@ -526,9 +584,15 @@ const handler: ToolHandler = async (
 
     // Footer with page context (always included)
     lines.push(`[Page] ${inspectResult.url} | "${inspectResult.title}"`);
-
+    const inspectPayload = lines.join('\n');
+    const headeredText = prependHeaderText({ url: inspectResult.url, title: inspectResult.title, mode: 'inspect', capturedAt: Date.now(), tabId }, inspectPayload);
     return {
-      content: [{ type: 'text', text: lines.join('\n') }],
+      content: [{
+        type: 'text',
+        text: includeMetrics
+          ? appendMetricsFooter(headeredText, buildTextMetrics(headeredText, { mode: `inspect:${scope}` }))
+          : headeredText,
+      }],
     };
   } catch (error) {
     return {

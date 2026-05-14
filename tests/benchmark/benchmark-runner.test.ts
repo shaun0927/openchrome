@@ -6,7 +6,10 @@ import {
   BenchmarkTask,
   TaskResult,
   BenchmarkRunnerOptions,
+  BenchmarkReport,
 } from './benchmark-runner';
+import { OpenChromeRealAdapter } from './adapters/openchrome-real-adapter';
+import { main, writeCiOutput } from './run';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -326,5 +329,177 @@ describe('BenchmarkRunner', () => {
     expect(report.summary.totalInputChars).toBe(0);
     expect(report.summary.totalOutputChars).toBe(0);
     expect(report.summary.totalToolCalls).toBe(0);
+  });
+
+  test('real adapter rejects tool results marked isError', async () => {
+    const adapter = new OpenChromeRealAdapter({ mode: 'dom' });
+    (adapter as unknown as { send: jest.Mock }).send = jest.fn().mockResolvedValue({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        isError: true,
+        content: [{ type: 'text', text: 'tool failed' }],
+      },
+    });
+
+    await expect(adapter.callTool('read_page', {})).rejects.toThrow(
+      'MCP read_page returned an error: tool failed'
+    );
+  });
+
+  test('real adapter rejects JSON-RPC error responses', async () => {
+    const adapter = new OpenChromeRealAdapter({ mode: 'ax' });
+    (adapter as unknown as { send: jest.Mock }).send = jest.fn().mockResolvedValue({
+      jsonrpc: '2.0',
+      id: 1,
+      error: { code: -32000, message: 'server failed' },
+    });
+
+    await expect(adapter.callTool('navigate', {})).rejects.toThrow(
+      'MCP navigate failed: server failed'
+    );
+  });
+
+  test('CI output writes only JSON to stdout and progress to stderr', () => {
+    const reports: BenchmarkReport[] = [{
+      adapter: 'OpenChrome',
+      mode: 'dom',
+      tasks: [],
+      summary: { totalInputChars: 0, totalOutputChars: 0, totalToolCalls: 0 },
+    }];
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    writeCiOutput(reports, { passed: true, regressions: [] }, output as never);
+
+    expect(output.stdout.write).toHaveBeenCalledTimes(1);
+    const stdout = output.stdout.write.mock.calls[0][0];
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(JSON.parse(stdout)).toEqual(reports);
+    expect(stdout).not.toContain('No regressions detected');
+    expect(output.stderr.write).toHaveBeenCalledWith('\nNo regressions detected.\n');
+  });
+
+  test('benchmark CLI rejects unknown matrix categories before running adapters', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'typo-category'], output as never)).rejects.toThrow(
+      'Unknown benchmark category or scenario: typo-category'
+    );
+
+    expect(output.stdout.write).not.toHaveBeenCalled();
+    expect(output.stderr.write).not.toHaveBeenCalled();
+  });
+
+  test('benchmark CLI rejects fractional --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'agent-loop', '--runs', '1.5'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: 1.5'
+    );
+
+    expect(output.stdout.write).not.toHaveBeenCalled();
+  });
+
+  test('benchmark CLI rejects zero or negative --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'agent-loop', '--runs', '0'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: 0'
+    );
+    await expect(main(['--category', 'agent-loop', '--runs', '-3'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: -3'
+    );
+  });
+
+  test('benchmark CLI rejects non-numeric --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await expect(main(['--category', 'agent-loop', '--runs', 'abc'], output as never)).rejects.toThrow(
+      '--runs must be a positive integer; got: abc'
+    );
+  });
+
+  test('benchmark CLI honors positive integer --runs values', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await main(['--category', 'agent-loop', '--runs', '2', '--json'], output as never);
+
+    expect(output.stdout.write).toHaveBeenCalledTimes(1);
+    const stdout = output.stdout.write.mock.calls[0][0];
+    const reports = JSON.parse(stdout);
+    expect(Array.isArray(reports)).toBe(true);
+    for (const report of reports) {
+      for (const task of report.tasks) {
+        expect(task.runs).toHaveLength(2);
+      }
+    }
+  });
+
+  test('benchmark CLI treats --json as machine-readable matrix output', async () => {
+    const output = {
+      stdout: { write: jest.fn() },
+      stderr: { write: jest.fn() },
+    };
+
+    await main(['--category', 'agent-loop', '--runs', '1', '--json'], output as never);
+
+    expect(output.stdout.write).toHaveBeenCalledTimes(1);
+    const stdout = output.stdout.write.mock.calls[0][0];
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(JSON.parse(stdout)).toHaveLength(2);
+    expect(stdout).not.toContain('BENCHMARK REPORT');
+    expect(output.stderr.write.mock.calls.join('\n')).toContain('Running benchmarks in AX mode');
+  });
+
+  test('run computes latency distribution and payload stats', async () => {
+    const runner = new BenchmarkRunner({ runsPerTask: 4 });
+    const adapter = makeAdapter();
+    let callCount = 0;
+    const task = makeTask(() => {
+      callCount++;
+      return {
+        success: true,
+        inputChars: 10,
+        outputChars: 100,
+        responseChars: 80,
+        estimatedOutputTokens: 20,
+        screenshotBytes: 5,
+        nodeRssBytes: 1000,
+        chromeRssBytes: null,
+        toolCallCount: 1,
+        wallTimeMs: callCount * 10,
+      };
+    });
+    runner.addTask(task);
+
+    const report = await runner.run(adapter);
+    const stats = report.tasks[0].stats;
+
+    expect(stats.minWallTimeMs).toBe(10);
+    expect(stats.p50WallTimeMs).toBe(20);
+    expect(stats.maxWallTimeMs).toBe(40);
+    expect(stats.stddevWallTimeMs).toBeCloseTo(11.18, 1);
+    expect(stats.meanResponseChars).toBe(80);
+    expect(stats.meanEstimatedOutputTokens).toBe(20);
+    expect(stats.meanScreenshotBytes).toBe(5);
+    expect(stats.meanNodeRssBytes).toBe(1000);
   });
 });

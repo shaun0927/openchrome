@@ -36,6 +36,12 @@ jobs:
       - name: Lint tier boundary (core must not import pilot)
         run: npm run lint:tier
 
+      - name: Lint tool schemas (description / enum / REQUIRED-prefix budgets)
+        run: npm run lint:tool-schemas
+        # Baseline-aware: existing violations are allow-listed at
+        # scripts/lint-tool-schemas.baseline.json; only NEW violations fail CI.
+        # See docs/dev/tool-schema-conventions.md.
+
       - name: Run tests
         run: npx jest --config jest.ci.config.js
         env:

@@ -8,6 +8,7 @@
  */
 
 import { execSync } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -15,7 +16,7 @@ import * as path from 'path';
 // Override the global mock from tests/setup.ts that replaces ChromeLauncher
 jest.unmock('../../src/chrome/launcher');
 
-import { ChromeLauncher } from '../../src/chrome/launcher';
+import { ChromeLauncher, waitForDebugPort, DebugPortTimeoutError } from '../../src/chrome/launcher';
 
 jest.mock('child_process', () => {
   const actual = jest.requireActual('child_process');
@@ -336,5 +337,26 @@ describe('ChromeLauncher port race condition fixes', () => {
         expect(launcher.isConnected()).toBe(true);
       }
     }, 10000); // 10s timeout for this test
+  });
+
+  describe('waitForDebugPort() process death fast-fail', () => {
+    it('fast-fails when Chrome is signal-terminated before debug port is ready', async () => {
+      const fakeProcess = {
+        exitCode: null,
+        signalCode: 'SIGTERM',
+      } as unknown as ChildProcess;
+
+      let thrown: unknown;
+      try {
+        await waitForDebugPort(1, 5000, fakeProcess);
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeDefined();
+      expect(thrown).not.toBeInstanceOf(DebugPortTimeoutError);
+      expect((thrown as Error).message).toContain('code null signal SIGTERM');
+      expect((thrown as Error).message).toContain('debug port 1');
+    }, 10_000);
   });
 });

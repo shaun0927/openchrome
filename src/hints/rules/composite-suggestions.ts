@@ -12,11 +12,25 @@ function recentToolCount(ctx: HintContext, name: string): number {
   return ctx.recentCalls.filter(c => c.toolName === name).length;
 }
 
+/**
+ * True when the most recent call's args carried a non-'none' `returnAfterState`.
+ * Such calls already inlined a fresh page snapshot in their response, so any
+ * "consider read_page" follow-up nag is noise — the agent has already
+ * observed the page state. See issue #845.
+ */
+function lastCallCarriedSnapshot(ctx: HintContext): boolean {
+  if (ctx.recentCalls.length === 0) return false;
+  const ras = ctx.recentCalls[0].args?.returnAfterState;
+  return ras === 'ax' || ras === 'dom';
+}
+
 export const compositeSuggestionRules: HintRule[] = [
   {
     name: 'find-then-click',
     priority: 200,
     maxSeverity: 'info',
+    // Duplicated by interact tool description "When to use" block.
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'computer' && ctx.toolName !== 'click') return null;
       if (!lastToolWas(ctx, 'find')) return null;
@@ -27,6 +41,8 @@ export const compositeSuggestionRules: HintRule[] = [
     name: 'multiple-form-input',
     priority: 201,
     maxSeverity: 'warning',
+    // Duplicated by form_input description (fill_form is named as alternative).
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'form_input') return null;
       if (recentToolCount(ctx, 'form_input') >= 1) {
@@ -104,12 +120,19 @@ export const compositeSuggestionRules: HintRule[] = [
     name: 'state-check-after-action',
     priority: 206,
     maxSeverity: 'warning',
+    // Duplicated by inspect description "When to use" + read_page "When NOT to use".
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
       if (
         lastToolWas(ctx, 'navigate') ||
         lastToolWas(ctx, 'interact')
       ) {
+        // Suppress when the previous action already returned a snapshot
+        // via returnAfterState — the agent has already observed page state
+        // in that response, so a follow-up read_page is the user's choice,
+        // not something to nag about. See issue #845.
+        if (lastCallCarriedSnapshot(ctx)) return null;
         return 'Hint: Use inspect(query) for quick page state checks after actions — e.g. inspect("error messages") or inspect("form field values").';
       }
       return null;
@@ -119,6 +142,8 @@ export const compositeSuggestionRules: HintRule[] = [
     name: 'repeated-read-page',
     priority: 207,
     maxSeverity: 'warning',
+    // Duplicated by read_page description "When NOT to use" naming inspect/find as alternatives.
+    redundant_with_description: true,
     match(ctx) {
       if (ctx.toolName !== 'read_page') return null;
       if (recentToolCount(ctx, 'read_page') >= 2) {

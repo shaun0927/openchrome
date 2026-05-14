@@ -247,6 +247,17 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter('openchrome_tool_calls_total', 'Total MCP tool calls');
     instance.registerHistogram('openchrome_tool_duration_seconds', 'Tool call duration in seconds',
       [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120]);
+    instance.registerHistogram('openchrome_tool_output_bytes', 'Final MCP tool result payload size in bytes',
+      [128, 512, 1024, 4096, 16384, 65536, 262144, 1048576]);
+    instance.registerHistogram('openchrome_tool_estimated_tokens', 'Estimated MCP tool result output tokens (chars / 4 heuristic)',
+      [32, 128, 256, 1024, 4096, 16384, 65536, 262144]);
+    instance.registerHistogram('openchrome_tool_compression_saved_bytes', 'Estimated response bytes saved by response compression or delta modes',
+      [128, 512, 1024, 4096, 16384, 65536, 262144]);
+    instance.registerCounter('openchrome_cache_status_total', 'Cache status observations by tool and key version');
+    instance.registerCounter('openchrome_diff_total', 'oc_diff comparisons by kind');
+    instance.registerHistogram('openchrome_diff_dom_entries', 'Number of DOM diff entries emitted by oc_diff', [0, 1, 2, 5, 10, 25, 50, 100]);
+    instance.registerCounter('openchrome_batch_items_total', 'batch_execute item outcomes by result');
+    instance.registerCounter('openchrome_batch_idempotency_evictions_total', 'batch_execute idempotency cache evictions by reason');
     instance.registerCounter('openchrome_reconnect_total', 'Total successful CDP reconnections');
     instance.registerGauge('openchrome_heap_bytes', 'Node.js heap usage in bytes');
     instance.registerGauge('openchrome_active_sessions', 'Current active MCP sessions');
@@ -254,10 +265,16 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerGauge('openchrome_tabs_health', 'Tab health status count');
     instance.registerCounter('openchrome_rate_limit_rejections_total', 'Requests rejected by rate limiter');
     instance.registerCounter('openchrome_tool_calls_aborted_total', 'Tool calls aborted before successful completion');
+    instance.registerCounter('openchrome_react_query_total', 'Pilot React inspection queries by subcommand');
+    instance.registerCounter('openchrome_react_renders_observed_total', 'Pilot React render observations');
+    instance.registerCounter('openchrome_react_unavailable_total', 'Pilot React unavailable results by reason');
     instance.registerCounter('openchrome_listener_errors_total', 'Async EventEmitter listener errors surfaced by safeAsyncListener');
     instance.registerCounter('openchrome_zombie_targets_cleaned_total', 'Tracked targets evicted after listener or cleanup failures');
     instance.registerCounter('openchrome_unhandled_rejections_total', 'Process-level unhandled promise rejections (safety-net counter)');
     instance.registerCounter('openchrome_cookie_scan_total', 'Cookie source scans by outcome (complete/partial/no_candidates/no_cookies)');
+    instance.registerCounter('openchrome_wait_predicate_total', 'wait_for function-mode outcomes by result');
+    instance.registerHistogram('openchrome_wait_predicate_elapsed_ms', 'wait_for function-mode elapsed time in milliseconds',
+      [50, 100, 200, 500, 1000, 2500, 5000, 10000, 30000]);
     instance.registerHistogram('openchrome_cookie_scan_duration_seconds', 'Cookie source scan duration in seconds',
       [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]);
     instance.registerHistogram('openchrome_cookie_scan_targets_scanned', 'Number of targets actually probed in each cookie scan',
@@ -265,6 +282,14 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter(
       'openchrome_session_init_budget_exhausted_total',
       'Session-init operations that ran out of budget, labeled by exhausting stage (A-3)',
+    );
+    instance.registerCounter(
+      'openchrome_intercept_estimated_response_bytes_total',
+      'Estimated response bytes for intercepted static asset requests, labeled by resource_type and estimate_source',
+    );
+    instance.registerCounter(
+      'openchrome_intercept_estimated_blocked_response_bytes_total',
+      'Estimated response bytes blocked via Fetch.failRequest, labeled by resource_type and estimate_source',
     );
   }
   return instance;

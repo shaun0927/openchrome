@@ -3,7 +3,8 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
 
@@ -60,6 +61,98 @@ function formatCookiesCompact(cookies: any[]): string {
   return sections.join('\n\n');
 }
 
+interface CookieElicitationDetails {
+  action: 'delete' | 'clear';
+  tabId: string;
+  name?: string;
+  domain?: string;
+  path?: string;
+  count?: number;
+  domains?: string[];
+}
+
+interface ElicitationResponse {
+  action?: string;
+  state?: string;
+  status?: string;
+  content?: { confirm?: boolean };
+}
+
+async function requireElicitationForDestructiveCookieAction(
+  context: ToolContext | undefined,
+  details: CookieElicitationDetails,
+): Promise<MCPResult | null> {
+  if (!context?.clientCapabilities?.elicitation || !context.requestClient) {
+    return null;
+  }
+
+  const requested = details.action === 'delete'
+    ? `delete cookie "${details.name}" for ${details.domain}${details.path ?? '/'}`
+    : `clear ${details.count ?? 0} cookie(s) across ${(details.domains ?? []).length} domain(s)`;
+
+  let response: ElicitationResponse;
+  try {
+    response = await context.requestClient<ElicitationResponse>(
+      'elicitation/create',
+      {
+        message: `Confirm destructive cookies action: ${requested}.`,
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            confirm: {
+              type: 'boolean',
+              description: 'REQUIRED: true to allow this destructive cookies action.',
+            },
+          },
+          required: ['confirm'],
+        },
+        metadata: {
+          tool: 'cookies',
+          ...details,
+        },
+      },
+      { timeoutMs: 30_000, signal: context.signal },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = /timeout/i.test(message)
+      ? 'elicitation_timeout'
+      : context.signal?.aborted || /abort|closed|cancel/i.test(message)
+        ? 'user_cancelled'
+        : 'elicitation_failed';
+    const payload = {
+      success: false,
+      code,
+      error: code,
+      action: details.action,
+      message: `Destructive cookies action was not confirmed: ${message}`,
+    };
+    return {
+      content: [{ type: 'text', text: JSON.stringify(payload) }],
+      structuredContent: payload,
+      isError: true,
+    };
+  }
+
+  const decision = String(response.action ?? response.state ?? response.status ?? '').toLowerCase();
+  if (decision === 'accept' && response.content?.confirm === true) return null;
+
+  const code = decision === 'cancel' ? 'user_cancelled' : 'user_declined';
+
+  const payload = {
+    success: false,
+    code,
+    error: code,
+    action: details.action,
+    message: 'Destructive cookies action was not accepted by the client/user.',
+  };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    structuredContent: payload,
+    isError: true,
+  };
+}
+
 const definition: MCPToolDefinition = {
   name: 'cookies',
   description: 'Manage browser cookies (get, set, delete, clear).',
@@ -112,14 +205,21 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Return all cookies with full attributes, bypassing classification.',
       },
+      dryRun: {
+        type: 'boolean',
+        description:
+          'Preview-only mode for destructive actions (delete, clear). When true, returns counts and a sample of cookies that would be deleted without mutating any state. Default: false.',
+      },
     },
     required: ['tabId', 'action'],
   },
+  annotations: TOOL_ANNOTATIONS.cookies,
 };
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const action = args.action as string;
@@ -132,6 +232,7 @@ const handler: ToolHandler = async (
   const sameSite = args.sameSite as 'Strict' | 'Lax' | 'None' | undefined;
   const expires = args.expires as number | undefined;
   const raw = args.raw as boolean | undefined;
+  const dryRun = args.dryRun === true;
 
   const sessionManager = getSessionManager();
 
@@ -301,6 +402,50 @@ const handler: ToolHandler = async (
           path,
         };
 
+        // #878 — dryRun: report what would be deleted; no mutation.
+        if (dryRun) {
+          const cookies = await page.cookies();
+          const matching = cookies.filter(
+            (c) => c.name === name && c.domain === cookieToDelete.domain && c.path === cookieToDelete.path,
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'delete',
+                  dryRun: true,
+                  wouldAffect: {
+                    count: matching.length,
+                    samples: matching.slice(0, 10).map((c) => c.name),
+                    details: { name, domain: cookieToDelete.domain, path: cookieToDelete.path },
+                  },
+                  guidance:
+                    'Pass dryRun:false (or omit) to execute. Count==0 means no cookie matched the name+domain+path triple.',
+                }),
+              },
+            ],
+            structuredContent: {
+              dryRun: true,
+              wouldAffect: {
+                count: matching.length,
+                samples: matching.slice(0, 10).map((c) => c.name),
+                details: { name, domain: cookieToDelete.domain, path: cookieToDelete.path },
+              },
+              guidance: 'Pass dryRun:false (or omit) to execute.',
+            },
+          };
+        }
+
+        const confirmation = await requireElicitationForDestructiveCookieAction(context, {
+          action: 'delete',
+          tabId,
+          name,
+          domain: cookieToDelete.domain,
+          path: cookieToDelete.path,
+        });
+        if (confirmation) return confirmation;
+
         await page.deleteCookie(cookieToDelete);
 
         return {
@@ -319,6 +464,45 @@ const handler: ToolHandler = async (
 
       case 'clear': {
         const cookies = await page.cookies();
+
+        // #878 — dryRun: report what would be cleared; no mutation.
+        if (dryRun) {
+          const domains = Array.from(new Set(cookies.map((c) => c.domain))).sort();
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'clear',
+                  dryRun: true,
+                  wouldAffect: {
+                    count: cookies.length,
+                    samples: cookies.slice(0, 10).map((c) => c.name),
+                    details: { domains },
+                  },
+                  guidance: 'Pass dryRun:false (or omit) to execute.',
+                }),
+              },
+            ],
+            structuredContent: {
+              dryRun: true,
+              wouldAffect: {
+                count: cookies.length,
+                samples: cookies.slice(0, 10).map((c) => c.name),
+                details: { domains },
+              },
+              guidance: 'Pass dryRun:false (or omit) to execute.',
+            },
+          };
+        }
+
+        const confirmation = await requireElicitationForDestructiveCookieAction(context, {
+          action: 'clear',
+          tabId,
+          count: cookies.length,
+          domains: Array.from(new Set(cookies.map((c) => c.domain))).sort(),
+        });
+        if (confirmation) return confirmation;
 
         // Delete all cookies
         for (const cookie of cookies) {

@@ -19,6 +19,7 @@ export interface DOMSerializerOptions {
   // light (default): sibling dedup threshold=4, container collapse enabled
   // aggressive: sibling dedup threshold=3
   includeUserAgentShadowDOM?: boolean;  // default: false
+  planningProfile?: 'default' | 'stable';
 }
 
 export interface PageStats {
@@ -93,6 +94,20 @@ const CONTAINER_TAGS = new Set([
   'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span',
 ]);
 
+const INTERACTIVE_HINT_SCAN_MAX_MS = 100;
+const INTERACTIVE_HINT_SCAN_MAX_ELEMENTS = 2500;
+
+interface CustomInteractiveHint {
+  path: string;
+  hints: string;
+}
+
+interface CursorInteractiveScanResult {
+  completed: boolean;
+  inspected: number;
+  hints: CustomInteractiveHint[];
+}
+
 /**
  * Parse flat attributes array into a map
  */
@@ -105,28 +120,79 @@ function parseAttributes(attrs: string[] | undefined): Map<string, string> {
   return map;
 }
 
+function escapeAttributeValue(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&apos;';
+      default:
+        return char;
+    }
+  });
+}
+
+const ID_REFERENCE_ATTRS = new Set([
+  'for',
+  'aria-labelledby',
+  'aria-describedby',
+  'aria-activedescendant',
+  'aria-controls',
+  'aria-owns',
+  'aria-flowto',
+  'aria-details',
+]);
+
+function collectReferencedIds(node: DOMNode, referencedIds: Set<string>): void {
+  if (node.nodeType === NODE_TYPE_ELEMENT) {
+    const attrMap = parseAttributes(node.attributes);
+    for (const attr of ID_REFERENCE_ATTRS) {
+      const value = attrMap.get(attr);
+      if (!value) continue;
+      for (const id of value.split(/\s+/).filter(Boolean)) {
+        referencedIds.add(id);
+      }
+    }
+  }
+
+  for (const child of node.children || []) collectReferencedIds(child, referencedIds);
+  if (node.contentDocument) collectReferencedIds(node.contentDocument, referencedIds);
+  for (const shadowRoot of node.shadowRoots || []) collectReferencedIds(shadowRoot, referencedIds);
+}
 /**
  * Check if a node is interactive
  */
-function isInteractive(tagName: string, attrMap: Map<string, string>): boolean {
+function isNativeInteractive(tagName: string, attrMap: Map<string, string>): boolean {
   if (INTERACTIVE_TAGS.has(tagName)) return true;
   const role = attrMap.get('role');
   if (role && INTERACTIVE_ROLES.has(role)) return true;
   return false;
 }
 
+function isInteractive(tagName: string, attrMap: Map<string, string>, customHints?: string): boolean {
+  return Boolean(customHints) || isNativeInteractive(tagName, attrMap);
+}
+
 /**
  * Check if a DOM node or any descendant contains interactive elements.
  * Prevents sibling dedup from collapsing groups with clickable elements.
  */
-function containsInteractive(node: DOMNode): boolean {
+function containsInteractive(node: DOMNode, path: string, ctx: SerializeContext): boolean {
   if (node.nodeType !== NODE_TYPE_ELEMENT) return false;
   const tag = (node.localName || node.nodeName).toLowerCase();
   const attrMap = parseAttributes(node.attributes);
-  if (isInteractive(tag, attrMap)) return true;
+  if (isInteractive(tag, attrMap, ctx.customInteractiveHints.get(path))) return true;
   if (node.children) {
+    const childPaths = createChildPathMap(node.children, path);
     for (const child of node.children) {
-      if (containsInteractive(child)) return true;
+      if (containsInteractive(child, childPaths.get(child) ?? path, ctx)) return true;
     }
   }
   return false;
@@ -151,25 +217,83 @@ function getDirectTextContent(node: DOMNode): string {
 /**
  * Format a single element node as a line
  */
+function isVolatileStableAttr(name: string, value: string): boolean {
+  if (name === 'id') {
+    const hasRandomKeyword = /(?:^|[-_])(uuid|random|nonce|session|generated|ember|react-aria)[-_]?[a-z0-9]*$/i.test(value);
+    const hasUuidShape = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i.test(value);
+    const longHex = value.match(/[0-9a-f]{16,}/i)?.[0];
+    const hasMixedLongHex = !!longHex && /[a-f]/i.test(longHex) && /\d/.test(longHex);
+    return hasRandomKeyword || hasUuidShape || hasMixedLongHex;
+  }
+  if (name === 'class') {
+    return false;
+  }
+  return false;
+}
+
+function hasMeaningfulStableDescendant(node: DOMNode): boolean {
+  for (const child of node.children || []) {
+    if (child.nodeType !== NODE_TYPE_ELEMENT) continue;
+    const childTag = child.localName || child.nodeName.toLowerCase();
+    const childAttrs = parseAttributes(child.attributes);
+    if (!isDecorativeMedia(childTag, childAttrs, isInteractive(childTag, childAttrs))) return true;
+    if (hasMeaningfulStableDescendant(child)) return true;
+  }
+  return false;
+}
+
+function isDecorativeMedia(tagName: string, attrMap: Map<string, string>, interactive: boolean): boolean {
+  if (interactive) return false;
+  if (!['img', 'picture', 'source', 'video', 'canvas'].includes(tagName)) return false;
+  if (
+    attrMap.has('alt') ||
+    attrMap.has('title') ||
+    attrMap.has('aria-label') ||
+    attrMap.has('role') ||
+    attrMap.has('data-testid') ||
+    attrMap.has('controls') ||
+    attrMap.has('tabindex')
+  ) return false;
+  return true;
+}
+
+function isDecorativeMediaNode(node: DOMNode): boolean {
+  if (node.nodeType !== NODE_TYPE_ELEMENT) return false;
+  const tagName = node.localName || node.nodeName.toLowerCase();
+  const attrMap = parseAttributes(node.attributes);
+  return isDecorativeMedia(tagName, attrMap, isInteractive(tagName, attrMap))
+    && !hasMeaningfulStableDescendant(node);
+}
+
 function formatElement(
   node: DOMNode,
   attrMap: Map<string, string>,
   indent: string,
   textContent: string,
   interactive: boolean,
+  hints?: string,
+  planningProfile: 'default' | 'stable' = 'default',
+  referencedIds: Set<string> = new Set(),
 ): string {
   const tagName = node.localName || node.nodeName.toLowerCase();
 
   // Build attribute string with only kept attrs
   const attrParts: string[] = [];
   for (const [k, v] of attrMap) {
-    if (KEEP_ATTRS.has(k)) {
-      attrParts.push(`${k}="${v}"`);
+    if (KEEP_ATTRS.has(k) || (planningProfile === 'stable' && k === 'controls')) {
+      if (
+        planningProfile === 'stable'
+        && isVolatileStableAttr(k, v)
+        && !(k === 'id' && referencedIds.has(v))
+      ) continue;
+      attrParts.push(`${k}="${escapeAttributeValue(v)}"`);
     }
   }
   const attrStr = attrParts.length > 0 ? ' ' + attrParts.join(' ') : '';
 
-  const interactiveMarker = interactive ? ' ★' : '';
+  const interactiveMarker = interactive
+    ? ` ★${hints ? ` [${hints}]` : ''}`
+    : '';
   const affordancePrefix = formatAffordancePrefix({
     tagName,
     role: attrMap.get('role'),
@@ -188,13 +312,13 @@ function formatElement(
  * - Has no meaningful text content
  * - Is NOT interactive
  */
-function isCollapsibleContainer(node: DOMNode): boolean {
+function isCollapsibleContainer(node: DOMNode, path: string, ctx: SerializeContext): boolean {
   if (!node.children) return false;
   const tagName = (node.localName || node.nodeName).toLowerCase();
   if (!CONTAINER_TAGS.has(tagName)) return false;
 
   const attrMap = parseAttributes(node.attributes);
-  if (isInteractive(tagName, attrMap)) return false;
+  if (isInteractive(tagName, attrMap, ctx.customInteractiveHints.get(path))) return false;
 
   const text = getDirectTextContent(node);
   if (text.length > 0) return false;
@@ -207,9 +331,10 @@ function isCollapsibleContainer(node: DOMNode): boolean {
  * Collect a chain of single-child containers starting from node.
  * Returns the chain nodes and the leaf (first non-container or multi-child node).
  */
-function collectContainerChain(node: DOMNode): { chain: DOMNode[], leaf: DOMNode } {
+function collectContainerChain(node: DOMNode, path: string, ctx: SerializeContext): { chain: DOMNode[], leaf: DOMNode, leafPath: string } {
   const chain: DOMNode[] = [node];
   let current = node;
+  let currentPath = path;
 
   while (chain.length < MAX_CONTAINER_CHAIN) {
     const elementChildren = (current.children || []).filter(
@@ -218,15 +343,18 @@ function collectContainerChain(node: DOMNode): { chain: DOMNode[], leaf: DOMNode
     if (elementChildren.length !== 1) break;
 
     const child = elementChildren[0];
+    const childPaths = createChildPathMap(current.children || [], currentPath);
+    const childPath = childPaths.get(child) ?? currentPath;
     const childTag = (child.localName || child.nodeName).toLowerCase();
     if (!CONTAINER_TAGS.has(childTag)) break;
 
     const childAttrMap = parseAttributes(child.attributes);
-    if (isInteractive(childTag, childAttrMap)) break;
+    if (isInteractive(childTag, childAttrMap, ctx.customInteractiveHints.get(childPath))) break;
     if (getDirectTextContent(child).length > 0) break;
 
     chain.push(child);
     current = child;
+    currentPath = childPath;
   }
 
   // The leaf is the deepest container's single element child, or the last container itself
@@ -234,13 +362,15 @@ function collectContainerChain(node: DOMNode): { chain: DOMNode[], leaf: DOMNode
     c => c.nodeType === NODE_TYPE_ELEMENT && !SKIP_TAGS.has(c.nodeName.toUpperCase())
   );
   const leaf = lastChildren.length === 1 ? lastChildren[0] : current;
+  const lastChildPaths = createChildPathMap(current.children || [], currentPath);
+  const leafPath = lastChildPaths.get(leaf) ?? currentPath;
 
   // If leaf is same as last chain entry, the chain didn't find a true leaf
   if (leaf === current) {
-    return { chain: [], leaf: node }; // no collapse
+    return { chain: [], leaf: node, leafPath: path }; // no collapse
   }
 
-  return { chain, leaf };
+  return { chain, leaf, leafPath };
 }
 
 interface SiblingGroup {
@@ -284,8 +414,45 @@ interface SerializeContext {
   interactiveOnly: boolean;
   compression: 'none' | 'light' | 'aggressive';
   includeUserAgentShadowDOM: boolean;
+  planningProfile: 'default' | 'stable';
+  referencedIds: Set<string>;
   nodesVisited: number;
   maxNodes: number;
+  customInteractiveHints: Map<string, string>;
+  /**
+   * Tracks every backendNodeId emitted in the output so the caller can mint
+   * a `[node_refs]` block for the #844 backend-node uid contract. Insertion
+   * order is preserved so the output map mirrors the visual order of lines.
+   */
+  emittedBackendNodeIds: Set<number>;
+}
+
+function createChildPathMap(children: DOMNode[], parentPath: string): Map<DOMNode, string> {
+  const paths = new Map<DOMNode, string>();
+  let elementIndex = 0;
+  for (const child of children) {
+    if (child.nodeType !== NODE_TYPE_ELEMENT) continue;
+    paths.set(child, `${parentPath}/c:${elementIndex}`);
+    elementIndex += 1;
+  }
+  return paths;
+}
+
+function appendTruncationMarker(ctx: SerializeContext): void {
+  const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
+  ctx.lines.push(truncationMsg);
+  ctx.truncated = true;
+}
+
+function appendBoundedLine(ctx: SerializeContext, line: string): boolean {
+  if (ctx.totalChars + line.length > ctx.maxOutputChars) {
+    appendTruncationMarker(ctx);
+    return false;
+  }
+
+  ctx.lines.push(line);
+  ctx.totalChars += line.length;
+  return true;
 }
 
 /**
@@ -295,6 +462,7 @@ function serializeNode(
   node: DOMNode,
   depth: number,
   ctx: SerializeContext,
+  path = 'd',
 ): void {
   if (ctx.truncated) return;
 
@@ -311,8 +479,9 @@ function serializeNode(
   // Handle document node - just recurse into children
   if (node.nodeType === NODE_TYPE_DOCUMENT) {
     if (node.children) {
+      const childPaths = createChildPathMap(node.children, path);
       for (const child of node.children) {
-        serializeNode(child, depth, ctx);
+        serializeNode(child, depth, ctx, childPaths.get(child) ?? path);
         if (ctx.truncated) return;
       }
     }
@@ -332,13 +501,31 @@ function serializeNode(
 
   const tagName = node.localName || node.nodeName.toLowerCase();
   const attrMap = parseAttributes(node.attributes);
-  const interactive = isInteractive(tagName, attrMap);
+  const customHints = ctx.customInteractiveHints.get(path);
+  const interactive = isInteractive(tagName, attrMap, customHints);
+
+  if (ctx.planningProfile === 'stable' && isDecorativeMedia(tagName, attrMap, interactive)) {
+    const fallbackText = getDirectTextContent(node);
+    const indent = '  '.repeat(depth);
+    if (fallbackText) {
+      const line = formatElement(node, attrMap, indent, fallbackText, interactive, customHints, ctx.planningProfile, ctx.referencedIds);
+      if (!appendBoundedLine(ctx, line + '\n')) return;
+      ctx.emittedBackendNodeIds.add(node.backendNodeId);
+    }
+    // Omit decorative media wrappers without fallback text, but still inspect
+    // descendants so meaningful labels inside <picture> survive.
+    for (const child of node.children || []) {
+      serializeNode(child, depth + 1, ctx);
+      if (ctx.truncated) return;
+    }
+    return;
+  }
 
   const indent = '  '.repeat(depth);
 
   // Container chain collapse (only in non-'none' compression mode, non-interactive containers)
-  if (ctx.compression !== 'none' && !interactive && isCollapsibleContainer(node)) {
-    const { chain, leaf } = collectContainerChain(node);
+  if (ctx.compression !== 'none' && !interactive && isCollapsibleContainer(node, path, ctx)) {
+    const { chain, leaf, leafPath } = collectContainerChain(node, path, ctx);
     if (chain.length >= 2) {
       // Build chain prefix: [10]div>[11]section>[12]div>
       const chainPrefix = chain.map(n => {
@@ -349,25 +536,30 @@ function serializeNode(
       // Serialize the leaf: format its line but with chain prefix prepended
       const leafTag = leaf.localName || leaf.nodeName.toLowerCase();
       const leafAttrMap = parseAttributes(leaf.attributes);
-      const leafInteractive = isInteractive(leafTag, leafAttrMap);
+      const leafHints = ctx.customInteractiveHints.get(leafPath);
+      const leafInteractive = isInteractive(leafTag, leafAttrMap, leafHints);
       const leafText = getDirectTextContent(leaf);
-      const leafLine = formatElement(leaf, leafAttrMap, '', leafText, leafInteractive);
+      const leafLine = formatElement(leaf, leafAttrMap, '', leafText, leafInteractive, leafHints, ctx.planningProfile, ctx.referencedIds);
       const fullLine = `${indent}${chainPrefix}${leafLine}\n`;
 
       if (ctx.totalChars + fullLine.length > ctx.maxOutputChars) {
-        const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
-        ctx.lines.push(truncationMsg);
-        ctx.truncated = true;
+        appendTruncationMarker(ctx);
         return;
       }
 
       ctx.lines.push(fullLine);
       ctx.totalChars += fullLine.length;
+      // Track every backendNodeId emitted in this collapsed chain so the
+      // #844 [node_refs] block can mint stable uids for the entire visible
+      // DOM tree (chain ancestors + leaf), not just leaves.
+      for (const chainNode of chain) ctx.emittedBackendNodeIds.add(chainNode.backendNodeId);
+      ctx.emittedBackendNodeIds.add(leaf.backendNodeId);
 
       // Recurse into leaf's children
       if (leaf.children) {
+        const childPaths = createChildPathMap(leaf.children, leafPath);
         for (const child of leaf.children) {
-          serializeNode(child, depth + 1, ctx);
+          serializeNode(child, depth + 1, ctx, childPaths.get(child) ?? leafPath);
           if (ctx.truncated) return;
         }
       }
@@ -377,18 +569,19 @@ function serializeNode(
 
   if (!ctx.interactiveOnly || interactive) {
     const textContent = getDirectTextContent(node);
-    const line = formatElement(node, attrMap, indent, textContent, interactive);
+    const line = formatElement(node, attrMap, indent, textContent, interactive, customHints, ctx.planningProfile, ctx.referencedIds);
     const lineWithNewline = line + '\n';
 
     if (ctx.totalChars + lineWithNewline.length > ctx.maxOutputChars) {
-      const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
-      ctx.lines.push(truncationMsg);
-      ctx.truncated = true;
+      appendTruncationMarker(ctx);
       return;
     }
 
     ctx.lines.push(lineWithNewline);
     ctx.totalChars += lineWithNewline.length;
+    // #844: track this node's backendNodeId so the [node_refs] block can
+    // mint a stable uid for it.
+    ctx.emittedBackendNodeIds.add(node.backendNodeId);
   }
 
   // Handle iframe content document
@@ -400,7 +593,7 @@ function serializeNode(
       ctx.lines.push(separator);
       ctx.totalChars += separator.length;
     }
-    serializeNode(node.contentDocument, depth + 1, ctx);
+    serializeNode(node.contentDocument, depth + 1, ctx, `${path}/f`);
     return; // children are inside contentDocument
   }
 
@@ -417,9 +610,7 @@ function serializeNode(
       const separator = `${childIndent}--shadow-root-- (${shadowType})\n`;
 
       if (ctx.totalChars + separator.length > ctx.maxOutputChars) {
-        const truncationMsg = `\n\n[Output truncated at ${ctx.maxOutputChars} chars. Use depth parameter to limit scope.]`;
-        ctx.lines.push(truncationMsg);
-        ctx.truncated = true;
+        appendTruncationMarker(ctx);
         return;
       }
 
@@ -428,8 +619,10 @@ function serializeNode(
 
       // Shadow root children at depth+2 (inside shadow root boundary)
       if (shadowRoot.children) {
+        const shadowPath = `${path}/s:${node.shadowRoots.indexOf(shadowRoot)}`;
+        const childPaths = createChildPathMap(shadowRoot.children, shadowPath);
         for (const child of shadowRoot.children) {
-          serializeNode(child, depth + 2, ctx);
+          serializeNode(child, depth + 2, ctx, childPaths.get(child) ?? shadowPath);
           if (ctx.truncated) return;
         }
       }
@@ -438,6 +631,7 @@ function serializeNode(
 
   // Recurse into children
   if (node.children && ctx.compression !== 'none') {
+    const childPaths = createChildPathMap(node.children, path);
     const groups = groupConsecutiveSiblings(node.children);
     const threshold = ctx.compression === 'aggressive'
       ? SIBLING_COLLAPSE_THRESHOLD_AGGRESSIVE
@@ -446,15 +640,22 @@ function serializeNode(
     for (const group of groups) {
       if (ctx.truncated) return;
 
+      if (ctx.planningProfile === 'stable' && group.nodes.every(isDecorativeMediaNode)) {
+        // A purely decorative media run contributes no planning signal. Skip it
+        // as a group instead of visiting every omitted leaf and exhausting the
+        // serializer node budget on ad/image-heavy pages.
+        continue;
+      }
+
       // Skip dedup for groups containing interactive elements to avoid
       // hiding clickable buttons/links/inputs from the LLM
-      const groupHasInteractive = group.nodes.some(n => containsInteractive(n));
+      const groupHasInteractive = group.nodes.some(n => containsInteractive(n, childPaths.get(n) ?? path, ctx));
 
       if (group.nodes.length >= threshold && !groupHasInteractive) {
         // Emit first SIBLING_SAMPLE_COUNT with full detail
         const samples = group.nodes.slice(0, SIBLING_SAMPLE_COUNT);
         for (const sampleNode of samples) {
-          serializeNode(sampleNode, depth + 1, ctx);
+          serializeNode(sampleNode, depth + 1, ctx, childPaths.get(sampleNode) ?? path);
           if (ctx.truncated) return;
         }
 
@@ -467,17 +668,22 @@ function serializeNode(
         if (ctx.totalChars + summaryLine.length <= ctx.maxOutputChars) {
           ctx.lines.push(summaryLine);
           ctx.totalChars += summaryLine.length;
+          // #844: the summary line surfaces the first/last backendNodeIds of
+          // the dedup'd run; mint stable uids for both endpoints so callers
+          // can refer to the range bounds without a fresh DOM read.
+          ctx.emittedBackendNodeIds.add(firstRef);
+          ctx.emittedBackendNodeIds.add(lastRef);
         }
 
         // Emit last node if not already shown
         if (group.nodes.length > SIBLING_SAMPLE_COUNT) {
           const lastNode = group.nodes[group.nodes.length - 1];
-          serializeNode(lastNode, depth + 1, ctx);
+          serializeNode(lastNode, depth + 1, ctx, childPaths.get(lastNode) ?? path);
         }
       } else {
         // Small group — emit all normally
         for (const groupNode of group.nodes) {
-          serializeNode(groupNode, depth + 1, ctx);
+          serializeNode(groupNode, depth + 1, ctx, childPaths.get(groupNode) ?? path);
           if (ctx.truncated) return;
         }
       }
@@ -492,11 +698,113 @@ function serializeNode(
     }
   } else if (node.children) {
     // Original behavior when compression is 'none'
+    const childPaths = createChildPathMap(node.children, path);
     for (const child of node.children) {
-      serializeNode(child, depth + 1, ctx);
+      serializeNode(child, depth + 1, ctx, childPaths.get(child) ?? path);
       if (ctx.truncated) return;
     }
   }
+}
+
+async function scanCustomInteractiveElements(page: Page, pierceIframes: boolean): Promise<CursorInteractiveScanResult> {
+  // Bound the browser-side scan from inside the evaluated function. Racing
+  // page.evaluate with a timeout does not abort the in-page work.
+  return await page.evaluate((maxMs: number, maxElements: number, includeIframes: boolean) => {
+      const interactiveRoles = new Set([
+        'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'listbox',
+        'menu', 'menuitem', 'tab', 'switch', 'slider',
+      ]);
+      const interactiveTags = new Set(['a', 'button', 'input', 'select', 'textarea', 'details', 'summary']);
+      type RootEntry = { root: Document | ShadowRoot; path: string };
+      const roots: RootEntry[] = [{ root: document, path: 'd' }];
+      const now = () => (typeof performance !== 'undefined' && typeof performance.now === 'function')
+        ? performance.now()
+        : Date.now();
+      const deadline = now() + maxMs;
+      let inspected = 0;
+      let budgetExceeded = false;
+      const hintsByPath: Array<{ path: string; hints: string }> = [];
+
+      for (let i = 0; i < roots.length; i++) {
+        const { root, path: rootPath } = roots[i];
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let current = walker.nextNode();
+        const paths = new WeakMap<Node, string>();
+        const childIndexes = new WeakMap<Node, number>();
+        while (current) {
+          inspected += 1;
+          if (inspected > maxElements || now() > deadline) {
+            budgetExceeded = true;
+            break;
+          }
+
+          const el = current as HTMLElement;
+          const parent = el.parentNode;
+          const siblingIndex = childIndexes.get(parent as Node) ?? 0;
+          childIndexes.set(parent as Node, siblingIndex + 1);
+          const parentPath = parent === root
+            ? rootPath
+            : (paths.get(parent as Node) ?? rootPath);
+          const path = `${parentPath}/c:${siblingIndex}`;
+          paths.set(el, path);
+
+          if (el.shadowRoot) roots.push({ root: el.shadowRoot, path: `${path}/s:0` });
+          if (includeIframes && el.tagName.toLowerCase() === 'iframe') {
+            try {
+              const frame = el as HTMLIFrameElement;
+              if (frame.contentDocument) roots.push({ root: frame.contentDocument, path: `${path}/f` });
+            } catch {
+              // Cross-origin frames are represented by CDP when possible; page
+              // script cannot inspect them, so custom hints are best-effort.
+            }
+          }
+          current = walker.nextNode();
+
+          if (el.closest('[hidden], [aria-hidden="true"]')) continue;
+
+          const tag = el.tagName.toLowerCase();
+          if (interactiveTags.has(tag)) continue;
+          const role = el.getAttribute('role');
+          if (role && interactiveRoles.has(role.toLowerCase())) continue;
+
+          const style = getComputedStyle(el);
+          const hasCursorPointer = style.cursor === 'pointer';
+          const hasOnClick = el.hasAttribute('onclick') || typeof el.onclick === 'function';
+          const tabIndex = el.getAttribute('tabindex');
+          const hasTabIndex = tabIndex !== null && tabIndex !== '-1';
+          const editable = el.getAttribute('contenteditable');
+          const isEditable = el.isContentEditable || editable === '' || editable === 'true' || editable === 'plaintext-only';
+
+          if (!hasCursorPointer && !hasOnClick && !hasTabIndex && !isEditable) continue;
+          if (hasCursorPointer && !hasOnClick && !hasTabIndex && !isEditable) {
+            const parent = el.parentElement;
+            if (parent && getComputedStyle(parent).cursor === 'pointer') continue;
+          }
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) continue;
+
+          const hints: string[] = [];
+          if (hasCursorPointer) hints.push('cursor:pointer');
+          if (hasOnClick) hints.push('onclick');
+          if (hasTabIndex) hints.push('tabindex');
+          if (isEditable) hints.push('contenteditable');
+
+          const hiddenInput = el.querySelector('input[type="radio"], input[type="checkbox"]') as HTMLInputElement | null;
+          if (hiddenInput) {
+            const inputStyle = getComputedStyle(hiddenInput);
+            const hidden = inputStyle.display === 'none' || inputStyle.visibility === 'hidden' || hiddenInput.hidden;
+            if (hidden) {
+              hints.push(`${hiddenInput.type}:${hiddenInput.indeterminate ? 'mixed' : String(hiddenInput.checked)}`);
+            }
+          }
+
+          hintsByPath.push({ path, hints: hints.join(', ') });
+        }
+        if (budgetExceeded) break;
+      }
+
+      return { completed: !budgetExceeded, inspected, hints: hintsByPath };
+    }, INTERACTIVE_HINT_SCAN_MAX_MS, INTERACTIVE_HINT_SCAN_MAX_ELEMENTS, pierceIframes);
 }
 
 /**
@@ -506,7 +814,17 @@ export async function serializeDOM(
   page: Page,
   cdpClient: CDPClientLike,
   options?: DOMSerializerOptions,
-): Promise<{ content: string; pageStats: PageStats; truncated: boolean }> {
+): Promise<{
+  content: string;
+  pageStats: PageStats;
+  truncated: boolean;
+  /**
+   * Backend node ids emitted into `content`, in insertion order. Callers
+   * use this to mint the #844 backend-node uid contract `[node_refs]`
+   * mapping block for the response.
+   */
+  emittedBackendNodeIds: number[];
+}> {
   const maxDepth = options?.maxDepth ?? -1;
   const maxOutputChars = options?.maxOutputChars ?? MAX_OUTPUT_CHARS;
   const includePageStats = options?.includePageStats ?? true;
@@ -514,6 +832,7 @@ export async function serializeDOM(
   const interactiveOnly = (options?.interactiveOnly ?? false) || options?.filter === 'interactive';
   const compression = options?.compression ?? 'light';  // default to 'light'
   const includeUserAgentShadowDOM = options?.includeUserAgentShadowDOM ?? false;
+  const planningProfile = options?.planningProfile ?? 'default';
 
   // Get page stats via page.evaluate
   const pageStats = await withTimeout(
@@ -530,6 +849,21 @@ export async function serializeDOM(
     15000,
     'serializeDOM:pageStats',
   ) as PageStats;
+
+  let customInteractiveHints = new Map<string, string>();
+  if (interactiveOnly) {
+    try {
+      const scanResult = await scanCustomInteractiveElements(page, pierceIframes);
+      if (scanResult.completed) {
+        customInteractiveHints = new Map(scanResult.hints.map(({ path, hints }) => [path, hints]));
+      }
+    } catch {
+      // Cursor/onclick hint discovery is opportunistic. Large or hostile pages
+      // should still serialize using native tags and ARIA roles if this pre-scan
+      // times out or throws.
+      customInteractiveHints = new Map();
+    }
+  }
 
   // Get DOM tree via CDP. Always pierce at the CDP layer so shadowRoots are
   // present; ctx.pierceIframes below controls whether iframe contentDocument
@@ -549,17 +883,14 @@ export async function serializeDOM(
     { depth: documentDepth, pierce: true },
   );
 
-  const lines: string[] = [];
-
-  // Add page stats header
-  if (includePageStats) {
-    const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight} | docSize: ${pageStats.scrollWidth}x${pageStats.scrollHeight}\n\n`;
-    lines.push(statsLine);
+  const referencedIds = new Set<string>();
+  if (planningProfile === 'stable') {
+    collectReferencedIds(root, referencedIds);
   }
 
   const ctx: SerializeContext = {
-    lines,
-    totalChars: lines.reduce((acc, l) => acc + l.length, 0),
+    lines: [],
+    totalChars: 0,
     truncated: false,
     maxOutputChars,
     maxDepth,
@@ -567,12 +898,28 @@ export async function serializeDOM(
     interactiveOnly,
     compression,
     includeUserAgentShadowDOM,
+    planningProfile,
+    referencedIds,
     nodesVisited: 0,
     maxNodes: DEFAULT_MAX_SERIALIZER_NODES,
+    customInteractiveHints,
+    emittedBackendNodeIds: new Set<number>(),
   };
 
+  // Add page stats header through the same bounded append path as DOM lines.
+  if (includePageStats) {
+    const statsLine = `[page_stats] url: ${pageStats.url} | title: ${pageStats.title} | scroll: ${pageStats.scrollX},${pageStats.scrollY} | viewport: ${pageStats.viewportWidth}x${pageStats.viewportHeight} | docSize: ${pageStats.scrollWidth}x${pageStats.scrollHeight}\n\n`;
+    appendBoundedLine(ctx, statsLine);
+  }
+
+  if (includePageStats && planningProfile === 'stable' && !ctx.truncated) {
+    appendBoundedLine(ctx, '[planning_profile] stable\n\n');
+  }
+
   // Serialize from root
-  serializeNode(root, 0, ctx);
+  if (!ctx.truncated) {
+    serializeNode(root, 0, ctx);
+  }
 
   const content = ctx.lines.join('');
 
@@ -580,5 +927,6 @@ export async function serializeDOM(
     content,
     pageStats,
     truncated: ctx.truncated,
+    emittedBackendNodeIds: Array.from(ctx.emittedBackendNodeIds),
   };
 }

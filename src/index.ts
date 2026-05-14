@@ -13,6 +13,7 @@ import { registerAllTools } from './tools';
 import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
 import { resolveHeadlessMode } from './config/headless-resolver';
+import { resolveCapabilityFilterOptions } from './config/capability-filter';
 import { resolveWindowBoundsConfig } from './config/window-bounds';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './utils/pid-manager';
@@ -34,6 +35,8 @@ import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
 import { getBrowserStateManager } from './browser-state';
 import { getListenerErrorStats, installUnhandledRejectionSafetyNet } from './utils/safe-listener';
+import { setComponent, resetReadinessMachine } from './watchdog/readiness';
+import { wireChromeReadiness } from './watchdog/chrome-readiness';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -85,6 +88,7 @@ program
   .option('--hybrid', 'Enable hybrid mode (Lightpanda + Chrome routing)')
   .option('--lp-port <port>', 'Lightpanda debugging port (default: 9223)', '9223')
   .option('--blocked-domains <domains>', 'Comma-separated list of blocked domains (e.g., "*.bank.com,mail.google.com")')
+  .option('--allow-host <patterns>', 'Comma-separated host allowlist. When set, only http(s) hosts matching exact or leading-wildcard patterns may be opened (also: OPENCHROME_ALLOW_HOSTS).')
   .option('--audit-log', 'Enable security audit logging (default: false)')
   .option('--no-sanitize-content', 'Disable content sanitization for prompt injection defense (default: enabled)')
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
@@ -96,9 +100,118 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean }) => {
-    const port = parseInt(options.port, 10);
+  .option('--slim', 'Expose only core tools (alias for --tools-only core).')
+  .option('--tools-only <csv>', 'Expose only tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot. Default: all groups exposed.')
+  .option('--disable-tools <csv>', 'Remove tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot.')
+  .option('--introspect-tools-list', 'Print tools/list as compact JSON to stdout and exit (no Chrome/CDP startup). Used by lint-tool-schemas.mjs.')
+  .option('--auto-connect [userDataDir]', 'Attach to a Chrome you started yourself by reading <userDataDir>/DevToolsActivePort (#849). When omitted, uses the platform-default Chrome user-data dir. Also: OPENCHROME_AUTO_CONNECT=<dir> env var. Implies --launch-mode=attach.')
+  .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
+  .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
+  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string }) => {
+    // --introspect-tools-list: print tools/list JSON and exit, NO Chrome/CDP/transport startup.
+    if (options.introspectToolsList) {
+      const { MCPServer } = await import('./mcp-server');
+      const { registerAllTools } = await import('./tools');
+      const server = new MCPServer(undefined, { initialToolTier: 3 });
+      registerAllTools(server);
+      const manifest = server.getToolManifest();
+      const output = JSON.stringify(manifest.tools) + '\n';
+      for (let offset = 0; offset < output.length; offset += 16_384) {
+        const chunk = output.slice(offset, offset + 16_384);
+        if (!process.stdout.write(chunk)) {
+          await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+        }
+      }
+
+      return;
+    }
+
+
+    let port = parseInt(options.port, 10);
+
     let autoLaunch = options.autoLaunch || false;
+
+    // ─── --auto-connect (#849) ──────────────────────────────────────────
+    // Resolve the auto-connect intent up front. When set, it:
+    //   1. Locates DevToolsActivePort in the target user-data dir.
+    //   2. Overrides --port with the discovered port.
+    //   3. Forces launchMode='attach' so the launcher attaches instead of
+    //      spawning. Mutual-exclusion with --launch-mode=auto|isolated is
+    //      checked before any I/O so misconfigured operators fail fast.
+    //   4. Forces userDataDir so the existing attach diagnostics surface
+    //      the right path on failure.
+    // OPENCHROME_AUTO_CONNECT mirrors the CLI flag.
+    let autoConnectRaw: string | undefined;
+    if (options.autoConnect === true) {
+      autoConnectRaw = ''; // bare flag — use platform default
+    } else if (typeof options.autoConnect === 'string') {
+      autoConnectRaw = options.autoConnect;
+    } else if (process.env.OPENCHROME_AUTO_CONNECT !== undefined) {
+      autoConnectRaw = process.env.OPENCHROME_AUTO_CONNECT;
+    }
+
+    // Resolve the requested launch mode (CLI > env). We do this here, rather
+    // than letting the launcher resolve later, so we can fail fast on the
+    // mutual-exclusion check before any heavy startup work.
+    const requestedLaunchMode = options.launchMode || process.env.OPENCHROME_LAUNCH_MODE;
+    const launchModeSource: 'cli' | 'env' | 'config' = options.launchMode
+      ? 'cli'
+      : process.env.OPENCHROME_LAUNCH_MODE
+        ? 'env'
+        : 'config';
+
+    if (autoConnectRaw !== undefined) {
+      // Mutual-exclusion: auto-connect implies launchMode='attach'. Refuse
+      // 'auto' or 'isolated' before doing any disk I/O.
+      if (requestedLaunchMode) {
+        try {
+          const { resolveLaunchMode, assertAutoConnectCompatibleWithLaunchMode } =
+            require('./chrome/launch-mode-resolver');
+          const resolvedMode = resolveLaunchMode(
+            { launchMode: options.launchMode },
+            { OPENCHROME_LAUNCH_MODE: process.env.OPENCHROME_LAUNCH_MODE },
+            {},
+          );
+          assertAutoConnectCompatibleWithLaunchMode(
+            autoConnectRaw,
+            resolvedMode,
+            launchModeSource,
+          );
+        } catch (err) {
+          console.error(`[openchrome] ${(err as Error).message}`);
+          process.exit(2);
+        }
+      }
+
+      // Discover the active DevTools endpoint. Failures are fatal — the
+      // operator asked for auto-connect explicitly, and silently falling
+      // back to launch mode would defeat the contract (P2: no behavior
+      // change without the new flag).
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { discoverActiveDevToolsPort } = require('./chrome/auto-connect');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { setAutoConnectState } = require('./chrome/auto-connect-state');
+        const result = await discoverActiveDevToolsPort({
+          userDataDir: autoConnectRaw.trim() === '' ? undefined : autoConnectRaw,
+        });
+        port = result.port;
+        // Override CLI inputs so the rest of the bootstrap sees the
+        // discovered port + dir consistently.
+        options.userDataDir = result.userDataDir;
+        // Force attach so the launcher does not spawn.
+        options.launchMode = 'attach';
+        // Suppress autoLaunch — attach must never spawn.
+        autoLaunch = false;
+        setAutoConnectState(result);
+        console.error(
+          `[openchrome] Auto-connect: attached to Chrome at ${result.wsEndpoint} (userDataDir=${result.userDataDir})`,
+        );
+      } catch (err) {
+        console.error(`[openchrome] --auto-connect failed: ${(err as Error).message}`);
+        process.exit(2);
+      }
+    }
 
     // Server mode forces headless + auto-launch + no cookie bridge
     if (options.serverMode) {
@@ -124,6 +237,21 @@ program
     // returns null in that case.
     logActiveFlags();
     await bootstrapPilot();
+
+    // Secrets masking (#834): load dotenv into the process-wide secret store.
+    // Default behavior (no --secrets) is unchanged — the empty store is a no-op.
+    if (options.secrets) {
+      try {
+        const { loadSecretsFromFile, setSecretStore } = await import('./core/secrets');
+        const store = loadSecretsFromFile(options.secrets);
+        setSecretStore(store);
+        console.error(`[openchrome] Loaded ${store.size} secret(s) from ${options.secrets}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[openchrome] Error: failed to load --secrets: ${msg}`);
+        process.exit(2);
+      }
+    }
 
     console.error(`[openchrome] Chrome debugging port: ${port}`);
     console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
@@ -188,7 +316,20 @@ program
     }
 
     // Set global config before initializing anything
-    setGlobalConfig({ port, autoLaunch, userDataDir, profileDirectory, chromeBinary, useHeadlessShell, headless, restartChrome, ...windowConfig });
+    setGlobalConfig({
+      port,
+      autoLaunch,
+      userDataDir,
+      profileDirectory,
+      chromeBinary,
+      useHeadlessShell,
+      headless,
+      restartChrome,
+      // #659/#849: persist resolved launch mode so the launcher's per-call
+      // resolver picks it up (CLI > env > config > default).
+      ...(options.launchMode ? { chromeLaunchMode: options.launchMode as 'auto' | 'attach' | 'isolated' } : {}),
+      ...windowConfig,
+    });
     if (restartChrome) {
       console.error(`[openchrome] Restart Chrome mode: enabled (will quit existing Chrome)`);
     }
@@ -221,6 +362,18 @@ program
       console.error(`[openchrome] Blocked domains: ${blockedList.join(', ')}`);
     }
 
+    // Configure host allowlist if provided. Env is read by the guard at enforcement time
+    // so CLI and OPENCHROME_ALLOW_HOSTS compose without overwriting each other.
+    const allowHostOption = (options as { allowHost?: string }).allowHost;
+    if (allowHostOption) {
+      const allowHosts = allowHostOption.split(',').map((d: string) => d.trim()).filter(Boolean);
+      const existing = getGlobalConfig().security || {};
+      setGlobalConfig({
+        security: { ...existing, allow_hosts: allowHosts },
+      });
+      console.error(`[openchrome] Allowed hosts: ${allowHosts.join(', ')}`);
+    }
+
     // Configure audit logging if enabled
     if (options.auditLog) {
       const existing = getGlobalConfig().security || {};
@@ -239,15 +392,32 @@ program
       console.error('[openchrome] Content sanitization: disabled');
     }
 
+    const mcpOptions: Parameters<typeof setMCPServerOptions>[0] = {};
+
     // Tool tier configuration
     const envTier = parseInt(process.env.OPENCHROME_TOOL_TIER || '', 10);
     if (options.allTools || envTier >= 3) {
-      setMCPServerOptions({ initialToolTier: 3 as ToolTier });
+      mcpOptions.initialToolTier = 3 as ToolTier;
       console.error('[openchrome] All tools exposed from startup');
     } else if (envTier === 2) {
-      setMCPServerOptions({ initialToolTier: 2 as ToolTier });
+      mcpOptions.initialToolTier = 2 as ToolTier;
       console.error('[openchrome] Tier 2 tools exposed from startup');
     }
+
+    // Capability filter configuration (#829, #847)
+    const capabilityResolution = resolveCapabilityFilterOptions(options);
+    if (capabilityResolution.errorMessage) {
+      console.error(capabilityResolution.errorMessage);
+      process.exit(2);
+    }
+    if (capabilityResolution.capabilityFilter) {
+      mcpOptions.capabilityFilter = capabilityResolution.capabilityFilter;
+      if (capabilityResolution.logMessage) {
+        console.error(capabilityResolution.logMessage);
+      }
+    }
+
+    setMCPServerOptions(mcpOptions);
 
     // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
     // getMCPServer() → SessionManager → getCDPClient() reads this env var at construction.
@@ -263,8 +433,25 @@ program
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
     }
 
+    // Reset readiness machine so a fresh serve action starts from scratch.
+    resetReadinessMachine();
+
     const server = getMCPServer();
-    registerAllTools(server);
+    await registerAllTools(server);
+
+    // Dev-only hook: artificial delay for the tools component transition.
+    // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
+    const isDevHooks = process.env.NODE_ENV !== 'production' && process.env.OPENCHROME_DEV_HOOKS === '1';
+    if (isDevHooks && process.env.OPENCHROME_FAKE_SLOW_TOOLS) {
+      const delayMs = parseInt(process.env.OPENCHROME_FAKE_SLOW_TOOLS, 10);
+      if (delayMs > 0) {
+        setTimeout(() => setComponent('tools', 'ok'), delayMs);
+      } else {
+        setComponent('tools', 'ok');
+      }
+    } else {
+      setComponent('tools', 'ok');
+    }
 
     // Write PID file for zombie process detection
     writePidFile(port);
@@ -391,8 +578,8 @@ program
 
       // Wire HTTP transport through MCPServer.handleMessage() — single source of
       // truth for JSON-RPC validation, notification handling, and request routing.
-      httpTrans.onMessage(async (msg: Record<string, unknown>, signal?: AbortSignal) =>
-        server.handleMessage(msg, signal),
+      httpTrans.onMessage(async (msg: Record<string, unknown>, signal?: AbortSignal, context?: import('./transports').TransportMessageContext) =>
+        server.handleMessage(msg, signal, context),
       );
       server.wireRateLimiterCleanup(httpTrans);
       httpTrans.start();
@@ -478,6 +665,12 @@ program
     const cdpClient = getCDPClient();
     const sessionManager = getSessionManager();
 
+    // Readiness: wire chrome component via CDPClient connection events, then
+    // proactively connect so daemon /ready probes can become ready before the
+    // first MCP tool call.
+    const chromeReadiness = wireChromeReadiness(cdpClient);
+    chromeReadiness.initializeStartupConnection();
+
     // Wire session manager into HTTP transport for dashboard API endpoints
     if (httpTransport) {
       httpTransport.setSessionManager(sessionManager);
@@ -520,7 +713,7 @@ program
     });
     processWatchdog.on('chrome-relaunched', () => {
       console.error('[SelfHealing] Chrome relaunched by watchdog, triggering reconnect...');
-      cdpClient.forceReconnect().catch((err: unknown) => {
+      chromeReadiness.handleChromeRelaunched().catch((err: unknown) => {
         console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
       });
     });
@@ -533,7 +726,13 @@ program
         console.error(`[SelfHealing] ChromeProcessMonitor restarted (new pid=${newPid})`);
       }
     });
+    // Readiness: flip chrome to failing when watchdog detects Chrome died
+    processWatchdog.on('chrome-died', () => {
+      setComponent('chrome', 'failing');
+    });
     processWatchdog.start();
+    // Readiness: watchdogs component is ok once the first tick has been scheduled
+    setComponent('watchdogs', 'ok');
     console.error('[SelfHealing] ChromeProcessWatchdog started');
 
     // Tab Health Monitor (Layer 1)
@@ -817,6 +1016,38 @@ program
   });
 
 program
+  .command('doctor')
+  .description('Run holistic environment diagnostics (Node, Chrome, ports, disk, network)')
+  .option('--json', 'Emit DoctorReport as JSON to stdout')
+  .option('--check <id>', 'Run only this check (repeatable)', (val: string, prev: string[]) => [...prev, val], [] as string[])
+  .option('--remote', 'Enable opt-in remote network probe (HEAD update.googleapis.com)')
+  .option('--no-color', 'Disable colored output (also respected via NO_COLOR env var)')
+  .action(async (options: { json?: boolean; check: string[]; remote?: boolean; color?: boolean }) => {
+    const noColor = options.color === false || Boolean(process.env.NO_COLOR);
+
+    // Gate the remote check via env var so the check fn can read it
+    if (options.remote) {
+      process.env.OPENCHROME_DOCTOR_REMOTE_ENABLED = '1';
+    }
+
+    const { runDoctor, formatReport, writeDiagnosticsCache } = await import('./cli/doctor');
+    const report = await runDoctor({
+      checks: options.check.length > 0 ? options.check : undefined,
+      remote: Boolean(options.remote),
+    });
+
+    await writeDiagnosticsCache(report);
+
+    if (options.json) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    } else {
+      process.stdout.write(formatReport(report, noColor));
+    }
+
+    process.exit(report.exitCode);
+  });
+
+program
   .command('check')
   .description('Check Chrome connection status')
   .option('-p, --port <port>', 'Chrome remote debugging port', process.env.CHROME_PORT || '9222')
@@ -1037,6 +1268,12 @@ USAGE:
       }
     }
   }
+
+  # Diagnose environment issues (Node version, Chrome binary, port, disk, etc.)
+  openchrome doctor
+
+  # Machine-readable output
+  openchrome doctor --json
 `);
   });
 

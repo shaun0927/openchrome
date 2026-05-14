@@ -250,8 +250,15 @@ describe('ProfileManager', () => {
       expect(result.atomic).toBe(true);
     });
 
-    it('should fall back to fs.copyFileSync when sqlite3 not available', () => {
+    it('should skip cookie copy when sqlite3 is not available', () => {
       fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies'), 'cookie-db');
+      fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies-wal'), 'wal-data');
+      fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies-shm'), 'shm-data');
+      fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies-journal'), 'journal-data');
+      fs.writeFileSync(
+        path.join(sourceDir, 'Default', 'Preferences'),
+        JSON.stringify({ profile: { exit_type: 'Crashed' } })
+      );
 
       // Mock: `which sqlite3` fails
       mockExecFileSync.mockImplementation((file: unknown) => {
@@ -265,8 +272,12 @@ describe('ProfileManager', () => {
       const result = manager.syncProfileData(sourceDir, destDir);
 
       expect(result.atomic).toBe(false);
-      // Cookies should have been copied via fs.copyFileSync
-      expect(fs.existsSync(path.join(destDir, 'Default', 'Cookies'))).toBe(true);
+      expect(result.success).toBe(false);
+      expect(fs.existsSync(path.join(destDir, 'Default', 'Cookies'))).toBe(false);
+      expect(fs.existsSync(path.join(destDir, 'Default', 'Cookies-wal'))).toBe(false);
+      expect(fs.existsSync(path.join(destDir, 'Default', 'Cookies-shm'))).toBe(false);
+      expect(fs.existsSync(path.join(destDir, 'Default', 'Cookies-journal'))).toBe(false);
+      expect(fs.existsSync(path.join(destDir, 'Default', 'Preferences'))).toBe(true);
     });
 
     it('should clean up WAL/SHM/journal files after atomic backup', () => {
@@ -360,7 +371,30 @@ describe('ProfileManager', () => {
       expect(() => manager.syncProfileData(sourceDir, destDir)).not.toThrow();
     });
 
-    it('should update sync metadata after successful sync', () => {
+    it('should update sync metadata after successful atomic cookie sync', () => {
+      fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies'), 'cookie-db');
+
+      mockExecFileSync.mockImplementation((file: unknown) => {
+        if (String(file) === 'which' || String(file) === 'where') {
+          return Buffer.from('/usr/bin/sqlite3');
+        }
+        if (String(file) === 'sqlite3') {
+          fs.mkdirSync(path.join(destDir, 'Default'), { recursive: true });
+          fs.writeFileSync(path.join(destDir, 'Default', 'Cookies'), 'backed-up-db');
+        }
+        return Buffer.from('');
+      });
+
+      const manager = new ProfileManager();
+      manager.syncProfileData(sourceDir, destDir);
+
+      const metadata = manager.getSyncMetadata();
+      expect(metadata).not.toBeNull();
+      expect(metadata!.syncCount).toBe(1);
+      expect(metadata!.sourceProfileDir).toBe(sourceDir);
+    });
+
+    it('should not update sync metadata when sqlite3 is unavailable', () => {
       fs.writeFileSync(path.join(sourceDir, 'Default', 'Cookies'), 'cookie-db');
 
       mockExecFileSync.mockImplementation((file: unknown) => {
@@ -373,10 +407,7 @@ describe('ProfileManager', () => {
       const manager = new ProfileManager();
       manager.syncProfileData(sourceDir, destDir);
 
-      const metadata = manager.getSyncMetadata();
-      expect(metadata).not.toBeNull();
-      expect(metadata!.syncCount).toBe(1);
-      expect(metadata!.sourceProfileDir).toBe(sourceDir);
+      expect(manager.getSyncMetadata()).toBeNull();
     });
   });
 
@@ -547,6 +578,21 @@ describe('ProfileManager', () => {
       expect(result.userDataDir).toBe('/mock/persistent');
       expect(result.syncPerformed).toBe(true);
       expect(manager.syncProfileData).toHaveBeenCalledWith('/real/chrome/profile', '/mock/persistent');
+    });
+
+    it('should not mark sync performed when cookie sync is not atomic', () => {
+      const manager = new ProfileManager();
+      jest.spyOn(manager, 'needsSync').mockReturnValue(true);
+      jest.spyOn(manager, 'syncProfileData').mockReturnValue({ atomic: false, success: false });
+      jest.spyOn(manager, 'getOrCreatePersistentProfile').mockReturnValue('/mock/persistent');
+
+      const result = manager.resolveProfile({
+        realProfileDir: '/real/chrome/profile',
+        isProfileLocked: true,
+      });
+
+      expect(result.profileType).toBe('persistent');
+      expect(result.syncPerformed).toBe(false);
     });
 
     it('should return persistent profile without sync when locked but fresh', () => {

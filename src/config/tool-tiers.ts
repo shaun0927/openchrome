@@ -20,8 +20,11 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   form_input: 1,
   fill_form: 1,
   read_page: 1,
+  oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
+  element_pick: 1,             // src/tools/element-pick.ts — in-page picker facts (#899)
   inspect: 1,
   query_dom: 1,
+  oc_query: 1, // src/tools/oc-query.ts — semantic refs for interaction workflows (#1045)
   javascript_tool: 1,
   tabs_context: 1,
   tabs_create: 1,
@@ -47,6 +50,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_evidence_bundle: 1,      // src/tools/oc-evidence-bundle.ts — Outcome Contracts evidence bundle capture (#792)
   oc_skill_record: 1,         // src/tools/oc-skill-record.ts — skill memory write surface (#785)
   oc_skill_recall: 1,         // src/tools/oc-skill-recall.ts — skill memory read surface (#785)
+  oc_output_fetch: 1,         // src/tools/oc-output-fetch.ts — 2-stage fetch for large-output tools (#887)
 
   // Tier 2: Specialist (on demand)
   extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
@@ -68,18 +72,23 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   crawl: 2,
   crawl_sitemap: 2,
   vision_find: 2,
+  oc_context_export: 2,
+  oc_context_import: 2,
 
   // Session recording tools (#572) — opt-in, not needed for every session
   oc_recording_start: 2,
   oc_recording_stop: 2,
+  oc_recording_status: 2,
   oc_recording_list: 2,
   oc_recording_export: 2,
 
   // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
   // Names must match the 'name' field in each tool's definition
   oc_connection_health: 1,  // src/tools/connection-health.ts
+  oc_policy: 1,             // src/tools/oc-policy.ts
   oc_checkpoint: 1,         // src/tools/checkpoint.ts
   list_profiles: 1,         // src/tools/list-profiles.ts
+  oc_devtools_url: 1,       // src/tools/oc-devtools-url.ts (#860) — gated by env
 
   // Tier 3: Orchestration only
   workflow_init: 3,

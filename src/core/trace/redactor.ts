@@ -21,6 +21,32 @@
 
 export const REDACTED = '[REDACTED]';
 
+/**
+ * Explicit allow-list of keys introduced by issue #844 (`TraceTarget`
+ * envelope written under `args.target`). None of these are sensitive — the
+ * uid is opaque and synthetic, the backendNodeId is a Chrome-internal
+ * counter, and the loaderId is a navigation epoch identifier. We document
+ * the non-redaction decision here so a future audit does not need to
+ * re-derive the rationale from the absence of a rule.
+ *
+ * The redactor's `isSensitiveKey` check uses substring containment against
+ * `SENSITIVE_KEY_NAMES`; none of these three keys match any entry on that
+ * list, so they pass through unchanged today. The constant exists so a
+ * regression test can pin the contract.
+ */
+export const TRACE_TARGET_ALLOWLIST = ['nodeRef', 'backendNodeId', 'loaderId'] as const;
+
+const VAULT_LITERAL_REDACTIONS = new Map<string, string>();
+
+export function registerVaultTraceRedaction(name: string, plaintext: string): void {
+  if (!name || !plaintext) return;
+  VAULT_LITERAL_REDACTIONS.set(plaintext, `<vault:${name}>`);
+}
+
+export function clearVaultTraceRedactionsForTest(): void {
+  VAULT_LITERAL_REDACTIONS.clear();
+}
+
 const SENSITIVE_KEY_NAMES = [
   'password',
   'passwd',
@@ -51,6 +77,21 @@ const SENSITIVE_HEADER_NAMES = new Set(
     s.toLowerCase(),
   ),
 );
+
+/**
+ * Replay-telemetry fields allow-list (#875). These keys are emitted by
+ * `oc_skill_replay` per-step telemetry and contain only non-sensitive
+ * descriptors (skill identifiers, indices, resolution strategy names,
+ * elapsed milliseconds, ok flag). Listed explicitly here so future audits of
+ * `SENSITIVE_KEY_NAMES` know these fields are intentionally NOT redacted —
+ * they must round-trip verbatim for the curator promote-pass signal.
+ *
+ *   skill_id, step_index, resolved_via, selector_attempts, elapsed_ms, ok
+ *
+ * No code change is required: none of the names overlap with
+ * `SENSITIVE_KEY_NAMES` or any credential pattern. This comment is the
+ * contract anchor.
+ */
 
 /** Patterns scanned in every string-typed value across the event tree. */
 const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
@@ -88,6 +129,9 @@ function isSensitiveKey(key: string): boolean {
  */
 export function scrubString(value: string): string {
   let out = value;
+  for (const [plaintext, token] of VAULT_LITERAL_REDACTIONS) {
+    out = out.split(plaintext).join(token);
+  }
   for (const { name, re } of CREDENTIAL_PATTERNS) {
     if (name === 'url_credential_param') {
       out = out.replace(re, (_m, p1: string) => `${p1}=${REDACTED}`);
@@ -95,6 +139,35 @@ export function scrubString(value: string): string {
       out = out.replace(re, (_m, p1: string) => `${p1} ${REDACTED}`);
     } else {
       out = out.replace(re, REDACTED);
+    }
+  }
+  return out;
+}
+
+
+/**
+ * Redact JavaScript predicate source before it is persisted in trace-like
+ * telemetry. Predicate strings often quote cookies, bearer tokens, or fixture
+ * secrets inline; generic pattern redaction handles known token shapes, while
+ * the cookie/storage guard below redacts quoted literals when the predicate is
+ * explicitly reading browser credential stores.
+ */
+export function redactPredicateSource(value: string): string {
+  let out = scrubString(value);
+  if (/document\.cookie|\bcookie\b|localStorage|sessionStorage/i.test(out)) {
+    out = out.replace(/(['"])([^'"]{4,})\1/g, (_m, quote: string) => `${quote}${REDACTED}${quote}`);
+  }
+  return out;
+}
+function redactWaitForArgs(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return walk(value);
+  const args = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (k === 'value' && args.type === 'function' && typeof v === 'string') {
+      out[k] = redactPredicateSource(v);
+    } else {
+      out[k] = walk(v);
     }
   }
   return out;
@@ -163,6 +236,18 @@ function walk(value: unknown, siblingName?: string): unknown {
   }
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
+    const toolName = typeof obj.tool === 'string' ? obj.tool : typeof obj.name === 'string' ? obj.name : typeof obj.toolName === 'string' ? obj.toolName : undefined;
+    if (toolName === 'wait_for') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if ((k === 'args' || k === 'arguments') && v && typeof v === 'object') {
+          out[k] = redactWaitForArgs(v);
+        } else {
+          out[k] = walk(v);
+        }
+      }
+      return out;
+    }
     // Detect form-field shape: an object with both `name` (string) and `value`
     // keys is treated as a key-value pair where `name` controls `value`.
     const formFieldName =
@@ -194,12 +279,24 @@ function walk(value: unknown, siblingName?: string): unknown {
 /**
  * Top-level entry: redact a captured trace event's `body`. The wrapper
  * envelope (`ts`, `seq`, `kind`) is preserved as-is.
+ *
+ * Composition (#834): the body is first walked through the credential
+ * pattern matcher (this file), then through the loaded-secrets redactor
+ * (`src/core/secrets/redactor.ts`). The secrets pass is a no-op when
+ * `--secrets` was not provided.
  */
 export function redactTraceEvent<T extends { body: unknown }>(event: T): T {
-  return { ...event, body: walk(event.body) } as T;
+  // Lazy import keeps the credential-pattern redactor self-contained for
+  // callers that pull the trace module in isolation (no implicit
+  // dependency cycle with the secrets module's own redactor walk).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactSecrets } = require('../secrets/redactor') as typeof import('../secrets/redactor');
+  return { ...event, body: redactSecrets(walk(event.body)) } as T;
 }
 
 /** Convenience for tests: redact an arbitrary value tree. */
 export function redactValue(value: unknown): unknown {
-  return walk(value);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactSecrets } = require('../secrets/redactor') as typeof import('../secrets/redactor');
+  return redactSecrets(walk(value));
 }

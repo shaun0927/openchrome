@@ -4,9 +4,12 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS, DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
+import { mergeHeaderJson, isStateHeaderEnabled } from './_shared/state-header';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 
 const definition: MCPToolDefinition = {
   name: 'page_content',
@@ -26,9 +29,14 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Return outerHTML vs innerHTML. Default: true',
       },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap page-origin content in <oc:page>. Default true; false disables.',
+      },
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.page_content,
 };
 
 const handler: ToolHandler = async (
@@ -38,6 +46,7 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const selector = args.selector as string | undefined;
   const outerHTML = (args.outerHTML as boolean) ?? true;
+  const boundaryMarkers = areBoundaryMarkersEnabled(args);
 
   const sessionManager = getSessionManager();
 
@@ -62,18 +71,20 @@ const handler: ToolHandler = async (
       const element = await page.$(selector);
 
       if (!element) {
+        const missingBody = {
+          action: 'page_content',
+          selector,
+          content: null,
+          message: `No element found matching "${selector}"`,
+        };
+        const missingWithState = isStateHeaderEnabled()
+          ? mergeHeaderJson(
+              { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
+              missingBody,
+            )
+          : missingBody;
         return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                action: 'page_content',
-                selector,
-                content: null,
-                message: `No element found matching "${selector}"`,
-              }),
-            },
-          ],
+          content: [{ type: 'text', text: JSON.stringify(missingWithState) }],
           isError: true,
         };
       }
@@ -91,19 +102,21 @@ const handler: ToolHandler = async (
         html = html.substring(0, MAX_OUTPUT_CHARS) + `\n\n[Truncated: ${originalLength} chars total, showing first ${MAX_OUTPUT_CHARS}]`;
       }
 
+      const elementBody = {
+        action: 'page_content',
+        selector,
+        outerHTML,
+        contentLength: originalLength,
+        content: boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: 'text' }, html) : html,
+      };
+      const elementWithState = isStateHeaderEnabled()
+        ? mergeHeaderJson(
+            { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
+            elementBody,
+          )
+        : elementBody;
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              action: 'page_content',
-              selector,
-              outerHTML,
-              contentLength: originalLength,
-              content: html,
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: JSON.stringify(elementWithState) }],
       };
     } else {
       // Get full page content
@@ -114,18 +127,20 @@ const handler: ToolHandler = async (
         html = html.substring(0, MAX_OUTPUT_CHARS) + `\n\n[Truncated: ${originalLength} chars total, showing first ${MAX_OUTPUT_CHARS}]`;
       }
 
+      const fullPageBody = {
+        action: 'page_content',
+        selector: null,
+        contentLength: originalLength,
+        content: boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: 'text' }, html) : html,
+      };
+      const fullPageWithState = isStateHeaderEnabled()
+        ? mergeHeaderJson(
+            { url: page.url(), title: await page.title(), mode: 'html' as const, capturedAt: Date.now(), tabId },
+            fullPageBody,
+          )
+        : fullPageBody;
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              action: 'page_content',
-              selector: null,
-              contentLength: originalLength,
-              content: html,
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: JSON.stringify(fullPageWithState) }],
       };
     }
   } catch (error) {

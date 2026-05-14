@@ -10,9 +10,13 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { formatElementMapAsText } from '../vision/screenshot-analyzer';
+import { formatPerceptionSnapshotAsText } from '../vision/perception-provider';
+import { DomAnnotatorPerceptionProvider } from '../vision/providers/dom-annotator-provider';
 import { trackVisionUsage } from '../vision/config';
+import { recordVisualTrajectory } from '../observability/visual-trajectory';
 
 const definition: MCPToolDefinition = {
   name: 'vision_find',
@@ -40,9 +44,40 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Only show interactive elements (buttons, links, inputs). Default: true',
       },
+      format: {
+        type: 'string',
+        enum: ['legacy', 'snapshot', 'both'],
+        description: 'Output format: legacy text+image, provider-neutral snapshot JSON, or both. Default: legacy.',
+      },
+      includeImage: {
+        type: 'boolean',
+        description: 'Include annotated image output. Defaults to true for legacy/both and false for snapshot.',
+      },
+      occlusionFilter: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, drops elements whose center is covered by another element via elementFromPoint. Defaults to false to preserve today\'s output; set to true for stricter accuracy.',
+      },
+      iframes: {
+        type: 'string',
+        enum: ['none', 'same-origin', 'all'],
+        default: 'none',
+        description: 'Frame traversal mode. "all" still respects same-origin policy; cross-origin frames are listed in iframes.skipped.',
+      },
+      mode: {
+        type: 'string',
+        enum: ['viewport', 'tiled'],
+        default: 'viewport',
+        description: 'viewport: today\'s single-shot capture. tiled: full document scrolled in viewport-tall steps; returns per-tile screenshots and a unified element map.',
+      },
+      recordTrajectory: {
+        type: 'boolean',
+        description: 'Opt-in visual trajectory artifact capture for this call. Also enabled by OPENCHROME_VISUAL_TRAJECTORY=1.',
+      },
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.vision_find,
 };
 
 const handler: ToolHandler = async (
@@ -85,30 +120,88 @@ const handler: ToolHandler = async (
     const showGrid = args.showGrid === true;
     const showBoundingBoxes = args.showBoundingBoxes !== false;
     const interactiveOnly = args.interactiveOnly !== false;
+    const format = (args.format as string | undefined) || 'legacy';
+    if (format !== 'legacy' && format !== 'snapshot' && format !== 'both') {
+      return {
+        content: [{ type: 'text', text: `Error: Invalid format "${format}". Must be "legacy", "snapshot", or "both".` }],
+        isError: true,
+      };
+    }
+    const includeImage = args.includeImage !== undefined
+      ? args.includeImage === true
+      : format !== 'snapshot';
+    const occlusionFilter = args.occlusionFilter === true;
+    const iframesArg = args.iframes;
+    const iframes: 'none' | 'same-origin' | 'all' =
+      iframesArg === 'same-origin' || iframesArg === 'all' ? iframesArg : 'none';
+    const modeArg = args.mode;
+    const mode: 'viewport' | 'tiled' = modeArg === 'tiled' ? 'tiled' : 'viewport';
 
-    const result = await analyzeScreenshot(page, {
+    const provider = new DomAnnotatorPerceptionProvider(page);
+    const { result, snapshot } = await provider.captureAnnotated(tabId, page.url(), {
       showGrid,
       showBoundingBoxes,
       interactiveOnly,
+      occlusionFilter,
+      iframes,
+      mode,
     });
 
     trackVisionUsage(result.annotationTimeMs);
     const textMap = formatElementMapAsText(result.elementMap);
     console.error(`[vision_find] Analyzed tab ${tabId}: ${result.elementCount} elements in ${result.annotationTimeMs}ms`);
+    const trajectory = await recordVisualTrajectory({
+      enabled: args.recordTrajectory === true,
+      sessionId,
+      tabId,
+      url: page.url(),
+      toolName: 'vision_find',
+      instruction: typeof args.instruction === 'string' ? args.instruction : undefined,
+      provider: 'dom-annotator',
+      elementCount: result.elementCount,
+      latencyMs: result.annotationTimeMs,
+      warnings: snapshot.warnings,
+      outcome: 'success',
+      annotatedImageBase64: result.screenshot,
+      mimeType: result.mimeType,
+    }).catch((err) => {
+      console.error('[vision_find] visual trajectory capture failed:', err instanceof Error ? err.message : err);
+      return null;
+    });
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)\n\n${textMap}`,
-        },
-        {
-          type: 'image',
-          data: result.screenshot,
-          mimeType: result.mimeType,
-        },
-      ],
-    };
+    const tiles = mode === 'tiled' ? (result.tiling?.tiles ?? []) : [];
+    const tileNote =
+      mode === 'tiled' && tiles.length > 0
+        ? `
+
+Tiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y order.`
+        : '';
+    const imageBlocks =
+      tiles.length > 0
+        ? tiles.map((t) => ({ type: 'image' as const, data: t.imageBase64, mimeType: t.mimeType }))
+        : [{ type: 'image' as const, data: result.screenshot, mimeType: result.mimeType }];
+
+    const content: MCPResult['content'] = [];
+    if (format === 'legacy' || format === 'both') {
+      content.push({
+        type: 'text',
+        text: `Vision analysis: ${result.elementCount} elements found (${result.viewport.width}x${result.viewport.height} viewport, ${result.annotationTimeMs}ms)${tileNote}
+${trajectory ? `\nTrajectory: ${trajectory.traceId} (${trajectory.dir})\n` : ''}
+
+${textMap}`,
+      });
+    }
+    if (format === 'snapshot' || format === 'both') {
+      content.push({
+        type: 'text',
+        text: formatPerceptionSnapshotAsText(snapshot),
+      });
+    }
+    if (includeImage) {
+      content.push(...imageBlocks);
+    }
+
+    return { content };
   } catch (error) {
     return {
       content: [

@@ -74,13 +74,6 @@ describe('ReadPageTool', () => {
       sampleAccessibilityTree
     );
 
-    // Set up CDP response for depth 5 (used with interactive filter)
-    mockSessionManager.mockCDPClient.setCDPResponse(
-      'Accessibility.getFullAXTree',
-      { depth: 5 },
-      sampleAccessibilityTree
-    );
-
     // Set up DOM.getDocument response for DOM mode (now the default)
     mockSessionManager.mockCDPClient.setCDPResponse(
       'DOM.getDocument',
@@ -124,10 +117,118 @@ describe('ReadPageTool', () => {
   });
 
   afterEach(() => {
+    delete process.env.OPENCHROME_PROFILE;
     jest.clearAllMocks();
+    // Keep delta snapshot cache isolated between read_page tests.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('../../src/compression/snapshot-store').SnapshotStore.getInstance().clear();
   });
 
   describe('Accessibility Tree', () => {
+    test('markdown exposes nextCursor for truncated output without changing text output shape', async () => {
+      process.env.OPENCHROME_STATE_HEADER = 'off';
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'A'.repeat(60000)}</p></main>`);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+      }) as {
+        content: Array<{ type: string; text: string }>;
+        structuredContent?: { hasMore: boolean; nextCursor?: string; total: number; offset: number; text: string };
+      };
+
+      expect(result.content[0].text).toContain('[Output truncated — exceeded MAX_OUTPUT_CHARS]');
+      expect(result.structuredContent?.hasMore).toBe(true);
+      expect(result.structuredContent?.offset).toBe(0);
+      expect(result.structuredContent?.total).toBeGreaterThan(result.content[0].text.length);
+      expect(result.structuredContent?.nextCursor).toEqual(expect.any(String));
+      expect(result.structuredContent?.text).toBe(result.content[0].text);
+    });
+
+    test('markdown cursor returns subsequent page as structuredContent JSON', async () => {
+      process.env.OPENCHROME_STATE_HEADER = 'off';
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'A'.repeat(60000)}</p></main>`);
+
+      const first = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+      }) as { structuredContent?: { nextCursor?: string } };
+
+      const second = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+        cursor: first.structuredContent?.nextCursor,
+      }) as {
+        content: Array<{ type: string; text: string }>;
+        structuredContent?: { action: string; mode: string; hasMore: boolean; offset: number; text: string };
+      };
+
+      expect(JSON.parse(second.content[0].text)).toEqual(second.structuredContent);
+      expect(second.structuredContent?.action).toBe('read_page');
+      expect(second.structuredContent?.mode).toBe('markdown');
+      expect(second.structuredContent?.offset).toBeGreaterThan(0);
+      expect(second.structuredContent?.hasMore).toBe(true);
+      expect(second.structuredContent?.text).not.toContain('[Output truncated — exceeded MAX_OUTPUT_CHARS]');
+    });
+
+    test('markdown cursor rejects malformed and stale cursors', async () => {
+      process.env.OPENCHROME_STATE_HEADER = 'off';
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'A'.repeat(60000)}</p></main>`);
+
+      const malformed = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        cursor: 'not-a-cursor',
+      }) as { isError?: boolean; structuredContent?: { error?: { code: string } } };
+      expect(malformed.isError).toBe(true);
+      expect(malformed.structuredContent?.error?.code).toBe('invalid_cursor');
+
+      const first = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+      }) as { structuredContent?: { nextCursor?: string } };
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'B'.repeat(60000)}</p></main>`);
+
+      const stale = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        cursor: first.structuredContent?.nextCursor,
+      }) as { isError?: boolean; structuredContent?: { error?: { code: string; retry: string } } };
+      expect(stale.isError).toBe(true);
+      expect(stale.structuredContent?.error).toEqual({ code: 'stale_cursor', retry: 'restart_from_no_cursor' });
+    });
+
+    test('semantic include_metrics reports the final serialized payload size', async () => {
+      const handler = await getReadPageHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'semantic',
+        include_metrics: true,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      const payload = JSON.parse(text) as { _metrics: { returned_chars: number; estimated_tokens: number } };
+      expect(payload._metrics.returned_chars).toBe(text.length);
+      expect(payload._metrics.estimated_tokens).toBe(Math.ceil(text.length / 4));
+    });
+
     test('returns tree with default depth', async () => {
       const handler = await getReadPageHandler();
 
@@ -207,6 +308,23 @@ describe('ReadPageTool', () => {
         expect.anything(),
         'Accessibility.getFullAXTree',
         { depth: 3 }
+      );
+    });
+
+    test('caps custom depth above limit for interactive filter', async () => {
+      const handler = await getReadPageHandler();
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        filter: 'interactive',
+        depth: 10,
+      });
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 5 }
       );
     });
 
@@ -345,7 +463,7 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      expect(text).toMatch(/\[ref_\d+\]/);
+      expect(text).toMatch(/\[ref_\d+ @e\d+\]/);
     });
   });
 
@@ -454,6 +572,30 @@ describe('ReadPageTool', () => {
       );
     });
 
+    test('diagnostics.mode reflects DOM when AX-overflow triggers fallback=dom', async () => {
+      const mockSerializeDOM = jest.fn().mockResolvedValue({
+        content: '[page_stats] url: https://example.com\n\n<body></body>',
+      });
+      const handler = await getReadPageHandler(mockSerializeDOM);
+
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        generateLargeAXTree(600)
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        fallback: 'dom',
+        diagnostics: true,
+      }) as any;
+
+      // effective mode must reflect the actual output format, not the requested one
+      expect(result._diagnostics.mode).toBe('dom');
+      expect(result._diagnostics.requestedMode).toBe('ax');
+    });
+
     test('falls back to truncated AX output when DOM serialization fails', async () => {
       const mockSerializeDOM = jest.fn().mockRejectedValue(new Error('DOM serialization failed'));
       const handler = await getReadPageHandler(mockSerializeDOM);
@@ -535,7 +677,102 @@ describe('ReadPageTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid mode "html"');
-      expect(result.content[0].text).toContain('Must be "ax", "dom", or "css"');
+      expect(result.content[0].text).toContain('Must be "ax", "dom", "css", "semantic", or "markdown"');
+    });
+  });
+
+  describe('Markdown Mode', () => {
+    test('returns clean markdown and pagination metadata by default', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(
+        '<html><body><nav>Main page</nav><main><h1>Article</h1><p>See <a href="https://example.com">link</a>.</p></main></body></html>'
+      );
+      (page.evaluate as jest.Mock).mockResolvedValueOnce({
+        type: 'numbered',
+        hasNext: true,
+        hasPrev: false,
+        currentPage: 1,
+        totalPages: 3,
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      const text = result.content[0].text;
+      expect(text).toContain('# Article');
+      expect(text).toContain('[link](https://example.com)');
+      expect(text).not.toContain('Main page');
+      expect(text).toContain('[Pagination Detected]');
+      expect(text).toContain('Type: numbered');
+      expect(text).toContain('Pages: 1 / 3');
+    });
+
+
+
+    test('markdown contentFilter=prune returns raw and fit markdown with metrics', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId);
+      (page!.content as jest.Mock).mockResolvedValue(`
+        <main>
+          <h1>Article</h1>
+          <p>Home Login Cookie settings Privacy Policy</p>
+          <p>Enterprise pricing includes annual discounts and support.</p>
+          <table><tr><th>Plan</th><th>Price</th></tr><tr><td>Enterprise</td><td>Contact us</td></tr></table>
+        </main>
+      `);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        contentFilter: 'prune',
+        returnRaw: true,
+        returnFit: true,
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }> };
+      const jsonStart = result.content[0].text.indexOf('{');
+      const body = JSON.parse(result.content[0].text.slice(jsonStart));
+
+      expect(body.content).toContain('Enterprise pricing');
+      expect(body.raw_markdown).toContain('Cookie settings');
+      expect(body.fit_markdown).toContain('Enterprise pricing');
+      expect(body.fit_markdown).not.toContain('Cookie settings');
+      expect(body.filter.type).toBe('prune');
+      expect(body.filter.raw_chars).toBeGreaterThan(body.filter.fit_chars);
+    });
+
+    test('markdown contentFilter=bm25 requires query', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId);
+      (page!.content as jest.Mock).mockResolvedValue('<main><h1>Article</h1></main>');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        contentFilter: 'bm25',
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('requires a non-empty query');
+    });
+
+    test('can suppress markdown pagination metadata', async () => {
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue('<main><h1>Article</h1></main>');
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('# Article');
+      expect(result.content[0].text).not.toContain('[Pagination Detected]');
+      expect(page.evaluate).not.toHaveBeenCalled();
     });
   });
 
@@ -559,6 +796,92 @@ describe('ReadPageTool', () => {
       expect(typeof matchingCall![2]).toBe('number');
       expect(typeof matchingCall![3]).toBe('string');
     });
+
+
+
+    test('OPENCHROME_PROFILE=fast defaults AX reads to compact output and explicit compact=false disables it', async () => {
+      process.env.OPENCHROME_PROFILE = 'fast';
+      const handler = await getReadPageHandler();
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        {
+          nodes: [
+            { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Fast Page' }, childIds: [2, 3] },
+            { nodeId: 2, role: { value: 'StaticText' }, name: { value: 'Decorative copy' } },
+            { nodeId: 3, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+          ],
+        }
+      );
+
+      const fast = await handler(testSessionId, { tabId: testTargetId, mode: 'ax' }) as { content: Array<{ type: string; text: string }> };
+      expect(fast.content[0].text).toContain('button: "Submit"');
+      expect(fast.content[0].text).not.toContain('Decorative copy');
+
+      const explicitFull = await handler(testSessionId, { tabId: testTargetId, mode: 'ax', compact: false }) as { content: Array<{ type: string; text: string }> };
+      expect(explicitFull.content[0].text).toContain('Decorative copy');
+    });
+
+    test('compact AX mode omits non-actionable no-ref leaves while preserving actionable nodes', async () => {
+      const handler = await getReadPageHandler();
+      mockSessionManager.mockCDPClient.setCDPResponse(
+        'Accessibility.getFullAXTree',
+        { depth: 8 },
+        {
+          nodes: [
+            { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Compact Page' }, childIds: [2, 3] },
+            { nodeId: 2, role: { value: 'StaticText' }, name: { value: 'Decorative copy' } },
+            { nodeId: 3, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+          ],
+        }
+      );
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        compact: true,
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('button: "Submit"');
+      expect(result.content[0].text).not.toContain('Decorative copy');
+    });
+
+    test('AX delta compression returns only changes after the first cached snapshot', async () => {
+      const handler = await getReadPageHandler();
+      const firstTree = {
+        nodes: [
+          { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Delta Page' }, childIds: [2] },
+          { nodeId: 2, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+        ],
+      };
+      const secondTree = {
+        nodes: [
+          { nodeId: 1, backendDOMNodeId: 100, role: { value: 'document' }, name: { value: 'Delta Page' }, childIds: [2, 3] },
+          { nodeId: 2, backendDOMNodeId: 101, role: { value: 'button' }, name: { value: 'Submit' } },
+          { nodeId: 3, backendDOMNodeId: 102, role: { value: 'link' }, name: { value: 'Learn more' } },
+        ],
+      };
+      mockSessionManager.mockCDPClient.setCDPResponse('Accessibility.getFullAXTree', { depth: 8 }, firstTree);
+
+      const first = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        compression: 'delta',
+      }) as { content: Array<{ type: string; text: string }> };
+      expect(first.content[0].text).toContain('button: "Submit"');
+      expect(first.content[0].text).not.toContain('[AX Delta');
+
+      mockSessionManager.mockCDPClient.setCDPResponse('Accessibility.getFullAXTree', { depth: 8 }, secondTree);
+      const second = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'ax',
+        compression: 'delta',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(second.content[0].text).toContain('[AX Delta');
+      expect(second.content[0].text).toContain('Learn more');
+    });
+
   });
 
   describe('Error Handling', () => {
@@ -587,8 +910,13 @@ describe('ReadPageTool', () => {
       const handler = await getReadPageHandler();
       mockSessionManager.mockCDPClient.send.mockRejectedValueOnce(new Error('CDP error'));
 
+      // Use AX mode to exercise the top-level CDP error path. DOM mode now
+      // fails closed with its own dedicated message ("Read page DOM
+      // serialization error: …") covered by other tests, so steering this
+      // case through AX keeps the original assertion meaningful.
       const result = await handler(testSessionId, {
         tabId: testTargetId,
+        mode: 'ax',
       }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
 
       expect(result.isError).toBe(true);
@@ -606,7 +934,7 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      expect(text).toMatch(/^\[page_stats\]/);
+      expect(text).toMatch(/(?:^|\n)\[page_stats\]/);
     });
 
     test('AX mode page_stats includes url and title', async () => {

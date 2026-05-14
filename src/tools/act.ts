@@ -7,6 +7,7 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
@@ -20,7 +21,25 @@ import { withTimeout } from '../utils/with-timeout';
 import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
-import { getCachedSequence, cacheSequence, validateCachedSequence } from '../actions/action-cache';
+import {
+  getCachedSequence,
+  cacheSequence,
+  validateCachedSequence,
+  ActionCacheKeyV2Parts,
+  ActionCacheV2LookupDecision,
+  buildActionCacheKeyV2Parts,
+  cacheSequenceV2,
+  getCachedSequenceV2,
+  validateCachedSequenceV2,
+  buildWorkflowPageSignature,
+  cacheWorkflowSequence,
+  getWorkflowCachedSequence,
+  validateWorkflowCachedSequence,
+  WorkflowCacheDecision,
+  WorkflowPageSignature,
+} from '../actions/action-cache';
+import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 // ─── Types ───
 
@@ -38,7 +57,7 @@ interface StepResult {
 
 const definition: MCPToolDefinition = {
   name: 'act',
-  description: 'Execute multi-step browser actions from natural language instruction.',
+  description: 'Execute multi-step browser actions from a natural language instruction. Parses and runs click, type, select, scroll, hover, navigate, and wait steps in sequence.\n\nWhen to use: Automating a known multi-step flow (login, form fill, navigation) in one call.\nWhen NOT to use: Use interact for a single element action, or computer for raw coordinate input.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -54,20 +73,153 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Additional context (e.g., "on the login page")',
       },
-      verify: {
-        type: 'boolean',
-        description: 'Verify outcome after execution. Default: true',
-      },
+      verify: VERIFY_FIELD_SCHEMA,
       timeout: {
         type: 'number',
         description: 'Max time in ms for entire sequence. Default: 30000',
       },
+      use_workflow_cache: {
+        type: 'boolean',
+        description: 'Opt-in: try guarded structured workflow cache before legacy action cache. Default: false',
+      },
+      record_workflow_cache: {
+        type: 'boolean',
+        description: 'Opt-in: record safe successful parsed sequences into the structured workflow cache. Default: false',
+      },
+      allow_risky_replay: {
+        type: 'boolean',
+        description: 'Allow replay of workflow cache entries marked risky. Default: false',
+      },
+      workflow_debug: {
+        type: 'boolean',
+        description: 'Include concise workflow cache accept/reject metadata in the response. Default: false',
+      },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['tabId', 'instruction'],
   },
+  annotations: TOOL_ANNOTATIONS.act,
 };
 
 // ─── Element resolution helper ───
+
+async function collectWorkflowPageSignature(page: any): Promise<WorkflowPageSignature | null> {
+  try {
+    const projection = await page.evaluate(() => {
+      const controls = Array.from(document.querySelectorAll(
+        'button, a, input, select, textarea, [role], [aria-label], [placeholder]'
+      )).slice(0, 250);
+
+      const actionLabels: string[] = [];
+      const actionRoles: string[] = [];
+      const formShape: string[] = [];
+
+      for (const el of controls) {
+        const element = el as HTMLElement;
+        const rect = element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+
+        const tag = element.tagName.toLowerCase();
+        const input = element as HTMLInputElement;
+        const type = (input.getAttribute?.('type') || '').toLowerCase();
+        const role = element.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' ? 'textbox' : tag);
+        const label = element.getAttribute('aria-label')
+          || element.getAttribute('title')
+          || element.getAttribute('placeholder')
+          || (type === 'password' ? '' : (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim())
+          || (type === 'password' ? '' : (input.name || input.id || ''));
+
+        if (label) actionLabels.push(label.slice(0, 120));
+        if (role) actionRoles.push(role);
+        if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+          formShape.push(`${tag}:${type || role}:${label ? 'label' : 'unlabelled'}`);
+        }
+      }
+
+      return { title: document.title, actionLabels, actionRoles, formShape };
+    });
+
+    return buildWorkflowPageSignature(projection);
+  } catch {
+    return null;
+  }
+}
+
+
+async function collectActionCacheKeyParts(
+  page: any,
+  pageUrl: string,
+  instruction: string,
+  actions: ParsedAction[],
+  optionFingerprint: string,
+): Promise<ActionCacheKeyV2Parts | null> {
+  try {
+    const projection = await page.evaluate(() => {
+      const nodes = Array.from(document.querySelectorAll(
+        'button, a, input, select, textarea, [role], [aria-label], [placeholder]'
+      )).slice(0, 120).map((el) => {
+        const element = el as HTMLElement;
+        const input = element as HTMLInputElement;
+        const rect = element.getBoundingClientRect();
+        const tag = element.tagName.toLowerCase();
+        const type = (input.getAttribute?.('type') || '').toLowerCase();
+        const role = element.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' ? 'textbox' : tag);
+        const rawName = element.getAttribute('aria-label')
+          || element.getAttribute('title')
+          || element.getAttribute('placeholder')
+          || (type === 'password' ? '' : (element.innerText || element.textContent || ''))
+          || (type === 'password' ? '' : (input.name || input.id || ''));
+        return {
+          role,
+          name: String(rawName || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+          tag,
+          type,
+          disabled: Boolean((input as { disabled?: boolean }).disabled),
+          visible: rect.width > 0 && rect.height > 0,
+        };
+      }).filter(node => node.visible);
+
+      return {
+        title: document.title,
+        path: window.location.pathname,
+        locale: navigator.language,
+        userAgent: navigator.userAgent,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        nodes,
+      };
+    });
+
+    return buildActionCacheKeyV2Parts({
+      url: pageUrl,
+      instruction,
+      actionKinds: actions.map(action => action.action),
+      viewport: projection.viewport,
+      locale: projection.locale,
+      userAgent: projection.userAgent,
+      pageFingerprint: JSON.stringify({ title: projection.title, path: projection.path, nodes: projection.nodes }),
+      optionFingerprint,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function formatActionCacheStatus(decision: ActionCacheV2LookupDecision | null): string {
+  if (!decision) return '[cache] status=BYPASS keyVersion=2 reason=unavailable';
+  const parts = [`status=${decision.status}`, `keyVersion=${decision.keyVersion}`, `reason=${decision.reason}`];
+  if (decision.keyHash) parts.push(`key=${decision.keyHash.slice(0, 12)}`);
+  return `[cache] ${parts.join(' ')}`;
+}
+
+function formatWorkflowDebug(decision: WorkflowCacheDecision): string {
+  const parts = [`decision=${decision.decision}`, `reason=${decision.reason}`];
+  if (typeof decision.similarity === 'number') parts.push(`similarity=${decision.similarity}`);
+  if (decision.cacheAction) parts.push(`cacheAction=${decision.cacheAction}`);
+  if (decision.safety?.destructiveRisk && decision.safety.destructiveRisk !== 'none') {
+    parts.push(`destructiveRisk=${decision.safety.destructiveRisk}`);
+  }
+  return `[WorkflowCache] ${parts.join(' ')}`;
+}
 
 /**
  * Resolve element coordinates via AX tree. Returns null if resolution fails.
@@ -401,15 +553,30 @@ async function executeCheckUncheck(
 
 // ─── Handler ───
 
-const handler: ToolHandler = async (
+const coreHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const instruction = args.instruction as string;
-  const verify = args.verify !== false; // default true
+  // Legacy text-summary verification fires when:
+  //   * args.verify is undefined  → pre-#827 default of "always summarize"
+  //   * args.verify is any value coercing to a non-'none' mode (true, the
+  //     legacy default; "ax-diff"; "screenshot"; "both")
+  // It is suppressed when args.verify is explicitly false or "none". Without
+  // the explicit undefined branch, `args.verify !== false` would also have
+  // accepted the string "none" (codex P2 bug); going through coerceVerifyMode
+  // closes that hole while preserving backwards compat for callers that
+  // omit the field entirely.
+  const verifyMode = coerceVerifyMode(args.verify);
+  const verifyTextSummary =
+    args.verify === undefined ? true : verifyMode !== 'none';
   const timeoutMs = Math.min(Math.max((args.timeout as number) || 30000, 1000), 120000);
+  const useWorkflowCache = args.use_workflow_cache === true;
+  const recordWorkflowCache = args.record_workflow_cache === true;
+  const allowRiskyReplay = args.allow_risky_replay === true;
+  const workflowDebug = args.workflow_debug === true;
 
   if (!tabId) {
     return { content: [{ type: 'text', text: 'Error: tabId is required' }], isError: true };
@@ -444,21 +611,35 @@ const handler: ToolHandler = async (
   // 1. Try template match first (no page URL needed)
   const templateMatch = matchTemplate(instruction);
   let actions: ParsedAction[];
-  let source: 'template' | 'cache' | 'parsed' = 'parsed';
+  let source: 'template' | 'cache' | 'workflow_cache' | 'parsed' = 'parsed';
   let parseWarning: string | undefined;
+  let workflowSignature: WorkflowPageSignature | null = null;
+  let workflowDecision: WorkflowCacheDecision | null = null;
+  let actionCacheKeyParts: ActionCacheKeyV2Parts | null = null;
+  let actionCacheUrl: string | null = null;
+  let actionCacheDecision: ActionCacheV2LookupDecision | null = null;
 
   if (templateMatch) {
     actions = templateMatch.actions;
     source = 'template';
   } else {
-    // 2. Try cached sequence for this domain
     const pageUrl = page.url();
-    const cached = getCachedSequence(pageUrl, instruction);
-    if (cached) {
-      actions = cached.actions;
-      source = 'cache';
+
+    // 2. Try guarded structured workflow cache only when explicitly requested.
+    if (useWorkflowCache) {
+      workflowSignature = await collectWorkflowPageSignature(page);
+      workflowDecision = workflowSignature
+        ? getWorkflowCachedSequence(pageUrl, instruction, workflowSignature, { allowRiskyReplay })
+        : { decision: 'miss', reason: 'signature_unavailable' };
+    }
+
+    if (workflowDecision?.decision === 'accepted' && workflowDecision.actions) {
+      actions = workflowDecision.actions;
+      source = 'workflow_cache';
+      actionCacheDecision = { status: 'BYPASS', keyVersion: 2, reason: 'workflow_cache_accepted' };
     } else {
-      // 3. Fall back to NL parsing
+      // 3. Parse deterministically, then use parsed action kinds to build the
+      // safer page-fingerprint action cache v2 key.
       const parseResult = parseInstruction(instruction);
       if (!parseResult.success || parseResult.actions.length === 0) {
         const errMsg = parseResult.error || 'Could not parse instruction';
@@ -466,13 +647,26 @@ const handler: ToolHandler = async (
         return {
           content: [{
             type: 'text',
-            text: `[act] Parse error: ${errMsg}\n\nSuggestion: ${suggestion}`,
+            text: `[act] Parse error: ${errMsg}
+
+Suggestion: ${suggestion}`,
           }],
           isError: true,
         };
       }
+
       actions = parseResult.actions;
       parseWarning = parseResult.suggestion;
+      actionCacheKeyParts = await collectActionCacheKeyParts(page, pageUrl, instruction, actions, `verify=${verifyMode}`);
+      actionCacheUrl = actionCacheKeyParts ? pageUrl : null;
+      actionCacheDecision = actionCacheKeyParts
+        ? getCachedSequenceV2(pageUrl, instruction, actionCacheKeyParts, { allowLegacyFallback: true })
+        : { status: 'BYPASS', keyVersion: 2, reason: 'fingerprint_unavailable' };
+
+      if (actionCacheDecision.actions && actionCacheDecision.status === 'HIT') {
+        actions = actionCacheDecision.actions;
+        source = 'cache';
+      }
     }
   }
 
@@ -483,6 +677,11 @@ const handler: ToolHandler = async (
 
   const deadline = Date.now() + timeoutMs;
 
+  // Wrap the entire action sequence in runVerify so AX-hash + pHash deltas
+  // bracket the whole composite operation (issue #827). When mode is 'none'
+  // this returns `verify: undefined` and the result is byte-identical to
+  // pre-#827 develop.
+  const verifyOutcome = await runVerify(page, verifyMode, async () => {
   for (let i = 0; i < actions.length; i++) {
     if (Date.now() >= deadline) {
       failedAt = i + 1;
@@ -541,6 +740,9 @@ const handler: ToolHandler = async (
       break;
     }
   }
+  return undefined as void;
+  });
+  const actVerifyReport: VerifyReport | undefined = verifyOutcome.verify;
 
   // Clean up any leftover discovery tags
   await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
@@ -554,22 +756,56 @@ const handler: ToolHandler = async (
   if (success && source === 'parsed') {
     try {
       cacheSequence(page.url(), instruction, actions);
+      if (actionCacheKeyParts && actionCacheUrl) cacheSequenceV2(actionCacheUrl, instruction, actions, actionCacheKeyParts);
       // Boost confidence above MIN_CONFIDENCE so the entry is retrievable immediately
       validateCachedSequence(page.url(), instruction, true);
     } catch { /* non-fatal */ }
+
+    if (recordWorkflowCache) {
+      try {
+        workflowSignature = workflowSignature || await collectWorkflowPageSignature(page);
+        if (workflowSignature) {
+          const entry = cacheWorkflowSequence(page.url(), instruction, actions, workflowSignature);
+          workflowDecision = entry
+            ? { decision: 'accepted', reason: 'recorded', entry, safety: entry.safety }
+            : { decision: 'miss', reason: 'record_failed' };
+        }
+      } catch { /* non-fatal */ }
+    }
   }
 
   // Boost confidence on successful cache hit
   if (success && source === 'cache') {
     try {
-      validateCachedSequence(page.url(), instruction, true);
+      if (actionCacheDecision?.keyVersion === 2 && actionCacheDecision.keyHash) {
+        validateCachedSequenceV2(page.url(), instruction, actionCacheDecision.keyHash, true);
+      } else {
+        validateCachedSequence(page.url(), instruction, true);
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  if (success && source === 'workflow_cache') {
+    try {
+      workflowDecision = validateWorkflowCachedSequence(page.url(), instruction, true);
     } catch { /* non-fatal */ }
   }
 
   // If cached sequence failed, reduce confidence
   if (!success && source === 'cache') {
     try {
-      validateCachedSequence(page.url(), instruction, false);
+      if (actionCacheDecision?.keyVersion === 2 && actionCacheDecision.keyHash) {
+        validateCachedSequenceV2(page.url(), instruction, actionCacheDecision.keyHash, false);
+      } else {
+        validateCachedSequence(page.url(), instruction, false);
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  if (!success && source === 'workflow_cache') {
+    try {
+      const failed = failedAt !== null ? stepResults[failedAt - 1] : stepResults[stepResults.length - 1];
+      workflowDecision = validateWorkflowCachedSequence(page.url(), instruction, false, failed?.outcome || 'replay_failed');
     } catch { /* non-fatal */ }
   }
 
@@ -586,10 +822,11 @@ const handler: ToolHandler = async (
     stepLines.push(`Step ${r.step}: ${symbol} ${label}`);
   }
 
-  const lines: string[] = [headerLine, '', ...stepLines];
+  const lines: string[] = [headerLine, formatActionCacheStatus(actionCacheDecision), '', ...stepLines];
 
-  // Verification
-  if (verify && success) {
+  // Verification — legacy text summary. Preserved verbatim so default
+  // (`verify` absent or `true`) callers see the same `[Verification] …` line.
+  if (verifyTextSummary && success) {
     try {
       const state = await withTimeout(page.evaluate(() => ({
         url: window.location.href,
@@ -604,13 +841,38 @@ const handler: ToolHandler = async (
     lines.push('', `[Warning] ${parseWarning}`);
   }
 
-  return {
+  if (workflowDebug && workflowDecision) {
+    lines.push('', formatWorkflowDebug(workflowDecision));
+  }
+
+  const baseResult: MCPResult = {
     content: [{ type: 'text', text: lines.join('\n') }],
     isError: !success,
   };
+  return actVerifyReport ? { ...baseResult, verify: actVerifyReport } : baseResult;
 };
 
 // ─── Registration ───
+
+
+const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
+  const result = await coreHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+
+  try {
+    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'act');
+    if (page) {
+      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+    }
+  } catch {
+    // Snapshot chaining is best-effort; never mask the successful action result.
+  }
+  return result;
+};
 
 export function registerActTool(server: MCPServer): void {
   server.registerTool('act', handler, definition);

@@ -10,11 +10,13 @@
  * S4 JS injection        → element.click() + dispatchEvent
  * S5 Keyboard navigation → DOM.focus + keyboard.press('Enter'/'Space')
  * S6 CDP raw events      → Full mousePressed + mouseReleased sequence
- * S7 HITL               → Return structured context for human intervention
+ * S7 Visual grounding   → Gated provider-neutral visual bbox click
+ * S8 HITL               → Return structured context for human intervention
  */
 
 import type { Page } from 'puppeteer-core';
 import type { CDPClient } from '../../cdp/client';
+import { dispatchCoordinateClick } from '../../cdp/input';
 import { withDomDelta } from '../dom-delta';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS, AXResolvedElement } from '../ax-element-resolver';
 import { discoverElements, cleanupTags, DISCOVERY_TAG, getTaggedElementRect } from '../element-discovery';
@@ -22,10 +24,11 @@ import { FoundElement, scoreElement, tokenizeQuery } from '../element-finder';
 import { classifyOutcome, formatOutcomeLine, InteractionOutcome } from './outcome-classifier';
 import { getTargetId } from '../puppeteer-helpers';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../../config/defaults';
+import type { PerceptionElement, PerceptionSnapshot } from '../../vision/types';
 
 // ─── Types ───
 
-export type StrategyId = 'S1_AX' | 'S2_CSS' | 'S3_CDP_COORD' | 'S4_JS_INJECT' | 'S5_KEYBOARD' | 'S6_CDP_RAW' | 'S7_HITL';
+export type StrategyId = 'S1_AX' | 'S2_CSS' | 'S3_CDP_COORD' | 'S4_JS_INJECT' | 'S5_KEYBOARD' | 'S6_CDP_RAW' | 'S7_VISUAL_GROUNDING' | 'S8_HITL';
 
 export interface RalphResult {
   success: boolean;
@@ -45,6 +48,10 @@ export interface RalphOptions {
   waitAfter?: number;
   /** Maximum total time for all strategies in ms (default: 15000) */
   budgetMs?: number;
+  /** Opt-in visual fallback snapshot. Disabled unless explicitly supplied. */
+  visualSnapshot?: PerceptionSnapshot;
+  /** Enables S7 visual grounding when visualSnapshot is present. */
+  visualGrounding?: boolean;
 }
 
 // ─── Strategy Implementations ───
@@ -55,6 +62,7 @@ interface StrategyContext {
   query: string;
   action: 'click' | 'double_click' | 'hover';
   waitAfter: number;
+  visualSnapshot?: PerceptionSnapshot;
 }
 
 interface StrategyResult {
@@ -156,12 +164,7 @@ const strategyCDPCoord: StrategyFn = async (ctx) => {
   const x = Math.round(ax.rect.x), y = Math.round(ax.rect.y);
 
   const { delta } = await withDomDelta(ctx.page, async () => {
-    await ctx.cdpClient.send(ctx.page, 'Input.dispatchMouseEvent', {
-      type: 'mousePressed', x, y, button: 'left', clickCount: 1,
-    });
-    await ctx.cdpClient.send(ctx.page, 'Input.dispatchMouseEvent', {
-      type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
-    });
+    await dispatchCoordinateClick(ctx.cdpClient, ctx.page, { x, y, button: 'left', clickCount: 1 });
   }, { settleMs: Math.max(150, ctx.waitAfter) });
 
   invalidateAXCache(getTargetId(ctx.page.target()));
@@ -288,6 +291,52 @@ const strategyCDPRaw: StrategyFn = async (ctx) => {
   };
 };
 
+const UNSAFE_VISUAL_LABEL = /\b(delete|remove|destroy|confirm|pay|purchase|transfer|password|mfa|otp|credential|secret)\b/i;
+
+function scoreVisualElement(el: PerceptionElement, query: string): number {
+  if (el.interactive !== true) return 0;
+  if (el.bbox.width < 4 || el.bbox.height < 4 || el.bbox.width > 2000 || el.bbox.height > 2000) return 0;
+  const label = `${el.label} ${el.role || ''}`.toLowerCase();
+  const tokens = tokenizeQuery(query).filter((token) => token.length > 1);
+  if (tokens.length === 0) return 0;
+  let score = 0;
+  for (const token of tokens) {
+    if (label.includes(token)) score += 25;
+  }
+  if (el.type === 'control') score += 15;
+  if (typeof el.confidence === 'number') score += Math.max(0, Math.min(20, el.confidence * 20));
+  return score;
+}
+
+/** S7: Provider-neutral visual grounding candidate click. */
+const strategyVisualGrounding: StrategyFn = async (ctx) => {
+  const snapshot = ctx.visualSnapshot;
+  if (!snapshot || (ctx.action !== 'click' && ctx.action !== 'hover' && ctx.action !== 'double_click')) return null;
+  if (UNSAFE_VISUAL_LABEL.test(ctx.query)) return null;
+
+  const candidates = snapshot.elements
+    .map((element) => ({ element, score: scoreVisualElement(element, ctx.query) }))
+    .filter((candidate) => candidate.score >= 45)
+    .sort((a, b) => b.score - a.score);
+  if (candidates.length === 0) return null;
+  if (candidates.length > 1 && candidates[0].score - candidates[1].score < 15) return null;
+
+  const best = candidates[0].element;
+  const x = Math.round(best.bbox.x + best.bbox.width / 2);
+  const y = Math.round(best.bbox.y + best.bbox.height / 2);
+  const { delta } = await performAction(ctx.page, ctx.action, x, y, ctx.waitAfter);
+
+  return {
+    delta,
+    backendDOMNodeId: best.backendDOMNodeId,
+    role: best.role || best.type,
+    name: best.label,
+    elementDesc: `visual ${best.type} "${best.label}"`,
+    refInfo: '',
+    sourceInfo: `[via visual grounding provider=${snapshot.provider} score=${candidates[0].score.toFixed(1)}]`,
+  };
+};
+
 // ─── Strategy Registry ───
 
 const STRATEGIES: Array<{ id: StrategyId; fn: StrategyFn; label: string }> = [
@@ -351,10 +400,13 @@ export async function ralphClick(
   const budgetMs = options?.budgetMs || 15000;
   const startTime = Date.now();
 
-  const ctx: StrategyContext = { page, cdpClient, query, action, waitAfter };
+  const ctx: StrategyContext = { page, cdpClient, query, action, waitAfter, visualSnapshot: options?.visualSnapshot };
   const strategiesTried: StrategyId[] = [];
+  const strategies = options?.visualGrounding && options.visualSnapshot
+    ? [...STRATEGIES, { id: 'S7_VISUAL_GROUNDING' as const, fn: strategyVisualGrounding, label: 'Visual grounding' }]
+    : STRATEGIES;
 
-  for (const strategy of STRATEGIES) {
+  for (const strategy of strategies) {
     // Check timeout budget
     if (Date.now() - startTime > budgetMs) {
       break;
@@ -396,19 +448,19 @@ export async function ralphClick(
     }
   }
 
-  // S7: All automated strategies exhausted — HITL
-  strategiesTried.push('S7_HITL');
-  const triedSummary = strategiesTried.filter(s => s !== 'S7_HITL').map(s => {
-    const strat = STRATEGIES.find(st => st.id === s);
+  // S8: All automated strategies exhausted — HITL
+  strategiesTried.push('S8_HITL');
+  const triedSummary = strategiesTried.filter(s => s !== 'S8_HITL').map(s => {
+    const strat = strategies.find(st => st.id === s);
     return strat ? strat.label : s;
   }).join(', ');
 
-  const hitlLine = `\u26a0 All ${STRATEGIES.length} strategies exhausted for "${query}". Tried: ${triedSummary}. Please interact with the element manually, or try a different approach (javascript_tool, navigate to a different URL).`;
+  const hitlLine = `\u26a0 All ${strategies.length} strategies exhausted for "${query}". Tried: ${triedSummary}. Please interact with the element manually, or try a different approach (javascript_tool, navigate to a different URL).`;
 
   return {
     success: false,
     outcome: 'ELEMENT_NOT_FOUND',
-    strategyUsed: 'S7_HITL',
+    strategyUsed: 'S8_HITL',
     strategiesTried,
     responseLine: hitlLine,
     hitlRequired: true,

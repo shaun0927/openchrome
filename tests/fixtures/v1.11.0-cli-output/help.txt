@@ -1,0 +1,14 @@
+Usage: openchrome [options] [command]
+
+MCP server for parallel Claude Code browser sessions
+
+Options:
+  -V, --version     output the version number
+  -h, --help        display help for command
+
+Commands:
+  serve [options]   Start the MCP server
+  check [options]   Check Chrome connection status
+  verify [options]  Verify performance optimizations are working
+  info              Show how it works
+  help [command]    display help for command

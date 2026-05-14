@@ -9,7 +9,9 @@
 import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
@@ -69,6 +71,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId', 'strategy'],
   },
+  annotations: TOOL_ANNOTATIONS.batch_paginate,
 };
 
 interface PageResult {
@@ -187,17 +190,16 @@ const handler: ToolHandler = async (
         try {
           const screenshotData = await Promise.race([
             (async () => {
-              const cdpSession = await (page as any).target().createCDPSession();
-              try {
-                const { data } = await cdpSession.send('Page.captureScreenshot', {
+              const { data } = await getScreenshotScheduler().capture(
+                page,
+                sessionManager.getCDPClient(),
+                {
                   format: 'webp',
                   quality: DEFAULT_SCREENSHOT_QUALITY,
                   optimizeForSpeed: true,
-                });
-                return data as string;
-              } finally {
-                await cdpSession.detach().catch(() => {});
-              }
+                }
+              );
+              return data;
             })(),
             new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
           ]);
@@ -207,17 +209,24 @@ const handler: ToolHandler = async (
           } else {
             throw new Error('Screenshot timed out');
           }
-        } catch {
-          // Fallback to Puppeteer PNG with timeout
-          let fallbackTimer: NodeJS.Timeout;
-          const screenshotData = await Promise.race([
-            page.screenshot({ encoding: 'base64', type: 'png' }).finally(() => clearTimeout(fallbackTimer)),
-            new Promise<never>((_, reject) => {
-              fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
-            }),
-          ]);
-          result.screenshot = screenshotData as string;
-          result.screenshotMimeType = 'image/png';
+        } catch (err) {
+          // Do not start a second screenshot if the primary CDP capture is
+          // merely still running after the race timeout; it may complete later.
+          // Only use Puppeteer's PNG fallback for immediate CDP failures.
+          if (err instanceof Error && err.message === 'Screenshot timed out') {
+            result.error = err.message;
+          } else {
+            // Fallback to Puppeteer PNG with timeout
+            let fallbackTimer: NodeJS.Timeout;
+            const screenshotData = await Promise.race([
+              page.screenshot({ encoding: 'base64', type: 'png' }).finally(() => clearTimeout(fallbackTimer)),
+              new Promise<never>((_, reject) => {
+                fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
+              }),
+            ]);
+            result.screenshot = screenshotData as string;
+            result.screenshotMimeType = 'image/png';
+          }
         }
       }
 

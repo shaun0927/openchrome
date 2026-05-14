@@ -7,9 +7,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
-import { getActionRecorder } from '../recording/action-recorder';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { getActionRecorder, registerSessionRecorder, unregisterSessionRecorder } from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
+import { currentRequestContext } from '../observability/request-id';
+import { assertFilePathAllowedBySessionRoots } from '../security/mcp-roots';
 
 /** Matches the RECORDING_ID_PATTERN exported from recording-store */
 const RECORDING_ID_PATTERN = /^rec-\d{8}-\d{6}-[a-z0-9]{4,6}$/;
@@ -22,6 +25,7 @@ function isValidRecordingId(id: string): boolean {
 
 const startDefinition: MCPToolDefinition = {
   name: 'oc_recording_start',
+  annotations: TOOL_ANNOTATIONS.oc_recording_start,
   description:
     'Start a new session recording. All subsequent MCP tool calls will be recorded ' +
     'until oc_recording_stop is called. Errors if a recording is already active.',
@@ -35,6 +39,10 @@ const startDefinition: MCPToolDefinition = {
       profile: {
         type: 'string',
         description: 'Optional browser profile name to associate with this recording.',
+      },
+      trajectoryBundle: {
+        type: 'boolean',
+        description: 'Default false. When true, write a file-based trajectory bundle under ~/.openchrome/trajectories.',
       },
     },
   },
@@ -54,10 +62,13 @@ const startHandler: ToolHandler = async (
   }
 
   try {
-    const metadata = await recorder.start(sessionId, {
+    const startOptions = {
       label: args.label as string | undefined,
       profile: args.profile as string | undefined,
-    });
+      ...(args.trajectoryBundle === true ? { trajectoryBundle: true } : {}),
+    };
+    const metadata = await recorder.start(sessionId, startOptions);
+    registerSessionRecorder(sessionId, recorder);
 
     const lines = [
       'Recording started.',
@@ -67,6 +78,11 @@ const startHandler: ToolHandler = async (
     ];
     if (metadata.label) lines.push(`  Label:   ${metadata.label}`);
     if (metadata.profile) lines.push(`  Profile: ${metadata.profile}`);
+    const trajectory = recorder.activeTrajectoryBundle || metadata.trajectoryBundle;
+    if (trajectory?.enabled && trajectory.trajectory_id) {
+      lines.push(`  Trajectory: ${trajectory.trajectory_id}`);
+      if (trajectory.dir) lines.push(`  Bundle:  ${trajectory.dir}`);
+    }
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   } catch (err) {
@@ -82,6 +98,7 @@ const startHandler: ToolHandler = async (
 
 const stopDefinition: MCPToolDefinition = {
   name: 'oc_recording_stop',
+  annotations: TOOL_ANNOTATIONS.oc_recording_stop,
   description:
     'Stop the active session recording and finalize it to disk. ' +
     'Returns a summary of the recording. Errors if no recording is active.',
@@ -121,6 +138,13 @@ const stopHandler: ToolHandler = async (
       `  Stopped:  ${metadata.stoppedAt ?? 'unknown'}`,
     ];
     if (metadata.label) lines.push(`  Label:    ${metadata.label}`);
+    if (metadata.trajectoryBundle?.enabled && metadata.trajectoryBundle.trajectory_id) {
+      lines.push(`  Trajectory: ${metadata.trajectoryBundle.trajectory_id}`);
+      if (metadata.trajectoryBundle.dir) lines.push(`  Bundle:   ${metadata.trajectoryBundle.dir}`);
+      const report = metadata.trajectoryBundle.report as Record<string, unknown> | undefined;
+      if (report) lines.push(`  Events:   ${String(report.total_events ?? 'unknown')}`);
+    }
+    unregisterSessionRecorder(metadata.sessionId);
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   } catch (err) {
@@ -132,10 +156,38 @@ const stopHandler: ToolHandler = async (
   }
 };
 
+
+// ─── oc_recording_status ─────────────────────────────────────────────────────
+
+const statusDefinition: MCPToolDefinition = {
+  name: 'oc_recording_status',
+  annotations: TOOL_ANNOTATIONS.oc_recording_status,
+  description: 'Report whether session recording is active, including trajectory bundle metadata when enabled.',
+  inputSchema: { type: 'object', properties: {} },
+};
+
+const statusHandler: ToolHandler = async (
+  _sessionId: string,
+  _args: Record<string, unknown>,
+): Promise<MCPResult> => {
+  const recorder = getActionRecorder();
+  const metadata = recorder.activeMetadata;
+  const trajectory = recorder.activeTrajectoryBundle || metadata?.trajectoryBundle;
+  const payload = {
+    active: recorder.isRecording,
+    recordingId: recorder.activeRecordingId,
+    sessionId: metadata?.sessionId,
+    actionCount: metadata?.actionCount ?? 0,
+    trajectoryBundle: trajectory ?? { enabled: false },
+  };
+  return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }], structuredContent: payload as unknown as Record<string, unknown> };
+};
+
 // ─── oc_recording_list ────────────────────────────────────────────────────────
 
 const listDefinition: MCPToolDefinition = {
   name: 'oc_recording_list',
+  annotations: TOOL_ANNOTATIONS.oc_recording_list,
   description: 'List available session recordings, newest first.',
   inputSchema: {
     type: 'object',
@@ -202,6 +254,7 @@ const listHandler: ToolHandler = async (
 
 const exportDefinition: MCPToolDefinition = {
   name: 'oc_recording_export',
+  annotations: TOOL_ANNOTATIONS.oc_recording_export,
   description:
     'Export a recording as JSON or a self-contained HTML report. ' +
     'For HTML, saves to ~/.openchrome/recordings/{id}/report.html and returns the path.',
@@ -223,7 +276,7 @@ const exportDefinition: MCPToolDefinition = {
 };
 
 const exportHandler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const recordingId = args.recordingId as string;
@@ -258,6 +311,7 @@ const exportHandler: ToolHandler = async (
       const html = await generateHtmlReport(metadata, actions, store);
       const dir = store.getRecordingDir(recordingId);
       const filepath = path.join(dir, 'report.html');
+      assertFilePathAllowedBySessionRoots(currentRequestContext()?.mcpSessionId ?? sessionId, filepath);
       await fs.promises.writeFile(filepath, html, 'utf-8');
       return {
         content: [{ type: 'text', text: `HTML report saved to: ${filepath}` }],
@@ -421,6 +475,7 @@ function escapeHtml(str: string): string {
 export function registerRecordingTools(server: MCPServer): void {
   server.registerTool(startDefinition.name, startHandler, startDefinition);
   server.registerTool(stopDefinition.name, stopHandler, stopDefinition);
+  server.registerTool(statusDefinition.name, statusHandler, statusDefinition);
   server.registerTool(listDefinition.name, listHandler, listDefinition);
   server.registerTool(exportDefinition.name, exportHandler, exportDefinition);
 }

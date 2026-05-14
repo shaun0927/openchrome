@@ -5,24 +5,49 @@
 import { KeyInput } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
+import { detectPagination, type PaginationInfo } from '../utils/pagination-detector';
 import {
   getBase64EncodedByteLength,
   resolveViewportDimensions,
   validateCaptureArea,
   validateInlineImagePayload,
 } from '../utils/screenshot-guards';
+import {
+  appendReturnAfterState,
+  parseReturnAfterState,
+  RETURN_AFTER_STATE_SCHEMA,
+} from './_shared/return-after-state';
+
+function formatPaginationGuidance(pagination: PaginationInfo): string {
+  const detail = pagination.type === 'none'
+    ? ''
+    : ` detected (${pagination.type}${pagination.currentPage !== undefined ? ` page ${pagination.currentPage}` : ''}${pagination.totalPages !== undefined ? ` of ${pagination.totalPages}` : ''})`;
+  return `[Pagination Detected] Pagination${detail}. Use batch_paginate to collect pages/items; avoid manual next/scroll loops.`;
+}
+
+async function getPaginationGuidance(page: import('puppeteer-core').Page, tabId: string): Promise<string | null> {
+  try {
+    const pagination = await detectPagination(page, tabId);
+    if (pagination.type === 'none' || !pagination.hasNext) return null;
+    return formatPaginationGuidance(pagination);
+  } catch {
+    return null;
+  }
+}
 
 const definition: MCPToolDefinition = {
   name: 'computer',
-  description: 'Mouse, keyboard, and screenshot actions on a tab.',
+  description: 'Mouse, keyboard, and screenshot actions on a tab. Supports click, type, scroll, key, hover, and screenshot by pixel coordinate or element ref.\n\nWhen to use: Precise coordinate-based input, screenshots, or keyboard shortcuts.\nWhen NOT to use: Use interact for natural-language element actions, or act for multi-step sequences.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -91,12 +116,14 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Only for action "screenshot". Force full screenshot, bypassing adaptive degradation. Default: false.',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['action', 'tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.computer,
 };
 
-const handler: ToolHandler = async (
+const innerHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
@@ -225,24 +252,23 @@ const handler: ToolHandler = async (
           try {
             const screenshotData = await Promise.race([
               (async () => {
-                const cdpSession = await (page as any).target().createCDPSession();
-                try {
-                  // PNG is lossless: omit the quality field (CDP rejects
-                  // quality for png) and skip optimizeForSpeed (it only
-                  // applies to lossy encoders).
-                  const captureParams: Record<string, unknown> =
-                    effectiveFormat === 'png'
-                      ? { format: 'png' }
-                      : {
-                          format: effectiveFormat,
-                          quality: preset.quality,
-                          optimizeForSpeed: true,
-                        };
-                  const { data } = await cdpSession.send('Page.captureScreenshot', captureParams);
-                  return data as string;
-                } finally {
-                  await cdpSession.detach().catch(() => {});
-                }
+                // PNG is lossless: omit the quality field (CDP rejects
+                // quality for png) and skip optimizeForSpeed (it only
+                // applies to lossy encoders).
+                const captureParams: Record<string, unknown> =
+                  effectiveFormat === 'png'
+                    ? { format: 'png' }
+                    : {
+                        format: effectiveFormat,
+                        quality: preset.quality,
+                        optimizeForSpeed: true,
+                      };
+                const { data } = await getScreenshotScheduler().capture(
+                  page,
+                  sessionManager.getCDPClient(),
+                  captureParams
+                );
+                return data;
               })(),
               new Promise<null>((resolve) => setTimeout(() => resolve(null), DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS)),
             ]);
@@ -279,6 +305,11 @@ const handler: ToolHandler = async (
           const content: MCPContent[] = [
             { type: 'image', data: screenshot.data, mimeType: screenshot.mimeType },
           ];
+
+          const paginationGuidance = await getPaginationGuidance(page, tabId);
+          if (paginationGuidance) {
+            content.push({ type: 'text', text: paginationGuidance });
+          }
 
           // annotated mode: append note about repeated screenshot
           if (effectiveMode === 'annotated') {
@@ -759,6 +790,30 @@ const handler: ToolHandler = async (
 };
 
 /**
+ * Outer handler — runs the inner action, then optionally appends a fresh
+ * page snapshot per the `returnAfterState` chaining option. The snapshot is
+ * captured by reusing `read_page` so this stays a thin wrapper.
+ */
+const handler: ToolHandler = async (
+  sessionId: string,
+  args: Record<string, unknown>,
+  context?: ToolContext,
+): Promise<MCPResult> => {
+  const result = await innerHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+  const sessionManager = getSessionManager();
+  const page = await sessionManager.getPage(sessionId, tabId).catch(() => null);
+  if (!page) return result;
+
+  await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+  return result;
+};
+
+/**
  * Resolve a ref to screen coordinates, scrolling the element into view first.
  * Returns either { coord } on success or { error } on failure.
  */
@@ -771,6 +826,20 @@ async function resolveRefToCoordinates(
 ): Promise<{ coord: [number, number]; error?: never } | { coord?: never; error: MCPResult }> {
   const refIdManager = getRefIdManager();
   let backendNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, ref);
+  const isRefIdFormat = /^ref_\d+$/.test(ref);
+
+  if (isRefIdFormat) {
+    const entry = refIdManager.getRef(sessionId, tabId, ref);
+    if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
+      return {
+        error: {
+          content: [{ type: 'text', text: formatStaleRefError(ref) }],
+          isError: true,
+          error: makeStaleRefError(ref),
+        },
+      };
+    }
+  }
 
   if (backendNodeId === undefined) {
     return {
@@ -786,17 +855,44 @@ async function resolveRefToCoordinates(
     // Validate ref identity before clicking (only for ref_N refs with stored fingerprint)
     const refEntry = refIdManager.getRef(sessionId, tabId, ref);
     if (refEntry && refEntry.tagName) {
+      let nodeLocalName: string | undefined;
+      let nodeTextContent: string | undefined;
+      let nodeName: string | undefined;
       try {
         const { node } = await cdpClient.send<{
-          node: { localName: string };
-        }>(page, 'DOM.describeNode', { backendNodeId });
+          node: {
+            localName: string;
+            nodeValue?: string;
+            attributes?: string[];
+            children?: Array<{ nodeType?: number; nodeValue?: string }>;
+          };
+        }>(page, 'DOM.describeNode', { backendNodeId, depth: 1 });
+        nodeLocalName = node?.localName;
+        nodeTextContent = getDescribeNodeTextContent(node);
+        nodeName = getDescribeNodeName(node);
+      } catch {
+        // If validation CDP calls fail, proceed with the click
+      }
 
+      if (nodeLocalName !== undefined) {
         const validation = refIdManager.validateRef(
           sessionId, tabId, ref,
-          node.localName
+          nodeLocalName,
+          nodeTextContent,
+          nodeName,
         );
 
         if (!validation.valid && validation.stale) {
+          if (isRefIdFormat) {
+            return {
+              error: {
+                content: [{ type: 'text', text: formatStaleRefError(ref) }],
+                isError: true,
+                error: makeStaleRefError(ref),
+              },
+            };
+          }
+
           // Attempt transparent recovery: re-find the element using stored metadata
           const relocated = await refIdManager.tryRelocateRef(
             sessionId, tabId, ref, page, cdpClient
@@ -817,8 +913,6 @@ async function resolveRefToCoordinates(
             };
           }
         }
-      } catch {
-        // If validation CDP calls fail, proceed with the click
       }
     }
 
@@ -849,6 +943,34 @@ async function resolveRefToCoordinates(
       },
     };
   }
+}
+
+function getDescribeNodeAttributes(node?: { attributes?: string[] }): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const raw = node?.attributes || [];
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    attrs[raw[i]] = raw[i + 1];
+  }
+  return attrs;
+}
+
+function getDescribeNodeName(node?: { attributes?: string[] }): string | undefined {
+  const attrs = getDescribeNodeAttributes(node);
+  return attrs['aria-label'] || attrs.title || attrs.placeholder || attrs.alt || attrs.name || undefined;
+}
+
+function getDescribeNodeTextContent(node?: {
+  nodeValue?: string;
+  children?: Array<{ nodeType?: number; nodeValue?: string }>;
+}): string | undefined {
+  const ownValue = node?.nodeValue?.trim();
+  if (ownValue) return ownValue;
+  const childText = (node?.children || [])
+    .filter((child) => child.nodeType === 3 && child.nodeValue)
+    .map((child) => child.nodeValue)
+    .join('')
+    .trim();
+  return childText || undefined;
 }
 
 /**

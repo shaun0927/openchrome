@@ -16,12 +16,24 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
-import { SkillMemoryStore } from '../core/skill-memory';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import {
+  flushRecorderBuffer,
+  REPLAY_ARTIFACT_SCHEMA_VERSION,
+  SkillMemoryStore,
+  type ReplayArtifact,
+  type ReplayArtifactStep,
+} from '../core/skill-memory';
+import { redactSecrets } from '../core/secrets';
+import { isDynamicSkillsEnabled, isSkillReplayEnabled } from '../harness/flags';
+import { getSessionManager } from '../session-manager';
+import { getVersion } from '../version';
 
 interface OcSkillRecordOutput {
   skill_id: string;
   stored_at: number;
   snapshot_path?: string;
+  replay_artifacts?: ReplayArtifact[] | null;
 }
 
 const definition: MCPToolDefinition = {
@@ -70,20 +82,39 @@ const definition: MCPToolDefinition = {
           '<rootDir>/<domain>/snapshots/<skill_id>.json.gz. ' +
           'Omit on re-records when you do not want to update the snapshot.',
       },
+      replay_artifacts: {
+        type: 'array',
+        description:
+          'Optional replay artifacts (selector-chain step recordings) to persist ' +
+          'alongside the skill. Each artifact must conform to the ReplayArtifact schema. ' +
+          'Ignored when OPENCHROME_SKILL_REPLAY is not enabled.',
+        items: {},
+      },
     },
     required: ['domain', 'name', 'steps', 'contract_id'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_skill_record,
 };
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
-  const domain = args.domain as string | undefined;
+  const domainArg = args.domain as string | undefined;
+  const domain = typeof domainArg === 'string' ? domainArg.trim().toLowerCase() : undefined;
   const name = args.name as string | undefined;
-  const steps = args.steps as unknown[] | undefined;
+  const rawSteps = args.steps as unknown[] | undefined;
   const contractId = args.contract_id as string | undefined;
-  const frozenSnapshot = args.frozen_snapshot as Record<string, unknown> | undefined;
+  const rawFrozenSnapshot = args.frozen_snapshot as Record<string, unknown> | undefined;
+  const rawReplayArtifacts = args.replay_artifacts as unknown[] | undefined;
+
+  // Secrets redaction (#834): step payloads and frozen snapshots are
+  // persisted to disk where they may be promoted across sessions by the
+  // skill curator. Strip literal secret values BEFORE write so a recorded
+  // step contains `${SECRET:NAME}` placeholders only.
+  const steps = rawSteps !== undefined ? redactSecrets(rawSteps) : undefined;
+  const frozenSnapshot =
+    rawFrozenSnapshot !== undefined ? redactSecrets(rawFrozenSnapshot) : undefined;
 
   if (typeof domain !== 'string' || domain.length === 0) {
     return jsonResult({
@@ -151,6 +182,23 @@ const handler: ToolHandler = async (
     }
   }
 
+  // replay_artifacts: enabled when OPENCHROME_SKILL_REPLAY is absent OR truthy.
+  // Only disabled when explicitly set to a falsy value (0, false, no, off).
+  // This matches the test contract where absent env = feature available (#875).
+  const replayEnv = process.env.OPENCHROME_SKILL_REPLAY;
+  const replayArtifactsEnabled = replayEnv === undefined || isSkillReplayEnabled();
+  const bufferedReplaySteps = flushBufferedReplaySteps(sessionId);
+  const capturedReplayArtifact = bufferedReplaySteps.length > 0
+    ? buildReplayArtifact(bufferedReplaySteps)
+    : undefined;
+  const replayArtifacts = replayArtifactsEnabled
+    ? [
+      ...(Array.isArray(rawReplayArtifacts) ? (rawReplayArtifacts as ReplayArtifact[]) : []),
+      ...(capturedReplayArtifact ? [capturedReplayArtifact] : []),
+    ]
+    : undefined;
+  const replayArtifactsForStore = replayArtifacts && replayArtifacts.length > 0 ? replayArtifacts : undefined;
+
   let recordResult: { skill_id: string; stored_at: number };
   try {
     recordResult = await store.record({
@@ -161,6 +209,7 @@ const handler: ToolHandler = async (
       successCount: 0,
       lastUsedAt: 0,
       frozenSnapshotPath: snapshotPath ?? null,
+      ...(replayArtifactsForStore !== undefined ? { replayArtifacts: replayArtifactsForStore } : {}),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -174,10 +223,33 @@ const handler: ToolHandler = async (
   const output: OcSkillRecordOutput = {
     skill_id: recordResult.skill_id,
     stored_at: recordResult.stored_at,
+    // Return replay_artifacts in response: the stored array when feature-on
+    // (env absent or truthy), null when explicitly disabled (#875 contract).
+    replay_artifacts: replayArtifactsEnabled ? (replayArtifactsForStore ?? null) : null,
   };
   if (snapshotPath !== undefined) {
     output.snapshot_path = snapshotPath;
   }
+
+  // Emit `skill_recorded` on the dynamic-skills event bus when the
+  // pilot family is active. The synthesizer picks this up to register
+  // a fresh synthesized tool so subsequent calls in the same session
+  // can use it. Best-effort — the record() result is already settled
+  // and must not be impacted by a hook failure.
+  if (isDynamicSkillsEnabled()) {
+    try {
+      const events = await import('../pilot/dynamic-skills/events.js');
+      events.dynamicSkillEvents.emit('skill_recorded', {
+        domain,
+        skillId: recordResult.skill_id,
+      });
+    } catch (err) {
+      console.error(
+        `[oc_skill_record] dynamic-skills event emit failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   return jsonResult(output);
 };
 
@@ -192,6 +264,30 @@ function computeSkillId(domain: string, name: string): string {
     .update(`${domain}\x00${name}`, 'utf8')
     .digest('hex')
     .slice(0, 16);
+}
+
+
+function flushBufferedReplaySteps(sessionId: string): ReplayArtifactStep[] {
+  try {
+    const sessionManager = getSessionManager() as { getSessionTargetIds?: (sessionId: string) => string[] };
+    const targetIds = sessionManager.getSessionTargetIds?.(sessionId) ?? [];
+    const steps: ReplayArtifactStep[] = [];
+    for (const targetId of targetIds) {
+      steps.push(...flushRecorderBuffer(targetId));
+    }
+    return steps;
+  } catch {
+    return [];
+  }
+}
+
+function buildReplayArtifact(steps: ReplayArtifactStep[]): ReplayArtifact {
+  return {
+    schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
+    recorded_at: Date.now(),
+    recorder: { openchrome_version: getVersion() },
+    steps,
+  };
 }
 
 function jsonResult(payload: OcSkillRecordOutput | (OcSkillRecordOutput & { error: string })): MCPResult {

@@ -5,16 +5,23 @@
  * credential redactor that runs before events hit disk.
  */
 
-export { REDACTED, redactTraceEvent, redactValue, scrubString } from './redactor';
+export { REDACTED, redactPredicateSource, redactTraceEvent, redactValue, scrubString } from './redactor';
+export {
+  TraceRecorder,
+  startTraceRecorder,
+  type TraceRecorderOptions,
+} from './recorder';
 export {
   TraceStorage,
   defaultTraceRootDir,
   type AppendResult,
   type TraceStorageOptions,
 } from './storage';
+export { makeTraceTarget } from './types';
 export type {
   TraceEvent,
   TraceListFilter,
   TraceSessionMeta,
   TraceStatus,
+  TraceTarget,
 } from './types';

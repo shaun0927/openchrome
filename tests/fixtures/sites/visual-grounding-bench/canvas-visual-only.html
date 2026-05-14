@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>canvas-visual-only</title></head>
+<body data-scenario="canvas-visual-only">
+  <main>
+    <h1>canvas-visual-only</h1>
+    <button id="primary">Launch report</button>
+    <canvas id="canvas" width="320" height="120" aria-label="visual fixture canvas"></canvas>
+    <p id="status">Ready</p>
+  </main>
+  <script>
+    document.getElementById('primary').addEventListener('click', () => { document.getElementById('status').textContent = 'Done'; });
+    const ctx = document.getElementById('canvas').getContext('2d');
+    ctx.fillStyle = '#145'; ctx.fillRect(20, 20, 180, 48); ctx.fillStyle = 'white'; ctx.font = '20px sans-serif'; ctx.fillText('canvas-visual-only', 30, 52);
+  </script>
+</body></html>

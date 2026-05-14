@@ -5,14 +5,50 @@
 import { HTTPRequest } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { getMetricsCollector } from '../metrics/collector';
+
+// --- Bandwidth preset table ---
+// Exported so tests can import directly without going through the tool handler.
+export type BandwidthPreset = 'optimize-bandwidth' | 'optimize-bandwidth-light';
+
+/**
+ * Maps each preset name to the CDP ResourceType strings it blocks.
+ * CDP ResourceType values are PascalCase (Image, Media, Font, Stylesheet).
+ */
+export const PRESET_RESOURCE_TYPES: Record<BandwidthPreset, string[]> = {
+  'optimize-bandwidth': ['Image', 'Media', 'Font', 'Stylesheet'],
+  'optimize-bandwidth-light': ['Image', 'Media', 'Font'],
+};
+
+export const SUPPORTED_PRESETS: BandwidthPreset[] = [
+  'optimize-bandwidth',
+  'optimize-bandwidth-light',
+];
+
+/**
+ * Expand a preset name into InterceptRule entries (block rules, one per resource type).
+ * Rules use pattern '*' (match any URL) filtered to the resource type.
+ */
+function presetToRules(preset: BandwidthPreset): InterceptRule[] {
+  return PRESET_RESOURCE_TYPES[preset].map((rt) => ({
+    id: `preset-${preset}-${rt.toLowerCase()}`,
+    pattern: '*',
+    resourceTypes: [rt.toLowerCase()], // Puppeteer resourceType() returns lowercase
+    action: 'block' as const,
+  }));
+}
+
+// Read env once at module load — applied per-enable when set.
+const ENV_PRESET = (process.env.OPENCHROME_OPTIMIZE_BANDWIDTH ?? '').trim() as BandwidthPreset | '';
 
 // Intercept rule definition
 interface InterceptRule {
   id: string;
   pattern: string;
   resourceTypes?: string[];
-  action: 'block' | 'modify' | 'log';
+  action: 'block' | 'modify' | 'log' | 'allow';
   modifyOptions?: {
     headers?: Record<string, string>;
     body?: string;
@@ -53,6 +89,13 @@ const KEEP_HEADERS = new Set([
 
 // Resource types considered static assets (eligible for grouping)
 const ASSET_TYPES = new Set(['image', 'font', 'stylesheet', 'media']);
+
+const STATIC_ASSET_RESPONSE_BYTE_ESTIMATES: Record<string, number> = {
+  image: 100 * 1024,
+  media: 1024 * 1024,
+  font: 30 * 1024,
+  stylesheet: 20 * 1024,
+};
 
 interface AssetGroup {
   domain: string;
@@ -172,9 +215,72 @@ function matchesPattern(url: string, pattern: string): boolean {
   }
 }
 
+function estimatedStaticAssetResponseBytes(resourceType: string): number {
+  return STATIC_ASSET_RESPONSE_BYTE_ESTIMATES[resourceType.toLowerCase()] ?? 0;
+}
+
+function ruleMatchesLog(rule: InterceptRule, log: RequestLogEntry): boolean {
+  if (!matchesPattern(log.url, rule.pattern)) return false;
+  if (rule.resourceTypes && rule.resourceTypes.length > 0) {
+    return rule.resourceTypes.includes(log.resourceType.toLowerCase()) ||
+      rule.resourceTypes.includes(log.resourceType);
+  }
+  return true;
+}
+
+function dryRunPreviewResult(args: {
+  action: 'enable' | 'addRule';
+  rules: InterceptRule[];
+  existingRulesCount: number;
+  loggedRequests: RequestLogEntry[];
+  preset?: BandwidthPreset | null;
+}): MCPResult {
+  const matchedLogs = args.loggedRequests.filter((log) => args.rules.some((rule) => ruleMatchesLog(rule, log)));
+  const samples = matchedLogs.slice(0, 10).map((log) => ({
+    url: log.url,
+    resourceType: log.resourceType,
+    method: log.method,
+  }));
+  const wouldAffect = {
+    count: matchedLogs.length,
+    samples,
+    details: {
+      action: args.action,
+      parsedRules: args.rules,
+      parsedRuleCount: args.rules.length,
+      existingRulesCount: args.existingRulesCount,
+      observedRequestCount: args.loggedRequests.length,
+      preset: args.preset ?? null,
+    },
+  };
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        action: 'request_intercept',
+        dryRun: true,
+        wouldAffect,
+        message: `Dry-run preview: ${args.rules.length} rule(s) would be installed; ${matchedLogs.length} observed request(s) would match.`,
+      }),
+    }],
+    structuredContent: {
+      dryRun: true,
+      wouldAffect,
+      guidance: 'Pass dryRun:false (or omit) to execute.',
+    },
+    isError: false,
+  };
+}
+
 const definition: MCPToolDefinition = {
   name: 'request_intercept',
-  description: 'Intercept network requests (log, block, modify).',
+  annotations: TOOL_ANNOTATIONS.request_intercept,
+  description:
+    'Intercept network requests (log, block, modify). ' +
+    'preset="optimize-bandwidth" blocks Image/Media/Font/Stylesheet; ' +
+    'preset="optimize-bandwidth-light" blocks Image/Media/Font. ' +
+    'User block/allow/modify rules run after presets; explicit allow rules win. ' +
+    'OPENCHROME_OPTIMIZE_BANDWIDTH=<preset> can auto-apply to new targets.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -186,6 +292,13 @@ const definition: MCPToolDefinition = {
         type: 'string',
         enum: ['enable', 'disable', 'addRule', 'removeRule', 'listRules', 'getLogs', 'clearLogs'],
         description: 'Action to perform',
+      },
+      preset: {
+        type: 'string',
+        enum: ['optimize-bandwidth', 'optimize-bandwidth-light'],
+        description:
+          'Bandwidth preset: "optimize-bandwidth" blocks Image/Media/Font/Stylesheet; ' +
+          '"optimize-bandwidth-light" blocks Image/Media/Font only.',
       },
       rule: {
         type: 'object',
@@ -202,7 +315,7 @@ const definition: MCPToolDefinition = {
           },
           action: {
             type: 'string',
-            enum: ['block', 'modify', 'log'],
+            enum: ['block', 'modify', 'log', 'allow'],
             description: 'Rule action',
           },
           modifyOptions: {
@@ -223,6 +336,11 @@ const definition: MCPToolDefinition = {
       limit: {
         type: 'number',
         description: 'Max logs to return (getLogs)',
+      },
+      dryRun: {
+        type: 'boolean',
+        default: false,
+        description: 'Preview enable/addRule rule installation without enabling interception, installing listeners, or mutating rules.',
       },
     },
     required: ['tabId', 'action'],
@@ -261,11 +379,28 @@ const handler: ToolHandler = async (
   const ruleArg = args.rule as {
     pattern?: string;
     resourceTypes?: string[];
-    action?: 'block' | 'modify' | 'log';
+    action?: 'block' | 'modify' | 'log' | 'allow';
     modifyOptions?: { status?: number; headers?: Record<string, string>; body?: string };
   } | undefined;
   const ruleId = args.ruleId as string | undefined;
   const limit = args.limit as number | undefined;
+  const presetArg = args.preset as string | undefined;
+  const dryRun = args.dryRun === true;
+
+  // Validate preset before any other work
+  if (presetArg !== undefined) {
+    if (!SUPPORTED_PRESETS.includes(presetArg as BandwidthPreset)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ error: 'unknown_preset', supported: SUPPORTED_PRESETS }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
 
   const sessionManager = getSessionManager();
 
@@ -295,7 +430,7 @@ const handler: ToolHandler = async (
       };
     }
 
-    // Get or create state
+    // Get or create state. dryRun must not create per-tab state by itself.
     let state = interceptStates.get(tabId);
     if (!state) {
       state = {
@@ -305,12 +440,58 @@ const handler: ToolHandler = async (
         loggedRequests: [],
         maxLogs: 500,
       };
-      interceptStates.set(tabId, state);
+      if (!dryRun) {
+        interceptStates.set(tabId, state);
+      }
     }
 
     switch (action) {
       case 'enable': {
+        // Determine active preset: per-call arg takes precedence over env var.
+        const activePreset = (presetArg as BandwidthPreset | undefined) ??
+          (ENV_PRESET && SUPPORTED_PRESETS.includes(ENV_PRESET as BandwidthPreset)
+            ? (ENV_PRESET as BandwidthPreset)
+            : undefined);
+
+        if (dryRun) {
+          const nextRules = state.rules.filter((r) => !r.id.startsWith('preset-'));
+          if (activePreset) {
+            nextRules.unshift(...presetToRules(activePreset));
+          }
+          const installedRules = nextRules.filter((rule) => !state.rules.includes(rule));
+          return dryRunPreviewResult({
+            action: 'enable',
+            rules: installedRules.length > 0 ? installedRules : nextRules,
+            existingRulesCount: state.rules.length,
+            loggedRequests: state.loggedRequests,
+            preset: activePreset ?? null,
+          });
+        }
+
         if (state.enabled) {
+          // Re-enable with an explicit `preset` arg replaces the previously
+          // injected preset rules in-place. The listener already references
+          // state.rules, so updates take effect immediately on the next request.
+          // Calls without `preset` keep current behaviour (no-op + already_enabled).
+          if (presetArg !== undefined) {
+            state.rules = state.rules.filter((r) => !r.id.startsWith('preset-'));
+            if (activePreset) {
+              state.rules.unshift(...presetToRules(activePreset));
+            }
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    action: 'enable',
+                    status: 'preset_updated',
+                    preset: activePreset ?? null,
+                    rulesCount: state.rules.length,
+                  }),
+                },
+              ],
+            };
+          }
           return {
             content: [
               {
@@ -325,7 +506,18 @@ const handler: ToolHandler = async (
           };
         }
 
+        // Inject preset rules at the front; user rules (added via addRule) come after.
+        // Always clear old injected preset rules first so re-enabling without a preset
+        // leaves only the user's rules active.
+        state.rules = state.rules.filter(r => !r.id.startsWith('preset-'));
+        if (activePreset) {
+          const presetRules = presetToRules(activePreset);
+          state.rules.unshift(...presetRules);
+        }
+
         await page.setRequestInterception(true);
+
+        const metrics = getMetricsCollector();
 
         // Create request listener
         state.listener = async (request: HTTPRequest) => {
@@ -335,7 +527,8 @@ const handler: ToolHandler = async (
           let matched = false;
           let matchedRule: InterceptRule | null = null;
 
-          // Check rules in order
+          // Two-pass rule evaluation: first pass finds the selected match,
+          // second lets explicit allow rules override block/modify conflicts.
           for (const rule of state!.rules) {
             if (matchesPattern(url, rule.pattern)) {
               // Check resource type filter
@@ -344,11 +537,48 @@ const handler: ToolHandler = async (
                   continue;
                 }
               }
-
               matched = true;
               matchedRule = rule;
               break;
             }
+          }
+
+          if (matched && (matchedRule?.action === 'block' || matchedRule?.action === 'modify')) {
+            const matchedBlockFromPreset = matchedRule.action === 'block' && matchedRule.id.startsWith('preset-');
+            // Look for explicit overrides that also match. Allow wins over
+            // block/modify conflicts, even when a modify rule is the first
+            // match. User-authored modify rules may override injected preset
+            // blocks, but not earlier user-authored blocks; that preserves the
+            // pre-preset first-match semantics for custom rule sets.
+            let modifyOverride: InterceptRule | null = null;
+            for (const rule of state!.rules) {
+              if (rule === matchedRule) continue;
+              if (rule.action !== 'allow' && rule.action !== 'modify') continue;
+              if (!matchesPattern(url, rule.pattern)) continue;
+              if (rule.resourceTypes && rule.resourceTypes.length > 0) {
+                if (!rule.resourceTypes.includes(resourceType)) continue;
+              }
+              if (rule.action === 'allow') {
+                matchedRule = rule;
+                break;
+              }
+              if (matchedBlockFromPreset && !modifyOverride) {
+                modifyOverride = rule;
+              }
+            }
+            if (matchedRule.action === 'block' && modifyOverride) {
+              matchedRule = modifyOverride;
+            }
+          }
+
+          const rtLabel = resourceType.toLowerCase();
+          const estimatedResponseBytes = estimatedStaticAssetResponseBytes(resourceType);
+          if (estimatedResponseBytes > 0) {
+            metrics.inc(
+              'openchrome_intercept_estimated_response_bytes_total',
+              { resource_type: rtLabel, estimate_source: 'resource_type' },
+              estimatedResponseBytes,
+            );
           }
 
           // Log request if any log rules exist or matched
@@ -374,6 +604,13 @@ const handler: ToolHandler = async (
           if (matchedRule) {
             try {
               if (matchedRule.action === 'block') {
+                if (estimatedResponseBytes > 0) {
+                  metrics.inc(
+                    'openchrome_intercept_estimated_blocked_response_bytes_total',
+                    { resource_type: rtLabel, estimate_source: 'resource_type' },
+                    estimatedResponseBytes,
+                  );
+                }
                 await request.abort('blockedbyclient');
                 return;
               }
@@ -409,6 +646,7 @@ const handler: ToolHandler = async (
               text: JSON.stringify({
                 action: 'enable',
                 status: 'enabled',
+                preset: activePreset ?? null,
                 rulesCount: state.rules.length,
                 message: 'Request interception enabled',
               }),
@@ -468,12 +706,21 @@ const handler: ToolHandler = async (
         }
 
         const newRule: InterceptRule = {
-          id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: dryRun ? 'dry-run-rule' : `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           pattern: ruleArg.pattern,
           resourceTypes: ruleArg.resourceTypes,
           action: ruleArg.action,
           modifyOptions: ruleArg.modifyOptions,
         };
+
+        if (dryRun) {
+          return dryRunPreviewResult({
+            action: 'addRule',
+            rules: [newRule],
+            existingRulesCount: state.rules.length,
+            loggedRequests: state.loggedRequests,
+          });
+        }
 
         state.rules.push(newRule);
 

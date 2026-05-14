@@ -23,6 +23,18 @@ export type {
   ScreenshotClassAssertion,
   UrlAssertion,
 } from './types';
+export type {
+  BrowserTaskBudgets,
+  BrowserTaskLoopGuard,
+  BrowserTaskSignature,
+  BrowserTaskSignatureInputSpec,
+  TaskSignatureEvaluationInput,
+  TaskSignatureInputRedaction,
+  TaskSignatureInputType,
+  TaskSignatureLoopGuardKind,
+  TaskSignatureStatus,
+  TaskSignatureToolCallSummary,
+} from './task-signature';
 
 export type { EvalContext, NetworkLogEntry } from './eval-context';
 export type { ValidationError, ValidationResult } from './validator';
@@ -33,6 +45,12 @@ export type {
 } from './screenshot-class';
 
 export { validateAssertion } from './validator';
+export {
+  evaluateTaskSignature,
+  preflightAllowedTools,
+  redactTaskSignatureInputs,
+  validateBrowserTaskSignature,
+} from './task-signature';
 export { evaluate } from './evaluate';
 export {
   hamming,
@@ -50,3 +68,4 @@ export {
   scoreHash,
   teachClass,
 } from './screenshot-class';
+export { createChromeEvalContext } from './chrome-eval-context';

@@ -14,6 +14,7 @@ export class OpenChromeStubAdapter implements MCPAdapter {
   name = 'OpenChrome';
   mode: string;
   private options: OpenChromeAdapterOptions;
+  private tabSeq = 0;
 
   private _totalInputChars = 0;
   private _totalOutputChars = 0;
@@ -37,8 +38,11 @@ export class OpenChromeStubAdapter implements MCPAdapter {
     this._totalInputChars += inputJson.length;
 
     // Stub response - no actual MCP server connection
+    const text = toolName === 'tabs_create'
+      ? JSON.stringify({ tabId: `stub-${this.mode}-tab-${++this.tabSeq}` })
+      : 'stub response';
     const result: MCPToolResult = {
-      content: [{ type: 'text', text: 'stub response' }],
+      content: [{ type: 'text', text }],
     };
 
     const outputJson = JSON.stringify(result);
@@ -64,6 +68,7 @@ export class OpenChromeStubAdapter implements MCPAdapter {
     this._totalInputChars = 0;
     this._totalOutputChars = 0;
     this._toolCallCount = 0;
+    this.tabSeq = 0;
   }
 }
 

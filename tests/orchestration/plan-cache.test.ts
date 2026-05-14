@@ -409,6 +409,111 @@ describePlanExecutor('PlanExecutor', () => {
   }
 
   // -----------------------------------------------------------------------
+
+  describe('safe plan-as-code contract validation', () => {
+    function safePlan(overrides: Partial<CompiledPlan> = {}): CompiledPlan {
+      return buildPlan({
+        id: 'safe-plan',
+        contractVersion: 2,
+        allowedTools: ['mock_tool', 'recovery_tool'],
+        steps: [buildStep({ order: 1, tool: 'mock_tool', timeout: 5000 })],
+        successCriteria: { requiredFields: ['ok'] },
+        ...overrides,
+      });
+    }
+
+    test('rejects tools outside allowedTools before execution', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler, javascript_tool: handler }));
+      const plan = safePlan({ steps: [buildStep({ tool: 'javascript_tool' })] });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not in allowedTools');
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('rejects unknown tools, missing timeouts, malformed substitutions, and missing success criteria', async () => {
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: makeMockHandler(makeMCPResult('ok')) }));
+
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'ghost_tool' })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('unknown tool') });
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'mock_tool', timeout: 0 })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('positive timeout') });
+      await expect(executor.execute(safePlan({ steps: [buildStep({ tool: 'mock_tool', args: { url: '${bad-name}' } })] }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('malformed substitution') });
+      await expect(executor.execute(safePlan({ successCriteria: {} }), SESSION_ID, { ok: true }))
+        .resolves.toMatchObject({ success: false, error: expect.stringContaining('explicit successCriteria') });
+    });
+
+    test('bounds recovery handler length for safe contract plans', async () => {
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: makeMockHandler(makeMCPResult('ok')) }));
+      const tooManySteps = Array.from({ length: 11 }, (_, index) => buildStep({ order: index + 1, tool: 'mock_tool' }));
+      const plan = safePlan({ errorHandlers: [{ condition: 'step1_error', action: 'too-much', steps: tooManySteps }] });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('exceeds 10 steps');
+    });
+
+    test('successful safe contract execution includes bounded evidence', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+      const plan = safePlan();
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(true);
+      expect(result.evidence).toEqual([expect.objectContaining({
+        step: 1,
+        tool: 'mock_tool',
+        source: 'plan',
+        outcome: 'success',
+        summary: 'ok',
+      })]);
+    });
+
+    test('safe contract execution includes recovery evidence', async () => {
+      const failHandler = makeErrorHandler('boom');
+      const recoveryHandler = makeMockHandler(makeMCPResult('recovered'));
+      const executor = new PlanExecutor(makeResolverWith({ fail_tool: failHandler, recovery_tool: recoveryHandler }));
+      const plan = safePlan({
+        allowedTools: ['fail_tool', 'recovery_tool'],
+        steps: [buildStep({ order: 1, tool: 'fail_tool', timeout: 5000 })],
+        errorHandlers: [{
+          condition: 'step1_error',
+          action: 'recover',
+          steps: [buildStep({ order: 1, tool: 'recovery_tool', timeout: 5000 })],
+        }],
+      });
+
+      const result = await executor.execute(plan, SESSION_ID, { ok: true });
+
+      expect(result.success).toBe(true);
+      expect(result.evidence).toEqual([
+        expect.objectContaining({ step: 1, tool: 'fail_tool', source: 'plan', outcome: 'error' }),
+        expect.objectContaining({ step: 1, tool: 'recovery_tool', source: 'recovery', outcome: 'success', summary: 'recovered' }),
+      ]);
+    });
+
+    test('legacy plans without contractVersion remain backward compatible', async () => {
+      const handler = makeMockHandler(makeMCPResult('ok'));
+      const executor = new PlanExecutor(makeResolverWith({ mock_tool: handler }));
+      const legacy = buildPlan({
+        steps: [buildStep({ tool: 'mock_tool', timeout: 0 })],
+        successCriteria: {},
+      });
+
+      const result = await executor.execute(legacy, SESSION_ID, {});
+
+      expect(result.success).toBe(false);
+      expect(result.error).not.toContain('Plan contract validation failed');
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
   // Basic execution
   // -----------------------------------------------------------------------
 
@@ -467,6 +572,67 @@ describePlanExecutor('PlanExecutor', () => {
     expect(options['port']).toBe('8080');
   });
 
+  test('substitutes dotted paths from stored query results into later step args', async () => {
+    const queryHandler = makeMockHandler(makeMCPResult(JSON.stringify({
+      matches: {
+        login_form: {
+          email_box: { ref: 'oc_ref_email' },
+          submit_btn: { ref: 'oc_ref_submit' },
+        },
+      },
+    })));
+    const fillHandler = makeMockHandler(makeMCPResult('filled'));
+    const clickHandler = makeMockHandler(makeMCPResult('clicked'));
+    const assertHandler = makeMockHandler(makeMCPResult(JSON.stringify({
+      verdict: 'pass',
+      evidence: { kind: 'dom_text', contains: 'Welcome' },
+    })));
+    const executor = new PlanExecutor(makeResolverWith({
+      oc_query: queryHandler,
+      fill_form: fillHandler,
+      interact: clickHandler,
+      oc_assert: assertHandler,
+    }));
+    const plan = buildPlan({
+      id: 'semantic-login-plan',
+      steps: [
+        buildStep({
+          order: 1,
+          tool: 'oc_query',
+          args: { query: 'login form' },
+          parseResult: { format: 'json', storeAs: 'login' },
+        }),
+        buildStep({
+          order: 2,
+          tool: 'fill_form',
+          args: { ref: '${login.matches.login_form.email_box.ref}', value: 'agent@example.com' },
+        }),
+        buildStep({
+          order: 3,
+          tool: 'interact',
+          args: { ref: '${login.matches.login_form.submit_btn.ref}', action: 'click' },
+        }),
+        buildStep({
+          order: 4,
+          tool: 'oc_assert',
+          args: { assertion: { kind: 'dom_text', contains: 'Welcome' } },
+          parseResult: { format: 'json', storeAs: 'postcondition' },
+        }),
+      ],
+      successCriteria: { requiredFields: ['login', 'postcondition'] },
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(true);
+    expect((fillHandler as jest.Mock).mock.calls[0][1]).toMatchObject({ ref: 'oc_ref_email' });
+    expect((clickHandler as jest.Mock).mock.calls[0][1]).toMatchObject({ ref: 'oc_ref_submit' });
+    expect(result.data?.postcondition).toMatchObject({
+      verdict: 'pass',
+      evidence: { kind: 'dom_text', contains: 'Welcome' },
+    });
+  });
+
   // -----------------------------------------------------------------------
   // Result parsing / storeAs
   // -----------------------------------------------------------------------
@@ -506,6 +672,28 @@ describePlanExecutor('PlanExecutor', () => {
     const step2Args = (step2Handler as jest.Mock).mock.calls[0][1] as Record<string, unknown>;
     // The stored value should be the parsed object (or its stringified form)
     expect(step2Args['data']).toBeDefined();
+  });
+
+  test('extracts dotted JSON paths with parseResult.extractField', async () => {
+    const handler = makeMockHandler(makeMCPResult(JSON.stringify({
+      matches: { login_form: { submit_btn: { ref: 'oc_ref_submit' } } },
+    })));
+    const executor = new PlanExecutor(makeResolverWith({ oc_query: handler }));
+    const plan = buildPlan({
+      id: 'extract-dotted-path-plan',
+      steps: [buildStep({
+        order: 1,
+        tool: 'oc_query',
+        args: {},
+        parseResult: { format: 'json', extractField: 'matches.login_form.submit_btn.ref', storeAs: 'submitRef' },
+      })],
+      successCriteria: { requiredFields: ['submitRef'] },
+    });
+
+    const result = await executor.execute(plan, SESSION_ID, {});
+
+    expect(result.success).toBe(true);
+    expect(result.data?.submitRef).toBe('oc_ref_submit');
   });
 
   // -----------------------------------------------------------------------
@@ -781,5 +969,170 @@ describeIntegration('Integration: PlanRegistry + PlanExecutor', () => {
 
     // Two successes should drive confidence up from the initial 0.5
     expect(after).toBeGreaterThan(before);
+  });
+
+  test('classifies unauthorized tool errors as auth_redirect', async () => {
+    const handler: ToolHandler = jest.fn(async () => ({ ...makeMCPResult('unauthorized: login required'), isError: true }));
+    const executor = new PlanExecutor((toolName: string) => toolName === 'mock_tool' ? handler : null);
+    const plan = buildPlan({
+      steps: [{ order: 1, tool: 'mock_tool', args: {}, timeout: 1000 }],
+    });
+
+    const result = await executor.execute(plan, 'test-session-001', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({ class: 'auth_redirect', stepOrder: 1, tool: 'mock_tool' });
+  });
+
+  test('maps empty-result success-criteria failures to empty_result metadata', async () => {
+    const handler: ToolHandler = jest.fn(async () => makeMCPResult('[]'));
+    const executor = new PlanExecutor((toolName: string) => toolName === 'mock_tool' ? handler : null);
+    const plan = buildPlan({
+      steps: [{ order: 1, tool: 'mock_tool', args: {}, timeout: 1000 }],
+      successCriteria: { minDataItems: 1 },
+    });
+
+    const result = await executor.execute(plan, 'test-session-001', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({ class: 'empty_result', stepOrder: 1, tool: 'mock_tool' });
+  });
+});
+
+describe('PlanExecutor task signatures', () => {
+  const signature = {
+    version: 1 as const,
+    id: 'fixture.plan.boundary',
+    description: 'Plan boundary fixture',
+    inputs: {},
+    allowedTools: ['mock_tool'],
+    success: { kind: 'dom_text' as const, contains: 'ok' },
+    loopGuards: [{ kind: 'max_same_tool' as const, limit: 2, window: 2 }],
+    budgets: { maxToolCalls: 5, maxWallMs: 30_000 },
+  };
+
+  function resolver(handlers: Record<string, ToolHandler>) {
+    return (toolName: string): ToolHandler | null => handlers[toolName] ?? null;
+  }
+
+  test('preflights disallowed tools without invoking handlers', async () => {
+    const handler = jest.fn(async () => makeMCPResult('ok'));
+    const executor = new PlanExecutor(resolver({ javascript_tool: handler }));
+    const plan = buildPlan({
+      id: 'disallowed-plan',
+      steps: [buildStep({ tool: 'javascript_tool' })],
+      successCriteria: {},
+    });
+
+    const result = await executor.execute(plan, 'session', {}, { taskSignature: signature });
+
+    expect(result.success).toBe(false);
+    expect(result.taskSignature?.status).toBe('failure');
+    expect(result.error).toMatch(/disallows tool/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test('stops signature-bound plans on loop guards while no-signature path is unchanged', async () => {
+    const handler = jest.fn(async () => makeMCPResult('ok'));
+    const executor = new PlanExecutor(resolver({ mock_tool: handler }));
+    const plan = buildPlan({
+      id: 'loop-plan',
+      steps: [
+        buildStep({ order: 1, tool: 'mock_tool' }),
+        buildStep({ order: 2, tool: 'mock_tool' }),
+      ],
+      successCriteria: {},
+    });
+
+    const unsigned = await executor.execute(plan, 'session', {});
+    expect(unsigned.success).toBe(true);
+    expect(unsigned.taskSignature).toBeUndefined();
+
+    const signed = await executor.execute(plan, 'session', {}, { taskSignature: signature });
+    expect(signed.success).toBe(false);
+    expect(signed.taskSignature).toEqual({
+      status: 'stop',
+      reasons: ['max_same_tool exceeded for mock_tool: 2/2'],
+    });
+  });
+});
+
+describe('PlanExecutor final verification gate', () => {
+  const SESSION_ID = 'test-session-001';
+  const handler: ToolHandler = jest.fn(async () => makeMCPResult(JSON.stringify({
+    url: 'https://example.com/done',
+    dom_text: { body: 'Done', '#status': 'Done' },
+    captured_at: Date.now(),
+  })));
+  const resolver = (toolName: string): ToolHandler | null => toolName === 'snapshot_tool' ? handler : null;
+
+  function planWithFinalAssertion(contains: string, extra: Partial<CompiledPlan['finalVerification']> = {}): CompiledPlan {
+    return buildPlan({
+      id: 'final-verification-plan',
+      steps: [buildStep({
+        order: 1,
+        tool: 'snapshot_tool',
+        args: {},
+        parseResult: { format: 'json', storeAs: 'finalSnapshot' },
+      })],
+      successCriteria: {},
+      finalVerification: {
+        finalAssertions: [{ kind: 'dom_text', selector: '#status', contains }],
+        snapshotParam: 'finalSnapshot',
+        ...extra,
+      },
+    });
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('passes when final assertion matches stored snapshot', async () => {
+    const executor = new PlanExecutor(resolver);
+    const result = await executor.execute(planWithFinalAssertion('Done'), SESSION_ID, {});
+
+    expect(result.success).toBe(true);
+    expect(result.finalVerification?.passed).toBe(true);
+    expect(result.finalVerification?.assertions[0].passed).toBe(true);
+  });
+
+  test('fails when final assertion does not match stored snapshot', async () => {
+    const executor = new PlanExecutor(resolver);
+    const result = await executor.execute(planWithFinalAssertion('Missing'), SESSION_ID, {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Final verification failed');
+    expect(result.finalVerification?.failedAssertion?.index).toBe(0);
+  });
+
+  test('does not fall back to body text for selector-specific final assertions', async () => {
+    const selectorMissingHandler: ToolHandler = jest.fn(async () => makeMCPResult(JSON.stringify({
+      url: 'https://example.com/done',
+      dom_text: { body: 'Done' },
+      captured_at: Date.now(),
+    })));
+    const selectorMissingResolver = (toolName: string): ToolHandler | null => (
+      toolName === 'snapshot_tool' ? selectorMissingHandler : null
+    );
+    const executor = new PlanExecutor(selectorMissingResolver);
+
+    const result = await executor.execute(planWithFinalAssertion('Done'), SESSION_ID, {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Final verification failed');
+    expect(result.finalVerification?.failedAssertion?.index).toBe(0);
+  });
+
+  test('fails clearly when requested evidence kind is unsupported', async () => {
+    const executor = new PlanExecutor(resolver);
+    const result = await executor.execute(
+      planWithFinalAssertion('Done', { requiredEvidence: ['phash'] }),
+      SESSION_ID,
+      {},
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('unsupported finalVerification.requiredEvidence');
   });
 });

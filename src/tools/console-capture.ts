@@ -8,9 +8,29 @@
  */
 
 import { CDPSession } from 'puppeteer-core';
+import * as crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '../core/console-buffer/ring-buffer';
+import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
+import { paginate } from '../utils/paginate';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
+
+/**
+ * Validate caller-supplied cap values. Used to reject `maxLogs`/`maxBytes`
+ * inputs that would corrupt the ring buffer (zero, negative, NaN, Infinity,
+ * non-integer, non-number) before they reach `createConsoleRingBuffer`.
+ *
+ * The factory itself also coerces invalid values back to defaults as a
+ * defense-in-depth measure, but the tool-level check returns a clear
+ * structured error to the caller so they see the bad input.
+ */
+function isPositiveInteger(v: unknown): boolean {
+  if (typeof v !== 'number') return false;
+  return Number.isFinite(v) && Number.isInteger(v) && v > 0;
+}
 
 // Console log entry structure
 interface ConsoleLogEntry {
@@ -23,6 +43,7 @@ interface ConsoleLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  truncatedFrom?: number;
 }
 
 // CDP event payload types
@@ -60,13 +81,14 @@ interface CDPExceptionThrownEvent {
 
 // Capture state for each tab
 interface CaptureState {
-  logs: ConsoleLogEntry[];
+  logs: ConsoleRingBuffer<ConsoleLogEntry>;
   cdpSession: CDPSession;
   consoleHandler: (event: CDPConsoleAPICalledEvent) => void;
   exceptionHandler: (event: CDPExceptionThrownEvent) => void;
   startedAt: number;
   filter?: string[];
   maxLogs: number;
+  maxBytes: number;
 }
 
 // Module-level state storage
@@ -85,6 +107,7 @@ interface DedupedLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  truncatedFrom?: number;
 }
 
 /**
@@ -108,6 +131,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
         lastTimestamp: current.timestamp,
         location: current.location,
         args: current.args,
+        ...(current.truncatedFrom !== undefined && { truncatedFrom: current.truncatedFrom }),
       });
       i++;
       continue;
@@ -146,6 +170,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
           lastTimestamp: entry.timestamp,
           location: entry.location,
           args: entry.args,
+          ...(entry.truncatedFrom !== undefined && { truncatedFrom: entry.truncatedFrom }),
         });
       }
     }
@@ -157,6 +182,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
 const definition: MCPToolDefinition = {
   name: 'console_capture',
   description: 'Capture browser console output (start, stop, get, clear).',
+  annotations: TOOL_ANNOTATIONS.console_capture,
   inputSchema: {
     type: 'object',
     properties: {
@@ -178,9 +204,21 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max logs to return (get action)',
       },
+      cursor: {
+        type: 'string',
+        description: 'Opaque pagination cursor returned as nextCursor from a prior console_capture get call.',
+      },
       maxLogs: {
         type: 'number',
         description: 'Max logs to store. Default: 1000',
+      },
+      maxBytes: {
+        type: 'number',
+        description: 'Max total bytes of logs to store. Default: 4194304 (4 MiB)',
+      },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap console-origin text in <oc:console>. Default true; false disables.',
       },
     },
     required: ['tabId', 'action'],
@@ -214,6 +252,16 @@ const setupCleanupListener = (() => {
   };
 })();
 
+/** Build a placeholder entry for an oversized log entry. */
+function makeOversizedPlaceholder(originalSizeBytes: number): ConsoleLogEntry {
+  return {
+    type: 'log',
+    text: '[entry exceeded maxBytes — truncated]',
+    timestamp: Date.now(),
+    truncatedFrom: originalSizeBytes,
+  };
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>
@@ -222,7 +270,30 @@ const handler: ToolHandler = async (
   const action = args.action as string;
   const filter = args.filter as string[] | undefined;
   const limit = args.limit as number | undefined;
-  const maxLogs = (args.maxLogs as number | undefined) ?? 1000;
+  const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
+  // maxLogs is a backward-compatible alias for maxLines. Defense-in-depth:
+  // reject zero / non-positive / non-integer values BEFORE forwarding to
+  // createConsoleRingBuffer so a malformed `start` request returns a clear
+  // error to the caller instead of silently flipping to the default
+  // (Codex P1 — `maxLogs: 0` is currently in the schema's value range).
+  const rawMaxLogs = args.maxLogs as unknown;
+  const rawMaxBytes = args.maxBytes as unknown;
+  const maxLogsValid = rawMaxLogs === undefined || isPositiveInteger(rawMaxLogs);
+  const maxBytesValid = rawMaxBytes === undefined || isPositiveInteger(rawMaxBytes);
+  if (!maxLogsValid || !maxBytesValid) {
+    return {
+      content: [{
+        type: 'text',
+        text:
+          'Error: maxLogs and maxBytes must be positive integers when supplied. ' +
+          `Received maxLogs=${JSON.stringify(rawMaxLogs)}, maxBytes=${JSON.stringify(rawMaxBytes)}.`,
+      }],
+      isError: true,
+    };
+  }
+  const maxLogs = (rawMaxLogs as number | undefined) ?? DEFAULT_MAX_LINES;
+  const maxBytes = (rawMaxBytes as number | undefined) ?? DEFAULT_MAX_BYTES;
+  const boundaryMarkers = areBoundaryMarkersEnabled(args);
 
   const sessionManager = getSessionManager();
 
@@ -277,14 +348,20 @@ const handler: ToolHandler = async (
         const cdpSession = await page.createCDPSession();
         await cdpSession.send('Runtime.enable');
 
+        const ringBuffer = createConsoleRingBuffer<ConsoleLogEntry>(
+          { maxLines: maxLogs, maxBytes },
+          makeOversizedPlaceholder,
+        );
+
         const state: CaptureState = {
-          logs: [],
+          logs: ringBuffer,
           cdpSession,
           consoleHandler: () => {},
           exceptionHandler: () => {},
           startedAt: Date.now(),
           filter,
           maxLogs,
+          maxBytes,
         };
 
         // Map CDP console types to Puppeteer-style types
@@ -329,12 +406,8 @@ const handler: ToolHandler = async (
             }),
           };
 
-          state.logs.push(entry);
-
-          // Trim if exceeds max
-          if (state.logs.length > state.maxLogs) {
-            state.logs = state.logs.slice(-state.maxLogs);
-          }
+          const sizeBytes = JSON.stringify(entry).length;
+          state.logs.push(entry, sizeBytes);
         };
 
         // Capture unhandled promise rejections
@@ -368,11 +441,8 @@ const handler: ToolHandler = async (
                 : undefined,
           };
 
-          state.logs.push(entry);
-
-          if (state.logs.length > state.maxLogs) {
-            state.logs = state.logs.slice(-state.maxLogs);
-          }
+          const sizeBytes = JSON.stringify(entry).length;
+          state.logs.push(entry, sizeBytes);
         };
 
         cdpSession.on('Runtime.consoleAPICalled', state.consoleHandler as any);
@@ -417,7 +487,7 @@ const handler: ToolHandler = async (
         state.cdpSession.off('Runtime.exceptionThrown', state.exceptionHandler as any);
         await state.cdpSession.send('Runtime.disable').catch(() => {});
         await state.cdpSession.detach().catch(() => {});
-        const logCount = state.logs.length;
+        const logCount = state.logs.stats().retained;
         const duration = Date.now() - state.startedAt;
         captureStates.delete(tabId);
 
@@ -455,24 +525,38 @@ const handler: ToolHandler = async (
           };
         }
 
-        let logs = state.logs;
-        if (limit && limit > 0) {
-          logs = logs.slice(-limit);
-        }
+        const logs: ConsoleLogEntry[] = (limit && limit > 0)
+          ? state.logs.tail(limit)
+          : state.logs.drain();
 
         // Deduplicate consecutive identical log messages
-        const deduplicatedLogs = deduplicateLogs(logs);
+        const deduplicatedLogs = deduplicateLogs(logs).map((log) => ({
+          ...log,
+          text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, log.text) : log.text,
+          args: boundaryMarkers && log.args ? log.args.map((arg) => wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, arg)) : log.args,
+        }));
+
+        const bufStats = state.logs.stats();
 
         // Calculate stats
         const stats = {
-          total: state.logs.length,
+          total: bufStats.retained,
           returned: deduplicatedLogs.length,
           beforeDedup: logs.length,
           byType: {} as Record<string, number>,
         };
-        for (const log of state.logs) {
+        for (const log of state.logs.drain()) {
           stats.byType[log.type] = (stats.byType[log.type] || 0) + 1;
         }
+
+        const bufferStats: ConsoleRingBufferStats = bufStats;
+        const pagination = buildConsoleCapturePagination(deduplicatedLogs, {
+          cursor,
+          pageSize: cursor ? Math.max(1, Math.floor(limit ?? 200)) : Math.max(1, Math.floor(limit ?? Math.max(deduplicatedLogs.length, 1))),
+        });
+        if (pagination.staleCursor) return staleCursorResult();
+        if (pagination.invalidCursor) return invalidCursorResult(pagination.invalidCursor);
+        if (cursor) stats.returned = pagination.logs.length;
 
         return {
           content: [
@@ -481,12 +565,23 @@ const handler: ToolHandler = async (
               text: JSON.stringify({
                 action: 'get',
                 status: 'running',
-                logs: deduplicatedLogs,
+                logs: cursor ? pagination.logs : deduplicatedLogs,
                 stats,
                 durationMs: Date.now() - state.startedAt,
+                bufferStats,
+                ...(cursor ? { hasMore: pagination.hasMore } : {}),
+                ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
               }),
             },
           ],
+          structuredContent: {
+            action: 'get',
+            status: 'running',
+            entries: cursor ? pagination.logs : deduplicatedLogs,
+            hasMore: cursor ? pagination.hasMore : false,
+            ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
+            total: pagination.total,
+          },
         };
       }
 
@@ -507,8 +602,8 @@ const handler: ToolHandler = async (
           };
         }
 
-        const clearedCount = state.logs.length;
-        state.logs = [];
+        const clearedCount = state.logs.stats().retained;
+        state.logs.clear();
 
         return {
           content: [
@@ -549,6 +644,74 @@ const handler: ToolHandler = async (
   }
 };
 
+export function buildConsoleCapturePagination(
+  logs: DedupedLogEntry[],
+  opts: { cursor?: string; pageSize: number },
+): {
+  logs: DedupedLogEntry[];
+  hasMore: boolean;
+  total: number;
+  nextCursor?: string;
+  staleCursor?: true;
+  invalidCursor?: unknown;
+} {
+  try {
+    const page = paginate(logs, {
+      cursor: opts.cursor,
+      pageSize: opts.pageSize,
+      contentHash: hashConsoleEntries(logs),
+    });
+    if (page.staleCursor) return { logs: [], hasMore: false, total: page.total, staleCursor: true };
+    return {
+      logs: page.items,
+      hasMore: page.hasMore,
+      total: page.total,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  } catch (error) {
+    return { logs: [], hasMore: false, total: logs.length, invalidCursor: error };
+  }
+}
+
+function hashConsoleEntries(logs: DedupedLogEntry[]): string {
+  const hash = crypto.createHash('sha256');
+  for (const log of logs) {
+    hash
+      .update(log.type)
+      .update('\0')
+      .update(log.text)
+      .update('\0')
+      .update(String(log.firstTimestamp ?? ''))
+      .update('\0')
+      .update(String(log.lastTimestamp ?? ''))
+      .update('\0')
+      .update(String(log.count ?? 1))
+      .update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function invalidCursorResult(error: unknown): MCPResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_cursor', message } }) }],
+    structuredContent: { error: { code: 'invalid_cursor', message } },
+  };
+}
+
+function staleCursorResult(): MCPResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }) }],
+    structuredContent: { error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } },
+  };
+}
+
 export function registerConsoleCaptureTool(server: MCPServer): void {
   server.registerTool('console_capture', handler, definition);
 }
+
+// Export captureStates for watchdog integration (read-only access to stats).
+export { captureStates };
+export type { CaptureState };

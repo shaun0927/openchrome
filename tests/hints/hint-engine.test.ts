@@ -136,6 +136,29 @@ describe('HintEngine', () => {
     });
   });
 
+  describe('recovery feedback bundles', () => {
+    it('writes a blocked-page feedback bundle when a blocking hint fires', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-feedback-hints-'));
+      const engine = new HintEngine(new ActivityTracker());
+      engine.enableRecoveryFeedback(tmpDir);
+
+      const hint = engine.getHint(
+        'navigate',
+        makeResult(JSON.stringify({ blockingPage: { type: 'access-denied', detail: '403 Forbidden' } })),
+        false,
+        'session-a',
+      );
+
+      expect(hint?.rule).toBe('access-denied-detected');
+      const files = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.jsonl'));
+      expect(files).toHaveLength(1);
+      const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, files[0]), 'utf8').trim());
+      expect(parsed.sessionId).toBe('session-a');
+      expect(parsed.trigger.category).toBe('blocked_page');
+      expect(parsed.hints[0].rule).toBe('access-denied-detected');
+    });
+  });
+
   describe('composite suggestion rules', () => {
     it('should suggest interact after find+click pattern', () => {
       const tracker = makeTracker([{ toolName: 'find' }]);
@@ -215,6 +238,24 @@ describe('HintEngine', () => {
       const result = makeResult('Clicked "Submit" button [Page navigated to /dashboard]');
       const hint = engine.getHint('interact', result, false);
       expect(hint?.hint).toContain('wait_for');
+    });
+
+    it('should hint to record skill memory after element_pick followed by successful same-node interact', () => {
+      const tracker = makeTracker([
+        { toolName: 'element_pick', args: { tabId: 'tab-1', action: 'start' }, result: 'success' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked picked element successfully');
+      const hint = engine.getHint(
+        'interact',
+        result,
+        false,
+        'test',
+        { target: { nodeRef: 'bnr:loader-1:42' } },
+      );
+      expect(hint?.rule).toBe('element-pick-skill-record');
+      expect(hint?.hint).toContain('oc_skill_record');
+      expect(hint?.hint).toContain('bnr:loader-1:42');
     });
 
     it('should hint after form submission', () => {
@@ -380,6 +421,28 @@ describe('HintEngine', () => {
       expect(hint).not.toBeNull();
       expect(hint?.hint).toContain('empty/null results');
       expect(hint?.hint).toContain('read_page');
+    });
+
+    it('empty-result-streak: treats undefined javascript_tool output as empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('javascript_tool', makeResult('undefined'), false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('empty/null results');
+    });
+
+    it('empty-result-streak: treats empty string javascript_tool output as empty', () => {
+      const tracker = makeTracker([
+        { toolName: 'javascript_tool' },
+        { toolName: 'javascript_tool' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const hint = engine.getHint('javascript_tool', makeResult(''), false);
+      expect(hint).not.toBeNull();
+      expect(hint?.hint).toContain('empty/null results');
     });
 
     it('empty-result-streak: does NOT trigger when current result is non-empty', () => {
@@ -735,6 +798,35 @@ describe('HintEngine', () => {
   });
 
   describe('Progress Tracking Integration', () => {
+
+
+    it('adds ranked recovery candidates to stuck stale-ref hints', () => {
+      const tracker = makeTracker([
+        { toolName: 'interact', result: 'error' },
+        { toolName: 'interact', result: 'error' },
+      ]);
+      const engine = new HintEngine(tracker as any);
+      const hint = engine.getHint('interact', makeResult('STALE_REF: element not found', true), true, undefined, { tabId: 'tab-1', ref: 'ref_1' });
+
+      expect(hint!.rule).toBe('progress-tracker-stuck');
+      expect(hint!.recoveryCandidates?.[0]).toMatchObject({ tool: 'read_page', risk: 'read_only' });
+      expect(hint!.hint).toContain('Ranked recovery candidates');
+      expect(hint!.hint).not.toContain('ref_1');
+    });
+
+    it('does not suggest blind interaction candidates for blocking pages', () => {
+      const tracker = makeTracker([
+        { toolName: 'click', result: 'error' },
+        { toolName: 'click', result: 'error' },
+      ]);
+      const engine = new HintEngine(tracker as any);
+      const hint = engine.getHint('click', makeResult('CAPTCHA Access Denied', true), true);
+
+      expect(hint!.rule).toBe('progress-tracker-stuck');
+      expect(hint!.recoveryCandidates?.map(c => c.tool)).toEqual(['read_page', 'tabs_context']);
+      expect(hint!.recoveryCandidates?.every(c => c.risk === 'read_only')).toBe(true);
+    });
+
     it('returns stuck hint when 3+ consecutive errors', () => {
       const tracker = makeTracker([
         { toolName: 'navigate', result: 'error', error: 'timed out' },
@@ -853,5 +945,42 @@ describe('HintEngine', () => {
       expect(critical!.hint).toContain('Previous actions:');
       expect(critical!.hint).toContain('computer');
     });
+  });
+});
+
+describe('failure episode memory', () => {
+  it('records a verified recovery episode and emits a future advisory hint', () => {
+    const tracker = new ActivityTracker();
+    const engine = new HintEngine(tracker);
+
+    const first = engine.getHint(
+      'custom_action',
+      makeResult('opaque widget failure on https://example.test/form', true),
+      true,
+      's-episode',
+      { url: 'https://example.test/form', description: 'submit contact form' },
+    );
+    expect(first).toBeNull();
+
+    engine.getHint(
+      'read_page',
+      makeResult('success banner visible after dismiss overlay'),
+      false,
+      's-episode',
+      { url: 'https://example.test/form', description: 'inspect page and dismiss overlay' },
+    );
+
+    const hint = engine.getHint(
+      'custom_action',
+      makeResult('opaque widget failure on https://example.test/form', true),
+      true,
+      's-episode',
+      { url: 'https://example.test/form', description: 'submit contact form' },
+    );
+
+    expect(hint?.rule).toBe('learned-pattern');
+    expect(hint?.hint).toContain('Similar failure episode');
+    expect(hint?.hint).toContain('no recovery was auto-executed');
+    expect(engine.getLearner().getFailureEpisodes()).toHaveLength(1);
   });
 });

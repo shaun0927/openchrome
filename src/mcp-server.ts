@@ -9,11 +9,14 @@ import {
   MCPResult,
   MCPError,
   MCPToolDefinition,
+  ToolCapability,
   ToolHandler,
   ToolContext,
+  ToolProgress,
   ToolRegistry,
   MCPErrorCodes,
 } from './types/mcp';
+import { TOOL_ANNOTATIONS } from './types/tool-annotations';
 import { MCPTransport, createTransport } from './transports/index';
 import { SessionManager, getSessionManager } from './session-manager';
 import { Dashboard, getDashboard, ActivityTracker, getActivityTracker, OperationController } from './dashboard/index.js';
@@ -25,6 +28,8 @@ import {
   readSkillGraphResource,
 } from './resources/skill-graph';
 import { HintEngine } from './hints';
+import { buildAutomationInsight, formatAutomationFallback, shouldInjectAutomationFallback } from './hints/result-guidance';
+import { getTaskDriftLedger } from './harness/task-ledger';
 import { validateToolSchema } from './utils/schema-validator';
 import { formatAge } from './utils/format-age';
 import { formatError } from './utils/format-error';
@@ -43,7 +48,9 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry } from './security/audit-logger';
+import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
 import { isClientDisconnect } from './errors/abort';
+import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
 import { isAllowed, requiredScope } from './auth/scope-policy';
 import type { Principal } from './auth/api-key-types';
 import { PRINCIPAL_SYM } from './middleware/auth';
@@ -53,14 +60,147 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
+import {
+  substituteSecrets,
+  redactSecrets,
+  redactSecretString,
+  MissingSecretError,
+  getSecretStore,
+} from './core/secrets';
+import { currentRequestContext } from './observability/request-id';
+import type { TransportMessageContext } from './transports';
+import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+import { redactPredicateSource } from './core/trace/redactor';
+import { getLifecycleBus, type LifecycleEvent, type Unsubscribe } from './core/lifecycle';
+import {
+  LIVE_RESOURCE_TEMPLATES,
+  ResourceRpcError,
+  assertLiveResourceAccess,
+  liveResourceDefinitions,
+  readLiveResource,
+  sessionStateUri,
+  sessionTabsUri,
+  journalUri,
+  recordingUri,
+} from './resources/live-state';
+import { ResourceSubscriptionManager } from './resources/subscriptions';
+import {
+  buildInvalidJsonRpcRequestResponse,
+  extractPrincipalAndScrub,
+  isInitializedNotification,
+  isJsonRpcNotification,
+  isServerToClientResponseMessage,
+} from './mcp/request-ingress';
+export { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
+import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
+import { isRunHarnessEnabled } from './run-harness/flags';
+import { extractRunId, getRunStore } from './run-harness/store';
+
+function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (toolName === 'wait_for' && args.type === 'function' && typeof args.value === 'string') {
+    return { ...args, value: redactPredicateSource(args.value) };
+  }
+  if (toolName !== 'act' || !('variables' in args)) {
+    return args;
+  }
+  return { ...args, variables: '[redacted]' };
+}
+
+function extractNetworkRootCandidateUrls(toolName: string, args: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) out.push(value);
+  };
+  switch (toolName) {
+    case 'navigate':
+    case 'tabs_create':
+    case 'crawl':
+      push(args.url);
+      break;
+    case 'crawl_sitemap':
+      push(args.url);
+      push(args.sitemap_url);
+      break;
+    case 'request_intercept': {
+      const rules = Array.isArray(args.rules) ? args.rules : [];
+      for (const rule of rules) {
+        if (!rule || typeof rule !== 'object') continue;
+        const pattern = (rule as { pattern?: unknown }).pattern;
+        if (typeof pattern === 'string' && /^https:\/\//i.test(pattern)) push(pattern);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return out;
+}
+
+function extractFileRootCandidatePaths(toolName: string, args: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) out.push(value);
+  };
+  switch (toolName) {
+    case 'page_pdf':
+    case 'page_screenshot':
+      push(args.path);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
 
 /** Recording tools excluded from session recording to prevent infinite loops */
 const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_start',
   'oc_recording_stop',
   'oc_recording_list',
+  'oc_recording_status',
   'oc_recording_export',
 ]);
+
+/**
+ * Summarize an MCPResult for journal recording, stripping injected hint text.
+ *
+ * The MCP server injects proactive hint text into both `_hint` and
+ * `content[]`. This function returns only the "real" content text (the first
+ * non-hint item), so the journal entry accurately reflects what the tool
+ * actually returned rather than the augmented hint.
+ */
+export function summarizeMcpResultForJournal(result: MCPResult): string | undefined {
+  const content = result.content;
+  if (!Array.isArray(content)) return undefined;
+  const injectedHint = typeof (result as Record<string, unknown>)._hint === 'string'
+    ? String((result as Record<string, unknown>)._hint).trim()
+    : undefined;
+
+  const textItems = content
+    .filter((c) => c.type === 'text' && typeof c.text === 'string')
+    .map((c) => c.text!.trim());
+
+  if (textItems.length === 0) return undefined;
+
+  // If a hint was injected, skip any content item whose trimmed text matches it.
+  const filtered = injectedHint
+    ? textItems.filter((t) => t !== injectedHint)
+    : textItems;
+
+  return filtered[0] ?? textItems[0];
+}
+
+function stringifyResultPayload(result: MCPResult): string {
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return Array.isArray(result.content)
+      ? result.content.map((c) => c.text ?? c.data ?? '').join('')
+      : '';
+  }
+}
 
 /**
  * Detect if an error is a Chrome/CDP connection error that may be recoverable
@@ -92,8 +232,43 @@ export function isConnectionError(error: unknown): boolean {
 }
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal']);
+ *  sleep/wake). Skip session initialization so recovery handlers can always run.
+ *
+ *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
+ *  ledger operations (or, for `oc_task_start`, just persist a meta row before
+ *  background work begins). They never touch the browser themselves, so they
+ *  must not trigger Chrome auto-launch on malformed input (#1034).
+ *
+ *  Run-harness tools (`oc_run_*`) and `oc_progress_status` are pure read /
+ *  bookkeeping calls landed on develop after this PR branched — also skip. */
+const SKIP_SESSION_INIT_TOOLS = new Set([
+  'oc_stop',
+  'oc_reap_orphans',
+  'oc_profile_status',
+  'oc_session_snapshot',
+  'oc_session_resume',
+  'oc_journal',
+  'oc_task_start',
+  'oc_task_list',
+  'oc_task_get',
+  'oc_task_cancel',
+  'oc_task_wait',
+  'oc_task_update',
+  'oc_task_finish',
+  'oc_run_start',
+  'oc_run_status',
+  'oc_run_events',
+  'oc_run_finish',
+  'oc_progress_status',
+]);
+
+const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
+  'execute_plan',
+  'crawl',
+  'crawl_sitemap',
+  'batch_paginate',
+  'batch_execute',
+]);
 
 /** Tools that may legitimately block the event loop longer than the normal fatal threshold. */
 const HEAVY_TOOLS = new Set(['computer', 'read_page', 'query_dom', 'cookies', 'javascript_tool']);
@@ -112,6 +287,7 @@ const STATE_STABLE_HIGH_FREQ_TOOLS = new Set([
   'wait_for',
   'page_content',
   'tabs_context',
+  'oc_progress_status',
 ]);
 
 /**
@@ -135,15 +311,144 @@ const RECONNECTION_GUIDANCE =
   'Simply retry your operation — Chrome will be re-launched automatically if needed. ' +
   'If the error persists, use tabs_context to get fresh tab IDs.';
 
+/**
+ * Secrets substitution whitelist (#834).
+ *
+ * Single chokepoint for `${SECRET:NAME}` → real-value substitution. Each
+ * entry below describes a tool argument path that legitimately needs the
+ * raw secret value (typing it into the page, setting it as a cookie, etc.).
+ * Every other argument is passed through unchanged so secrets never leak
+ * into ad-hoc fields a tool might log or echo.
+ *
+ * Adding a site is intentionally hand-rolled (not config-driven): a new
+ * whitelist entry must be justified against the P3 contract in review.
+ */
+function applySecretWhitelist(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  // Short-circuit when --secrets is unset and no secrets are loaded. The
+  // substituter still has to scan strings for unknown `${SECRET:NAME}`
+  // tokens (MISSING_SECRET semantics survive even without a loaded store),
+  // so we always at least probe.
+  const store = getSecretStore();
+  const out: Record<string, unknown> = { ...args };
+  switch (toolName) {
+    case 'form_input': {
+      if (typeof out.value === 'string') {
+        out.value = substituteSecrets(out.value as string, store);
+      }
+      break;
+    }
+    case 'fill_form': {
+      const fields = out.fields;
+      if (Array.isArray(fields)) {
+        out.fields = fields.map((f) => {
+          if (f && typeof f === 'object' && typeof (f as Record<string, unknown>).value === 'string') {
+            return {
+              ...(f as Record<string, unknown>),
+              value: substituteSecrets((f as Record<string, unknown>).value as string, store),
+            };
+          }
+          return f;
+        });
+      }
+      break;
+    }
+    case 'interact': {
+      if (out.action === 'type' && typeof out.text === 'string') {
+        out.text = substituteSecrets(out.text as string, store);
+      }
+      break;
+    }
+    case 'javascript_tool': {
+      if (typeof out.expression === 'string') {
+        out.expression = substituteSecrets(out.expression as string, store);
+      }
+      break;
+    }
+    case 'cookies': {
+      // `cookies` is a multi-action tool; only the `set` action's value
+      // payload is whitelisted.
+      const action = out.action;
+      if (action === 'set') {
+        // Single cookie shape: { name, value, ... } at the top level.
+        if (typeof out.value === 'string') {
+          out.value = substituteSecrets(out.value as string, store);
+        }
+        // Batched cookies: { cookies: [{ name, value, ... }] }.
+        const list = out.cookies;
+        if (Array.isArray(list)) {
+          out.cookies = list.map((c) => {
+            if (c && typeof c === 'object' && typeof (c as Record<string, unknown>).value === 'string') {
+              return {
+                ...(c as Record<string, unknown>),
+                value: substituteSecrets((c as Record<string, unknown>).value as string, store),
+              };
+            }
+            return c;
+          });
+        }
+      }
+      break;
+    }
+    case 'http_auth': {
+      if (typeof out.password === 'string') {
+        out.password = substituteSecrets(out.password as string, store);
+      }
+      break;
+    }
+    default:
+      // Non-whitelisted tool: pass through unchanged. Secrets present in
+      // those arguments would never reach the page anyway, but we also do
+      // NOT scan them — that would surprise agents passing literal
+      // `${SECRET:...}` strings into unrelated fields.
+      break;
+  }
+  return out;
+}
+
 export interface MCPServerOptions {
   dashboard?: boolean;
   dashboardRefreshInterval?: number;
   initialToolTier?: ToolTier;
+  /**
+   * Capability filter derived from --tools-only / --disable-tools CLI flags.
+   * When set, only tools whose `capability` is in this set are exposed.
+   * When undefined, all capabilities are exposed (default, P2-compliant).
+   */
+  capabilityFilter?: Set<ToolCapability>;
+}
+
+
+const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
+  'navigate',
+  'read_page',
+  'find',
+  'interact',
+  'act',
+  'fill_form',
+  'form_input',
+  'computer',
+  'page_screenshot',
+  'tabs_context',
+  'tabs_list',
+  'tabs_get',
+  'inspect',
+  'vision_find',
+  'oc_assert',
+]);
+
+function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>): string | undefined {
+  if (!TASK_ENVELOPE_BROWSER_TOOLS.has(toolName)) return undefined;
+  return extractTaskId(args);
 }
 
 export class MCPServer {
   private tools: Map<string, ToolRegistry> = new Map();
   private resources: Map<string, MCPResourceDefinition> = new Map();
+  private resourceSubscriptions = new ResourceSubscriptionManager();
+  private liveResourceLifecycleUnsubscribe: Unsubscribe | null = null;
   private manifestVersion: number = 1;
   private sessionManager: SessionManager;
   private transport: MCPTransport | null = null;
@@ -151,10 +456,13 @@ export class MCPServer {
   private activityTracker: ActivityTracker | null = null;
   private operationController: OperationController | null = null;
   private hintEngine: HintEngine | null = null;
+  private recoveryLedger: RecoveryTrajectoryLedger | null = null;
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private exposedTier: ToolTier = 1;
   private clientSupportsListChanged = true;
+  /** Active capability filter. undefined = no filter (all capabilities exposed). */
+  private capabilityFilter: Set<ToolCapability> | undefined;
   private clientDetected = false;
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
   private stopPromise: Promise<void> | null = null;
@@ -183,12 +491,43 @@ export class MCPServer {
    */
   private rateLimiterSweepTimer: NodeJS.Timeout | null = null;
 
+  /**
+   * Pending server→client request resolvers, keyed by JSON-RPC id string
+   * (#960). Populated by `requestFromClient`; drained by the response fork
+   * at the top of `handleMessage` and by `rejectAllPendingS2cRequests` on
+   * connection close.
+   */
+  private pendingClientRequests: Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (err: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+      signal?: AbortSignal;
+      signalListener?: () => void;
+      mcpSessionId?: string;
+    }
+  > = new Map();
+  /** Monotonic counter — prefixed `oc-s2c-` cannot collide with client ids. */
+  private nextS2cRequestId = 1;
+  /**
+   * Capabilities the client declared in `initialize` (#960). Downstream
+   * features (roots #880, sampling #876, elicitation #877) check this cache
+   * before issuing a server→client request and fall back when absent.
+   */
+  private clientCapabilities: { roots?: object; sampling?: object; elicitation?: object } = {};
+  private clientCapabilitiesBySession: Map<string, { roots?: object; sampling?: object; elicitation?: object }> = new Map();
+
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
     this.options = options;
 
     if (options.initialToolTier) {
       this.exposedTier = options.initialToolTier;
+    }
+
+    if (options.capabilityFilter) {
+      this.capabilityFilter = options.capabilityFilter;
     }
 
     // Release the tenant binding as soon as the underlying session is
@@ -200,6 +539,9 @@ export class MCPServer {
       this.sessionManager.addEventListener((event) => {
         if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
+          getTaskDriftLedger().cleanupSession(event.sessionId);
+        } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
+          getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);
         }
       });
     }
@@ -207,6 +549,8 @@ export class MCPServer {
     // Register built-in resources
     this.registerResource(usageGuideResource);
     this.registerResource(skillGraphResourceTemplate);
+
+    this.wireLiveResourceUpdateEmitters();
 
     // Initialize dashboard if enabled
     if (options.dashboard) {
@@ -226,6 +570,15 @@ export class MCPServer {
     this.hintEngine = new HintEngine(this.activityTracker);
     this.hintEngine.enableLogging(hintsDir);
     this.hintEngine.enableLearning(hintsDir);
+    this.hintEngine.enableRecoveryFeedback(path.join(process.cwd(), '.openchrome', 'recovery-feedback'));
+
+    // Initialize passive recovery trajectory ledger (#1017). Default-on with the
+    // existing .openchrome harness logs; set OPENCHROME_RECOVERY_LEDGER=0 to disable.
+    if (process.env.OPENCHROME_RECOVERY_LEDGER !== '0') {
+      this.recoveryLedger = new RecoveryTrajectoryLedger({
+        dirPath: path.join(process.cwd(), '.openchrome', 'recovery'),
+      });
+    }
 
     // Initialize task journal
     getTaskJournal().init().catch((err: unknown) => {
@@ -238,6 +591,14 @@ export class MCPServer {
       this.rateLimiter = new SessionRateLimiter(rateLimitRpm);
       console.error(`[MCPServer] Rate limiter: ${rateLimitRpm} requests/min per session`);
     }
+
+    // Wire the structured-logging sender (#870). After this point, calls to
+    // `log.info / log.warning / log.error / log.debug` from anywhere in the
+    // codebase will emit `notifications/message` to connected clients (at or
+    // above the active level) AND mirror error-level events to stderr.
+    setLogSender((level: LogLevel, logger: string, data: Record<string, unknown>) => {
+      this.sendNotification('notifications/message', { level, logger, data });
+    });
   }
 
   /**
@@ -291,6 +652,11 @@ export class MCPServer {
     options?: { timeoutRecoverable?: boolean }
   ): void {
     validateToolSchema(name, definition.inputSchema);
+    // Compile-time enforcement: MCPToolDefinition makes `annotations`
+    // required, so reaching this point guarantees the field is present.
+    // (No runtime guard here — the test suite registers synthetic dummy
+    // tools with dynamic names that don't appear in TOOL_ANNOTATIONS, and
+    // those legitimately bring their own inline annotations.)
     this.tools.set(name, { name, handler, definition, ...options });
     this.manifestVersion++;
   }
@@ -322,6 +688,231 @@ export class MCPServer {
   }
 
   /**
+   * Server→client request/response primitive (#960).
+   *
+   * Allocates a unique request id (prefixed `oc-s2c-` so it cannot collide
+   * with client-allocated ids), serializes the request via the existing
+   * `sendResponse` path, and registers a one-shot resolver. The transport
+   * delivers the JSON-RPC envelope; the response is matched back to the
+   * resolver in `handleMessage` (response fork) before the regular
+   * client-request validation runs.
+   *
+   * Failure modes (rejection):
+   *   - `timeoutMs` elapses → `Error('s2c_timeout:<method>')`.
+   *   - `signal` fires → `Error('s2c_aborted')`.
+   *   - Connection closes (`close()` / transport teardown) →
+   *     `Error('s2c_aborted:connection_closed')`.
+   *   - Client returns a JSON-RPC `error` → `Error(error.message)`.
+   *
+   * Concurrent in-flight requests are independent — no head-of-line blocking.
+   */
+  protected async requestFromClient<T = unknown>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<T> {
+    const id = `oc-s2c-${this.nextS2cRequestId++}`;
+    const timeoutMs = options?.timeoutMs ?? 30_000;
+    const mcpSessionId = currentRequestContext()?.mcpSessionId;
+    return new Promise<T>((resolve, reject) => {
+      const cleanup = (): void => {
+        const entry = this.pendingClientRequests.get(id);
+        if (!entry) return;
+        if (entry.timer) clearTimeout(entry.timer);
+        if (entry.signal && entry.signalListener) {
+          entry.signal.removeEventListener('abort', entry.signalListener);
+        }
+        this.pendingClientRequests.delete(id);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`s2c_timeout:${method}`));
+      }, timeoutMs);
+
+      let signalListener: (() => void) | undefined;
+      if (options?.signal) {
+        if (options.signal.aborted) {
+          clearTimeout(timer);
+          reject(new Error('s2c_aborted'));
+          return;
+        }
+        signalListener = (): void => {
+          cleanup();
+          reject(new Error('s2c_aborted'));
+        };
+        options.signal.addEventListener('abort', signalListener, { once: true });
+      }
+
+      this.pendingClientRequests.set(id, {
+        resolve: (value: unknown) => {
+          cleanup();
+          resolve(value as T);
+        },
+        reject: (err: Error) => {
+          cleanup();
+          reject(err);
+        },
+        timer,
+        signal: options?.signal,
+        signalListener,
+        mcpSessionId,
+      });
+
+      const request = {
+        jsonrpc: '2.0' as const,
+        id,
+        method,
+        ...(params ? { params } : {}),
+      };
+      try {
+        const transport = this.transport;
+        if (mcpSessionId && transport && typeof transport.sendToSession === 'function') {
+          const sent = transport.sendToSession(mcpSessionId, request as unknown as MCPResponse);
+          if (!sent) {
+            cleanup();
+            reject(new Error('s2c_aborted:connection_closed'));
+            return;
+          }
+        } else {
+          this.sendResponse(request as unknown as MCPResponse);
+        }
+      } catch (sendErr) {
+        cleanup();
+        reject(sendErr instanceof Error ? sendErr : new Error(String(sendErr)));
+      }
+    });
+  }
+
+  private getCurrentClientCapabilities(): { roots?: object; sampling?: object; elicitation?: object } {
+    const mcpSessionId = currentRequestContext()?.mcpSessionId;
+    if (mcpSessionId) {
+      return this.clientCapabilitiesBySession.get(mcpSessionId) ?? {};
+    }
+    return this.clientCapabilities;
+  }
+
+  /**
+   * Reject every pending server→client request. Called when the transport
+   * tears down (HTTP DELETE / stdio EOF) so callers don't hang forever.
+   */
+  private rejectAllPendingS2cRequests(reason: string): void {
+    for (const [id, entry] of this.pendingClientRequests) {
+      // Use entry.reject which also clears the timer / signal listener.
+      try {
+        entry.reject(new Error(reason));
+      } catch {
+        // best-effort
+      }
+      this.pendingClientRequests.delete(id);
+    }
+  }
+
+  private rejectPendingS2cRequestsForSession(sessionId: string, reason: string): void {
+    for (const [id, entry] of this.pendingClientRequests) {
+      if (entry.mcpSessionId !== sessionId) continue;
+      try {
+        entry.reject(new Error(reason));
+      } catch {
+        // best-effort
+      }
+      this.pendingClientRequests.delete(id);
+    }
+  }
+
+  /**
+   * Build a coalescing progress-reporter for a single tools/call invocation.
+   *
+   * Returns `undefined` when the client did not supply `_meta.progressToken`,
+   * giving downstream tools a cheap no-op semantic (`ctx.reportProgress?.(...)`).
+   *
+   * Coalescing window: 100 ms per progressToken. Updates within the window
+   * are dropped except for the most recent one, which is delivered when the
+   * window expires. The final update (highest progress) is always
+   * delivered when `flush()` is called at the end of the tool call.
+   *
+   * Notification emission is best-effort — exceptions in the transport
+   * layer are swallowed so a wedged SSE socket cannot break the parent
+   * tool call. Monotonic non-decreasing `progress` is enforced (out-of-order
+   * updates with lower progress are ignored).
+   */
+  private createProgressReporter(
+    progressToken: string | number | null | undefined,
+  ): { reporter?: (update: ToolProgress) => void; flush: () => void } {
+    if (progressToken === undefined || progressToken === null) {
+      return { reporter: undefined, flush: () => undefined };
+    }
+    const COALESCE_MS = 100;
+    let lastEmittedAt = 0;
+    let pending: ToolProgress | null = null;
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+    let highestProgress = -Infinity;
+    let closed = false;
+
+    const send = (update: ToolProgress): void => {
+      if (closed) return;
+      try {
+        this.sendNotification('notifications/progress', {
+          progressToken,
+          progress: update.progress,
+          ...(update.total !== undefined ? { total: update.total } : {}),
+          ...(update.message !== undefined ? { message: update.message } : {}),
+        });
+        lastEmittedAt = Date.now();
+      } catch (err) {
+        // Best-effort: a wedged transport must not break the parent tool call.
+        console.error('[MCPServer] progress notification emit failed:', err);
+      }
+    };
+
+    const reporter = (update: ToolProgress): void => {
+      if (closed) return;
+      // Enforce monotonic non-decreasing `progress`.
+      if (update.progress < highestProgress) return;
+      highestProgress = update.progress;
+      const now = Date.now();
+      const elapsed = now - lastEmittedAt;
+      if (elapsed >= COALESCE_MS) {
+        // Emit immediately and clear any pending coalesced update.
+        if (pendingTimer) {
+          clearTimeout(pendingTimer);
+          pendingTimer = null;
+          pending = null;
+        }
+        send(update);
+      } else {
+        // Buffer; schedule a single trailing emission.
+        pending = update;
+        if (!pendingTimer) {
+          pendingTimer = setTimeout(() => {
+            pendingTimer = null;
+            if (!closed && pending) {
+              const p = pending;
+              pending = null;
+              send(p);
+            }
+          }, COALESCE_MS - elapsed);
+        }
+      }
+    };
+
+    const flush = (): void => {
+      if (pendingTimer) {
+        clearTimeout(pendingTimer);
+        pendingTimer = null;
+      }
+      if (pending) {
+        const p = pending;
+        pending = null;
+        send(p);
+      }
+      closed = true;
+    };
+
+    return { reporter, flush };
+  }
+
+  /**
    * Wire rate-limiter session cleanup into the given transport so that
    * bucket memory is freed immediately when a client sends DELETE /mcp.
    *
@@ -332,24 +923,37 @@ export class MCPServer {
    * in start().
    */
   wireRateLimiterCleanup(transport: MCPTransport): void {
-    const hasHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
-    if (!hasHook) return;
-    (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
-      (sessionId: string) => {
-        if (this.rateLimiter) {
-          this.rateLimiter.removeSession(sessionId);
-        }
-        // Intentionally NOT clearing sessionTenants here: the transport
-        // callback receives the HTTP `Mcp-Session-Id` (a UUID assigned at
-        // initialize), whereas tenant claims are keyed by the tool-call
-        // sessionId (client-supplied via params/toolArgs, defaulting to
-        // 'default'). Those two spaces don't match, so deleting by this id
-        // would usually be a no-op, and on an unlucky collision would drop
-        // someone else's binding. sessionTenants is instead reclaimed by
-        // (a) the MCP `sessions/delete` handler and (b) the periodic
-        // `sweepSessionTenants()` tick scheduled in start().
-      },
-    );
+    const cleanupConnectionState = (sessionId: string): void => {
+      this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
+      this.clientCapabilitiesBySession.delete(sessionId);
+      this.resourceSubscriptions.cleanupSession(sessionId);
+    };
+
+    const hasDeleteHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
+    if (hasDeleteHook) {
+      (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
+        (sessionId: string) => {
+          if (this.rateLimiter) {
+            this.rateLimiter.removeSession(sessionId);
+          }
+          // Intentionally NOT clearing sessionTenants here: the transport
+          // callback receives the HTTP `Mcp-Session-Id` (a UUID assigned at
+          // initialize), whereas tenant claims are keyed by the tool-call
+          // sessionId (client-supplied via params/toolArgs, defaulting to
+          // 'default'). Those two spaces don't match, so deleting by this id
+          // would usually be a no-op, and on an unlucky collision would drop
+          // someone else's binding. sessionTenants is instead reclaimed by
+          // (a) the MCP `sessions/delete` handler and (b) the periodic
+          // `sweepSessionTenants()` tick scheduled in start().
+          cleanupConnectionState(sessionId);
+        },
+      );
+    }
+
+    const hasCloseHook = typeof (transport as unknown as { onSessionClose?: unknown }).onSessionClose === 'function';
+    if (hasCloseHook) {
+      (transport as unknown as { onSessionClose: (cb: (id: string) => void) => void }).onSessionClose(cleanupConnectionState);
+    }
   }
 
   /**
@@ -385,6 +989,7 @@ export class MCPServer {
   async handleMessage(
     parsed: Record<string, unknown>,
     signal?: AbortSignal,
+    transportContext?: TransportMessageContext,
   ): Promise<MCPResponse | null> {
     // Record activity — every inbound MCP request flows through this method
     // (stdio and HTTP transports both route here; see start()). By wiring at
@@ -392,43 +997,61 @@ export class MCPServer {
     // #649) without having to touch every registerTool() call site.
     getIdleState().notifyActive();
 
-    // Validate JSON-RPC 2.0 envelope
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      parsed.jsonrpc !== '2.0' ||
-      typeof parsed.method !== 'string'
-    ) {
-      return {
-        jsonrpc: '2.0' as const,
-        id: (parsed.id as string | number) ?? 0,
-        error: {
-          code: MCPErrorCodes.INVALID_REQUEST,
-          message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
-        },
-      };
+    // #960 — Server→client response fork. If this message has an id and
+    // (result | error) but no method, it is a response to a request the server
+    // sent earlier via `requestFromClient`. Route it to the pending resolver
+    // and short-circuit BEFORE the regular client-request validation (which
+    // would otherwise reject the response as "missing method field").
+    if (isServerToClientResponseMessage(parsed)) {
+      const idKey = String(parsed.id);
+      const entry = this.pendingClientRequests.get(idKey);
+      if (entry) {
+        if (entry.mcpSessionId && transportContext?.mcpSessionId !== entry.mcpSessionId) {
+          console.error(`[MCPServer] dropping client response for id=${idKey} from non-owner session`);
+          return null;
+        }
+        if ('error' in parsed) {
+          const err = parsed.error as { message?: string; code?: number };
+          entry.reject(new Error(err?.message ?? `s2c_error_code:${err?.code ?? 'unknown'}`));
+        } else {
+          entry.resolve(parsed.result);
+        }
+      } else {
+        // Stray response (e.g. client echoed a stale id) — log and drop.
+        console.error(`[MCPServer] dropping stray client response for id=${idKey}`);
+      }
+      return null;
     }
+
+    // Validate JSON-RPC 2.0 envelope
+    const invalidRequest = buildInvalidJsonRpcRequestResponse(parsed);
+    if (invalidRequest) return invalidRequest;
 
     // Read the transport-injected principal via the non-forgeable Symbol key
     // (see PRINCIPAL_SYM in src/middleware/auth.ts). JSON.parse cannot produce
     // symbol-keyed properties, so anything under PRINCIPAL_SYM was placed here
     // by the transport after authenticating the request — clients cannot
     // spoof a principal by including `"__principal": {...}` in their JSON body.
-    const principal = (parsed as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] as
-      | Principal
-      | undefined;
-    // Scrub any string-named `__principal` that a malicious caller may have
-    // embedded in the JSON. We don't read it, but deleting here prevents it
-    // from echoing back out via JSON.stringify in later response paths.
-    if ('__principal' in parsed) {
-      delete (parsed as Record<string, unknown>).__principal;
-    }
+    const principal = extractPrincipalAndScrub(parsed as Record<PropertyKey, unknown>);
 
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
-    if (parsed.id === undefined || parsed.id === null) {
+    if (isJsonRpcNotification(parsed)) {
       const method = parsed.method as string;
-      if (method === 'notifications/initialized' || method === 'initialized') {
+      if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
+        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+        if (mcpSessionId) {
+          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
+            console.error(`[MCPServer] initial roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+          });
+        }
+      } else if (method === 'notifications/roots/list_changed' || method === 'roots/list_changed') {
+        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+        if (mcpSessionId) {
+          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
+            console.error(`[MCPServer] roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+          });
+        }
       }
       // All notifications are silently ignored (no response sent)
       return null;
@@ -514,8 +1137,8 @@ export class MCPServer {
     }
 
     // Wire the transport message handler to MCPServer protocol logic
-    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal) =>
-      this.handleMessage(parsed, signal),
+    this.transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) =>
+      this.handleMessage(parsed, signal, context),
     );
 
     this.transport.start();
@@ -554,7 +1177,7 @@ export class MCPServer {
           break;
 
         case 'tools/list':
-          result = await this.handleToolsList();
+          result = await this.handleToolsList(params);
           break;
 
         case 'tools/call':
@@ -565,8 +1188,20 @@ export class MCPServer {
           result = await this.handleResourcesList();
           break;
 
+        case 'resources/templates/list':
+          result = await this.handleResourcesTemplatesList();
+          break;
+
         case 'resources/read':
           result = await this.handleResourcesRead(params);
+          break;
+
+        case 'resources/subscribe':
+          result = await this.handleResourcesSubscribe(params);
+          break;
+
+        case 'resources/unsubscribe':
+          result = await this.handleResourcesUnsubscribe(params);
           break;
 
         case 'sessions/list':
@@ -581,6 +1216,20 @@ export class MCPServer {
           result = await this.handleSessionsDelete(params, principal);
           break;
 
+        case 'logging/setLevel':
+          // #870 — accept the client's level threshold for notifications/message.
+          // Process-wide today; per-session level is a follow-up (acceptable for
+          // stdio's one-client-per-process model).
+          {
+            const level = (params as { level?: unknown } | undefined)?.level;
+            const err = logLevelSetErrorOrNull(level);
+            if (err) {
+              return this.errorResponse(id, err.code, err.message);
+            }
+            result = {};
+          }
+          break;
+
         default:
           return this.errorResponse(id, MCPErrorCodes.METHOD_NOT_FOUND, `Unknown method: ${method}`);
       }
@@ -591,8 +1240,59 @@ export class MCPServer {
         result,
       };
     } catch (error) {
+      if (error instanceof ResourceRpcError) {
+        return this.errorResponse(id, error.code, error.message, error.data);
+      }
       const message = formatError(error);
       return this.errorResponse(id, MCPErrorCodes.INTERNAL_ERROR, message);
+    }
+  }
+
+
+  private async refreshSessionRoots(mcpSessionId: string): Promise<void> {
+    const caps = this.clientCapabilitiesBySession.get(mcpSessionId) ?? this.clientCapabilities;
+    if (!caps.roots) return;
+    const roots = await this.requestFromClient<unknown>('roots/list', undefined, { timeoutMs: 250 });
+    setSessionMcpRoots(mcpSessionId, roots);
+  }
+
+  private enforceNetworkRootsForTool(
+    mcpSessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): MCPResult | null {
+    const urls = extractNetworkRootCandidateUrls(toolName, args);
+    if (urls.length === 0) return null;
+    try {
+      for (const url of urls) {
+        assertUrlAllowedBySessionRoots(mcpSessionId, url);
+      }
+      return null;
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: formatError(error) }],
+        isError: true,
+      };
+    }
+  }
+
+  private enforceFileRootsForTool(
+    mcpSessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): MCPResult | null {
+    const paths = extractFileRootCandidatePaths(toolName, args);
+    if (paths.length === 0) return null;
+    try {
+      for (const filePath of paths) {
+        assertFilePathAllowedBySessionRoots(mcpSessionId, filePath);
+      }
+      return null;
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: formatError(error) }],
+        isError: true,
+      };
     }
   }
 
@@ -600,6 +1300,24 @@ export class MCPServer {
    * Handle initialize request
    */
   private async handleInitialize(params?: Record<string, unknown>): Promise<MCPResult> {
+    // #960 — capture client capabilities for downstream consumers (roots,
+    // sampling, elicitation). Downstream issues check
+    // `this.clientCapabilities.<feature>` before issuing the server→client
+    // request and fall back to a heuristic / error path when absent.
+    const caps = params?.capabilities as { roots?: object; sampling?: object; elicitation?: object } | undefined;
+    if (caps && typeof caps === 'object') {
+      const captured = {
+        ...(caps.roots !== undefined ? { roots: caps.roots } : {}),
+        ...(caps.sampling !== undefined ? { sampling: caps.sampling } : {}),
+        ...(caps.elicitation !== undefined ? { elicitation: caps.elicitation } : {}),
+      };
+      this.clientCapabilities = captured;
+      const mcpSessionId = currentRequestContext()?.mcpSessionId;
+      if (mcpSessionId) {
+        this.clientCapabilitiesBySession.set(mcpSessionId, captured);
+      }
+    }
+
     // Detect client identity for progressive disclosure decisions
     const clientInfo = params?.clientInfo as { name?: string; version?: string } | undefined;
     const rawName = clientInfo?.name ?? '';
@@ -632,7 +1350,16 @@ export class MCPServer {
       protocolVersion: '2024-11-05',
       capabilities: {
         tools: { listChanged: this.clientSupportsListChanged },
-        resources: {},
+        resources: { listChanged: true, subscribe: true },
+        // #870 — advertise structured-logging support. Empty object per MCP
+        // spec means "supported, no sub-capabilities yet". Clients drive the
+        // level via `logging/setLevel`; events flow as
+        // `notifications/message`.
+        logging: {},
+        // #880 — OpenChrome can react to client roots/list_changed and treats
+        // roots as additive narrowing only. Empty object follows MCP capability
+        // convention: support exists without extra sub-capabilities.
+        roots: {},
       },
       serverInfo: {
         name: 'openchrome',
@@ -642,13 +1369,31 @@ export class MCPServer {
   }
 
   /**
+   * Returns true if a tool with the given capability is allowed by the active filter.
+   * When no filter is set, all tools are allowed (P2 default behaviour).
+   */
+  private isCapabilityAllowed(capability: ToolCapability | undefined): boolean {
+    if (!this.capabilityFilter) return true;
+    return this.capabilityFilter.has(capability ?? 'core');
+  }
+
+  /**
    * Handle tools/list request
    */
-  private async handleToolsList(): Promise<MCPResult> {
+  private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
+    // Signal the hint engine that this session has consumed tool descriptions,
+    // so rules whose guidance is already embedded in description "When to
+    // use / When NOT to use" blocks can suppress themselves without affecting
+    // other browser sessions that have not requested tools/list yet.
+    const sessionId = (params?.sessionId || 'default') as string;
+    if (this.hintEngine) {
+      this.hintEngine.markToolsListServed(sessionId);
+    }
+
     const tools: MCPToolDefinition[] = [];
     for (const registry of this.tools.values()) {
       const tier = getToolTier(registry.definition.name);
-      if (tier <= this.exposedTier) {
+      if (tier <= this.exposedTier && this.isCapabilityAllowed(registry.definition.capability)) {
         tools.push(registry.definition);
       }
     }
@@ -656,9 +1401,10 @@ export class MCPServer {
     // Add hint about additional tools when not fully expanded.
     // Only inject expand_tools if the client supports notifications/tools/list_changed —
     // otherwise there's no point since the client can't react to the notification.
-    if (this.exposedTier < 3 && this.clientSupportsListChanged) {
+    if (this.exposedTier < 3 && this.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
       const hiddenCount = Array.from(this.tools.values()).filter(
-        r => getToolTier(r.definition.name) > this.exposedTier
+        r => getToolTier(r.definition.name) > this.exposedTier &&
+          this.isCapabilityAllowed(r.definition.capability)
       ).length;
       if (hiddenCount > 0) {
         tools.push({
@@ -675,6 +1421,7 @@ export class MCPServer {
             },
             required: ['tier'],
           },
+          annotations: TOOL_ANNOTATIONS.expand_tools,
         });
       }
     }
@@ -690,7 +1437,15 @@ export class MCPServer {
     for (const resource of this.resources.values()) {
       resources.push(resource);
     }
+    resources.push(...liveResourceDefinitions(this.sessionManager));
     return { resources };
+  }
+
+  /**
+   * Handle resources/templates/list request
+   */
+  private async handleResourcesTemplatesList(): Promise<MCPResult> {
+    return { resourceTemplates: LIVE_RESOURCE_TEMPLATES };
   }
 
   /**
@@ -725,6 +1480,19 @@ export class MCPServer {
       };
     }
 
+    const live = await this.tryReadLiveResource(uri);
+    if (live) {
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: live.mimeType,
+            text: live.text,
+          },
+        ],
+      };
+    }
+
     const resource = this.resources.get(uri);
     if (!resource) {
       throw new Error(`Unknown resource: ${uri}`);
@@ -749,6 +1517,79 @@ export class MCPServer {
     };
   }
 
+
+
+  private async tryReadLiveResource(uri: string): Promise<{ mimeType: string; text: string } | null> {
+    if (!uri.startsWith('oc://')) return null;
+    return readLiveResource(this.sessionManager, uri);
+  }
+
+  /**
+   * Handle resources/subscribe request
+   */
+  private async handleResourcesSubscribe(params?: Record<string, unknown>): Promise<MCPResult> {
+    const uri = this.requireResourceUri(params, 'resources/subscribe');
+    assertLiveResourceAccess(this.sessionManager, uri);
+    const result = this.resourceSubscriptions.subscribe(uri);
+    return { ...result };
+  }
+
+  /**
+   * Handle resources/unsubscribe request
+   */
+  private async handleResourcesUnsubscribe(params?: Record<string, unknown>): Promise<MCPResult> {
+    const uri = this.requireResourceUri(params, 'resources/unsubscribe');
+    const result = this.resourceSubscriptions.unsubscribe(uri);
+    return { ...result };
+  }
+
+  private requireResourceUri(params: Record<string, unknown> | undefined, method: string): string {
+    if (!params) {
+      throw new Error(`Missing params for ${method}`);
+    }
+    const uri = params.uri;
+    if (typeof uri !== 'string' || uri.length === 0) {
+      throw new Error('Missing resource uri');
+    }
+    return uri;
+  }
+
+  private wireLiveResourceUpdateEmitters(): void {
+    if (typeof this.sessionManager.addEventListener === 'function') {
+      this.sessionManager.addEventListener((event) => {
+        if (event.type === 'session:target-added' || event.type === 'session:target-removed' || event.type === 'session:target-closed') {
+          this.emitResourceUpdated(sessionTabsUri(event.sessionId));
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+        }
+        if (event.type === 'session:created' || event.type === 'session:deleted') {
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+          this.emitResourcesListChanged();
+        }
+      });
+    }
+    if (this.liveResourceLifecycleUnsubscribe) return;
+    this.liveResourceLifecycleUnsubscribe = getLifecycleBus().on('*', (event: LifecycleEvent) => {
+      if ('sessionId' in event) {
+        if (event.kind.startsWith('target:') || event.kind.startsWith('worker:')) {
+          this.emitResourceUpdated(sessionTabsUri(event.sessionId));
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+        }
+        if (event.kind.startsWith('session:')) {
+          this.emitResourceUpdated(sessionStateUri(event.sessionId));
+          this.emitResourcesListChanged();
+        }
+      }
+    });
+  }
+
+  private emitResourceUpdated(uri: string): void {
+    this.resourceSubscriptions.emitUpdated(uri, this.transport);
+  }
+
+  private emitResourcesListChanged(): void {
+    this.resourceSubscriptions.emitListChanged(this.transport);
+  }
+
   /**
    * Handle tools/call request
    */
@@ -764,6 +1605,7 @@ export class MCPServer {
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
+    const telemetryToolArgs = redactToolArgsForTelemetry(toolName, toolArgs);
     // Use 'default' session if no sessionId is provided
     const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 
@@ -794,7 +1636,7 @@ export class MCPServer {
         } catch {
           // best-effort
         }
-        return {
+        const deniedResult: MCPResult = {
           content: [
             {
               type: 'text',
@@ -803,6 +1645,8 @@ export class MCPServer {
           ],
           isError: true,
         };
+        this.recordToolOutputObservability(toolName, deniedResult);
+        return deniedResult;
       }
     }
 
@@ -829,7 +1673,7 @@ export class MCPServer {
       } catch {
         // best-effort
       }
-      return {
+      const forbiddenResult: MCPResult = {
         content: [
           {
             type: 'text',
@@ -838,24 +1682,56 @@ export class MCPServer {
         ],
         isError: true,
       };
+      this.recordToolOutputObservability(toolName, forbiddenResult);
+      return forbiddenResult;
     }
 
-    // Handle the expand_tools meta-tool before normal tool lookup
+    // Handle the expand_tools meta-tool before normal tool lookup.
+    // It is classified as a core tool, so capability filters that exclude
+    // core must hide and reject it just like any other core tool.
     if (toolName === 'expand_tools') {
+      if (!this.isCapabilityAllowed('core')) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ code: 'CAPABILITY_DISABLED', capability: 'core' }),
+          }],
+          isError: true,
+        };
+      }
+      // If a specific tool name is requested (capability gate check), verify it is allowed
+      const requestedTool = toolArgs?.name as string | undefined;
+      if (requestedTool) {
+        const registry = this.tools.get(requestedTool);
+        if (registry && !this.isCapabilityAllowed(registry.definition.capability)) {
+          const capability = registry.definition.capability ?? 'core';
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({ code: 'CAPABILITY_DISABLED', capability }),
+            }],
+            isError: true,
+          };
+        }
+      }
+
       const oldTier = this.exposedTier;
       const tier = parseInt(String(toolArgs?.tier ?? '2'), 10) || 2;
       this.expandToolTier(Math.min(tier, 3) as ToolTier);
 
       // Collect newly-exposed tool definitions for clients that don't support list_changed
+      // Only include capability-allowed tools
       const newTools = Array.from(this.tools.values())
         .filter(r => {
           const t = getToolTier(r.definition.name);
-          return t <= this.exposedTier && t > oldTier;
+          return t <= this.exposedTier && t > oldTier &&
+            this.isCapabilityAllowed(r.definition.capability);
         })
         .map(r => r.definition);
 
       const toolCount = Array.from(this.tools.values()).filter(
-        r => getToolTier(r.definition.name) <= this.exposedTier
+        r => getToolTier(r.definition.name) <= this.exposedTier &&
+          this.isCapabilityAllowed(r.definition.capability)
       ).length;
 
       let text = `Tool tier expanded to ${this.exposedTier}. Now exposing ${toolCount} tools.`;
@@ -863,9 +1739,26 @@ export class MCPServer {
         text += `\n\nNewly available tools:\n${JSON.stringify(newTools, null, 2)}\n\nYou can now call these tools directly by name.`;
       }
 
-      return {
+      const expandResult: MCPResult = {
         content: [{ type: 'text', text }],
       };
+      this.recordToolOutputObservability(toolName, expandResult);
+      return expandResult;
+    }
+
+    // Capability gate check: reject calls to tools excluded by --tools-only / --disable-tools
+    if (this.capabilityFilter) {
+      const registry = this.tools.get(toolName);
+      if (registry && !this.isCapabilityAllowed(registry.definition.capability)) {
+        const capability = registry.definition.capability ?? 'core';
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ code: 'CAPABILITY_DISABLED', capability }),
+          }],
+          isError: true,
+        };
+      }
     }
 
     const tool = this.tools.get(toolName);
@@ -878,11 +1771,63 @@ export class MCPServer {
     if (requiredFields && requiredFields.length > 0) {
       const missing = requiredFields.filter((field) => !(field in toolArgs) || toolArgs[field] === undefined || toolArgs[field] === null);
       if (missing.length > 0) {
-        return {
+        const missingArgsResult: MCPResult = {
           content: [{ type: 'text', text: `Error: Missing required argument(s): ${missing.join(', ')}` }],
           isError: true,
         };
+        this.recordToolOutputObservability(toolName, missingArgsResult);
+        return missingArgsResult;
       }
+    }
+
+    // ─── Secrets substitution (#834) ──────────────────────────────────────
+    // Replace `${SECRET:NAME}` tokens with real values at the whitelisted
+    // argument paths only. The handler receives the literal secret value
+    // for typing/network use, but the response/trace/skill record layers
+    // re-redact it on the way out so secrets never reach LLM-visible
+    // artifacts. A missing secret raises MissingSecretError → structured
+    // MCP error result.
+    let substitutedArgs: Record<string, unknown>;
+    try {
+      substitutedArgs = applySecretWhitelist(toolName, toolArgs);
+    } catch (err) {
+      if (err instanceof MissingSecretError) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'MISSING_SECRET',
+                code: 'MISSING_SECRET',
+                name: err.secretName,
+                message: `Secret "${err.secretName}" is referenced via \${SECRET:${err.secretName}} but was not loaded. Pass --secrets <path> at server startup.`,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      throw err;
+    }
+
+    const rootsDenial = this.enforceNetworkRootsForTool(
+      currentRequestContext()?.mcpSessionId ?? sessionId,
+      toolName,
+      substitutedArgs,
+    );
+    if (rootsDenial) {
+      this.recordToolOutputObservability(toolName, rootsDenial);
+      return rootsDenial;
+    }
+
+    const fileRootsDenial = this.enforceFileRootsForTool(
+      currentRequestContext()?.mcpSessionId ?? sessionId,
+      toolName,
+      substitutedArgs,
+    );
+    if (fileRootsDenial) {
+      this.recordToolOutputObservability(toolName, fileRootsDenial);
+      return fileRootsDenial;
     }
 
     // All static gates passed (scope, tool existence, required args). Only
@@ -920,7 +1865,7 @@ export class MCPServer {
       if (!rateResult.allowed) {
         console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
         try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', withTenantLabel({ tool: toolName })); } catch { /* best-effort */ }
-        return {
+        const rateLimitResult: MCPResult = {
           content: [
             {
               type: 'text',
@@ -929,6 +1874,8 @@ export class MCPServer {
           ],
           isError: true,
         };
+        this.recordToolOutputObservability(toolName, rateLimitResult);
+        return rateLimitResult;
       }
     }
 
@@ -968,7 +1915,7 @@ export class MCPServer {
         });
 
         if (reconnectResult !== 'reconnected') {
-          return {
+          const reconnectResultPayload: MCPResult = {
             content: [
               {
                 type: 'text',
@@ -977,6 +1924,8 @@ export class MCPServer {
             ],
             isError: true,
           };
+          this.recordToolOutputObservability(toolName, reconnectResultPayload);
+          return reconnectResultPayload;
         }
         console.error(`[MCPServer] Reconnection complete, proceeding with "${toolName}"`);
       }
@@ -984,10 +1933,41 @@ export class MCPServer {
       // CDPClient may not be initialized — proceed with normal flow
     }
 
+    const taskEnvelopeId = taskEnvelopeIdForTool(toolName, toolArgs);
+
     // Start activity tracking
-    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', toolArgs, requestId);
-    getDashboardState().recordToolStart(sessionId || 'default', toolName, toolArgs, callId);
+    const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
+    getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
     const toolStartTime = Date.now();
+
+    const runHarnessId = isRunHarnessEnabled() ? extractRunId(toolArgs) : undefined;
+    if (runHarnessId && !toolName.startsWith('oc_run_')) {
+      try {
+        const runStore = getRunStore();
+        const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+        runStore.appendToolStarted({
+          run_id: runHarnessId,
+          session_id: sessionId,
+          tab_id: runTabId,
+          tool: toolName,
+          args: toolArgs,
+        });
+        if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+          runStore.appendRunEvent({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: runTabId,
+            kind: 'progress',
+            tool: toolName,
+            message: 'long task started',
+            metadata: { stage: 'started' },
+          });
+        }
+      } catch {
+        // best-effort run ledger; never alter tool behavior
+      }
+    }
+
 
     // Adaptive heartbeat: switch to heavy mode during tool execution
     try {
@@ -1076,16 +2056,32 @@ export class MCPServer {
         eventLoopMonitor.beginHeavyOperation();
       }
 
+      // MCP progress-notifications wiring (#869). When the client passed
+      // `_meta.progressToken` on tools/call, build a per-call coalescing
+      // reporter and thread it through every ToolContext invocation site
+      // (initial, post-reconnect retry, swallowed-error retry). flushProgress
+      // runs in the outer finally so a trailing coalesced update is always
+      // delivered before tools/call returns.
+      const progressToken = (
+        params as { _meta?: { progressToken?: string | number | null } } | undefined
+      )?._meta?.progressToken ?? undefined;
+      const { reporter: reportProgress, flush: flushProgress } =
+        this.createProgressReporter(progressToken);
+
       let result: MCPResult;
       try {
         const toolContext: ToolContext = {
           startTime: Date.now(),
           deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
           signal,
+          principal,
+          clientCapabilities: this.getCurrentClientCapabilities(),
+          requestClient: this.requestFromClient.bind(this),
+          reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
         result = await Promise.race([
-          Promise.resolve(tool.handler(sessionId, toolArgs, toolContext)).finally(() => clearTimeout(tid)),
+          Promise.resolve(tool.handler(sessionId, substitutedArgs, toolContext)).finally(() => clearTimeout(tid)),
           new Promise<never>((_, reject) => {
             tid = setTimeout(
               () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms`)),
@@ -1117,10 +2113,15 @@ export class MCPServer {
             const retryToolContext: ToolContext = {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+              signal,
+              principal,
+              clientCapabilities: this.getCurrentClientCapabilities(),
+              requestClient: this.requestFromClient.bind(this),
+              reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
             result = await Promise.race([
-              Promise.resolve(tool.handler(sessionId, toolArgs, retryToolContext)).finally(() => clearTimeout(tid2)),
+              Promise.resolve(tool.handler(sessionId, substitutedArgs, retryToolContext)).finally(() => clearTimeout(tid2)),
               new Promise<never>((_, reject) => {
                 tid2 = setTimeout(
                   () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (retry)`)),
@@ -1139,6 +2140,9 @@ export class MCPServer {
         if (isHeavyTool && eventLoopMonitor) {
           eventLoopMonitor.endHeavyOperation();
         }
+        // Deliver any trailing coalesced progress update (#869). Safe to call
+        // when no progressToken was supplied — flush is a no-op then.
+        flushProgress();
       }
 
       // Check if the handler returned a connection error as MCPResult instead of throwing.
@@ -1155,8 +2159,13 @@ export class MCPServer {
             const swallowedRetryContext: ToolContext = {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+              signal,
+              principal,
+              clientCapabilities: this.getCurrentClientCapabilities(),
+              requestClient: this.requestFromClient.bind(this),
+              reportProgress,
             };
-            result = await Promise.resolve(tool.handler(sessionId, toolArgs, swallowedRetryContext));
+            result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
           } catch (retryError) {
             console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);
@@ -1178,7 +2187,10 @@ export class MCPServer {
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
+      result = redactSecrets(result);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');
+      this.emitResourceUpdated('oc://dashboard/state');
 
       // Record Prometheus metrics
       try {
@@ -1193,8 +2205,11 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, true);
+        const toolSucceeded = (result as MCPResult).isError !== true;
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, toolSucceeded);
         journal.record(entry);
+        this.emitResourceUpdated(journalUri(sessionId));
+        this.emitResourceUpdated(journalUri(sessionId));
       } catch {
         // Best-effort journal recording
       }
@@ -1205,7 +2220,9 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, true, { tabId, summary }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, true, { tabId, summary }).then(() => {
+            if (recorder.activeRecordingId) this.emitResourceUpdated(recordingUri(recorder.activeRecordingId));
+          }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -1298,7 +2315,11 @@ export class MCPServer {
       // surface, so pushing into content[] guarantees the hint reaches the
       // user. Mirrors the error-path injection below for consistency.
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId, toolArgs, callId);
+        const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, false, hintResult ?? undefined);
+        if (automation) {
+          (result as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           const injectHint =
             verbosity !== 'compact' ||
@@ -1320,22 +2341,78 @@ export class MCPServer {
         }
       }
 
-      if (compressionConfig?.enabled && compressionConfig?.trackSavings) {
+      if (compressionConfig?.enabled && compressionConfig?.trackSavings && !(result as Record<string, unknown>)._compression) {
         (result as Record<string, unknown>)._compression = {
           level: compressionConfig.level ?? 'light',
           verbosity,
         };
       }
 
-      return result;
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: result.isError !== true,
+      });
+
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          const runStore = getRunStore();
+          const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+          const durationMs = Date.now() - toolStartTime;
+          runStore.appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: runTabId,
+            tool: toolName,
+            args: toolArgs,
+            ok: !result.isError,
+            duration_ms: durationMs,
+          });
+          if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+            runStore.appendRunEvent({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              kind: 'partial_result',
+              tool: toolName,
+              ok: !result.isError,
+              duration_ms: durationMs,
+              message: result.isError ? 'long task returned an error result' : 'long task returned a synchronous final result',
+              metadata: { stage: 'final_response' },
+            });
+          }
+        } catch {
+          // best-effort run ledger; never alter tool behavior
+        }
+      }
+
+
+      // ─── Secrets redaction (#834) ─────────────────────────────────────
+      // Last line of defense before the MCP envelope: replace any literal
+      // secret value still present in the response (handler may have echoed
+      // the substituted input, returned it inside a JSON blob, or surfaced
+      // it via an error message) with `${SECRET:NAME}` placeholders. No-op
+      // when --secrets was not passed.
+      const finalResult = redactSecrets(result);
+      this.recordToolOutputObservability(toolName, finalResult);
+      return finalResult;
     } catch (error) {
       const message = formatError(error);
+      const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
       const aborted = abortReason !== null;
 
       // End activity tracking (error)
       this.activityTracker!.endCall(callId, aborted ? 'aborted' : 'error', message);
+      this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, aborted ? 'aborted' : 'error', undefined, redactedMessage);
       getDashboardState().recordToolEnd(callId, aborted ? 'aborted' : 'error', message);
+      this.emitResourceUpdated('oc://dashboard/state');
 
       // Audit log failed invocation — same correlation fields as success path.
       try {
@@ -1380,7 +2457,9 @@ export class MCPServer {
         if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
-          recorder.recordAction(toolName, toolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).catch(() => {});
+          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).then(() => {
+            if (recorder.activeRecordingId) this.emitResourceUpdated(recordingUri(recorder.activeRecordingId));
+          }).catch(() => {});
         }
       } catch {
         // Best-effort recording
@@ -1462,7 +2541,11 @@ export class MCPServer {
 
       // Inject proactive hint for errors into both _hint and content[]
       if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId);
+        const hintResult = this.hintEngine.getHint(toolName, errResult as Record<string, unknown>, true, sessionId, toolArgs, callId);
+        const automation = buildAutomationInsight(toolName, errResult as Record<string, unknown>, true, hintResult ?? undefined);
+        if (automation) {
+          (errResult as Record<string, unknown>)._automation = automation;
+        }
         if (hintResult) {
           (errResult as Record<string, unknown>)._hint = hintResult.hint;
           (errResult as Record<string, unknown>)._hintMeta = {
@@ -1476,9 +2559,101 @@ export class MCPServer {
             errResult.content.push({ type: 'text', text: `\n${hintResult.hint}` });
           }
         }
+
+        if (automation && shouldInjectAutomationFallback(automation, hintResult ?? undefined)) {
+          if (Array.isArray(errResult.content)) {
+            errResult.content.push({ type: 'text', text: `\n${formatAutomationFallback(automation)}` });
+          }
+        }
       }
 
-      return errResult;
+      if (runHarnessId && !toolName.startsWith('oc_run_')) {
+        try {
+          const runStore = getRunStore();
+          const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+          const durationMs = Date.now() - toolStartTime;
+          runStore.appendToolFinished({
+            run_id: runHarnessId,
+            session_id: sessionId,
+            tab_id: runTabId,
+            tool: toolName,
+            args: toolArgs,
+            ok: false,
+            duration_ms: durationMs,
+            message: displayMessage,
+          });
+          if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+            runStore.appendRunEvent({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              kind: 'warning',
+              tool: toolName,
+              ok: false,
+              duration_ms: durationMs,
+              message: displayMessage,
+              metadata: { stage: 'failed_response' },
+            });
+          }
+        } catch {
+          // best-effort run ledger; never alter tool behavior
+        }
+
+      }
+
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: !errorIsError,
+      });
+
+      // Secrets redaction (#834) — see success path. Error messages can
+      // include the literal value (e.g. "type ... failed for value X").
+      const finalErrResult = redactSecrets(errResult);
+      this.recordToolOutputObservability(toolName, finalErrResult);
+      return finalErrResult;
+    }
+  }
+
+
+  private recordToolOutputObservability(toolName: string, result: MCPResult): void {
+    try {
+      const metrics = getMetricsCollector();
+      const payload = stringifyResultPayload(result);
+      const bytes = Buffer.byteLength(payload, 'utf8');
+      metrics.observe('openchrome_tool_output_bytes', withTenantLabel({ tool: toolName }), bytes);
+      metrics.observe('openchrome_tool_estimated_tokens', withTenantLabel({ tool: toolName }), estimateOutputTokensFromChars(payload.length));
+
+      const compression = (result as Record<string, unknown>)._compression;
+      if (compression && typeof compression === 'object') {
+        const originalChars = (compression as Record<string, unknown>).originalChars;
+        const compressedChars = (compression as Record<string, unknown>).compressedChars;
+        const level = String((compression as Record<string, unknown>).level ?? 'unknown');
+        if (typeof originalChars === 'number' && typeof compressedChars === 'number' && originalChars > compressedChars) {
+          metrics.observe(
+            'openchrome_tool_compression_saved_bytes',
+            withTenantLabel({ tool: toolName, mode: level }),
+            originalChars - compressedChars,
+          );
+        }
+      }
+
+      const cache = extractCacheStatus(result);
+      if (cache) {
+        metrics.inc('openchrome_cache_status_total', withTenantLabel({
+          tool: toolName,
+          status: cache.status,
+          key_version: cache.keyVersion,
+        }));
+      }
+    } catch {
+      // Metrics are best-effort and must never affect tool responses.
     }
   }
 
@@ -1691,9 +2866,148 @@ export class MCPServer {
   }
 
   /**
+   * Invoke a registered tool through the normal MCP tool-call pipeline for
+   * internal background dispatchers. This preserves the same wrappers as a
+   * client tools/call (secret substitution, scope/rate gates when present,
+   * session setup, activity/journal/metrics, timeouts, and reconnect retry)
+   * instead of calling the raw handler directly.
+   */
+  async invokeRegisteredToolForTask(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    principal?: Principal,
+  ): Promise<MCPResult> {
+    return this.handleToolsCall(
+      { name: toolName, arguments: { ...args, sessionId } },
+      undefined,
+      principal,
+      signal,
+    );
+  }
+
+  /**
    * Get a tool handler by name (for internal server-side plan execution).
    * Returns null if the tool is not registered.
    */
+
+  private recordRecoveryTrajectory(
+    callId: string,
+    toolName: string,
+    sessionId: string,
+    toolArgs: Record<string, unknown>,
+    resultStatus: RecoveryResultStatus,
+    result?: MCPResult,
+    error?: string,
+  ): void {
+    if (!this.recoveryLedger || !this.activityTracker) return;
+
+    try {
+      const recent = this.activityTracker.getRecentCalls(3, sessionId);
+      const current = recent.find((call) => call.id === callId);
+      const tabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+      const previousTrajectory = this.recoveryLedger.getLastNode(sessionId, tabId);
+      const previousFailed =
+        previousTrajectory?.resultStatus === 'error' ||
+        previousTrajectory?.resultStatus === 'no_progress' ||
+        previousTrajectory?.resultStatus === 'aborted';
+      const recovered =
+        resultStatus === 'success' &&
+        previousTrajectory !== undefined &&
+        previousFailed &&
+        previousTrajectory.toolName !== toolName;
+      const progressStatus =
+        resultStatus === 'error' || resultStatus === 'no_progress' || current?.result === 'error'
+          ? 'stuck'
+          : 'unknown';
+      const priorNoProgressCount =
+        resultStatus === 'no_progress' &&
+        previousTrajectory?.toolName === toolName &&
+        previousTrajectory?.resultStatus === 'no_progress'
+          ? 1
+          : 0;
+      const score = scoreFromToolResult({
+        toolName,
+        isError: resultStatus === 'error' || resultStatus === 'aborted' || result?.isError === true,
+        resultText: summarizeResult(result),
+        errorText: error,
+        repeatedFailureCount: previousTrajectory?.resultStatus === 'error' ? 1 : 0,
+        repeatedNoProgressCount: priorNoProgressCount,
+        ...this.recoveryProgressEvidence(toolName, resultStatus, result),
+      });
+
+      this.recoveryLedger.record({
+        sessionId,
+        tabId,
+        toolName,
+        args: toolArgs,
+        resultStatus: recovered ? 'recovered' : resultStatus,
+        progressStatus,
+        error,
+        result,
+        recoveryTool: recovered ? toolName : undefined,
+        reward: score.score,
+      });
+    } catch {
+      // Recovery telemetry is best-effort and must not affect tool behavior.
+    }
+  }
+
+  private recoveryProgressEvidence(
+    toolName: string,
+    resultStatus: RecoveryResultStatus,
+    result?: MCPResult,
+  ): {
+    urlChanged?: boolean;
+    domChanged?: boolean;
+    networkChanged?: boolean;
+    dataItemsExtracted?: number;
+    freshRefsDiscovered?: boolean;
+    observationOnly?: boolean;
+  } {
+    if (resultStatus !== 'success' && resultStatus !== 'recovered') return {};
+    const resultText = summarizeResult(result) ?? '';
+    const hasRef = /\bref[_-]?[A-Za-z0-9]+|\[ref[^\]]+\]/.test(resultText);
+    if (toolName === 'navigate' || toolName === 'tabs_create' || toolName === 'page_reload') {
+      return { urlChanged: true, observationOnly: false };
+    }
+    if (toolName === 'act' || toolName === 'interact' || toolName === 'form_input' || toolName === 'fill_form') {
+      return { domChanged: true, freshRefsDiscovered: hasRef, observationOnly: false };
+    }
+    if (toolName === 'extract_data') {
+      return { dataItemsExtracted: this.countExtractedDataItems(result), observationOnly: false };
+    }
+    if (toolName === 'request_intercept' || toolName === 'network_capture_lite' || toolName === 'network_capture_full') {
+      return { networkChanged: true, observationOnly: false };
+    }
+    return { freshRefsDiscovered: hasRef };
+  }
+
+  private countExtractedDataItems(result?: MCPResult): number {
+    for (const item of result?.content ?? []) {
+      if (typeof item.text !== 'string') continue;
+      try {
+        const parsed = JSON.parse(item.text) as {
+          count?: unknown;
+          fieldsFound?: unknown;
+          items?: unknown;
+          data?: unknown;
+        };
+        if (typeof parsed.count === 'number' && Number.isFinite(parsed.count)) return Math.max(0, parsed.count);
+        if (Array.isArray(parsed.items)) return parsed.items.length;
+        if (typeof parsed.fieldsFound === 'number' && Number.isFinite(parsed.fieldsFound)) return Math.max(0, parsed.fieldsFound);
+        if (parsed.data && typeof parsed.data === 'object') {
+          return Object.values(parsed.data as Record<string, unknown>).filter((value) => value !== null && value !== undefined && value !== '').length;
+        }
+      } catch {
+        // Ignore non-JSON text payloads.
+      }
+    }
+    return 0;
+  }
+
+
   getToolHandler(toolName: string): ToolHandler | null {
     const registry = this.tools.get(toolName);
     return registry ? registry.handler : null;
@@ -1733,7 +3047,7 @@ export class MCPServer {
   private inferToolCategory(toolName: string): ToolCategory {
     if (['navigate', 'page_reload'].includes(toolName)) return 'navigation';
     if (['computer', 'form_input', 'drag_drop'].includes(toolName)) return 'interaction';
-    if (['read_page', 'find', 'page_content', 'query_dom'].includes(toolName)) return 'content';
+    if (['read_page', 'find', 'page_content', 'query_dom', 'oc_query'].includes(toolName)) return 'content';
     if (toolName === 'javascript_tool') return 'javascript';
     if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
     if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
@@ -1757,7 +3071,7 @@ export class MCPServer {
     warning: string | null;
   } | null {
     try {
-      const launcher = getChromeLauncher();
+      const launcher = getChromeLauncher(getGlobalConfig().port);
       const state = launcher.getProfileState();
 
       const profile: Record<string, unknown> = {
@@ -1808,6 +3122,16 @@ export class MCPServer {
   }
 
   private async _stopInternal(): Promise<void> {
+    // #960 — reject every in-flight server→client request before the
+    // transport tears down so callers don't hang forever on Promises that
+    // can never resolve.
+    this.rejectAllPendingS2cRequests('s2c_aborted:connection_closed');
+
+    if (this.liveResourceLifecycleUnsubscribe) {
+      this.liveResourceLifecycleUnsubscribe();
+      this.liveResourceLifecycleUnsubscribe = null;
+    }
+
     // Stop dashboard
     if (this.dashboard) {
       this.dashboard.stop();
@@ -1837,13 +3161,20 @@ export class MCPServer {
     // Base 5s for session/CDP cleanup + 6s per Chrome instance (5s kill + 1s buffer)
     const timeoutMs = Math.max(5000, 5000 + poolInstanceCount * 6000);
 
+    let cleanupTimeout: ReturnType<typeof setTimeout> | null = null;
     await Promise.race([
       this.cleanup(),
-      new Promise<void>((resolve) => setTimeout(() => {
+      new Promise<void>((resolve) => {
+        cleanupTimeout = setTimeout(() => {
         console.error(`[MCPServer] Cleanup timed out after ${timeoutMs / 1000}s, forcing exit`);
         resolve();
-      }, timeoutMs)),
+        }, timeoutMs);
+        cleanupTimeout.unref?.();
+      }),
     ]);
+    if (cleanupTimeout) {
+      clearTimeout(cleanupTimeout);
+    }
   }
 
   /**
@@ -1902,8 +3233,11 @@ export class MCPServer {
 let mcpServerInstance: MCPServer | null = null;
 let mcpServerOptions: MCPServerOptions = {};
 
-export function setMCPServerOptions(options: MCPServerOptions): void {
-  mcpServerOptions = options;
+export function setMCPServerOptions(options: Partial<MCPServerOptions>): void {
+  // Replace (not merge) — keeps the pre-#829 reset semantics callers rely on:
+  // `setMCPServerOptions({})` must clear previously set flags so that a fresh
+  // singleton picks up defaults, not a stale partial mix.
+  mcpServerOptions = { ...options };
 }
 
 export function getMCPServer(): MCPServer {
@@ -1911,4 +3245,10 @@ export function getMCPServer(): MCPServer {
     mcpServerInstance = new MCPServer(undefined, mcpServerOptions);
   }
   return mcpServerInstance;
+}
+
+/** Reset the MCP server singleton — for testing and programmatic server lifecycle only. */
+export function _resetMCPServerForTesting(): void {
+  mcpServerInstance = null;
+  mcpServerOptions = {};
 }

@@ -41,3 +41,21 @@ export * as voting from './voting/index.js';
 // no LLM calls. Gate call sites on `isSkillCuratorEnabled()` from
 // `src/harness/flags.ts` before invoking any export from this namespace.
 export * as curator from './curator/index.js';
+
+// Phase 4 (issue #889): dynamic skill→tool synthesis. Gate call sites on
+// `isDynamicSkillsEnabled()` from `src/harness/flags.ts` before invoking.
+export * as dynamicSkills from './dynamic-skills/index.js';
+
+// Phase 5 (issue #874): user-supplied proxy lifecycle binding. Pilot-tier
+// MCP tool that lets the host declare origin→upstream rules without
+// openchrome ever contacting the upstream proxy. Gate call sites on
+// `isProxyHookEnabled()` from `src/harness/flags.ts` before invoking any
+// export from this namespace.
+export * as proxy from './proxy/index.js';
+// Phase 4 (issue #820, blocks #717): pilot-tier skill graph executor.
+// Pure `decide()` function — no I/O, no side effects. Gate call sites on
+// `isStateGraphEnabled()` from `src/harness/flags.ts` before invoking.
+export * as skill from './skill/index.js';
+
+// Issue #837: pilot credential vault.
+export * as credentials from './credentials/store.js';

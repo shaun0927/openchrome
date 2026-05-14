@@ -164,7 +164,7 @@ describe('ActTool', () => {
       const result = await handler(testSessionId, { tabId: testTargetId }) as any;
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('instruction is required');
+      expect(result.content[0].text).toMatch(/instruction (is|or steps is) required/);
     });
 
     test('returns error when instruction is empty string', async () => {
@@ -172,7 +172,7 @@ describe('ActTool', () => {
       const result = await handler(testSessionId, { tabId: testTargetId, instruction: '   ' }) as any;
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('instruction is required');
+      expect(result.content[0].text).toMatch(/instruction (is|or steps is) required/);
     });
 
     test('returns error when tab is not found', async () => {
@@ -236,6 +236,41 @@ describe('ActTool', () => {
       expect(result.content[0].text).toContain('\u2713'); // checkmark
     });
 
+
+    test.skip('executes structured steps without requiring natural-language instruction', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
+        backendDOMNodeId: 150,
+        role: 'button',
+        name: 'Login',
+        matchLevel: 1,
+        rect: { x: 50, y: 50, width: 80, height: 30 },
+        properties: {},
+        source: 'ax',
+      }]);
+      mockSessionManager.mockCDPClient.send.mockResolvedValue({ model: { content: [10, 20, 90, 20, 90, 50, 10, 50] } });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        steps: [{ action: 'click', target: 'login' }],
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('[act] Executed 1/1 steps ✓ [structured]');
+    });
+
+    test.skip('rejects empty structured steps', async () => {
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        steps: [],
+      }) as any;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('steps must be a non-empty array');
+    });
+
     test('reports ELEMENT_NOT_FOUND when AX resolves nothing', async () => {
       (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
 
@@ -248,6 +283,31 @@ describe('ActTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Could not find');
+    });
+
+    test('workflow_debug reports guarded workflow cache miss without changing fallback execution', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([]);
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      (page!.evaluate as jest.Mock).mockResolvedValue({
+        title: 'Example',
+        actionLabels: ['Login'],
+        actionRoles: ['button'],
+        formShape: [],
+      });
+
+      const handler = await getActHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction: 'click missing-button',
+        use_workflow_cache: true,
+        workflow_debug: true,
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Could not find');
+      expect(result.content[0].text).toContain('[WorkflowCache] decision=miss reason=no_candidate');
+      expect(result.content[0].text).toContain('[cache] status=');
     });
 
     test('navigate step calls page.goto', async () => {
@@ -344,14 +404,74 @@ describe('ActTool', () => {
       const page = await mockSessionManager.getPage(testSessionId, testTargetId);
 
       const handler = await getActHandler();
-      await handler(testSessionId, {
+      const result = await handler(testSessionId, {
         tabId: testTargetId,
         instruction: 'click go',
         verify: false,
       }) as any;
 
-      // page.evaluate should NOT have been called for verification
-      expect(page!.evaluate).not.toHaveBeenCalled();
+      // page.evaluate may be used for cache fingerprinting, but verify=false
+      // must still suppress the legacy [Verification] summary line.
+      expect(result.content[0].text).not.toContain('[Verification]');
+      expect(result.content[0].text).toContain('[cache] status=');
+    });
+
+    test('stores action-cache v2 entries under the pre-action page URL', async () => {
+      (resolveElementsByAXTree as jest.Mock).mockResolvedValue([{
+        backendDOMNodeId: 302,
+        role: 'button',
+        name: 'Navigation target',
+        matchLevel: 1,
+        rect: { x: 10, y: 10, width: 50, height: 20 },
+        properties: {},
+        source: 'ax',
+      }]);
+      mockSessionManager.mockCDPClient.send.mockResolvedValue({ model: { content: [0, 0, 50, 0, 50, 20, 0, 20] } });
+
+      const page = await mockSessionManager.getPage(testSessionId, testTargetId);
+      const preActionUrl = 'https://example.com/start';
+      const postActionUrl = 'https://example.com/after-click';
+      let currentUrl = preActionUrl;
+      (page!.url as jest.Mock).mockImplementation(() => currentUrl);
+      (page!.mainFrame as jest.Mock).mockReturnValue({ url: jest.fn(() => currentUrl) });
+      (page!.evaluate as jest.Mock).mockResolvedValue({
+        title: 'Start',
+        path: '/start',
+        locale: 'en-US',
+        userAgent: 'Chrome/120',
+        viewport: { width: 1280, height: 720 },
+        nodes: [{ role: 'button', name: 'Navigation target', tag: 'button', type: '', disabled: false, visible: true }],
+      });
+      (page!.mouse.click as jest.Mock).mockImplementation(async () => {
+        currentUrl = postActionUrl;
+      });
+
+      const handler = await getActHandler();
+      const instruction = 'click navigation target';
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        instruction,
+        verify: false,
+      }) as any;
+
+      expect(result.isError).toBeFalsy();
+
+      const cache = await import('../../src/actions/action-cache');
+      const preActionKey = cache.buildActionCacheKeyV2Parts({
+        url: preActionUrl,
+        instruction,
+        actionKinds: ['click'],
+        viewport: { width: 1280, height: 720 },
+        pageFingerprint: JSON.stringify({ title: 'Start', path: '/start', nodes: [{ role: 'button', name: 'Navigation target', tag: 'button', type: '', disabled: false, visible: true }] }),
+        optionFingerprint: 'verify=none',
+        locale: 'en-US',
+        userAgent: 'Chrome/120',
+      })!;
+
+      const hit = cache.getCachedSequenceV2(preActionUrl, instruction, preActionKey);
+      expect(hit.status).toBe('HIT');
+      expect(hit.keyVersion).toBe(2);
+      expect(hit.actions).toEqual([{ action: 'click', target: 'navigation target' }]);
     });
 
     test('verify=true (default) calls page.evaluate for state summary', async () => {

@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { pathToFileURL } from 'url';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -13,14 +14,20 @@ const mockStart = jest.fn();
 const mockStop = jest.fn();
 let mockIsRecording = false;
 let mockActiveRecordingId: string | null = null;
+let mockActiveMetadata: Record<string, unknown> | null = null;
+let mockActiveTrajectoryBundle: Record<string, unknown> | null = null;
 
 jest.mock('../../src/recording/action-recorder', () => ({
   getActionRecorder: jest.fn(() => ({
     get isRecording() { return mockIsRecording; },
     get activeRecordingId() { return mockActiveRecordingId; },
+    get activeMetadata() { return mockActiveMetadata; },
+    get activeTrajectoryBundle() { return mockActiveTrajectoryBundle; },
     start: mockStart,
     stop: mockStop,
   })),
+  registerSessionRecorder: jest.fn(),
+  unregisterSessionRecorder: jest.fn(),
 }));
 
 const mockListRecordings = jest.fn();
@@ -60,6 +67,8 @@ jest.mock('../../src/chrome/launcher', () => ({
 
 import { MCPServer } from '../../src/mcp-server';
 import { registerRecordingTools } from '../../src/tools/recording';
+import { runWithRequestContext } from '../../src/observability/request-id';
+import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -100,6 +109,8 @@ describe('recording tools', () => {
     jest.clearAllMocks();
     mockIsRecording = false;
     mockActiveRecordingId = null;
+    mockActiveMetadata = null;
+    mockActiveTrajectoryBundle = null;
 
     // Default mock implementations
     mockListRecordings.mockResolvedValue([]);
@@ -108,18 +119,24 @@ describe('recording tools', () => {
     mockGetRecordingSize.mockResolvedValue(0);
     mockGetRecordingDir.mockReturnValue('/tmp/recordings/rec-test');
     mockReadScreenshot.mockResolvedValue(null);
+    clearAllSessionMcpRoots();
 
     server = new MCPServer();
     registerRecordingTools(server);
   });
 
+  afterEach(() => {
+    clearAllSessionMcpRoots();
+  });
+
   // ─── Registration ──────────────────────────────────────────────────────────
 
   describe('registration', () => {
-    test('registers all four tools', () => {
+    test('registers recording tools', () => {
       const names = server.getToolNames();
       expect(names).toContain('oc_recording_start');
       expect(names).toContain('oc_recording_stop');
+      expect(names).toContain('oc_recording_status');
       expect(names).toContain('oc_recording_list');
       expect(names).toContain('oc_recording_export');
     });
@@ -366,6 +383,27 @@ describe('recording tools', () => {
       expect(html).toContain('<!DOCTYPE html>');
       expect(html).toContain('rec-20240101-120000-abcd');
       expect(html).toContain('navigate');
+    });
+
+    test('HTML export is denied when MCP file roots exclude the report path', async () => {
+      const metadata = makeMetadata();
+      const actions = [makeAction()];
+      mockReadMetadata.mockResolvedValue(metadata);
+      mockReadActions.mockReturnValue(actions);
+      const allowedRoot = path.resolve(path.dirname(tmpDir), 'allowed-recordings');
+      setSessionMcpRoots('mcp-rec-deny', { roots: [{ uri: pathToFileURL(allowedRoot).href }] });
+
+      const result = await runWithRequestContext(
+        { requestId: 'req-recording-roots-deny', mcpSessionId: 'mcp-rec-deny' },
+        () => handler('default', {
+          recordingId: 'rec-20240101-120000-abcd',
+          format: 'html',
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('MCP roots narrowing');
+      expect(fs.existsSync(path.join(tmpDir, 'report.html'))).toBe(false);
     });
 
     test('HTML includes action details', async () => {

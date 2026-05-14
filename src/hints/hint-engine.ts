@@ -17,16 +17,31 @@ import * as path from 'path';
 import type { ToolCallEvent } from '../dashboard/types';
 import type { ActivityTracker } from '../dashboard/activity-tracker';
 import { PatternLearner } from './pattern-learner';
+import { buildFailureEpisodeContext, type FailureEpisodeContext } from './failure-episode-store';
 import { ProgressTracker } from './progress-tracker.js';
+import { formatRecoveryCandidates, rankRecoveryCandidates, type RecoveryCandidate } from './recovery-candidates';
+import { RepeatedCallDetector } from './repeated-call-detector.js';
 import { errorRecoveryRules } from './rules/error-recovery';
 import { blockingPageRules } from './rules/blocking-page';
 import { compositeSuggestionRules } from './rules/composite-suggestions';
 import { sequenceDetectionRules } from './rules/sequence-detection';
 import { repetitionDetectionRules } from './rules/repetition-detection';
 import { paginationDetectionRules } from './rules/pagination-detection';
+import { snapshotStaleRules } from './rules/snapshot-stale';
 import { createLearnedRules } from './rules/learned-rules';
 import { successHintRules } from './rules/success-hints';
 import { setupHintRules } from './rules/setup-hints';
+import { consoleBufferPressureRules } from './rules/console-buffer-pressure';
+import {
+  mapHintRuleToRecoveryCategory,
+  RecoveryFeedbackWriter,
+} from '../core/trace/recovery-feedback';
+import {
+  getTaskDriftLedger,
+  isTaskDriftLedgerEnabled,
+  type TaskDriftLedgerStore,
+  type TaskLedger,
+} from '../harness/task-ledger';
 
 export interface HintContext {
   toolName: string;
@@ -34,12 +49,21 @@ export interface HintContext {
   isError: boolean;
   recentCalls: ToolCallEvent[];
   fireCounts: Map<string, number>;
+  currentArgs?: Record<string, unknown>;
+  episodeContext?: FailureEpisodeContext;
 }
 
 export interface HintRule {
   name: string;
   priority: number;
   maxSeverity?: HintSeverity;
+  /**
+   * When true, this rule duplicates guidance already embedded in a tool
+   * description's "When to use / When NOT to use" block. If the client has
+   * consumed tools/list (i.e. descriptions have been delivered), the rule
+   * is suppressed to avoid redundant output.
+   */
+  redundant_with_description?: boolean;
   match(ctx: HintContext): string | null;
 }
 
@@ -65,6 +89,7 @@ export interface HintResult {
     tool?: string;
     reason: string;
   };
+  recoveryCandidates?: RecoveryCandidate[];
   context?: {
     element?: string;
     coordinates?: string;
@@ -77,7 +102,11 @@ export class HintEngine {
   private activityTracker: ActivityTracker;
   private learner: PatternLearner;
   private progressTracker: ProgressTracker;
+  private repeatedCallDetector: RepeatedCallDetector;
+  private taskLedger: TaskDriftLedgerStore;
   private logFilePath: string | null = null;
+  /** Session IDs for which tools/list has been served — suppresses rules tagged redundant_with_description */
+  private toolsListServedSessions: Set<string> = new Set();
   private hintEscalation: Map<string, number> = new Map(); // ruleName -> session fire count
   private missCounts: Map<string, number> = new Map(); // ruleName -> consecutive miss count
 
@@ -85,17 +114,21 @@ export class HintEngine {
   private logStream: fs.WriteStream | null = null;
   private logBuffer: string[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private recoveryFeedback: RecoveryFeedbackWriter | null = null;
   private static readonly FLUSH_INTERVAL = 200; // ms
 
-  constructor(activityTracker: ActivityTracker, progressTracker?: ProgressTracker) {
+  constructor(activityTracker: ActivityTracker, progressTracker?: ProgressTracker, repeatedCallDetector?: RepeatedCallDetector) {
     this.activityTracker = activityTracker;
     this.progressTracker = progressTracker ?? new ProgressTracker();
+    this.repeatedCallDetector = repeatedCallDetector ?? new RepeatedCallDetector();
+    this.taskLedger = getTaskDriftLedger();
     this.learner = new PatternLearner();
 
     // Collect all rules and sort by priority (ascending = highest priority first)
     // Learned rules (350) sit between repetition (250) and success hints (400)
     this.rules = [
       ...setupHintRules,             // priority 90
+      ...consoleBufferPressureRules, // priority 95
       ...errorRecoveryRules,         // priority 100-108
       ...blockingPageRules,          // priority 120-122
       ...paginationDetectionRules,   // priority 190-192
@@ -103,6 +136,7 @@ export class HintEngine {
       ...repetitionDetectionRules,   // priority 245-252
       ...sequenceDetectionRules,     // priority 300-304
       ...createLearnedRules(this.learner), // priority 350
+      ...snapshotStaleRules,         // priority 395 (#831)
       ...successHintRules,           // priority 400-403
     ].sort((a, b) => a.priority - b.priority);
 
@@ -132,6 +166,28 @@ export class HintEngine {
     this.learner.enablePersistence(dirPath);
   }
 
+  /** Enable best-effort recovery feedback JSONL bundles (#1048). */
+  enableRecoveryFeedback(dirPath: string): void {
+    this.recoveryFeedback = new RecoveryFeedbackWriter({ dirPath });
+  }
+
+  /**
+   * Signal that tools/list has been served to a client this session.
+   * Rules tagged `redundant_with_description: true` will be suppressed
+   * thereafter to avoid duplicating guidance already embedded in tool
+   * descriptions.
+   */
+  markToolsListServed(sessionId = 'default'): void {
+    this.toolsListServedSessions.add(sessionId);
+  }
+
+  /**
+   * Whether tools/list has been served for a session. Exposed for tests.
+   */
+  hasServedToolsList(sessionId = 'default'): boolean {
+    return this.toolsListServedSessions.has(sessionId);
+  }
+
   /**
    * Evaluate rules and return the first matching structured hint, or null.
    * Also feeds the learner for adaptive pattern detection.
@@ -141,15 +197,43 @@ export class HintEngine {
    * - 3-4 firings: warning (⚠️ WARNING prefix)
    * - 5+ firings:  critical (🛑 CRITICAL prefix + action history)
    */
-  getHint(toolName: string, result: Record<string, unknown>, isError: boolean, sessionId?: string): HintResult | null {
+  getHint(
+    toolName: string,
+    result: Record<string, unknown>,
+    isError: boolean,
+    sessionId?: string,
+    currentArgs?: Record<string, unknown>,
+    currentCallId?: string,
+  ): HintResult | null {
     const resultText = this.extractText(result);
-    const recentCalls = this.activityTracker.getRecentCalls(5, sessionId);
+    const episodeContext = buildFailureEpisodeContext({ args: currentArgs, resultText });
+    const hintSessionId = sessionId ?? 'default';
+    const recentCalls = this.activityTracker
+      .getRecentCalls(6, sessionId)
+      .filter((call) => {
+        if (currentCallId === undefined) return true;
+        const callId = (call as ToolCallEvent & { callId?: string }).id ?? (call as ToolCallEvent & { callId?: string }).callId;
+        return callId !== currentCallId;
+      })
+      .slice(0, 5);
 
     // Priority 50: Progress tracking (highest priority, runs before all rules)
     // NOTE: ProgressTracker returns early before the rule loop. Miss-count decay
     // for individual rules is intentionally frozen during stuck/stalling phases —
     // we don't want to spuriously reset escalating rule fire counts while the
     // agent is not making progress.
+    const ledger = isTaskDriftLedgerEnabled()
+      ? this.taskLedger.updateFromToolResult({
+          sessionId: hintSessionId,
+          tabId: typeof currentArgs?.tabId === 'string' ? currentArgs.tabId : undefined,
+          toolName,
+          args: currentArgs,
+          resultText,
+          isError,
+          recentCalls,
+        })
+      : null;
+    const ledgerHint = ledger ? this.formatLedgerHint(ledger) : null;
     const status = this.progressTracker.evaluate(recentCalls, toolName, resultText, isError);
 
     // Scope escalation keys by sessionId when available to prevent cross-session pollution
@@ -160,17 +244,22 @@ export class HintEngine {
       const key = escalationKey('progress-tracker-stuck');
       const fireCount = (this.hintEscalation.get(key) || 0) + 1;
       this.hintEscalation.set(key, fireCount);
+      const recoveryCandidates = rankRecoveryCandidates({ toolName, resultText, isError, recentCalls });
       const rawHintText = 'STOP — you are stuck. The last several tool calls made no meaningful progress ' +
         '(errors, stale refs, auth redirects, or timeouts). ' +
-        'Step back and try a completely different approach, or ask the user for help.';
+        'Step back and try a completely different approach, or ask the user for help.' +
+        formatRecoveryCandidates(recoveryCandidates) +
+        (ledgerHint ? ` ${ledgerHint}` : '');
       const severity = fireCount >= 2 ? 'critical' as const : 'warning' as const;
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stuck', hint: rawHintText, severity, fireCount });
+      this.recordRecoveryFeedback('progress-tracker-stuck', rawHintText, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
       return {
         severity,
         rule: 'progress-tracker-stuck',
         fireCount,
         hint: this.formatHintMessage(severity, rawHintText, fireCount),
         rawHint: rawHintText,
+        ...(recoveryCandidates.length > 0 && { recoveryCandidates }),
       };
     }
 
@@ -178,26 +267,45 @@ export class HintEngine {
       const key = escalationKey('progress-tracker-stalling');
       const fireCount = (this.hintEscalation.get(key) || 0) + 1;
       this.hintEscalation.set(key, fireCount);
+      const recoveryCandidates = rankRecoveryCandidates({ toolName, resultText, isError, recentCalls });
       const rawHintText = 'Warning: recent tool calls are not making progress. ' +
-        'Consider trying a different approach before getting stuck.';
+        'Consider trying a different approach before getting stuck.' +
+        formatRecoveryCandidates(recoveryCandidates) +
+        (ledgerHint ? ` ${ledgerHint}` : '');
       const severity = this.getSeverity(fireCount);
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'progress-tracker-stalling', hint: rawHintText, severity, fireCount });
+      this.recordRecoveryFeedback('progress-tracker-stalling', rawHintText, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
       return {
         severity,
         rule: 'progress-tracker-stalling',
         fireCount,
         hint: this.formatHintMessage(severity, rawHintText, fireCount),
         rawHint: rawHintText,
+        ...(recoveryCandidates.length > 0 && { recoveryCandidates }),
       };
     }
 
-    const ctx: HintContext = { toolName, resultText, isError, recentCalls, fireCounts: this.hintEscalation };
+    const ctx: HintContext = {
+      toolName,
+      resultText,
+      isError,
+      recentCalls,
+      fireCounts: this.hintEscalation,
+      currentArgs,
+      episodeContext,
+    };
 
     let matchedRule: string | null = null;
     let rawHint: string | null = null;
     let matchedMaxSeverity: HintSeverity | undefined;
 
-    for (const rule of this.rules) {
+    const evaluateRule = (rule: HintRule): boolean => {
+      // Suppress rules whose guidance is duplicated by an embedded tool
+      // description "When to use / When NOT to use" block, once the client
+      // has consumed tools/list.
+      if (rule.redundant_with_description && this.hasServedToolsList(hintSessionId)) {
+        return false;
+      }
       const h = rule.match(ctx);
       if (h) {
         matchedRule = rule.name;
@@ -205,7 +313,7 @@ export class HintEngine {
         matchedMaxSeverity = rule.maxSeverity;
         // Reset miss count on match
         this.missCounts.set(rule.name, 0);
-        break;
+        return true;
       } else {
         // Increment miss count; after 10 consecutive misses, decay fire count to 0
         const misses = (this.missCounts.get(rule.name) || 0) + 1;
@@ -215,13 +323,71 @@ export class HintEngine {
           this.missCounts.set(rule.name, 0);
         }
       }
+      return false;
+    };
+
+    // Evaluate higher-signal recovery/composite/repetition rules before exact
+    // repeated-call detection. The exact detector is intentionally inserted
+    // before lower-priority sequence/learned/success hints, but it must not
+    // preempt more specific guidance such as "find then click" or
+    // "repeated read_page -> inspect".
+    const repeatedDetectorPriority = 260;
+    for (const rule of this.rules) {
+      if (rule.priority >= repeatedDetectorPriority) break;
+      if (evaluateRule(rule)) break;
+    }
+
+    if (!rawHint) {
+      // Exact repeated-call detection. This catches syntactic
+      // wandering (same tool + same effective args) even when individual results
+      // look successful enough that ProgressTracker has not yet marked stuck.
+      const repeated = this.repeatedCallDetector.evaluate(recentCalls, toolName, currentArgs);
+      if (repeated) {
+        const key = escalationKey('repeated-identical-tool-call');
+        const fireCount = (this.hintEscalation.get(key) || 0) + 1;
+        this.hintEscalation.set(key, fireCount);
+        const severity = repeated.severity;
+        this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'repeated-identical-tool-call', hint: repeated.hint, severity, fireCount });
+        this.recordRecoveryFeedback('repeated-identical-tool-call', repeated.hint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
+        return {
+          severity,
+          rule: 'repeated-identical-tool-call',
+          fireCount,
+          hint: this.formatHintMessage(severity, repeated.hint, fireCount),
+          rawHint: repeated.hint,
+        };
+      }
+    }
+
+    if (!rawHint && ledger && ledgerHint) {
+      const key = escalationKey('task-ledger-drift');
+      const fireCount = (this.hintEscalation.get(key) || 0) + 1;
+      this.hintEscalation.set(key, fireCount);
+      const severity = fireCount >= 2 || ledger.stopCondition ? 'warning' as const : 'info' as const;
+      this.log({ timestamp: Date.now(), toolName, isError, matchedRule: 'task-ledger-drift', hint: ledgerHint, severity, fireCount });
+      this.recordRecoveryFeedback('task-ledger-drift', ledgerHint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
+      return {
+        severity,
+        rule: 'task-ledger-drift',
+        fireCount,
+        hint: this.formatHintMessage(severity, ledgerHint, fireCount),
+        rawHint: ledgerHint,
+        ...(ledger.suggestedNextStep && { suggestion: ledger.suggestedNextStep }),
+      };
+    }
+
+    if (!rawHint) {
+      for (const rule of this.rules) {
+        if (rule.priority < repeatedDetectorPriority) continue;
+        if (evaluateRule(rule)) break;
+      }
     }
 
     if (!rawHint || !matchedRule) {
       // Feed the learner even on miss
-      this.learner.onToolComplete(toolName, isError);
+      this.learner.onToolComplete(toolName, isError, episodeContext);
       if (isError) {
-        this.learner.onMiss(toolName, resultText);
+        this.learner.onMiss(toolName, resultText, episodeContext);
       }
       this.log({ timestamp: Date.now(), toolName, isError, matchedRule: null, hint: null, severity: null, fireCount: 0 });
       return null;
@@ -265,12 +431,69 @@ export class HintEngine {
       ...(context && { context }),
     };
 
-    // Feed the learner
-    this.learner.onToolComplete(toolName, isError);
+    // Feed the learner. Learned episode hints are advisory, so keep watching
+    // whether the caller's next different successful tool verifies that
+    // recovery path again. Static rules remain non-authoritative hints only.
+    this.learner.onToolComplete(toolName, isError, episodeContext);
+    if (isError && matchedRule === 'learned-pattern') {
+      this.learner.onMiss(toolName, resultText, episodeContext);
+    }
 
     this.log({ timestamp: Date.now(), toolName, isError, matchedRule, hint: formattedHint, severity, fireCount });
+    if (mapHintRuleToRecoveryCategory(matchedRule, resultText) !== 'unknown') {
+      this.recordRecoveryFeedback(matchedRule, rawHint, severity, fireCount, toolName, resultText, isError, hintSessionId, recentCalls);
+    }
 
     return hintResult;
+  }
+
+  private recordRecoveryFeedback(
+    rule: string,
+    rawHint: string,
+    severity: HintSeverity,
+    fireCount: number,
+    toolName: string,
+    resultText: string,
+    isError: boolean,
+    sessionId: string,
+    recentCalls: ToolCallEvent[],
+  ): void {
+    if (!this.recoveryFeedback) return;
+    const now = Date.now();
+    const category = mapHintRuleToRecoveryCategory(rule, resultText);
+    this.recoveryFeedback.append({
+      sessionId,
+      startedAt: now,
+      endedAt: now,
+      trigger: {
+        tool: toolName,
+        category,
+        errorFingerprint: resultText,
+        resultExcerpt: resultText,
+      },
+      context: {
+        recentTools: recentCalls.map((call) => call.toolName),
+        nonProgressCalls: category === 'non_progress' ? fireCount : 0,
+      },
+      hints: [{ rule, severity, rawHint }],
+      recovery: {
+        attemptedTools: [],
+        succeeded: false,
+        attempts: 0,
+        durationMs: 0,
+      },
+      outcome: {
+        finalStatus: isError || category === 'non_progress' ? 'failed' : 'escalated',
+        feedback: category === 'blocked_page'
+          ? 'blocked_page detected; no recovery attempted; escalated to host/user'
+          : undefined,
+      },
+      traceRefs: [],
+    });
+  }
+
+  private formatLedgerHint(ledger: TaskLedger): string | null {
+    return this.taskLedger.buildHint(ledger);
   }
 
   private getSeverity(fireCount: number, maxSeverity?: HintSeverity): HintSeverity {
@@ -338,7 +561,7 @@ export class HintEngine {
    * Write a log entry via buffered async stream (best-effort, non-blocking).
    */
   private log(entry: HintLogEntry): void {
-    if (!this.logStream) return;
+    if (!this.logFilePath) return;
     this.logBuffer.push(JSON.stringify(entry) + '\n');
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => {
@@ -348,12 +571,16 @@ export class HintEngine {
   }
 
   /**
-   * Flush buffered log entries to the write stream.
+   * Flush buffered log entries to disk.
+   *
+   * Use a synchronous append for the tiny buffered JSONL payloads so destroy()
+   * is deterministic for shutdown and tests. A WriteStream may acknowledge
+   * end() asynchronously, which can leave readers racing an empty/missing file.
    */
   private flushBuffer(): void {
-    if (this.logBuffer.length > 0 && this.logStream) {
+    if (this.logBuffer.length > 0 && this.logFilePath) {
       const data = this.logBuffer.join('');
-      this.logStream.write(data);
+      fs.appendFileSync(this.logFilePath, data, 'utf-8');
       this.logBuffer = [];
     }
     this.flushTimer = null;

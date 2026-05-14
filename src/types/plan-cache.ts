@@ -5,22 +5,29 @@
  * bypassing per-step agent LLM round-trips.
  */
 
+import type { BrowserTaskSignature, TaskSignatureStatus } from '../contracts/task-signature';
+import type { Assertion, Evidence } from '../contracts/types';
+
 /** A single step in a compiled plan */
+export type PlanStepRisk = 'low' | 'interactive' | 'destructive';
+
 export interface CompiledStep {
   /** Execution order (1-based) */
   order: number;
   /** MCP tool name (e.g. "javascript_tool", "computer") */
   tool: string;
-  /** Tool arguments — supports ${param} template variables */
+  /** Tool arguments — supports ${param} and ${param.path.to.value} template variables */
   args: Record<string, unknown>;
   /** Step-level timeout in milliseconds */
   timeout: number;
   /** Whether to retry this step on failure */
   retryOnFail?: boolean;
+  /** Risk classification for safe plan-as-code validation. */
+  risk?: PlanStepRisk;
   /** How to parse and store the result for subsequent steps */
   parseResult?: {
     format: 'json' | 'text';
-    /** JSON field to extract from result */
+    /** JSON field/path to extract from result */
     extractField?: string;
     /** Variable name to store result for later steps */
     storeAs?: string;
@@ -47,6 +54,25 @@ export interface PlanSuccessCriteria {
   customCheck?: string;
 }
 
+export interface FinalVerificationGate {
+  /** Inline Outcome Contract assertions evaluated after successCriteria. */
+  finalAssertions: Assertion[];
+  /** Params key containing an oc_assert-compatible evidence.snapshot object. Default: finalSnapshot. */
+  snapshotParam?: string;
+  /** Maximum age in ms for snapshot.captured_at / timestamp when present. */
+  freshnessMs?: number;
+  /** Evidence kinds requested by caller. Currently supports bounded snapshot evidence only. */
+  requiredEvidence?: Array<'dom' | 'url' | 'network' | 'screenshot' | 'phash'>;
+}
+
+export interface PlanFinalVerificationResult {
+  passed: boolean;
+  snapshotParam: string;
+  assertions: Array<{ index: number; passed: boolean; evidence: Evidence }>;
+  failedAssertion?: { index: number; assertion: Assertion; evidence: Evidence };
+  error?: string;
+}
+
 /** Task pattern for matching incoming tasks to cached plans */
 export interface TaskPattern {
   /** URL regex pattern (e.g. "https://x\\.com/.*") */
@@ -60,7 +86,20 @@ export interface TaskPattern {
 }
 
 /** A complete compiled plan — a cached sequence of tool calls */
+export interface PlanStepEvidence {
+  step: number;
+  tool: string;
+  source: 'plan' | 'recovery';
+  outcome: 'success' | 'error' | 'empty';
+  durationMs: number;
+  summary: string;
+}
+
 export interface CompiledPlan {
+  /** Optional v2 safe contract gate. Legacy plans without this remain backward compatible. */
+  contractVersion?: 2;
+  /** Explicit allow-list for tools that plan and recovery steps may invoke. */
+  allowedTools?: string[];
   /** Unique plan identifier */
   id: string;
   /** Plan version for cache invalidation */
@@ -78,6 +117,8 @@ export interface CompiledPlan {
   errorHandlers: PlanErrorHandler[];
   /** Success validation criteria */
   successCriteria: PlanSuccessCriteria;
+  /** Optional final Outcome Contract verification gate (#1031). */
+  finalVerification?: FinalVerificationGate;
 }
 
 /** Registry entry for a plan with usage statistics */
@@ -95,6 +136,7 @@ export interface PlanEntry {
     failCount: number;
     avgDurationMs: number;
     lastUsed: number;
+    failureClassCounts?: Partial<Record<PlanFailureClass, number>>;
   };
   /** Confidence score (0.0 - 1.0) based on success rate */
   confidence: number;
@@ -109,7 +151,38 @@ export interface PlanRegistryData {
   updatedAt: number;
 }
 
+
+export type PlanFailureClass =
+  | 'step_error'
+  | 'empty_result'
+  | 'timeout'
+  | 'contract_failed'
+  | 'stale_ref'
+  | 'auth_redirect'
+  | 'unknown';
+
+export interface PlanFailureMetadata {
+  class: PlanFailureClass;
+  stepOrder?: number;
+  tool?: string;
+  message: string;
+  hintRule?: string;
+  reflectionId?: string;
+}
+
+export interface PlanRecoveryCandidate {
+  source: 'error_handler' | 'hint' | 'reflection';
+  condition?: string;
+  action: string;
+  message: string;
+}
+
 /** Result of plan execution */
+export interface PlanExecutionOptions {
+  /** Optional deterministic boundary for tool allow-list and loop/budget status. */
+  taskSignature?: BrowserTaskSignature;
+}
+
 export interface PlanExecutionResult {
   /** Whether the plan executed successfully */
   success: boolean;
@@ -119,10 +192,20 @@ export interface PlanExecutionResult {
   data?: Record<string, unknown>;
   /** Error message (if failed) */
   error?: string;
+  /** Structured failure metadata when success=false. */
+  failure?: PlanFailureMetadata;
+  /** Safe, explanatory recovery options. These are never auto-executed. */
+  recoveryCandidates?: PlanRecoveryCandidate[];
   /** Execution duration in milliseconds */
   durationMs: number;
   /** Number of steps executed */
   stepsExecuted: number;
   /** Total steps in plan */
   totalSteps: number;
+  /** Present only when execution was bound to a BrowserTaskSignature. */
+  taskSignature?: TaskSignatureStatus;
+  /** Present when a plan opted into final verification. */
+  finalVerification?: PlanFinalVerificationResult;
+  /** Bounded execution evidence suitable for critic/outcome validation. */
+  evidence?: PlanStepEvidence[];
 }

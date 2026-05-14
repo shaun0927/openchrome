@@ -4,13 +4,15 @@
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { withTimeout } from '../utils/with-timeout';
+import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
-  description: 'Execute JavaScript in page context. Supports await.',
+  description: 'Execute JavaScript in page context. Supports await, async IIFE, and shadow-DOM helpers via __pierce.\n\nWhen to use: Custom DOM queries, data extraction, or triggering JS APIs not reachable via other tools.\nWhen NOT to use: Use interact or act for UI interactions, or extract_data for structured schema-based extraction.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -33,6 +35,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.javascript_tool,
 };
 
 export interface CDPEvalResult {
@@ -395,5 +398,13 @@ const handler: ToolHandler = async (
 };
 
 export function registerJavascriptTool(server: MCPServer): void {
-  server.registerTool('javascript_tool', handler, definition);
+  // Snapshot-cache (#879): conservative bump — `javascript_tool` cannot
+  // statically know whether the eval mutated the DOM, so we bump
+  // docEpoch unconditionally on a successful eval. A subsequent
+  // `read_page` therefore always recomputes.
+  const sm = getSessionManager();
+  const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
+    tid ? sm.getPage(sid, tid, undefined, 'javascript_tool') : Promise.resolve(null),
+  );
+  server.registerTool('javascript_tool', wrapped, definition);
 }

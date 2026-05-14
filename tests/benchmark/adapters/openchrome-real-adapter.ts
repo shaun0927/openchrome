@@ -154,13 +154,19 @@ export class OpenChromeRealAdapter implements MCPAdapter {
     });
 
     if (response.error) {
-      return {
-        content: [{ type: 'text', text: `Error: ${response.error.message}` }],
-        isError: true,
-      };
+      throw new Error(`MCP ${toolName} failed: ${response.error.message}`);
     }
 
     const result = response.result || { content: [] };
+    if (result.isError) {
+      const message = (result.content || [])
+        .map((part) => part.text || part.data || '')
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      throw new Error(`MCP ${toolName} returned an error${message ? `: ${message}` : ''}`);
+    }
+
     const toolResult: MCPToolResult = {
       content: result.content || [],
       isError: result.isError,

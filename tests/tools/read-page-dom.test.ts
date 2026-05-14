@@ -162,6 +162,23 @@ describe('ReadPageTool - DOM Mode', () => {
       expect(text).toContain('Click Me');
     });
 
+    test('diagnostics are omitted by default and exposed only when requested', async () => {
+      const handler = await getReadPageHandler();
+
+      const normal = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      expect(normal._diagnostics).toBeUndefined();
+
+      const diagnostic = await handler(testSessionId, { tabId: testTargetId, mode: 'dom', diagnostics: true }) as any;
+      expect(diagnostic._diagnostics).toEqual(expect.objectContaining({
+        mode: 'dom',
+        domGetDocumentMs: expect.any(Number),
+        formatMs: expect.any(Number),
+        paginationMs: expect.any(Number),
+        sanitizeMs: expect.any(Number),
+      }));
+      expect(diagnostic.content[0].text).toContain('[page_stats]');
+    });
+
     test('mode=dom does NOT clear ref IDs', async () => {
       const handler = await getReadPageHandler();
       await handler(testSessionId, { tabId: testTargetId, mode: 'dom' });
@@ -290,6 +307,32 @@ describe('ReadPageTool - DOM Mode', () => {
       // Should contain docSize in page_stats header
       expect(text).toContain('docSize: 1920x3000');
     });
+
+    test('explicit mode=dom returns an error when DOM serialization fails instead of falling back to AX', async () => {
+      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
+        if (method === 'DOM.getDocument') {
+          throw new Error('DOM unavailable');
+        }
+        if (method === 'Accessibility.getFullAXTree') {
+          return sampleAccessibilityTree;
+        }
+        return {};
+      });
+
+      const handler = await getReadPageHandler();
+      const result = await handler(testSessionId, { tabId: testTargetId, mode: 'dom' }) as any;
+      const text = result.content[0].text;
+
+      expect(result.isError).toBe(true);
+      expect(text).toContain('Read page DOM serialization error: DOM unavailable');
+      expect(text).not.toContain('ref_');
+      expect(mockRefIdManager.generateRef).not.toHaveBeenCalled();
+      expect(mockSessionManager.mockCDPClient.send).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        expect.anything()
+      );
+    });
   });
 
   describe('Backward Compatibility', () => {
@@ -305,6 +348,32 @@ describe('ReadPageTool - DOM Mode', () => {
 
       // clearTargetRefs should NOT be called in DOM mode
       expect(mockRefIdManager.clearTargetRefs).not.toHaveBeenCalled();
+    });
+
+    test('default mode falls back to AX when DOM serialization fails', async () => {
+      mockSessionManager.mockCDPClient.send.mockImplementation(async (_page: unknown, method: string) => {
+        if (method === 'DOM.getDocument') {
+          throw new Error('DOM unavailable');
+        }
+        if (method === 'Accessibility.getFullAXTree') {
+          return sampleAccessibilityTree;
+        }
+        return {};
+      });
+
+      const handler = await getReadPageHandler();
+      const result = await handler(testSessionId, { tabId: testTargetId }) as any;
+      const text = result.content[0].text;
+
+      expect(result.isError).toBeUndefined();
+      expect(text).toContain('ref_');
+      expect(text).not.toContain('Read page DOM serialization error');
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Accessibility.getFullAXTree',
+        { depth: 8 }
+      );
+      expect(mockRefIdManager.generateRef).toHaveBeenCalled();
     });
 
     test('mode=ax explicitly returns AX tree', async () => {

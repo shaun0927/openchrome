@@ -19,10 +19,56 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
+import { dispatchCoordinateClick } from '../cdp/input';
+import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import {
+  getLocatorFallbackProvider,
+  isLocatorFallbackEnabled,
+  locatorFallbackThreshold,
+  resolveLocatorFallback,
+  type LocatorFallbackCandidate,
+  type LocatorFallbackTrigger,
+  type ValidatedLocatorFallbackCandidate,
+} from '../core/perception/locator-fallback';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { isPilotEnabled } from '../harness/flags';
+import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
+import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
+
+
+async function resolveInteractVault(value: unknown): Promise<{ value: unknown; token?: string; plaintext?: string; error?: MCPResult }> {
+  if (typeof value !== 'string' || !value.startsWith('vault://') || !isPilotEnabled()) return { value };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const vault = require('../pilot/credentials/store') as typeof import('../pilot/credentials/store');
+    const resolved = await vault.resolveVaultValue(value);
+    return { value: resolved.value, token: resolved.token, plaintext: String(resolved.value) };
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String((error as { code: unknown }).code) : 'VAULT_ERROR';
+    return { value, error: { content: [{ type: 'text', text: `Error: ${code}: ${error instanceof Error ? error.message : String(error)}` }], isError: true, errorReason: code } as MCPResult };
+  }
+}
+
+function maskInteractVault(text: string, vault?: { token?: string; plaintext?: string }): string {
+  if (!vault?.token || !vault.plaintext) return text;
+  return text.split(vault.plaintext).join(vault.token);
+}
+
+/**
+ * Inject the structured {@link VerifyReport} onto an MCPResult under
+ * `result.verify` (mirrors the issue #827 schema). When the report is
+ * undefined we return the input unchanged — this keeps the default
+ * `verify: 'none' | false | absent` path byte-identical to develop.
+ */
+function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined): MCPResult {
+  if (!report) return result;
+  return { ...result, verify: report };
+}
 
 const definition: MCPToolDefinition = {
   name: 'interact',
-  description: 'Find element, act, wait, return state summary.',
+  description: 'Find element by natural language; click/hover/double_click it; wait for DOM settle; return state.\n\nWhen to use: One described element action, with coordinate fallback for Shadow DOM/canvas/iframes.\nWhen NOT to use: Use act for multi-step flows; computer for general coordinate clicks.',
+  annotations: TOOL_ANNOTATIONS.interact,
   inputSchema: {
     type: 'object',
     properties: {
@@ -32,12 +78,37 @@ const definition: MCPToolDefinition = {
       },
       query: {
         type: 'string',
-        description: 'Element to act on (natural language)',
+        description: 'Element to act on (natural language). Required when mode is "ref" (default).',
+      },
+      mode: {
+        type: 'string',
+        enum: ['ref', 'coordinate'],
+        default: 'ref',
+        description: 'Dispatch mode. "ref" (default) resolves the element by query; "coordinate" sends a CDP mouse event directly to pixel coordinates.',
+      },
+      coordinate: {
+        type: 'object',
+        description: 'Pixel coordinates for coordinate mode. Required when mode is "coordinate".',
+        properties: {
+          x: { type: 'integer', minimum: 0 },
+          y: { type: 'integer', minimum: 0 },
+          button: { type: 'string', enum: ['left', 'right', 'middle'], default: 'left' },
+          clickCount: { type: 'integer', minimum: 1, maximum: 3, default: 1 },
+          modifiers: {
+            type: 'array',
+            items: { type: 'string', enum: ['alt', 'ctrl', 'meta', 'shift'] },
+          },
+        },
+        required: ['x', 'y'],
       },
       action: {
         type: 'string',
-        enum: ['click', 'double_click', 'hover'],
-        description: 'Action to perform. Default: click',
+        enum: ['click', 'double_click', 'hover', 'type'],
+        description: 'Action to perform. Default: click. Use type with value to enter text.',
+      },
+      value: {
+        type: 'string',
+        description: 'Text to type when action is type. Supports vault://name in pilot mode.',
       },
       waitAfter: {
         type: 'number',
@@ -48,10 +119,8 @@ const definition: MCPToolDefinition = {
         enum: ['state_summary', 'dom_delta', 'both'],
         description: 'Response content. Default: both',
       },
-      verify: {
-        type: 'boolean',
-        description: 'Return screenshot after action',
-      },
+      verify: VERIFY_FIELD_SCHEMA,
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
       waitForMs: {
         type: 'number',
         description: 'Poll timeout for element in ms. Max: 30000',
@@ -60,28 +129,187 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Poll interval in ms. Default: 200',
       },
+      ref: {
+        type: 'string',
+        description: 'Snapshot ref ID (from read_page refs map). When provided, skips AX re-resolution and clicks the element directly via its cached backendDOMNodeId.',
+      },
+      intent: {
+        type: 'string',
+        maxLength: 120,
+        description: 'Optional short label (≤120 chars) describing the user-facing goal of this action, e.g. "submit login form". Recorded in the task journal for observability.',
+      },
+      capture_artifact: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, stage a replay artifact step for oc_skill_record after a successful click. Default false is a strict no-op.',
+      },
+      locatorFallback: {
+        type: 'object',
+        description: 'Opt-in AI locator fallback extension point. Disabled by default; when enabled, provider candidates are validated before any action.',
+        properties: {
+          enabled: { type: 'boolean', description: 'Enable locator fallback for stale/missing/ambiguous targets.' },
+          minConfidence: { type: 'number', minimum: 0, maximum: 1, description: 'Minimum provider confidence before validation. Default: 0.7.' },
+        },
+      },
     },
-    required: ['tabId', 'query'],
+    required: ['tabId'],
   },
 };
 
-const handler: ToolHandler = async (
+async function validateBackendNodeClickability(
+  page: any,
+  backendNodeId: number,
+  cdpClient: { send: (page: any, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+): Promise<boolean> {
+  const resolved = await cdpClient.send(page, 'DOM.resolveNode', { backendNodeId }) as { object?: { objectId?: string } };
+  const objectId = resolved.object?.objectId;
+  if (!objectId) return false;
+
+  const checked = await cdpClient.send(page, 'Runtime.callFunctionOn', {
+    objectId,
+    returnByValue: true,
+    functionDeclaration: `function () {
+      if (!(this instanceof HTMLElement)) return { clickable: false };
+      const box = this.getBoundingClientRect();
+      const style = window.getComputedStyle(this);
+      const disabled = this.disabled === true || this.getAttribute('aria-disabled') === 'true';
+      const visible = box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+      return { clickable: visible && !disabled };
+    }`,
+  }) as { result?: { value?: { clickable?: boolean } } };
+  return checked.result?.value?.clickable === true;
+}
+
+async function validateLocatorCandidate(
+  page: any,
+  candidate: LocatorFallbackCandidate,
+  resolveBackendNodeId?: (ref: string) => number | undefined,
+  cdpClient?: { send: (page: any, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+): Promise<ValidatedLocatorFallbackCandidate | null> {
+  const backendNodeId = candidate.backendNodeId ?? (candidate.ref ? resolveBackendNodeId?.(candidate.ref) : undefined);
+  if (typeof backendNodeId === 'number' && cdpClient) {
+    try {
+      await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+      if (!(await validateBackendNodeClickability(page, backendNodeId, cdpClient))) {
+        throw new Error('backend node is not clickable');
+      }
+      const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId }) as { model?: { content?: number[] } };
+      const content = boxModel.model?.content;
+      if (!content || content.length < 8) throw new Error('invalid box model');
+      const [x1, y1,, , x2,, , y2] = content;
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      if (width <= 0 || height <= 0) throw new Error('invalid box dimensions');
+      return {
+        ...candidate,
+        selector: candidate.selector ?? candidate.ref ?? `backendNodeId:${backendNodeId}`,
+        backendNodeId,
+        rect: { x: (x1 + x2) / 2, y: (y1 + y2) / 2, width, height },
+      };
+    } catch {
+      // Fall through to selector validation when a provider supplied both selector and backendNodeId.
+    }
+  }
+
+  if (!candidate.selector) return null;
+  const rect = await page.evaluate((selector: string) => {
+    const el = document.querySelector(selector) as HTMLElement | null;
+    if (!el) return null;
+    const box = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    const visible = box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    const disabled = (el as HTMLButtonElement | HTMLInputElement).disabled === true || el.getAttribute('aria-disabled') === 'true';
+    if (!visible || disabled) return null;
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2, width: box.width, height: box.height };
+  }, candidate.selector).catch(() => null);
+  if (!rect) return null;
+  return { ...candidate, selector: candidate.selector, rect };
+}
+
+const coreHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
 ): Promise<MCPResult> => {
   throwIfAborted(context);
   const tabId = args.tabId as string;
+  const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
+  const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
+  const rawValue = args.value;
+  const vaultValue = await resolveInteractVault(rawValue);
+  if (vaultValue.error) return vaultValue.error;
+  const typeValue = vaultValue.value;
+  if (action === 'type' && typeValue === undefined) {
+    return { content: [{ type: 'text', text: 'Error: value is required when action is type' }], isError: true };
+  }
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
   const returnFormat = (args.returnFormat as string) || 'both';
-  const verify = args.verify as boolean | undefined;
+  const verifyMode = coerceVerifyMode(args.verify);
   const waitForMs = args.waitForMs as number | undefined;
   const pollInterval = Math.min(Math.max((args.pollInterval as number) || 200, 50), 2000);
+  const locatorFallbackArg = args.locatorFallback;
+  const locatorFallbackEnabled = isLocatorFallbackEnabled(locatorFallbackArg);
+  const locatorMinConfidence = locatorFallbackThreshold(locatorFallbackArg);
+
+  const intent = args.intent as string | undefined;
+  const refArg = args.ref as string | undefined;
+  const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
+
+  const runLocatorFallbackForPage = async (page: any, trigger: LocatorFallbackTrigger): Promise<MCPResult | null> => {
+    if (!locatorFallbackEnabled || !query) return null;
+    const pageInfo = await page.evaluate(() => ({ url: window.location.href, title: document.title })).catch(() => ({ url: '', title: '' }));
+    const cdpClient = sessionManager.getCDPClient();
+    const resolved = await resolveLocatorFallback(
+      { trigger, query, action, tabId, sessionId, pageUrl: pageInfo.url, pageTitle: pageInfo.title, maxCandidates: 5 },
+      (candidate) => validateLocatorCandidate(
+        page,
+        candidate,
+        (ref) => refIdManager.getBackendDOMNodeId(sessionId, tabId, ref),
+        cdpClient,
+      ),
+      { minConfidence: locatorMinConfidence, provider: getLocatorFallbackProvider() },
+    );
+    if (!resolved.accepted) {
+      return {
+        content: [{ type: 'text', text: `Locator fallback (${resolved.provider}) found no validated candidate for "${query}".` }],
+        isError: true,
+        locatorFallback: { trigger, provider: resolved.provider, accepted: false },
+      } as MCPResult;
+    }
+    const candidate = resolved.accepted;
+    const x = Math.round(candidate.rect.x);
+    const y = Math.round(candidate.rect.y);
+    const isStealthFallback = sessionManager.isStealthTarget(tabId);
+    const { result: fallbackDomResult, verify: fallbackVerifyReport } = await runVerify(
+      page,
+      verifyMode,
+      async () =>
+        withDomDelta(page, async () => {
+          if (isStealthFallback) await humanMouseMove(page, x, y);
+          if (action === 'double_click') await page.mouse.click(x, y, { clickCount: 2 });
+          else if (action === 'hover') { if (!isStealthFallback) await page.mouse.move(x, y); }
+          else await page.mouse.click(x, y);
+        }, { settleMs: Math.max(150, waitAfter) }),
+    );
+    invalidateAXCache(getTargetId(page.target()));
+    const verb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+    const lines = [`${verb} locator fallback candidate "${candidate.label ?? candidate.selector}" [provider=${candidate.provider} confidence=${candidate.confidence}]`];
+    if (fallbackDomResult.delta) lines.push('', '[DOM Delta]', fallbackDomResult.delta);
+    return attachVerifyReport({
+      content: [{ type: 'text', text: lines.join('\n') }],
+      locatorFallback: {
+        trigger,
+        provider: resolved.provider,
+        accepted: true,
+        selected: { selector: candidate.selector, confidence: candidate.confidence, reason: candidate.reason, provider: candidate.provider },
+      },
+    } as MCPResult, fallbackVerifyReport);
+  };
 
   if (!tabId) {
     return {
@@ -90,9 +318,235 @@ const handler: ToolHandler = async (
     };
   }
 
+  // ─── intent validation (#894) ───
+  if (intent !== undefined) {
+    if (typeof intent !== 'string' || intent.trim() === '') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be a non-empty string with at most 120 characters.' }],
+        isError: true,
+      };
+    }
+    if (intent.length > 120) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_INTENT: intent must be at most 120 characters.' }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Ref fast-path (#831) ───
+  if (refArg) {
+    // Check if the ref is stale (missing or TTL-expired).
+    if (refIdManager.isRefStale(sessionId, tabId, refArg)) {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
+      if (page) {
+        try {
+          const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
+          if (fallback && (fallback as MCPResult & { locatorFallback?: { accepted?: boolean } }).locatorFallback?.accepted === true) return fallback;
+        } catch {
+          // Preserve the STALE_REF contract when the optional fallback provider itself fails.
+        }
+      }
+      const staleWarning = typeof refIdManager.getRefStalenessWarning === 'function'
+        ? refIdManager.getRefStalenessWarning(sessionId, tabId, refArg)
+        : undefined;
+      const warningText = staleWarning
+        ? `\nWarning: ${staleWarning.code}: ${staleWarning.message}`
+        : '';
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" is no longer valid (element may have changed or page navigated). Call read_page to get fresh refs.${warningText}` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg, stale_warning: staleWarning },
+      } as MCPResult;
+    }
+
+    const backendDOMNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refArg);
+    if (!backendDOMNodeId) {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
+      if (page) {
+        try {
+          const fallback = await runLocatorFallbackForPage(page, 'STALE_REF');
+          if (fallback && (fallback as MCPResult & { locatorFallback?: { accepted?: boolean } }).locatorFallback?.accepted === true) return fallback;
+        } catch {
+          // Preserve the STALE_REF contract when the optional fallback provider itself fails.
+        }
+      }
+      return {
+        content: [{ type: 'text', text: `STALE_REF: ref "${refArg}" could not be resolved to a DOM node.` }],
+        isError: true,
+        error: { code: 'STALE_REF', ref_id: refArg },
+      } as MCPResult;
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      const cdpClient = sessionManager.getCDPClient();
+      // Scroll into view then get bounding box
+      await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: backendDOMNodeId });
+      const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId: backendDOMNodeId }) as
+        { model: { content: number[] } };
+      const [x1, y1,, , x2,, , y2] = boxModel.model.content;
+      const cx = Math.round((x1 + x2) / 2);
+      const cy = Math.round((y1 + y2) / 2);
+
+      if (action === 'double_click') {
+        await page.mouse.click(cx, cy, { clickCount: 2 });
+      } else if (action === 'hover') {
+        await page.mouse.move(cx, cy);
+      } else if (action === 'type') {
+        await page.mouse.click(cx, cy);
+        const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+        await page.keyboard.down(modifier);
+        await page.keyboard.press('KeyA');
+        await page.keyboard.up(modifier);
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(String(typeValue));
+      } else {
+        await page.mouse.click(cx, cy);
+      }
+
+      if (captureArtifact && action === 'click') {
+        await captureBackendNodeReplayStep({
+          cdpClient,
+          page,
+          backendNodeId: backendDOMNodeId,
+          kind: 'click',
+        });
+      }
+
+      const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
+      const lines = [`${actionVerb} [${refArg}] [via ref]`];
+
+      return {
+        content: [{ type: 'text', text: maskInteractVault(lines.join('\n'), vaultValue) }],
+        via: 'ref',
+      } as MCPResult;
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Mode: coordinate ───
+  if (mode === 'coordinate') {
+    if (query) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
+        isError: true,
+      };
+    }
+    if (!coordinateArg) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" block is required when mode is "coordinate".' }],
+        isError: true,
+      };
+    }
+    const cx = coordinateArg.x as number;
+    const cy = coordinateArg.y as number;
+    if (typeof cx !== 'number' || typeof cy !== 'number') {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: coordinate.x and coordinate.y must be integers.' }],
+        isError: true,
+      };
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      // Viewport clamping
+      const viewport = page.viewport() ?? await page.evaluate(() => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      })).catch(() => null);
+
+      if (viewport && (cx > viewport.width || cy > viewport.height || cx < 0 || cy < 0)) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'OOB_COORDINATE',
+              message: `Coordinates (${cx}, ${cy}) are outside viewport bounds.`,
+              viewport: { width: viewport.width, height: viewport.height },
+            }),
+          }],
+          isError: true,
+        };
+      }
+
+      const cdpClient = sessionManager.getCDPClient();
+      const isStealth = sessionManager.isStealthTarget(tabId);
+
+      const { delta } = await withDomDelta(page, async () => {
+        if (isStealth) await humanMouseMove(page, cx, cy);
+        await dispatchCoordinateClick(cdpClient, page, {
+          x: cx,
+          y: cy,
+          button: (coordinateArg.button as 'left' | 'right' | 'middle') ?? 'left',
+          clickCount: (coordinateArg.clickCount as number) ?? 1,
+          modifiers: (coordinateArg.modifiers as Array<'alt' | 'ctrl' | 'meta' | 'shift'>) ?? [],
+        });
+      }, { settleMs: Math.max(150, waitAfter) });
+
+      const lines: string[] = [`Clicked coordinate (${cx}, ${cy}) via CDP`];
+      if (delta) lines.push('', '[DOM Delta]', delta);
+
+      const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+        { type: 'text' as const, text: maskInteractVault(lines.join('\n'), vaultValue) },
+      ];
+
+      if (verifyMode !== 'none') {
+        try {
+          const screenshotBuf = await withTimeout(
+            page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
+            DEFAULT_SCREENSHOT_TIMEOUT_MS,
+            'verify-screenshot',
+            context
+          ) as string;
+          resultContent.push({ type: 'image' as const, data: screenshotBuf, mimeType: 'image/webp' });
+        } catch { /* screenshot failed, non-fatal */ }
+      }
+
+      return { content: resultContent };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Mode: ref (default) ───
+  if (mode !== 'ref') {
+    return {
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: mode must be "ref" or "coordinate".' }],
+      isError: true,
+    };
+  }
+  if (coordinateArg) {
+    return {
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "coordinate" must not be provided when mode is "ref". Use "query" instead.' }],
+      isError: true,
+    };
+  }
+
   if (!query) {
     return {
-      content: [{ type: 'text', text: 'Error: query is required' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" is required when mode is "ref".' }],
       isError: true,
     };
   }
@@ -157,15 +611,31 @@ const handler: ToolHandler = async (
         const axX = Math.round(ax.rect.x);
         const axY = Math.round(ax.rect.y);
 
-        // Perform action with DOM delta
+        // Perform action with DOM delta — wrapped in runVerify so the per-action
+        // verify report (AX-hash + pHash) is captured around the actual click.
         const isStealth = sessionManager.isStealthTarget(tabId);
-        const { delta: axDelta } = await withDomDelta(page, async () => {
-          // Stealth: use Bézier curve mouse path to avoid bot detection
-          if (isStealth) await humanMouseMove(page, axX, axY);
-          if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
-          else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
-          else await page.mouse.click(axX, axY);
-        }, { settleMs: Math.max(150, waitAfter) });
+        const { verify: axVerifyReport, result: axActionResult } = await runVerify(
+          page,
+          verifyMode,
+          async () =>
+            withDomDelta(page, async () => {
+              // Stealth: use Bézier curve mouse path to avoid bot detection
+              if (isStealth) await humanMouseMove(page, axX, axY);
+              if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
+              else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
+              else if (action === 'type') {
+                await page.mouse.click(axX, axY);
+                const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+                await page.keyboard.down(modifier);
+                await page.keyboard.press('KeyA');
+                await page.keyboard.up(modifier);
+                await page.keyboard.press('Backspace');
+                await page.keyboard.type(String(typeValue));
+              }
+              else await page.mouse.click(axX, axY);
+            }, { settleMs: Math.max(150, waitAfter) }),
+        );
+        const axDelta = axActionResult.delta;
 
         // Invalidate AX cache after interaction
         invalidateAXCache(getTargetId(page.target()));
@@ -176,11 +646,20 @@ const handler: ToolHandler = async (
           ax.role, ax.name, undefined, undefined
         );
 
+        if (captureArtifact && action === 'click') {
+          await captureBackendNodeReplayStep({
+            cdpClient,
+            page,
+            backendNodeId: ax.backendDOMNodeId,
+            kind: 'click',
+          });
+        }
+
         // Clean up any leftover tags
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
         // Classify outcome and build response
-        const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+        const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
         const axOutcome = classifyOutcome(axDelta, ax.role);
         const axLine = formatOutcomeLine(axOutcome, axVerb, `${ax.role} "${ax.name}"`, `[${axRef}]`, `[${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]`);
 
@@ -204,11 +683,12 @@ const handler: ToolHandler = async (
         if (axState.activeInfo !== 'none') lines.push('', `[Focused] ${axState.activeInfo}`);
 
         const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-          { type: 'text' as const, text: lines.join('\n') },
+          { type: 'text' as const, text: maskInteractVault(lines.join('\n'), vaultValue) },
         ];
 
-        // Optional screenshot (verify mode)
-        if (verify) {
+        // Legacy screenshot content (backcompat for `verify: true` → 'screenshot').
+        // Preserved verbatim so callers that accept the WebP image still receive it.
+        if (verifyMode === 'screenshot' || verifyMode === 'both') {
           try {
             const screenshotBuf = await withTimeout(
               page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
@@ -220,7 +700,7 @@ const handler: ToolHandler = async (
           } catch { /* screenshot failed, non-fatal */ }
         }
 
-        return { content: resultContent };
+        return attachVerifyReport({ content: resultContent }, axVerifyReport);
       }
     } catch (axError) {
       throwIfAborted(context);
@@ -267,6 +747,15 @@ const handler: ToolHandler = async (
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
+        let fallback: MCPResult | null = null;
+        if (locatorFallbackEnabled) {
+          try {
+            fallback = await runLocatorFallbackForPage(page, 'ELEMENT_NOT_FOUND');
+          } catch {
+            fallback = null;
+          }
+        }
+        if (fallback) return fallback;
         return {
           content: [{ type: 'text', text: `No elements found matching "${query}"` }],
           isError: true,
@@ -297,6 +786,15 @@ const handler: ToolHandler = async (
     const bestMatch = bestElement;
 
     if (!bestMatch || bestMatch.score < 10) {
+      let fallback: MCPResult | null = null;
+      if (locatorFallbackEnabled) {
+        try {
+          fallback = await runLocatorFallbackForPage(page, 'AMBIGUOUS_SELECTOR');
+        } catch {
+          fallback = null;
+        }
+      }
+      if (fallback) return fallback;
       return {
         content: [
           {
@@ -330,23 +828,38 @@ const handler: ToolHandler = async (
     const finalX = Math.round(bestMatch.rect.x);
     const finalY = Math.round(bestMatch.rect.y);
 
-    // Perform the action with DOM delta capture
+    // Perform the action with DOM delta capture, wrapped in runVerify so the
+    // structured verify report (AX-hash + pHash) covers the actual click.
     const isStealthCSS = sessionManager.isStealthTarget(tabId);
-    const { delta } = await withDomDelta(
+    const { result: cssDomResult, verify: cssVerifyReport } = await runVerify(
       page,
-      async () => {
-        // Stealth: use Bézier curve mouse path to avoid bot detection
-        if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
-        if (action === 'double_click') {
-          await page.mouse.click(finalX, finalY, { clickCount: 2 });
-        } else if (action === 'hover') {
-          if (!isStealthCSS) await page.mouse.move(finalX, finalY);
-        } else {
-          await page.mouse.click(finalX, finalY);
-        }
-      },
-      { settleMs: Math.max(150, waitAfter) }
+      verifyMode,
+      async () =>
+        withDomDelta(
+          page,
+          async () => {
+            // Stealth: use Bézier curve mouse path to avoid bot detection
+            if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
+            if (action === 'double_click') {
+              await page.mouse.click(finalX, finalY, { clickCount: 2 });
+            } else if (action === 'hover') {
+              if (!isStealthCSS) await page.mouse.move(finalX, finalY);
+            } else if (action === 'type') {
+              await page.mouse.click(finalX, finalY);
+              const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+              await page.keyboard.down(modifier);
+              await page.keyboard.press('KeyA');
+              await page.keyboard.up(modifier);
+              await page.keyboard.press('Backspace');
+              await page.keyboard.type(String(typeValue));
+            } else {
+              await page.mouse.click(finalX, finalY);
+            }
+          },
+          { settleMs: Math.max(150, waitAfter) }
+        ),
     );
+    const { delta } = cssDomResult;
 
     // Generate ref for the interacted element
     let refId = '';
@@ -362,6 +875,15 @@ const handler: ToolHandler = async (
       );
     }
 
+    if (captureArtifact && action === 'click' && bestMatch.backendDOMNodeId) {
+      await captureBackendNodeReplayStep({
+        cdpClient,
+        page,
+        backendNodeId: bestMatch.backendDOMNodeId,
+        kind: 'click',
+      });
+    }
+
     // Clean up discovery tags to prevent stale properties
     await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
@@ -369,7 +891,7 @@ const handler: ToolHandler = async (
     invalidateAXCache(getTargetId(page.target()));
 
     // Build compact action label with confidence score
-    const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+    const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
     const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
     const textPart = textSample ? ` "${textSample}"` : '';
     const refPart = refId ? ` [${refId}]` : '';
@@ -477,9 +999,12 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG
+    // Optional screenshot verification — WebP via CDP, fallback to Puppeteer PNG.
+    // Legacy attachment: only emit the embedded image when the caller asked for
+    // a screenshot mode (true → 'screenshot' via coerceVerifyMode, or the new
+    // 'screenshot'/'both' enum values). Default 'none' path is unchanged.
     let screenshotContent: { type: 'image'; data: string; mimeType: string } | null = null;
-    if (verify) {
+    if (verifyMode === 'screenshot' || verifyMode === 'both') {
       try {
         const screenshotResult = await Promise.race([
           (async () => {
@@ -521,15 +1046,13 @@ const handler: ToolHandler = async (
     }
 
     const responseContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-      { type: 'text', text: lines.join('\n') },
+      { type: 'text', text: maskInteractVault(lines.join('\n'), vaultValue) },
     ];
     if (screenshotContent) {
       responseContent.push(screenshotContent);
     }
 
-    return {
-      content: responseContent,
-    };
+    return attachVerifyReport({ content: responseContent }, cssVerifyReport);
   } catch (error) {
     return {
       content: [
@@ -541,6 +1064,26 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+};
+
+
+const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
+  const result = await coreHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+
+  try {
+    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'interact');
+    if (page) {
+      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+    }
+  } catch {
+    // Snapshot chaining is best-effort; never mask the successful action result.
+  }
+  return result;
 };
 
 export function registerInteractTool(server: MCPServer): void {

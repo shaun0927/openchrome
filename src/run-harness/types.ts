@@ -1,0 +1,69 @@
+export const RUN_STATUSES = [
+  'created',
+  'running',
+  'completed',
+  'failed',
+  'timed_out',
+  'canceled',
+  'aborted',
+  'needs_user_input',
+  'needs_strategy_change',
+] as const;
+
+export type RunStatus = typeof RUN_STATUSES[number];
+
+export const TERMINAL_RUN_STATUSES = new Set<RunStatus>([
+  'completed',
+  'failed',
+  'timed_out',
+  'canceled',
+  'aborted',
+  'needs_strategy_change',
+]);
+
+export type RunEventKind =
+  | 'run_started'
+  | 'run_finished'
+  | 'tool_call_started'
+  | 'tool_call_finished'
+  | 'progress'
+  | 'warning'
+  | 'partial_result'
+  | 'hint'
+  | 'evidence'
+  | 'failure';
+
+export interface RunEvent {
+  id: string;
+  run_id: string;
+  ts: number;
+  kind: RunEventKind;
+  session_id?: string;
+  tab_id?: string;
+  tool?: string;
+  ok?: boolean;
+  duration_ms?: number;
+  args_hash?: string;
+  message?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RunBudgets {
+  max_tool_calls?: number;
+  max_same_tool_retries?: number;
+  max_observation_only_calls?: number;
+  max_no_progress_streak?: number;
+  max_wall_ms?: number;
+}
+
+export interface RunRecord {
+  run_id: string;
+  status: RunStatus;
+  created_at: number;
+  updated_at: number;
+  session_id?: string;
+  tab_id?: string;
+  metadata?: Record<string, unknown>;
+  budget?: RunBudgets;
+  events: RunEvent[];
+}

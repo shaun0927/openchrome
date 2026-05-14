@@ -32,6 +32,7 @@ function makeSnapshot(overrides: Partial<{
   memo: unknown;
   label: string;
   version: number;
+  lifecycle: unknown;
 }> = {}) {
   return {
     version: 1,
@@ -56,6 +57,8 @@ function makeTab(overrides: Partial<{
   sessionId: string;
   url: string;
   title: string;
+  workerLastActivityAt: number;
+  profileDirectory: string;
 }> = {}) {
   return {
     targetId: 'target-aaa',
@@ -358,6 +361,63 @@ describe('generateResumeGuide', () => {
 
     expect(guide).toContain('CLOSED');
     expect(guide).toContain('https://closed.example.com');
+    expect(guide).toContain('stale target');
+    expect(guide).toContain('Recovery guidance: CLOSED targets cannot be reused');
+  });
+
+  test('includes lifecycle profile/storage identity and auth guidance', () => {
+    const snap = makeSnapshot({
+      lifecycle: {
+        capturedAt: Date.now() - 1000,
+        recoverySource: 'oc_session_snapshot',
+        profile: {
+          type: 'persistent',
+          profileDirectory: 'Profile 1',
+          cookieCopiedAt: Date.now() - 60_000,
+        },
+        storageState: {
+          enabled: true,
+          dir: '/tmp/openchrome-storage-state',
+        },
+      },
+    });
+    const tabAnalysis = [
+      {
+        saved: makeTab({
+          profileDirectory: 'Profile 1',
+          workerLastActivityAt: Date.now() - 2000,
+        }),
+        status: 'LIVE' as const,
+        currentTargetId: 'target-aaa',
+        currentUrl: 'https://example.com/form',
+      },
+    ];
+
+    const guide = generateResumeGuide(snap as any, tabAnalysis);
+
+    expect(guide).toContain('Recovery source: oc_session_snapshot');
+    expect(guide).toContain('Profile/storage identity: profile=persistent/Profile 1; storage-state=enabled');
+    expect(guide).toContain('Cookie sync age:');
+    expect(guide).toContain('profile=Profile 1');
+    expect(guide).toContain('lastActivity=');
+    expect(guide).toContain('Auth guidance: reuse the same profileDirectory and storage-state setting');
+  });
+
+  test('warns when auth recovery used a temporary profile', () => {
+    const snap = makeSnapshot({
+      lifecycle: {
+        capturedAt: Date.now(),
+        recoverySource: 'oc_session_snapshot',
+        profile: { type: 'temp' },
+        storageState: { enabled: false },
+      },
+    });
+
+    const guide = generateResumeGuide(snap as any, []);
+
+    expect(guide).toContain('profile=temp; storage-state=disabled');
+    expect(guide).toContain('temporary profile');
+    expect(guide).toContain('may not survive process restart');
   });
 
   test('includes completed steps', () => {
@@ -591,5 +651,88 @@ describe('registerSessionResumeTool', () => {
       expect.any(Function),
       expect.objectContaining({ name: 'oc_session_resume' }),
     );
+  });
+});
+
+describe('generateResumeGuide supplemental artifacts', () => {
+  test('includes checkpoint completed and pending steps', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      checkpoint: {
+        version: 1,
+        timestamp: Date.now() - 60_000,
+        taskDescription: 'Research product prices',
+        completedSteps: ['Opened dashboard', 'Collected first page'],
+        pendingSteps: ['Collect second page', 'Export CSV'],
+        currentUrl: 'https://example.com/dashboard',
+        tabStates: [],
+        extractedData: {},
+      },
+    } as any);
+
+    expect(guide).toContain('Checkpoint:');
+    expect(guide).toContain('Research product prices');
+    expect(guide).toContain('Opened dashboard');
+    expect(guide).toContain('Collect second page');
+    expect(guide).toContain('https://example.com/dashboard');
+  });
+
+  test('includes recent success and failure with avoid guidance', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      recentJournal: [
+        { ts: Date.now() - 2000, tool: 'navigate', ok: true, summary: '✓ → https://example.com' },
+        { ts: Date.now() - 1000, tool: 'interact', ok: false, summary: '✗ Click "missing"' },
+      ],
+    });
+
+    expect(guide).toContain('Recent tool activity:');
+    expect(guide).toContain('Last success: ✓ → https://example.com');
+    expect(guide).toContain('Last failure: ✗ Click "missing"');
+    expect(guide).toContain('Avoid: repeating the last failed call');
+  });
+
+
+
+  test('includes task checkpoint context when taskId context is supplied', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      taskRun: {
+        taskId: 'task-1035',
+        status: 'RUNNING',
+        objective: 'verify automatic checkpoints',
+        currentCursor: 'https://example.com/page-b',
+        latestCheckpoint: {
+          checkpoint_id: 'cp-1',
+          run_id: 'task-1035',
+          summary: 'Reached page B',
+          current_cursor: 'https://example.com/page-b',
+          created_at: Date.now() - 30_000,
+        },
+        latestCheckpointAgeMs: 30_000,
+        recentEvents: [{ ts: Date.now() - 10_000, kind: 'checkpointed', data: { checkpoint_id: 'cp-1' } }],
+        lastSuccessfulAction: 'navigate page B',
+        lastFailure: 'stale target recovered',
+        nextHostAction: 'resume',
+      },
+    } as any);
+
+    expect(guide).toContain('Task checkpoint context:');
+    expect(guide).toContain('Task ID: task-1035');
+    expect(guide).toContain('Latest checkpoint: cp-1');
+    expect(guide).toContain('Last successful action: navigate page B');
+    expect(guide).toContain('Last failure: stale target recovered');
+    expect(guide).toContain('Next host action class: resume');
+  });
+
+  test('links evidence bundles without embedding blobs', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      evidenceBundles: [{ id: 'bundle-1', path: '/tmp/openchrome/bundle-1' }],
+    });
+
+    expect(guide).toContain('Evidence bundles:');
+    expect(guide).toContain('bundle-1: /tmp/openchrome/bundle-1');
+    expect(guide).toContain('Recommended next safe action');
   });
 });

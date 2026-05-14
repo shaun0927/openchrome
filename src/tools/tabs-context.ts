@@ -3,6 +3,7 @@
  */
 
 import { MCPServer } from '../mcp-server';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
@@ -10,6 +11,7 @@ import { safeTitle } from '../utils/safe-title';
 const definition: MCPToolDefinition = {
   name: 'tabs_context',
   description: 'Get session tab IDs grouped by worker.',
+  annotations: TOOL_ANNOTATIONS.tabs_context,
   inputSchema: {
     type: 'object',
     properties: {
@@ -24,6 +26,44 @@ const definition: MCPToolDefinition = {
     },
     required: [],
   },
+  // #871 — MCP-spec outputSchema. Clients with schema validators (Inspector,
+  // future TS SDK-backed hosts) read `structuredContent` directly instead of
+  // re-parsing `content[0].text`.
+  outputSchema: {
+    type: 'object',
+    properties: {
+      sessionId: { type: 'string' },
+      defaultWorkerId: { type: 'string' },
+      workerCount: { type: 'integer', minimum: 0 },
+      tabCount: { type: 'integer', minimum: 0 },
+      workers: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            tabCount: { type: 'integer', minimum: 0 },
+            tabs: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  tabId: { type: 'string' },
+                  workerId: { type: 'string' },
+                  url: { type: 'string' },
+                  title: { type: 'string' },
+                },
+                required: ['tabId', 'workerId', 'url', 'title'],
+              },
+            },
+          },
+          required: ['id', 'name', 'tabCount'],
+        },
+      },
+    },
+    required: ['sessionId', 'workerCount', 'tabCount', 'workers'],
+  },
 };
 
 interface TabInfo {
@@ -31,6 +71,8 @@ interface TabInfo {
   workerId: string;
   url: string;
   title: string;
+  /** #848: name of the BrowserContext owning this tab; 'default' for Chrome's default. */
+  context: string;
 }
 
 const handler: ToolHandler = async (
@@ -67,6 +109,7 @@ const handler: ToolHandler = async (
               workerId: workerInfo.id,
               url: page.url(),
               title: await safeTitle(page),
+              context: sessionManager.getTargetContextName(targetId),
             };
             tabInfos.push(tabInfo);
             workerTabs[workerInfo.id].push(tabInfo);
@@ -77,52 +120,42 @@ const handler: ToolHandler = async (
       }
     }
 
-    if (summaryMode) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(
-              {
-                sessionId,
-                workerCount: workers.length,
-                tabCount: tabInfos.length,
-                workers: workers.map((w) => ({
-                  id: w.id,
-                  name: w.name,
-                  tabCount: workerTabs[w.id]?.length || 0,
-                })),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
+    // #871 — single source of truth: build the structured object once, then
+    // serialize it for the back-compat `content[]` channel. The wire-format
+    // invariant `JSON.parse(content[0].text) === structuredContent` is enforced
+    // by tests/unit/output-schema.test.ts.
+    const structured = summaryMode
+      ? {
+          sessionId,
+          workerCount: workers.length,
+          tabCount: tabInfos.length,
+          workers: workers.map((w) => ({
+            id: w.id,
+            name: w.name,
+            tabCount: workerTabs[w.id]?.length || 0,
+          })),
+        }
+      : {
+          sessionId,
+          defaultWorkerId: session.defaultWorkerId,
+          workerCount: workers.length,
+          tabCount: tabInfos.length,
+          workers: workers.map((w) => ({
+            id: w.id,
+            name: w.name,
+            tabCount: workerTabs[w.id]?.length || 0,
+            tabs: workerTabs[w.id] || [],
+          })),
+        };
 
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(
-            {
-              sessionId,
-              defaultWorkerId: session.defaultWorkerId,
-              workerCount: workers.length,
-              tabCount: tabInfos.length,
-              workers: workers.map((w) => ({
-                id: w.id,
-                name: w.name,
-                tabCount: workerTabs[w.id]?.length || 0,
-                tabs: workerTabs[w.id] || [],
-              })),
-            },
-            null,
-            2
-          ),
+          text: JSON.stringify(structured),
         },
       ],
+      structuredContent: structured as unknown as Record<string, unknown>,
     };
   } catch (error) {
     return {

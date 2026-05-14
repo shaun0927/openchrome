@@ -238,20 +238,29 @@ describe('ChromeDetector', () => {
     });
 
     test('polling emits "not-found" events periodically', async () => {
+      jest.useFakeTimers();
       mockChromeNotFound();
 
       const handler = jest.fn();
       detector.on('not-found', handler);
 
-      detector.startPolling(50);
-      await new Promise(r => setTimeout(r, 180));
-      detector.stopPolling();
+      try {
+        detector.startPolling(50);
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+        detector.stopPolling();
 
-      // Should have fired at least twice in ~180ms with 50ms interval
-      expect(handler.mock.calls.length).toBeGreaterThanOrEqual(2);
+        // Two elapsed intervals should deterministically produce two polls;
+        // fake timers avoid CI scheduler starvation on saturated macOS runners.
+        expect(handler.mock.calls.length).toBeGreaterThanOrEqual(2);
+      } finally {
+        detector.stopPolling();
+        jest.useRealTimers();
+      }
     });
 
     test('polling emits "detected" when Chrome appears during polling', async () => {
+      jest.useFakeTimers();
       // Start with Chrome absent
       mockChromeNotFound();
 
@@ -260,43 +269,57 @@ describe('ChromeDetector', () => {
       detector.on('not-found', notFoundHandler);
       detector.on('detected', detectedHandler);
 
-      detector.startPolling(50);
+      try {
+        detector.startPolling(50);
 
-      // After first poll, simulate Chrome being installed
-      await new Promise(r => setTimeout(r, 70));
+        // After first poll, simulate Chrome being installed.
+        jest.advanceTimersByTime(50);
+        await Promise.resolve();
 
-      const platform = os.platform();
-      let chromePath: string;
-      if (platform === 'darwin') {
-        chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-      } else if (platform === 'win32') {
-        chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-        process.env['PROGRAMFILES'] = 'C:\\Program Files';
-      } else {
-        chromePath = '/usr/bin/google-chrome-stable';
+        const platform = os.platform();
+        let chromePath: string;
+        if (platform === 'darwin') {
+          chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+        } else if (platform === 'win32') {
+          chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+          process.env['PROGRAMFILES'] = 'C:\\Program Files';
+        } else {
+          chromePath = '/usr/bin/google-chrome-stable';
+        }
+        mockChromeFound(chromePath);
+
+        jest.advanceTimersByTime(50);
+        await Promise.resolve();
+        detector.stopPolling();
+
+        expect(notFoundHandler).toHaveBeenCalled();
+        expect(detectedHandler).toHaveBeenCalled();
+      } finally {
+        detector.stopPolling();
+        jest.useRealTimers();
       }
-      mockChromeFound(chromePath);
-
-      await new Promise(r => setTimeout(r, 100));
-      detector.stopPolling();
-
-      expect(notFoundHandler).toHaveBeenCalled();
-      expect(detectedHandler).toHaveBeenCalled();
     });
 
     test('accepts custom interval via startPolling parameter', async () => {
+      jest.useFakeTimers();
       mockChromeNotFound();
 
       const handler = jest.fn();
       detector.on('not-found', handler);
 
-      // Use constructor default but override in startPolling
-      detector.startPolling(60);
-      await new Promise(r => setTimeout(r, 200));
-      detector.stopPolling();
+      try {
+        // Use constructor default but override in startPolling.
+        detector.startPolling(60);
+        jest.advanceTimersByTime(180);
+        await Promise.resolve();
+        detector.stopPolling();
 
-      // ~3 intervals in 200ms
-      expect(handler.mock.calls.length).toBeGreaterThanOrEqual(2);
+        // Three elapsed custom intervals should produce at least two polls.
+        expect(handler.mock.calls.length).toBeGreaterThanOrEqual(2);
+      } finally {
+        detector.stopPolling();
+        jest.useRealTimers();
+      }
     });
   });
 

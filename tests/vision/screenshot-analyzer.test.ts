@@ -59,10 +59,13 @@ describe('collectInteractiveElements', () => {
   it('passes interactiveOnly flag to page.evaluate', async () => {
     const page = createMockPage([]);
     await collectInteractiveElements(page as any, true);
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), true);
+    // Updated for #932 P1 iframe-offset fix: the in-page collector now also
+    // receives a third arg (a translation-mode flag) so the assertion accepts
+    // any trailing argument.
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), true, expect.anything());
 
     await collectInteractiveElements(page as any, false);
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), false);
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), false, expect.anything());
   });
 
   it('handles empty page', async () => {

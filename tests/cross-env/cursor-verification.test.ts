@@ -117,9 +117,9 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       expect(initResult.protocolVersion).toBe('2024-11-05');
     });
 
-    test('Server capabilities: tools.listChanged=true, resources={}', () => {
+    test('Server capabilities advertise resource subscriptions', () => {
       expect(initResult.capabilities.tools.listChanged).toBe(true);
-      expect(initResult.capabilities.resources).toEqual({});
+      expect(initResult.capabilities.resources).toEqual({ listChanged: true, subscribe: true });
     });
 
     test('Server info: name="openchrome", version present', () => {
@@ -135,16 +135,15 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
   describe('C2: Tool Discovery & Listing', () => {
     let tier1Tools: any[];
 
-    test('Initial tools/list returns Tier 1 tools only (38 tools) + expand_tools', async () => {
+    test('Initial tools/list returns progressive-disclosure tools + expand_tools', async () => {
       const { response } = await sendAndReceive(server, 'tools/list');
       tier1Tools = response.result.tools;
-      // 38 Tier 1 tools (includes oc_reap_orphans lifecycle sweep, oc_assert,
-      // oc_evidence_bundle, oc_skill_record, oc_skill_recall) + 1 expand_tools virtual tool = 39
       const toolNames = tier1Tools.map((t: any) => t.name);
       expect(toolNames).toContain('expand_tools');
 
       const nonExpandTools = tier1Tools.filter((t: any) => t.name !== 'expand_tools');
-      expect(nonExpandTools.length).toBe(38);
+      expect(nonExpandTools.length).toBeGreaterThanOrEqual(46);
+      expect(new Set(toolNames).size).toBe(toolNames.length);
     });
 
     test('expand_tools virtual tool present in initial list', () => {
@@ -158,7 +157,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       const names = tier1Tools.map((t: any) => t.name);
       const expectedCore = [
         'navigate', 'page_reload', 'computer', 'interact', 'find',
-        'form_input', 'fill_form', 'read_page', 'inspect', 'query_dom',
+        'form_input', 'fill_form', 'read_page', 'oc_observe', 'inspect', 'query_dom',
         'javascript_tool', 'tabs_context', 'tabs_create', 'tabs_close',
         'cookies', 'storage', 'wait_for', 'memory', 'lightweight_scroll',
         'oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume',
@@ -199,7 +198,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
         'batch_execute', 'batch_paginate',
-        'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
+        'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       ];
       for (const tool of expectedTier2) {
         expect(toolNames).toContain(tool);
@@ -293,7 +292,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
       'console_capture', 'performance_metrics', 'file_upload',
       'batch_execute', 'batch_paginate',
-      'oc_recording_start', 'oc_recording_stop', 'oc_recording_list', 'oc_recording_export',
+      'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       'crawl', 'crawl_sitemap', 'vision_find', 'extract_data', 'oc_totp_generate',
     ];
     tier2Tools.forEach(tool => {

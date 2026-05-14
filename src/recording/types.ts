@@ -4,6 +4,38 @@
  */
 
 /**
+ * A single Outcome Contract assertion result attached to a recorded action.
+ */
+export interface ContractResultEntry {
+  /** Verbatim Assertion JSON from the DSL */
+  assertion: unknown;
+  /** Evaluation verdict */
+  verdict: 'pass' | 'fail' | 'inconclusive';
+  /** Implementation-defined evidence details */
+  details?: Record<string, unknown>;
+}
+
+/**
+ * A single network request entry attached to a recorded action.
+ */
+export interface NetworkEntry {
+  method: string;
+  url: string;
+  status?: number;
+  durationMs?: number;
+}
+
+/**
+ * A single console message entry attached to a recorded action.
+ */
+export interface ConsoleEntry {
+  level: 'log' | 'warn' | 'error';
+  text: string;
+  /** Unix timestamp in milliseconds */
+  ts: number;
+}
+
+/**
  * A single recorded action within a session recording.
  */
 export interface RecordingAction {
@@ -31,6 +63,14 @@ export interface RecordingAction {
   screenshotBefore?: string;
   /** Filename of screenshot taken after the action */
   screenshotAfter?: string;
+  /** Outcome Contract assertion results for this action (≤ 4 KB total JSON) */
+  contractResults?: ContractResultEntry[];
+  /** Verbatim verify block from the tool response, if present */
+  verify?: Record<string, unknown>;
+  /** Network requests correlated with this action (≤ 20 entries) */
+  network?: NetworkEntry[];
+  /** Console messages emitted during this action (≤ 20 entries) */
+  console?: ConsoleEntry[];
 }
 
 /**
@@ -53,6 +93,8 @@ export interface RecordingMetadata {
   profile?: string;
   /** Optional user-supplied label for the recording */
   label?: string;
+  /** Optional active trajectory bundle metadata (#1059). */
+  trajectoryBundle?: { enabled: boolean; trajectory_id?: string; dir?: string; report?: Record<string, unknown> };
 }
 
 /**

@@ -13,6 +13,7 @@ import { EventEmitter } from 'events';
 import { ChromeLauncher } from './launcher';
 import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
 import { shouldRateLimitRelaunch } from './exit-classifier';
+import { getLifecycleBus, isLifecycleBusEnabled } from '../core/lifecycle';
 
 /** Idle cadence. 60 s is 6× slower than the default 10 s active rate. */
 const IDLE_INTERVAL_MS = 60_000;
@@ -43,6 +44,12 @@ export class ChromeProcessWatchdog extends EventEmitter {
   private readonly maxRelaunchCycles = 10;
   private stopped = true;
   private lastDelayMs = 0;
+  /**
+   * Unsubscribe handle for the additive lifecycle-bus `chrome:exit` listener.
+   * Set to null when the bus is off (OPENCHROME_LIFECYCLE_BUS=0) so the
+   * watchdog behaves identically to v1.11.0 in that mode.
+   */
+  private busUnsub: (() => void) | null = null;
 
   constructor(launcher: ChromeLauncher, opts?: ProcessWatchdogOptions) {
     super();
@@ -59,6 +66,23 @@ export class ChromeProcessWatchdog extends EventEmitter {
     this.stop(); // clear any existing timer
     this.stopped = false;
     this.scheduleNext(this.nextDelayMs());
+    // Issue #857: additive subscription to chrome:exit so the watchdog can
+    // short-circuit one poll cycle when the bus reports an exit. The existing
+    // polling loop is UNCHANGED — this is purely additive and has no effect
+    // when OPENCHROME_LIFECYCLE_BUS=0.
+    if (isLifecycleBusEnabled()) {
+      this.busUnsub = getLifecycleBus().on('chrome:exit', (ev) => {
+        // Only act on exits for a Chrome PID we are currently monitoring.
+        if (
+          this.lastKnownPid !== null &&
+          this.lastKnownPid === (ev as { pid?: number }).pid
+        ) {
+          // Update lastKnownPid so the next poll does not try to probe a
+          // dead process before the launcher has updated its instance.
+          this.lastKnownPid = null;
+        }
+      });
+    }
   }
 
   /**
@@ -69,6 +93,10 @@ export class ChromeProcessWatchdog extends EventEmitter {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.busUnsub) {
+      try { this.busUnsub(); } catch { /* idempotent */ }
+      this.busUnsub = null;
     }
     // Do NOT reset relaunching — async check() may still be in-flight
   }

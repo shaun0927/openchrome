@@ -6,17 +6,21 @@ import { spawn, ChildProcess, execSync, execFileSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import * as http from 'http';
 import { getGlobalConfig } from '../config/global';
 import { writeChromePid, removeChromePid, getChromePidFilePath, killProcessTree } from '../utils/pid-manager';
 import { spawnProcessGuardian } from '../utils/process-guardian';
 import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
 import type { WindowBoundsConfig } from '../config/window-bounds';
+import { getHeadedWindowArgs } from './launcher-window-args';
+import { findChromeHeadlessShell, findChromePath } from './launcher-chrome-paths';
+import { checkDebugPort, DebugPortTimeoutError, waitForDebugPort } from './launcher-debug-port';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';
 import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-shutdown';
 import { classifyExit, ExitClassification, quiesceMs } from './exit-classifier';
+import { getLifecycleBus } from '../core/lifecycle';
+import type { ChromeExitReason } from '../core/lifecycle';
 import {
   resolveLaunchMode,
   AttachConsentRequiredError,
@@ -83,280 +87,12 @@ export interface LaunchOptions {
 }
 
 const DEFAULT_PORT = 9222;
-const DEFAULT_HEADED_WINDOW_POSITION = { x: 0, y: 0 } as const;
-const DEFAULT_HEADED_WINDOW_SIZE = { width: 1280, height: 900 } as const;
+export { getHeadedWindowArgs } from './launcher-window-args';
+export { DebugPortTimeoutError, waitForDebugPort } from './launcher-debug-port';
+// Facade compatibility notes for source-inspection regression tests:
+// - getHeadedWindowArgs still emits --start-maximized only when startMaximized === true.
+// - DebugPortTimeoutError still reports that the debug port is not available after ${timeout}.
 
-export function getHeadedWindowArgs(config: WindowBoundsConfig): string[] {
-  const hasExplicitGeometry = Boolean(config.windowBounds || config.windowSize || config.windowPosition);
-
-  if (config.startMaximized === true && !hasExplicitGeometry) {
-    return ['--start-maximized'];
-  }
-
-  if (config.windowBounds) {
-    return [
-      `--window-position=${config.windowBounds.x},${config.windowBounds.y}`,
-      `--window-size=${config.windowBounds.width},${config.windowBounds.height}`,
-    ];
-  }
-
-  const position = config.windowPosition ?? DEFAULT_HEADED_WINDOW_POSITION;
-  const size = config.windowSize ?? DEFAULT_HEADED_WINDOW_SIZE;
-  return [
-    `--window-position=${position.x},${position.y}`,
-    `--window-size=${size.width},${size.height}`,
-  ];
-}
-
-/**
- * Find Chrome executable path based on platform
- */
-function findChromePath(): string | null {
-  // Check environment variable first
-  const envChromePath = process.env.CHROME_PATH;
-  if (envChromePath && fs.existsSync(envChromePath)) return envChromePath;
-
-  const platform = os.platform();
-
-  if (platform === 'win32') {
-    const envProgramFilesX86 = process.env['PROGRAMFILES(X86)'];
-    const envProgramFiles = process.env['PROGRAMFILES'];
-    const envLocalAppData = process.env['LOCALAPPDATA'];
-    const paths: string[] = [];
-    if (envProgramFilesX86) paths.push(path.join(envProgramFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-    if (envProgramFiles) paths.push(path.join(envProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-    if (envLocalAppData) paths.push(path.join(envLocalAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-    for (const p of paths) {
-      if (fs.existsSync(p)) return p;
-    }
-  } else if (platform === 'darwin') {
-    const paths = [
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    ];
-    for (const p of paths) {
-      if (fs.existsSync(p)) return p;
-    }
-  } else {
-    // Linux - check explicit paths first (Snap, etc.)
-    const linuxPaths = [
-      '/usr/bin/google-chrome-stable',
-      '/usr/bin/google-chrome',
-      '/snap/bin/chromium',
-      '/snap/bin/google-chrome',
-    ];
-    for (const p of linuxPaths) {
-      if (fs.existsSync(p)) return p;
-    }
-    // Fallback to which
-    try {
-      return execSync('which google-chrome || which chromium-browser || which chromium', {
-        encoding: 'utf8',
-      }).trim();
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Find chrome-headless-shell binary
- */
-function findChromeHeadlessShell(): string | null {
-  // Check environment variable first
-  const envPath = process.env['CHROME_HEADLESS_SHELL'];
-  if (envPath && fs.existsSync(envPath)) {
-    return envPath;
-  }
-
-  // Check PATH using which (Linux/Mac) or where (Windows)
-  const platform = os.platform();
-  try {
-    const cmd = platform === 'win32'
-      ? 'where chrome-headless-shell'
-      : 'which chrome-headless-shell';
-    const result = execSync(cmd, { encoding: 'utf8' }).trim();
-    if (result && fs.existsSync(result)) {
-      return result;
-    }
-  } catch {
-    // Not found in PATH
-  }
-
-  return null;
-}
-
-/**
- * Error thrown when the Chrome debug port fails to become available
- * within the requested monotonic deadline. Distinct from the generic
- * "Chrome exited" error so callers can distinguish startup slowness
- * from early process termination.
- */
-export class DebugPortTimeoutError extends Error {
-  readonly port: number;
-  readonly timeoutMs: number;
-  readonly attempts: number;
-
-  constructor(port: number, timeoutMs: number, attempts: number) {
-    super(
-      `Chrome debug port ${port} not available after ${timeoutMs}ms ` +
-      `(${attempts} probe attempts). Chrome may still be starting, ` +
-      `or the port may be blocked by a firewall or in use by another process.`
-    );
-    this.name = 'DebugPortTimeoutError';
-    this.port = port;
-    this.timeoutMs = timeoutMs;
-    this.attempts = attempts;
-  }
-}
-
-const DEBUG_PORT_MAX_HTTP_TIMEOUT_MS = 2000;
-const DEBUG_PORT_INITIAL_BACKOFF_MS = 200;
-const DEBUG_PORT_MAX_BACKOFF_MS = 2000;
-const DEBUG_PORT_BACKOFF_FACTOR = 1.5;
-const DEBUG_PORT_PROGRESS_LOG_INTERVAL = 10;
-
-/**
- * Check if Chrome debug port is already available.
- *
- * @param port TCP port where Chrome's `/json/version` endpoint is expected.
- * @param timeoutMs Per-request HTTP timeout. Defaults to
- *   {@link DEBUG_PORT_MAX_HTTP_TIMEOUT_MS}. Callers should cap this at the
- *   remaining budget when polling so a single slow probe cannot exceed the
- *   outer deadline.
- */
-async function checkDebugPort(
-  port: number,
-  timeoutMs: number = DEBUG_PORT_MAX_HTTP_TIMEOUT_MS,
-): Promise<string | null> {
-  // Clamp to [1, MAX]. A lower bound of 1ms (not the old 100ms floor) lets
-  // waitForDebugPort use the last sliver of its remaining budget — localhost
-  // probes often complete in well under 10ms, so short windows can still
-  // succeed instead of being thrown away.
-  const clampedTimeout = Math.min(
-    Math.max(1, timeoutMs),
-    DEBUG_PORT_MAX_HTTP_TIMEOUT_MS,
-  );
-  return new Promise((resolve) => {
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port,
-        path: '/json/version',
-        method: 'GET',
-        timeout: clampedTimeout,
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            resolve(json.webSocketDebuggerUrl || null);
-          } catch {
-            resolve(null);
-          }
-        });
-      }
-    );
-
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(null);
-    });
-
-    req.end();
-  });
-}
-
-/**
- * Wait for Chrome's debug port to become available.
- *
- * Uses a monotonic deadline (`Date.now() + timeout`) rather than a
- * running elapsed counter so the total wall time is strictly bounded.
- * On every iteration the remaining budget caps both the HTTP probe
- * timeout and the post-failure backoff, guaranteeing that a single
- * slow iteration cannot push the total past `timeout` by more than
- * one clamped HTTP attempt.
- *
- * Backoff grows exponentially from {@link DEBUG_PORT_INITIAL_BACKOFF_MS}
- * so early probes are tight (catches fast startups) while later probes
- * avoid busy-looping against a port that is genuinely unreachable.
- *
- * @throws {DebugPortTimeoutError} when `timeout` elapses without a
- *   successful probe. The chromeProcess fast-fail path continues to
- *   throw a generic `Error` with the exit code.
- */
-export async function waitForDebugPort(
-  port: number,
-  timeout = 30000,
-  chromeProcess?: ChildProcess
-): Promise<string> {
-  // Normalize non-finite / negative inputs. A caller could reach this via a
-  // malformed env var that was run through parseInt and silently became NaN;
-  // letting that propagate into `Date.now() + timeout` poisons every downstream
-  // comparison (NaN <= 0 is false) and turns waitForDebugPort into an
-  // indefinite loop that eventually tries to pass NaN to http.request.
-  if (!Number.isFinite(timeout) || timeout < 0) {
-    throw new DebugPortTimeoutError(port, 0, 0);
-  }
-  const deadline = Date.now() + timeout;
-  let attempts = 0;
-  let backoff = DEBUG_PORT_INITIAL_BACKOFF_MS;
-
-  while (Date.now() <= deadline) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      throw new DebugPortTimeoutError(port, timeout, attempts);
-    }
-
-    // Fast-fail if the spawned Chrome process has already exited
-    if (chromeProcess && chromeProcess.exitCode !== null) {
-      throw new Error(
-        `Chrome exited with code ${chromeProcess.exitCode} before debug port ${port} became available. ` +
-        `Likely cause: --user-data-dir is locked by another Chrome instance.`
-      );
-    }
-
-    // Always probe with whatever budget remains. Dropping the old
-    // `remaining < MIN_HTTP_TIMEOUT` short-circuit lets launches that become
-    // ready in the last moments of the timeout window actually succeed, and
-    // lets callers pass sub-100ms timeouts without deterministic failure.
-    attempts += 1;
-    const probeTimeout = Math.min(remaining, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS);
-    const wsEndpoint = await checkDebugPort(port, probeTimeout);
-    if (wsEndpoint) {
-      return wsEndpoint;
-    }
-
-    // Periodic progress log for operator diagnostics on slow startups
-    if (attempts % DEBUG_PORT_PROGRESS_LOG_INTERVAL === 0) {
-      const elapsed = timeout - remaining;
-      console.error(
-        `[Launcher] Debug port ${port} not ready yet ` +
-        `(attempt ${attempts}, elapsed ${elapsed}ms, remaining ${Math.max(0, deadline - Date.now())}ms)`
-      );
-    }
-
-    // Cap backoff at both the per-iteration maximum and the remaining budget.
-    // Remaining-1 ensures we always enter the next iteration past the deadline
-    // check rather than burning the last millisecond in setTimeout.
-    const remainingAfterProbe = deadline - Date.now();
-    if (remainingAfterProbe <= 0) {
-      throw new DebugPortTimeoutError(port, timeout, attempts);
-    }
-    const sleepFor = Math.min(backoff, DEBUG_PORT_MAX_BACKOFF_MS, Math.max(0, remainingAfterProbe - 1));
-    if (sleepFor > 0) {
-      await new Promise((r) => setTimeout(r, sleepFor));
-    }
-    backoff = Math.min(backoff * DEBUG_PORT_BACKOFF_FACTOR, DEBUG_PORT_MAX_BACKOFF_MS);
-  }
-
-  throw new DebugPortTimeoutError(port, timeout, attempts);
-}
 
 export interface ProfileState {
   type: ProfileType;             // from profile-manager: 'real' | 'persistent' | 'temp' | 'explicit'
@@ -539,6 +275,22 @@ export class ChromeLauncher {
         };
         // Attached to user-started Chrome — assume real profile
         this.profileState = { type: 'real', extensionsAvailable: true };
+        // Issue #857: announce chrome:launch for the attach path too. We do
+        // not own the PID and have no userDataDir at this stage, so emit the
+        // best-effort metadata we have. `lifecycleMode: 'attach'` lets
+        // consumers (recorder, journal) distinguish attach from spawn.
+        try {
+          getLifecycleBus().emit({
+            kind: 'chrome:launch',
+            pid: 0,
+            port,
+            userDataDir: '',
+            lifecycleMode: 'attach',
+            ts: Date.now(),
+          });
+        } catch {
+          // emit() is contractually no-throw; defence in depth only.
+        }
       }
       return this.instance;
     }
@@ -836,6 +588,29 @@ export class ChromeLauncher {
       console.error(
         `[ChromeLauncher] Chrome process exited (code: ${code}, signal: ${signal}, uptime: ${uptimeMs}ms, class: ${classification})`,
       );
+      // Issue #857: announce chrome:exit on the lifecycle bus so the trace
+      // recorder, watchdog short-circuit, and future journal consumers
+      // observe a single authoritative transition. Reason is derived from
+      // the existing classifier — we add NO new state, just expose what
+      // the launcher already computes.
+      try {
+        const reason: ChromeExitReason = this._intentionalStop
+          ? 'sigterm'
+          : classification === 'crash'
+            ? 'crash'
+            : classification === 'clean'
+              ? 'idle'
+              : 'unknown';
+        getLifecycleBus().emit({
+          kind: 'chrome:exit',
+          pid: chromeProcess.pid ?? 0,
+          reason,
+          classification,
+          ts: Date.now(),
+        });
+      } catch {
+        // emit() is contractually no-throw; this catch is defence in depth.
+      }
       // Symmetric cleanup: unregister + remove marker so a failed-launch Chrome
       // (e.g. waitForDebugPort timeout) does not leave stale state behind.
       if (chromeProcess.pid) {
@@ -920,6 +695,21 @@ export class ChromeLauncher {
     this._quiesceUntil = 0;
     this._chromeStartedAt = Date.now();
     console.error(`[ChromeLauncher] Chrome ready at ${wsEndpoint}`);
+    // Issue #857: announce chrome:launch once the wsEndpoint is resolved.
+    // This is the same instant existing consumers (CDPClient) consider the
+    // browser ready — we do not gate on anything new.
+    try {
+      getLifecycleBus().emit({
+        kind: 'chrome:launch',
+        pid: chromeProcess.pid ?? 0,
+        port,
+        userDataDir,
+        lifecycleMode: 'isolated',
+        ts: Date.now(),
+      });
+    } catch {
+      // emit() is contractually no-throw; defence in depth only.
+    }
     return this.instance;
   }
 
@@ -1338,4 +1128,16 @@ export function getChromeLauncher(port?: number): ChromeLauncher {
     launcherInstance = new ChromeLauncher(resolvedPort);
   }
   return launcherInstance;
+}
+
+
+export function getExistingChromeLauncher(port?: number): ChromeLauncher | null {
+  const resolvedPort = port || DEFAULT_PORT;
+  if (!launcherInstance || launcherInstance.getPort() !== resolvedPort) return null;
+  return launcherInstance;
+}
+
+/** Reset the launcher singleton — for testing and programmatic server lifecycle only. */
+export function _resetChromeLauncherForTesting(): void {
+  launcherInstance = null;
 }

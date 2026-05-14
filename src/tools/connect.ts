@@ -1,14 +1,21 @@
 /**
  * Connect tools — expose web AI host connection info via MCP protocol.
  * Part of #523: Desktop App Web host connection guide.
+ * Part of #860: DevTools URL exposure via devtools field + oc_devtools_url tool.
  */
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { generateConnectionInfo, generateAllConnectionInfo, getHostIds } from '../connect/index';
 import { copyToClipboard } from '../connect/clipboard';
 import { openInBrowser } from '../connect/open-url';
 import type { WebAIHostId, ServerConnectionState } from '../connect/types';
+import { getAutoConnectState } from '../chrome/auto-connect-state';
+import { getChromePool } from '../chrome/pool';
+import { getDevToolsInstanceInfo } from '../chrome/devtools-info';
+import { getGlobalConfig } from '../config/global';
+import { getRuntimeProfile } from '../config/runtime-profile';
 
 function getServerState(): ServerConnectionState {
   const httpPort = process.env.OPENCHROME_HTTP_PORT || '3100';
@@ -22,21 +29,66 @@ function getServerState(): ServerConnectionState {
   };
 }
 
+/**
+ * Returns true when DevTools URL exposure is enabled (default: on).
+ * Gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'.
+ */
+export function isDevToolsExposureEnabled(): boolean {
+  return process.env.OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0';
+}
+
+/**
+ * Collect DevTools instance info from all active Chrome pool instances.
+ * Also queries the default single-instance port when the pool has no entries.
+ * Returns undefined if unreachable or exposure is disabled.
+ */
+export async function collectDevToolsInfo(): Promise<
+  { instances: Awaited<ReturnType<typeof getDevToolsInstanceInfo>>[] } | undefined
+> {
+  if (!isDevToolsExposureEnabled()) {
+    return undefined;
+  }
+
+  // Collect ports: prefer pool instances; fall back to default port
+  const pool = getChromePool();
+  const poolInstances = pool.getInstances();
+  const ports: number[] =
+    poolInstances.size > 0
+      ? Array.from(poolInstances.values()).map((inst) => inst.port)
+      : [getGlobalConfig().port];
+
+  const results = await Promise.all(ports.map((p) => getDevToolsInstanceInfo(p)));
+  const reachable = results.filter((r) => r !== null) as NonNullable<typeof results[number]>[];
+
+  if (reachable.length === 0) {
+    return undefined;
+  }
+
+  return { instances: reachable };
+}
+
 const getConnectionInfoDef: MCPToolDefinition = {
   name: 'oc_get_connection_info',
   description:
-    'Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom). Returns the MCP server URL, bearer token, settings page URL, and step-by-step instructions.',
+    'Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom). ' +
+    'Returns the MCP server URL, bearer token, settings page URL, step-by-step instructions, and ' +
+    '(when Chrome is reachable) a devtools block with live DevTools inspector URLs for all open pages. ' +
+    'Use host="openchrome" to introspect the openchrome server itself — when --auto-connect is ' +
+    'active, returns {mode: "auto-connect", userDataDir, port}.',
   inputSchema: {
     type: 'object',
     properties: {
       host: {
         type: 'string',
-        enum: ['claude', 'chatgpt', 'gemini', 'custom', 'all'],
-        description: 'Web AI host to generate config for. Use "all" for all hosts.',
+        enum: ['claude', 'chatgpt', 'gemini', 'custom', 'all', 'openchrome'],
+        description:
+          'Web AI host to generate config for. Use "all" for all hosts, ' +
+          'or "openchrome" for openchrome server status (e.g. auto-connect mode).',
       },
     },
     required: ['host'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_get_connection_info,
 };
 
 const getConnectionInfoHandler: ToolHandler = async (
@@ -46,21 +98,70 @@ const getConnectionInfoHandler: ToolHandler = async (
   const hostArg = args.host as string;
   const state = getServerState();
 
+  // Fetch devtools info in parallel with host-info generation. This is also
+  // used by host="openchrome" so self-introspection includes the same #860
+  // live DevTools metadata as external host config responses.
+  const devToolsPromise = collectDevToolsInfo();
+
+  if (hostArg === 'openchrome') {
+    // Issue #849: surface the auto-connect state so MCP clients can verify
+    // they are talking to an externally-launched Chrome.
+    const autoConnect = getAutoConnectState();
+    const devtools = await devToolsPromise;
+    if (autoConnect) {
+      const response = {
+        mode: autoConnect.mode,
+        userDataDir: autoConnect.userDataDir,
+        port: autoConnect.port,
+        wsEndpoint: autoConnect.wsEndpoint,
+        attachedAt: new Date(autoConnect.attachedAt).toISOString(),
+        runtimeProfile: getRuntimeProfile(),
+        ...(devtools ? { devtools } : {}),
+      };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(response, null, 2),
+          },
+        ],
+      };
+    }
+    const response = { mode: 'managed', runtimeProfile: getRuntimeProfile(), ...(devtools ? { devtools } : {}) };
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(response, null, 2),
+        },
+      ],
+    };
+  }
+
+
   if (hostArg === 'all') {
-    const all = generateAllConnectionInfo(state);
-    return { content: [{ type: 'text', text: JSON.stringify(all, null, 2) }] };
+    const [all, devtools] = await Promise.all([
+      Promise.resolve(generateAllConnectionInfo(state)),
+      devToolsPromise,
+    ]);
+    const response = devtools ? { ...all, devtools } : all;
+    return { content: [{ type: 'text', text: JSON.stringify(response, null, 2) }] };
   }
 
   const validHosts = getHostIds();
   if (!validHosts.includes(hostArg as WebAIHostId)) {
     return {
-      content: [{ type: 'text', text: `Invalid host: ${hostArg}. Valid hosts: ${validHosts.join(', ')}` }],
+      content: [{ type: 'text', text: `Invalid host: ${hostArg}. Valid hosts: ${validHosts.join(', ')}, openchrome` }],
       isError: true,
     };
   }
 
-  const info = generateConnectionInfo(hostArg as WebAIHostId, state);
-  return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
+  const [info, devtools] = await Promise.all([
+    Promise.resolve(generateConnectionInfo(hostArg as WebAIHostId, state)),
+    devToolsPromise,
+  ]);
+  const response = devtools ? { ...info, devtools } : info;
+  return { content: [{ type: 'text', text: JSON.stringify(response, null, 2) }] };
 };
 
 const copyToClipboardDef: MCPToolDefinition = {
@@ -73,6 +174,7 @@ const copyToClipboardDef: MCPToolDefinition = {
     },
     required: ['text'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_copy_to_clipboard,
 };
 
 const copyToClipboardHandler: ToolHandler = async (
@@ -105,6 +207,7 @@ const openHostSettingsDef: MCPToolDefinition = {
     },
     required: ['host'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_open_host_settings,
 };
 
 const openHostSettingsHandler: ToolHandler = async (

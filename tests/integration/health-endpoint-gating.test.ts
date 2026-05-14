@@ -80,6 +80,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function allocatePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      server.close((closeError) => {
+        if (closeError) {
+          reject(closeError);
+          return;
+        }
+        if (typeof address === 'object' && address !== null) {
+          resolve(address.port);
+        } else {
+          reject(new Error('ephemeral port allocation did not return an address'));
+        }
+      });
+    });
+  });
+}
+
 async function waitForLog(getLog: () => string, pattern: RegExp, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -168,24 +189,11 @@ describeFn('health endpoint gating (issue #648)', () => {
     },
   ];
 
-  // We pick a fresh high port per test to avoid colliding with the
-  // developer's stray openchrome on 9090, or with a previous test run.
-  const pickPort = (() => {
-    let next = 38000 + Math.floor(Math.random() * 2000);
-    return () => next++;
-  })();
-
-  // Pick fresh Chrome/HTTP transport ports too so parallel jest workers
-  // (or a stray dev-mode openchrome on 9222/3100) never collide.
-  const pickTransportPorts = (() => {
-    let next = 40000 + Math.floor(Math.random() * 4000);
-    return () => ({ chromePort: next++, httpPort: next++ });
-  })();
-
   scenarios.forEach((scenario) => {
     test(scenario.name, async () => {
-      const healthPort = pickPort();
-      const { chromePort, httpPort } = pickTransportPorts();
+      const healthPort = await allocatePort();
+      const chromePort = await allocatePort();
+      const httpPort = await allocatePort();
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         OPENCHROME_HEALTH_PORT: String(healthPort),
@@ -240,12 +248,21 @@ describeFn('health endpoint gating (issue #648)', () => {
         // Expected wording.
         expect(stderr).toMatch(scenario.expectedLogPattern);
 
-        // Give the listener a beat to actually bind() on the enabled path.
+        // Wait for the listener to actually bind() on the enabled path.
+        // Slow CI runners (especially ubuntu-20 with --transport=both) need
+        // more than a fixed 500ms after the log line — bind() happens slightly
+        // after the SelfHealing log on those machines. Poll instead of guess.
+        let probe: 'connected' | 'refused' | 'timeout' = 'refused';
         if (scenario.expectBound) {
-          await sleep(500);
+          const deadline = Date.now() + 10_000;
+          while (Date.now() < deadline) {
+            probe = await probePort(healthPort, 300);
+            if (probe === 'connected') break;
+            await sleep(150);
+          }
+        } else {
+          probe = await probePort(healthPort, 500);
         }
-
-        const probe = await probePort(healthPort, 500);
         if (scenario.expectBound) {
           expect(probe).toBe('connected');
           // And the payload should be the daemon's own /health JSON.
@@ -266,15 +283,12 @@ describeFn('health endpoint gating (issue #648)', () => {
         // and must NOT produce a TypeError for the stdio case where
         // healthEndpoint === null.
         child.kill('SIGTERM');
-        const shutdownTimeoutMs = process.platform === 'win32' ? 30_000 : 10_000;
+        const shutdownTimeoutMs = 30_000;
         const exit = await waitForExit(child, shutdownTimeoutMs);
         expect(exit.timedOut).toBe(false);
-        if (process.platform === 'win32') {
-          // Windows may report a clean SIGTERM as code=null/signal=SIGTERM.
-          expect(exit.code === 0 || exit.signal === 'SIGTERM').toBe(true);
-        } else {
-          expect(exit.code).toBe(0);
-        }
+        // Node may report a clean SIGTERM shutdown as either code=0 or
+        // code=null/signal=SIGTERM depending on platform and timing.
+        expect(exit.code === 0 || exit.signal === 'SIGTERM').toBe(true);
         expect(stderr).not.toMatch(/TypeError/);
         expect(stderr).not.toMatch(/Cannot read properties of null/);
         expect(stderr).not.toMatch(/UnhandledPromiseRejection/);

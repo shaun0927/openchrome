@@ -4,7 +4,7 @@
  * Part of #572: Session Recording & Replay.
  */
 
-import { RecordingAction, RecordingMetadata } from './types';
+import { RecordingAction, RecordingMetadata, ContractResultEntry } from './types';
 
 /** Tool categories for color-coded badges */
 const TOOL_CATEGORIES: Record<string, string> = {
@@ -34,6 +34,9 @@ function getToolCategory(tool: string): string {
 }
 
 function formatTimestamp(ts: number): string {
+  if (process.env['OPENCHROME_REPLAY_DETERMINISTIC'] === '1') {
+    return '00:00:00.000';
+  }
   const d = new Date(ts);
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
@@ -49,6 +52,9 @@ function formatDuration(ms: number): string {
 
 function formatIso(iso: string | undefined): string {
   if (!iso) return '—';
+  if (process.env['OPENCHROME_REPLAY_DETERMINISTIC'] === '1') {
+    return '1970-01-01 00:00:00 UTC';
+  }
   try {
     return new Date(iso).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
   } catch {
@@ -72,6 +78,9 @@ function computeStats(actions: RecordingAction[]): {
   successRate: string;
   totalDurationMs: number;
   toolsUsed: string[];
+  contractPass: number;
+  contractFail: number;
+  contractInconclusive: number;
 } {
   const successCount = actions.filter(a => a.ok).length;
   const failureCount = actions.length - successCount;
@@ -80,7 +89,137 @@ function computeStats(actions: RecordingAction[]): {
   const successRate = actions.length > 0
     ? `${Math.round((successCount / actions.length) * 100)}%`
     : 'N/A';
-  return { totalActions: actions.length, successCount, failureCount, successRate, totalDurationMs, toolsUsed };
+
+  let contractPass = 0;
+  let contractFail = 0;
+  let contractInconclusive = 0;
+  for (const action of actions) {
+    for (const cr of (action.contractResults ?? [])) {
+      const entry = cr as ContractResultEntry;
+      if (entry.verdict === 'pass') contractPass++;
+      else if (entry.verdict === 'fail') contractFail++;
+      else contractInconclusive++;
+    }
+  }
+
+  return {
+    totalActions: actions.length,
+    successCount,
+    failureCount,
+    successRate,
+    totalDurationMs,
+    toolsUsed,
+    contractPass,
+    contractFail,
+    contractInconclusive,
+  };
+}
+
+/**
+ * Render the Outcome Contract panel for one action card.
+ * Returns '' if no contractResults present.
+ */
+function renderContractPanel(action: RecordingAction): string {
+  if (!action.contractResults || action.contractResults.length === 0) return '';
+
+  const entries = action.contractResults as ContractResultEntry[];
+  const rows = entries.map(cr => {
+    // Handle truncation placeholder
+    if ((cr as unknown as Record<string, unknown>)['truncated'] === true) {
+      const bytes = (cr as unknown as Record<string, unknown>)['originalBytes'] as number | undefined;
+      return `<div class="contract-row truncated">Truncated (original ${bytes ?? '?'} bytes exceeded 4 KB limit)</div>`;
+    }
+    const verdictClass = cr.verdict === 'pass' ? 'verdict-pass'
+      : cr.verdict === 'fail' ? 'verdict-fail'
+      : 'verdict-inconclusive';
+    const assertionJson = escapeHtml(JSON.stringify(cr.assertion, null, 2));
+    const detailsHtml = cr.details
+      ? `<pre class="panel-json">${escapeHtml(JSON.stringify(cr.details, null, 2))}</pre>`
+      : '';
+    return `<div class="contract-row">
+        <span class="verdict-badge ${verdictClass}">${escapeHtml(cr.verdict)}</span>
+        <pre class="panel-json">${assertionJson}</pre>
+        ${detailsHtml}
+      </div>`;
+  }).join('');
+
+  return `
+    <details class="panel-details contract-panel">
+      <summary>Contracts (${entries.length})</summary>
+      <div class="panel-body">${rows}</div>
+    </details>`;
+}
+
+/**
+ * Render the verify panel for one action card.
+ * Returns '' if no verify block present.
+ */
+function renderVerifyPanel(action: RecordingAction): string {
+  if (!action.verify) return '';
+  const json = escapeHtml(JSON.stringify(action.verify, null, 2));
+  return `
+    <details class="panel-details verify-panel">
+      <summary>Verify</summary>
+      <div class="panel-body">
+        <pre class="panel-json">${json}</pre>
+      </div>
+    </details>`;
+}
+
+/**
+ * Render the network panel for one action card.
+ * Returns '' if no network entries present.
+ */
+function renderNetworkPanel(action: RecordingAction): string {
+  if (!action.network || action.network.length === 0) return '';
+  const rows = action.network.map(n => {
+    const statusStr = n.status !== undefined ? String(n.status) : '—';
+    const durStr = n.durationMs !== undefined ? `${n.durationMs}ms` : '—';
+    // Truncation marker row has empty method
+    if (!n.method && n.url.includes('truncated')) {
+      return `<tr class="truncation-marker"><td colspan="4">${escapeHtml(n.url)}</td></tr>`;
+    }
+    return `<tr>
+        <td class="net-method">${escapeHtml(n.method)}</td>
+        <td class="net-url">${escapeHtml(n.url)}</td>
+        <td class="net-status">${escapeHtml(statusStr)}</td>
+        <td class="net-dur">${escapeHtml(durStr)}</td>
+      </tr>`;
+  }).join('');
+  return `
+    <details class="panel-details network-panel">
+      <summary>Network (${action.network.length})</summary>
+      <div class="panel-body">
+        <table class="panel-table">
+          <thead><tr><th>Method</th><th>URL</th><th>Status</th><th>Duration</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </details>`;
+}
+
+/**
+ * Render the console panel for one action card.
+ * Returns '' if no console entries present.
+ */
+function renderConsolePanel(action: RecordingAction): string {
+  if (!action.console || action.console.length === 0) return '';
+  const rows = action.console.map(c => {
+    const levelClass = `console-${c.level}`;
+    const timeStr = process.env['OPENCHROME_REPLAY_DETERMINISTIC'] === '1'
+      ? '00:00:00.000'
+      : formatTimestamp(c.ts);
+    return `<div class="console-row ${levelClass}">
+        <span class="console-time">${escapeHtml(timeStr)}</span>
+        <span class="console-level">${escapeHtml(c.level)}</span>
+        <span class="console-text">${escapeHtml(c.text)}</span>
+      </div>`;
+  }).join('');
+  return `
+    <details class="panel-details console-panel">
+      <summary>Console (${action.console.length})</summary>
+      <div class="panel-body">${rows}</div>
+    </details>`;
 }
 
 function renderActionCard(action: RecordingAction, screenshots: Map<string, string>): string {
@@ -125,6 +264,11 @@ function renderActionCard(action: RecordingAction, screenshots: Map<string, stri
     ? `<div class="action-url" title="${escapeHtml(action.url)}">&#x1F517; ${escapeHtml(action.url)}</div>`
     : '';
 
+  const contractPanel = renderContractPanel(action);
+  const verifyPanel = renderVerifyPanel(action);
+  const networkPanel = renderNetworkPanel(action);
+  const consolePanel = renderConsolePanel(action);
+
   return `
     <div class="action-card ${statusClass}" data-seq="${action.seq}" data-tool="${escapeHtml(action.tool)}" data-ok="${action.ok}">
       <div class="action-header">
@@ -144,6 +288,10 @@ function renderActionCard(action: RecordingAction, screenshots: Map<string, stri
         <pre class="args-json"><code>${argsJson}</code></pre>
       </details>
       ${screenshotSection}
+      ${contractPanel}
+      ${verifyPanel}
+      ${networkPanel}
+      ${consolePanel}
     </div>`;
 }
 
@@ -169,6 +317,11 @@ export function generateHtmlReport(
   const toolOptions = stats.toolsUsed
     .map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`)
     .join('\n');
+
+  const hasContracts = (stats.contractPass + stats.contractFail + stats.contractInconclusive) > 0;
+  const contractsSummaryRow = hasContracts
+    ? `<div class="meta-item"><strong>Contracts:</strong> <span style="color:var(--ok)">${stats.contractPass} pass</span> / <span style="color:var(--fail)">${stats.contractFail} fail</span> / <span style="color:var(--text-muted)">${stats.contractInconclusive} inconclusive</span></div>`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -496,6 +649,120 @@ export function generateHtmlReport(
 
     /* hidden by filter */
     .action-card.hidden { display: none; }
+
+    /* ── Outcome panels (contract, verify, network, console) ── */
+    .panel-details {
+      margin-top: 8px;
+    }
+
+    .panel-details summary {
+      font-size: 11px;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+      padding: 2px 0;
+    }
+
+    .panel-details summary:hover { color: var(--text); }
+
+    .panel-body {
+      margin-top: 6px;
+    }
+
+    .panel-json {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.5;
+      color: #a5b4fc;
+      white-space: pre;
+      margin: 4px 0;
+    }
+
+    /* Contract panel */
+    .contract-row {
+      margin-bottom: 8px;
+      padding: 6px;
+      background: var(--surface2);
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    .contract-row.truncated {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .verdict-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .verdict-pass        { background: rgba(34,197,94,0.2);   color: #4ade80; }
+    .verdict-fail        { background: rgba(239,68,68,0.2);   color: #fca5a5; }
+    .verdict-inconclusive { background: rgba(107,114,128,0.2); color: #9ca3af; }
+
+    /* Network panel */
+    .panel-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .panel-table th {
+      text-align: left;
+      padding: 4px 8px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    .panel-table td {
+      padding: 3px 8px;
+      color: var(--text);
+      border-bottom: 1px solid rgba(42,42,90,0.5);
+      word-break: break-all;
+    }
+
+    .net-method { color: #93c5fd; min-width: 60px; }
+    .net-status { min-width: 50px; }
+    .net-dur    { min-width: 70px; color: var(--text-muted); }
+
+    .truncation-marker td {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 4px 8px;
+    }
+
+    /* Console panel */
+    .console-row {
+      display: flex;
+      gap: 8px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
+    .console-log   { color: var(--text); }
+    .console-warn  { color: #fbbf24; background: rgba(251,191,36,0.05); }
+    .console-error { color: #fca5a5; background: rgba(239,68,68,0.05); }
+
+    .console-time  { color: var(--text-muted); min-width: 90px; }
+    .console-level { min-width: 40px; font-weight: 600; }
+    .console-text  { flex: 1; word-break: break-word; white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -513,6 +780,7 @@ export function generateHtmlReport(
       <div class="meta-item"><strong>Stopped:</strong> ${escapeHtml(formatIso(metadata.stoppedAt))}</div>
       <div class="meta-item"><strong>Duration:</strong> ${escapeHtml(sessionDuration)}</div>
       <div class="meta-item"><strong>Actions:</strong> ${metadata.actionCount}</div>
+      ${contractsSummaryRow}
     </div>
   </header>
 

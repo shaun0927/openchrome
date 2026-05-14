@@ -39,10 +39,12 @@ import { acquireLock, writeFileAtomicSafe } from '../../utils/atomic-file';
 
 import {
   SKILL_MEMORY_SCHEMA_VERSION,
+  SKILL_MEMORY_SCHEMA_VERSION_V1,
   type FrozenSnapshot,
   type SkillMemoryFile,
   type SkillRecord,
 } from './types';
+import { validateReplayArtifact, type ReplayArtifact } from './replay-artifact';
 
 export interface SkillMemoryStoreOptions {
   /** Root directory for per-domain skills.json + snapshot files. */
@@ -147,10 +149,35 @@ function assertSafeSnapshotId(snapshotId: string): void {
 }
 
 /**
+ * Normalise a record read from disk so its `replayArtifacts` field is
+ * always defined and parallel-indexed with `steps`. Defensive against:
+ *   - v1 records (no field on disk),
+ *   - partial v2 writes (field present but wrong length),
+ *   - non-array `steps` (we leave the field undefined; callers handle).
+ */
+function normaliseRecordForRead(rec: SkillRecord): SkillRecord {
+  if (!Array.isArray(rec.steps)) return { ...rec };
+  const stepCount = rec.steps.length;
+  const existing = rec.replayArtifacts;
+  if (Array.isArray(existing) && existing.length === stepCount) return rec;
+  const padded: Array<ReplayArtifact | null> = new Array(stepCount).fill(null);
+  if (Array.isArray(existing)) {
+    for (let i = 0; i < Math.min(existing.length, stepCount); i++) {
+      padded[i] = existing[i] ?? null;
+    }
+  }
+  return { ...rec, replayArtifacts: padded };
+}
+
+/**
  * Deterministic skill_id derived from (domain, name). Stable across
  * process restarts so `record()` is idempotent without needing a
  * separate uniqueness index.
  */
+function normalizeSkillDomain(domain: string): string {
+  return domain.trim().toLowerCase();
+}
+
 function computeSkillId(domain: string, name: string): string {
   return crypto
     .createHash('sha256')
@@ -177,8 +204,8 @@ export class SkillMemoryStore {
       throw new Error('SkillMemoryStore: opts.domain is required');
     }
     this.rootDir = opts.rootDir ?? defaultSkillMemoryRootDir();
-    this.domain = opts.domain;
-    this.encodedDomain = encodeDomain(opts.domain);
+    this.domain = normalizeSkillDomain(opts.domain);
+    this.encodedDomain = encodeDomain(this.domain);
   }
 
   /** Ensure the per-domain directory exists exactly once per instance. */
@@ -212,11 +239,21 @@ export class SkillMemoryStore {
   }
 
   /**
-   * Read skills.json synchronously. Returns an empty file shape when
-   * the file is missing, malformed, or stamped with an unknown schema
-   * version. The schema-mismatch case is logged via `console.error`
-   * (per project rule — `console.log` collides with MCP JSON-RPC) so
-   * operators can spot the rollback path during upgrades.
+   * Read skills.json synchronously. Returns an empty file shape when the
+   * file is missing or malformed.
+   *
+   * Schema handling:
+   *   - v2 (current): returned as-is.
+   *   - v1: each record is normalised to v2 in memory by attaching a
+   *     `replayArtifacts: [null, null, …]` parallel to `steps`. The file
+   *     on disk is NOT rewritten here — the next idempotent `record()`
+   *     write promotes it. This keeps reads side-effect-free, which is
+   *     important for `get()` / `list()` consumers.
+   *   - Anything else: logged and skipped (returns an empty file).
+   *
+   * The schema-mismatch case is logged via `console.error` (per project
+   * rule — `console.log` collides with MCP JSON-RPC) so operators can spot
+   * the rollback path during upgrades.
    */
   private readFileSync(): SkillMemoryFile {
     const file = this.skillsFile();
@@ -239,16 +276,37 @@ export class SkillMemoryStore {
       return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
     }
     const obj = parsed as Partial<SkillMemoryFile>;
-    if (obj.schema_version !== SKILL_MEMORY_SCHEMA_VERSION) {
-      console.error(
-        `SkillMemoryStore: skipping ${file} — unknown schema_version=${String(obj.schema_version)}`,
-      );
-      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+    if (obj.schema_version === SKILL_MEMORY_SCHEMA_VERSION) {
+      if (!obj.skills || typeof obj.skills !== 'object') {
+        return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+      }
+      // Normalise: ensure every record has a `replayArtifacts` array
+      // parallel-indexed with `steps`. Defends against partial/legacy v2
+      // writes that omitted the field.
+      const skills = obj.skills as Record<string, SkillRecord>;
+      const normalised: Record<string, SkillRecord> = {};
+      for (const [id, rec] of Object.entries(skills)) {
+        normalised[id] = normaliseRecordForRead(rec);
+      }
+      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: normalised };
     }
-    if (!obj.skills || typeof obj.skills !== 'object') {
-      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+    if (obj.schema_version === SKILL_MEMORY_SCHEMA_VERSION_V1) {
+      if (!obj.skills || typeof obj.skills !== 'object') {
+        return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+      }
+      const v1Skills = obj.skills as Record<string, SkillRecord>;
+      const upgraded: Record<string, SkillRecord> = {};
+      for (const [id, rec] of Object.entries(v1Skills)) {
+        upgraded[id] = normaliseRecordForRead(rec);
+      }
+      // Note: we return v2 in memory but do NOT rewrite the file here.
+      // The next record() acquires the lock and writes v2 explicitly.
+      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: upgraded };
     }
-    return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: obj.skills as Record<string, SkillRecord> };
+    console.error(
+      `SkillMemoryStore: skipping ${file} — unknown schema_version=${String(obj.schema_version)}`,
+    );
+    return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
   }
 
   /** Persist skills.json atomically (temp + rename via write-file-atomic). */
@@ -267,7 +325,8 @@ export class SkillMemoryStore {
    * Returns the assigned `skill_id` and the wall-clock ms `stored_at`.
    */
   async record(skill: Omit<SkillRecord, 'skillId'> & { skillId?: string }): Promise<RecordResult> {
-    if (skill.domain !== this.domain) {
+    const skillDomain = normalizeSkillDomain(skill.domain);
+    if (skillDomain !== this.domain) {
       throw new Error(
         `SkillMemoryStore: domain mismatch — store bound to "${this.domain}", record carries "${skill.domain}"`,
       );
@@ -290,11 +349,48 @@ export class SkillMemoryStore {
           break;
         }
       }
-      const skillId = existingId ?? skill.skillId ?? computeSkillId(skill.domain, skill.name);
+      const skillId = existingId ?? skill.skillId ?? computeSkillId(this.domain, skill.name);
       const existing = existingId ? file.skills[existingId] : undefined;
+      // `replayArtifacts` (#875) — when the caller supplies a value, validate
+      // each non-null entry and persist as-is. When omitted, fall back to
+      // the existing record's artifacts (re-record without artifact change),
+      // or to a parallel array of nulls sized to `steps.length`. Validation
+      // failure throws so callers see the issue rather than silently dropping
+      // captured strategies.
+      let replayArtifacts: Array<ReplayArtifact | null> | undefined;
+      if (skill.replayArtifacts !== undefined) {
+        if (!Array.isArray(skill.replayArtifacts)) {
+          throw new Error('SkillMemoryStore.record: replayArtifacts must be an array when present');
+        }
+        for (let i = 0; i < skill.replayArtifacts.length; i++) {
+          const a = skill.replayArtifacts[i];
+          if (a === null) continue;
+          const v = validateReplayArtifact(a);
+          if (!v.ok) {
+            throw new Error(`SkillMemoryStore.record: replayArtifacts[${i}] invalid: ${v.error}`);
+          }
+        }
+        replayArtifacts = skill.replayArtifacts.slice();
+      } else if (existing?.replayArtifacts) {
+        replayArtifacts = existing.replayArtifacts.slice();
+      }
+      // Final pad to the new `steps.length` — additive resize when caller
+      // grew the step list, truncate when they shrank it.
+      if (Array.isArray(skill.steps)) {
+        const want = skill.steps.length;
+        if (!replayArtifacts) {
+          replayArtifacts = new Array<ReplayArtifact | null>(want).fill(null);
+        } else if (replayArtifacts.length !== want) {
+          const next: Array<ReplayArtifact | null> = new Array(want).fill(null);
+          for (let i = 0; i < Math.min(replayArtifacts.length, want); i++) {
+            next[i] = replayArtifacts[i] ?? null;
+          }
+          replayArtifacts = next;
+        }
+      }
       const next: SkillRecord = {
         skillId,
-        domain: skill.domain,
+        domain: this.domain,
         name: skill.name,
         steps: skill.steps,
         contractId: skill.contractId,
@@ -307,7 +403,21 @@ export class SkillMemoryStore {
         // writeFrozenSnapshot; re-record without an explicit override
         // keeps the previously-recorded value.
         frozenSnapshotPath: skill.frozenSnapshotPath ?? existing?.frozenSnapshotPath ?? null,
+        ...(replayArtifacts !== undefined ? { replayArtifacts } : {}),
       };
+      // Preserve replay-outcome fields across idempotent re-record. The
+      // recorder owns `steps`/`contractId`; the replay path owns the
+      // replay-outcome fields. Mixing them would let a re-record erase
+      // the demote-on-fail signal that drives `oc_skill_recall` ranking (#856).
+      if (existing?.lastReplayPassedAt !== undefined) {
+        next.lastReplayPassedAt = existing.lastReplayPassedAt;
+      }
+      if (existing?.lastReplayFailedAt !== undefined) {
+        next.lastReplayFailedAt = existing.lastReplayFailedAt;
+      }
+      if (existing?.lastReplayError !== undefined) {
+        next.lastReplayError = existing.lastReplayError;
+      }
       file.skills[skillId] = next;
       await this.writeFile(file);
       return { skill_id: skillId, stored_at: Date.now() };
@@ -344,6 +454,74 @@ export class SkillMemoryStore {
       rows = rows.slice(0, filter.limit);
     }
     return rows;
+  }
+
+  /**
+   * Persist the outcome of a deterministic skill replay (#856). Exactly
+   * one of `passedAt` / `failedAt` must be supplied. On a passing replay
+   * the prior `lastReplayError` is cleared so callers can rely on the
+   * field being absent once a skill is healthy again.
+   *
+   * Throws when `skillId` is not known to this domain — replay is
+   * expected to be called only against skills that were previously
+   * recorded via `record()`. Atomicity matches `markUsed()`:
+   * `acquireLock` + `writeFileAtomicSafe`.
+   */
+  async recordReplayResult(
+    skillId: string,
+    args: { passedAt?: number; failedAt?: number; error?: string },
+  ): Promise<void> {
+    if (typeof skillId !== 'string' || skillId.length === 0) {
+      throw new Error('SkillMemoryStore.recordReplayResult: skill_id must be a non-empty string');
+    }
+    const passedAt = args.passedAt;
+    const failedAt = args.failedAt;
+    if (passedAt === undefined && failedAt === undefined) {
+      throw new Error(
+        'SkillMemoryStore.recordReplayResult: exactly one of passedAt / failedAt must be supplied',
+      );
+    }
+    if (passedAt !== undefined && failedAt !== undefined) {
+      throw new Error(
+        'SkillMemoryStore.recordReplayResult: passedAt and failedAt are mutually exclusive',
+      );
+    }
+    if (passedAt !== undefined && !Number.isFinite(passedAt)) {
+      throw new Error('SkillMemoryStore.recordReplayResult: passedAt must be a finite number');
+    }
+    if (failedAt !== undefined && !Number.isFinite(failedAt)) {
+      throw new Error('SkillMemoryStore.recordReplayResult: failedAt must be a finite number');
+    }
+    this.ensureDomainDir();
+    const release = await acquireLock(this.lockFile());
+    try {
+      const file = this.readFileSync();
+      const existing = file.skills[skillId];
+      if (!existing) {
+        throw new Error(`SkillMemoryStore.recordReplayResult: unknown skill_id=${skillId}`);
+      }
+      const next: SkillRecord = { ...existing };
+      if (passedAt !== undefined) {
+        next.lastReplayPassedAt = passedAt;
+        // A passing replay supersedes any stored error — keep the field
+        // shape clean so consumers can rely on its absence.
+        delete next.lastReplayError;
+      } else if (failedAt !== undefined) {
+        next.lastReplayFailedAt = failedAt;
+        if (typeof args.error === 'string' && args.error.length > 0) {
+          // Bound the persisted error so a runaway stack trace cannot
+          // bloat the on-disk JSON.
+          next.lastReplayError =
+            args.error.length > 2048 ? args.error.slice(0, 2048) : args.error;
+        } else {
+          delete next.lastReplayError;
+        }
+      }
+      file.skills[skillId] = next;
+      await this.writeFile(file);
+    } finally {
+      await release();
+    }
   }
 
   /**

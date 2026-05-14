@@ -99,6 +99,60 @@ export function resolveLaunchMode(
 }
 
 /**
+ * Mutual-exclusion error for `--auto-connect` (#849).
+ *
+ * `--auto-connect` implies `launchMode='attach'` (it locates a Chrome the
+ * user already started). Combining it with `--launch-mode=auto` or
+ * `--launch-mode=isolated` is contradictory: those modes spawn a fresh
+ * Chrome, which would either ignore the discovered DevToolsActivePort or
+ * race against the user's existing instance. We refuse at startup with a
+ * clear message naming both inputs so the operator can drop one.
+ *
+ * `--auto-connect` + `--launch-mode=attach` is allowed and is the implicit
+ * setting anyway.
+ */
+export class AutoConnectModeConflictError extends Error {
+  readonly errorCode = 'auto_connect_mode_conflict' as const;
+  readonly autoConnect: string;
+  readonly launchMode: string;
+
+  constructor(autoConnect: string, launchMode: string, source: 'cli' | 'env' | 'config') {
+    super(
+      `--auto-connect (${autoConnect}) is incompatible with --launch-mode=${launchMode} ` +
+        `(from ${source}). Auto-connect attaches to a Chrome you launched yourself; ` +
+        `'auto' and 'isolated' modes spawn a new Chrome. ` +
+        `Drop --auto-connect, switch --launch-mode=attach, or unset the conflicting source.`,
+    );
+    this.name = 'AutoConnectModeConflictError';
+    this.autoConnect = autoConnect;
+    this.launchMode = launchMode;
+  }
+}
+
+/**
+ * Validate that `--auto-connect` is compatible with the resolved launch
+ * mode. Throws {@link AutoConnectModeConflictError} on conflict; returns
+ * silently when auto-connect is unset or the mode is `'attach'`.
+ *
+ * @param autoConnect The raw `--auto-connect` value (string when set;
+ *   undefined when unset). Empty string is treated as "set without value".
+ * @param launchMode The launch mode resolved from CLI / env / config.
+ * @param source Where the conflicting launch mode came from (for diagnostics).
+ */
+export function assertAutoConnectCompatibleWithLaunchMode(
+  autoConnect: string | undefined,
+  launchMode: LaunchMode,
+  source: 'cli' | 'env' | 'config',
+): void {
+  if (autoConnect === undefined) return;
+  if (launchMode === 'attach') return;
+  // Empty string still counts as "auto-connect requested" (e.g. `--auto-connect`
+  // without a value defaults to the platform Chrome dir).
+  const display = autoConnect.trim() === '' ? '<default>' : autoConnect;
+  throw new AutoConnectModeConflictError(display, launchMode, source);
+}
+
+/**
  * Structured error: surface to the agent when attach is required but no
  * Chrome is listening on the debug port. The agent's logs / tool output
  * carry the helpful next steps so the user can react out-of-band.

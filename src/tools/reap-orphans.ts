@@ -1,7 +1,8 @@
 import { getGlobalConfig } from '../config/global';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
-import { cleanOrphanedChromeProcesses } from '../utils/pid-manager';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { cleanOrphanedChromeProcesses, previewOrphanedChromeProcesses } from '../utils/pid-manager';
 
 const definition: MCPToolDefinition = {
   name: 'oc_reap_orphans',
@@ -14,9 +15,15 @@ const definition: MCPToolDefinition = {
         items: { type: 'number' },
         description: 'Optional Chrome remote-debugging ports to check for legacy PID-file orphans. Defaults to the active CDP port window (base port through base+4); ownership markers are always scanned.',
       },
+      dryRun: {
+        type: 'boolean',
+        default: false,
+        description: 'Preview orphaned Chrome processes that would be terminated without killing processes or deleting marker/PID files.',
+      },
     },
     required: [],
   },
+  annotations: TOOL_ANNOTATIONS.oc_reap_orphans,
 };
 
 const FALLBACK_BASE_PORT = 9222;
@@ -48,6 +55,35 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const ports = normalizePorts(args.ports);
+  const dryRun = args.dryRun === true;
+  if (dryRun) {
+    const preview = previewOrphanedChromeProcesses(ports);
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          action: 'oc_reap_orphans',
+          dryRun: true,
+          checkedPorts: ports,
+          markerScan: true,
+          wouldAffect: preview,
+          message: preview.count === 0
+            ? 'No orphaned OpenChrome-managed Chrome processes would be terminated.'
+            : `Would terminate ${preview.count} orphaned OpenChrome-managed Chrome process(es).`,
+        }),
+      }],
+      structuredContent: {
+        dryRun: true,
+        wouldAffect: {
+          count: preview.count,
+          samples: preview.samples,
+          details: preview.details,
+        },
+        guidance: 'Pass dryRun:false (or omit) to execute.',
+      },
+      isError: false,
+    };
+  }
   const killed = cleanOrphanedChromeProcesses(ports);
   return {
     content: [{

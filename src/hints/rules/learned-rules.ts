@@ -18,6 +18,8 @@ export function createLearnedRules(learner: PatternLearner): HintRule[] {
       priority: 350,
       match(ctx) {
         if (!ctx.isError) return null;
+        const episode = learner.matchEpisode(ctx.resultText, ctx.toolName, ctx.episodeContext);
+        if (episode) return learner.buildEpisodeHint(episode);
         const pattern = learner.matchPattern(ctx.resultText, ctx.toolName);
         return pattern ? pattern.hint : null;
       },

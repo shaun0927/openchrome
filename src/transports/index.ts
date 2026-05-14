@@ -6,6 +6,11 @@
 import { MCPResponse } from '../types/mcp';
 import type { ApiKeyStore } from '../auth/api-key-store';
 
+export interface TransportMessageContext {
+  mcpSessionId?: string;
+  tenantId?: string;
+}
+
 /**
  * Abstraction over the wire protocol (stdio or HTTP).
  * MCPServer delegates all I/O to the transport; it never reads stdin
@@ -22,7 +27,7 @@ export interface MCPTransport {
    * to abandon long-running tool calls (see issue #8 — B-2).
    */
   onMessage(
-    handler: (msg: Record<string, unknown>, signal?: AbortSignal) => Promise<MCPResponse | null>,
+    handler: (msg: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) => Promise<MCPResponse | null>,
   ): void;
 
   /**
@@ -32,6 +37,12 @@ export interface MCPTransport {
    * HTTP response object directly).
    */
   send(response: MCPResponse): void;
+
+  /** Send to one logical MCP session when the transport supports it. */
+  sendToSession?(sessionId: string, response: MCPResponse): boolean;
+
+  /** Register cleanup for logical MCP session close/disconnect when supported. */
+  onSessionClose?(handler: (sessionId: string) => void): void;
 
   /** Start listening for messages (bind port or attach readline). */
   start(): void;
@@ -89,4 +100,3 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
   const { StdioTransport } = require('./stdio');
   return new StdioTransport();
 }
-

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>oc_observe fixture — frozen page for determinism</title>
+    <style>
+      body { margin: 0; font: 14px/1.4 system-ui, sans-serif; padding: 16px; }
+      .row { display: flex; gap: 8px; margin-bottom: 12px; }
+      .hidden-display { display: none; }
+      .hidden-visibility { visibility: hidden; }
+      input, button, select, textarea, a { font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>oc_observe static fixture</h1>
+      <a id="link-home" href="/home">Home</a>
+      <a id="link-about" href="/about">About</a>
+    </header>
+
+    <form id="signup" action="/submit" method="post">
+      <div class="row">
+        <input id="name" name="name" type="text" placeholder="Full name" aria-label="Full name" />
+      </div>
+      <div class="row">
+        <input id="email" name="email" type="email" placeholder="Email" aria-label="Email" />
+      </div>
+      <div class="row">
+        <textarea id="bio" name="bio" aria-label="Bio" placeholder="Tell us about yourself"></textarea>
+      </div>
+      <div class="row">
+        <select id="country" name="country" aria-label="Country">
+          <option value="us">United States</option>
+          <option value="kr">Korea</option>
+          <option value="jp">Japan</option>
+        </select>
+      </div>
+      <div class="row">
+        <label><input id="agree" type="checkbox" /> I agree to terms</label>
+      </div>
+      <div class="row">
+        <button id="submit-btn" type="submit">Submit</button>
+        <button id="reset-btn" type="reset">Reset</button>
+      </div>
+    </form>
+
+    <section>
+      <!-- These should be filtered out when includeHidden=false. -->
+      <input id="hidden-input-display" class="hidden-display" aria-label="Hidden by display" />
+      <input id="hidden-input-visibility" class="hidden-visibility" aria-label="Hidden by visibility" />
+      <button id="aria-hidden-btn" aria-hidden="true">Aria hidden button</button>
+      <input id="disabled-input" disabled aria-label="Disabled input" />
+    </section>
+  </body>
+</html>

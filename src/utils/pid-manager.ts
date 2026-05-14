@@ -3,6 +3,8 @@ import * as os from "os";
 import * as path from "path";
 import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "../chrome/ownership-marker";
 import { listAllTokens } from "./session-resume-token";
+import { getLifecycleBus } from "../core/lifecycle";
+import { cleanupAllStaleSessionsSync as cleanupNetworkBodiesSync } from "../core/network-capture/body-store";
 
 const LOG_PREFIX = "[openchrome:pid]";
 
@@ -166,6 +168,55 @@ export function readChromePid(port: number): number | null {
   }
 }
 
+
+export interface OrphanChromePreview {
+  count: number;
+  samples: Array<{ pid: number; source: 'pid-file' | 'marker'; port?: number; marker?: string; userDataDir?: string }>;
+  details: {
+    checkedPorts: number[];
+    pidFileCandidates: number;
+    markerCandidates: number;
+  };
+}
+
+export function previewOrphanedChromeProcesses(basePorts: number[]): OrphanChromePreview {
+  const samples: OrphanChromePreview['samples'] = [];
+  let pidFileCandidates = 0;
+  for (const port of basePorts) {
+    const chromePid = readChromePid(port);
+    if (chromePid === null) continue;
+    if (!isPidAlive(chromePid)) continue;
+    const serverPids = listActivePids(port);
+    if (serverPids.length > 0) continue;
+    pidFileCandidates++;
+    if (samples.length < 10) samples.push({ pid: chromePid, source: 'pid-file', port });
+  }
+
+  let markerCandidates = 0;
+  for (const { marker } of listMarkers()) {
+    if (classifyMarker(marker) !== 'kill') continue;
+    markerCandidates++;
+    if (samples.length < 10) {
+      samples.push({
+        pid: marker.pid,
+        source: 'marker',
+        marker: marker.marker,
+        userDataDir: marker.userDataDir,
+      });
+    }
+  }
+
+  return {
+    count: pidFileCandidates + markerCandidates,
+    samples,
+    details: {
+      checkedPorts: basePorts,
+      pidFileCandidates,
+      markerCandidates,
+    },
+  };
+}
+
 /**
  * Kill orphaned Chrome processes from previous crashed sessions.
  * An orphan is a Chrome process whose PID file exists AND is alive,
@@ -197,6 +248,19 @@ export function cleanOrphanedChromeProcesses(basePorts: number[]): number {
     try {
       killProcessTree(chromePid, 'SIGTERM');
       killed++;
+      // #857: announce the orphan-reap exit on the lifecycle bus so
+      // recorder/journal consumers can see this is an automated cleanup
+      // distinct from a user-driven close or crash. emit() is no-throw.
+      try {
+        getLifecycleBus().emit({
+          kind: 'chrome:exit',
+          pid: chromePid,
+          reason: 'orphan-reap',
+          ts: Date.now(),
+        });
+      } catch {
+        /* bus is no-throw; defence in depth */
+      }
     } catch {
       // Process may have died between check and kill
     }
@@ -206,6 +270,18 @@ export function cleanOrphanedChromeProcesses(basePorts: number[]): number {
   // Also walk ownership markers (#661 Phase 5) to catch Chromes that bound to
   // a port we don't know about, or whose PID file was lost.
   killed += reapOrphanMarkers();
+
+  // Purge any stale network-capture body directories left by previous
+  // SIGKILL'd processes (#896). Bodies persist on disk for the duration of an
+  // active full-mode capture and are normally cleaned on `stop`; a hard kill
+  // leaves them behind. We piggyback on the same startup hook that already
+  // walks PIDs/markers so the cleanup runs exactly once per openchrome start.
+  try {
+    cleanupNetworkBodiesSync();
+  } catch (err) {
+    console.error(`${LOG_PREFIX} cleanupNetworkBodiesSync failed:`, err);
+  }
+
   return killed;
 }
 
@@ -250,6 +326,19 @@ export function reapOrphanMarkers(): number {
         try {
           killProcessTree(marker.pid, 'SIGTERM');
           killed++;
+          // #857: mirror the orphan-reap on the lifecycle bus. Same
+          // rationale as the PID-file path above — consumers need to tell
+          // automated cleanup apart from user-driven close / crash.
+          try {
+            getLifecycleBus().emit({
+              kind: 'chrome:exit',
+              pid: marker.pid,
+              reason: 'orphan-reap',
+              ts: Date.now(),
+            });
+          } catch {
+            /* bus is no-throw; defence in depth */
+          }
         } catch {
           /* ignore */
         }

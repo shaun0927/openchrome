@@ -570,6 +570,8 @@ By default, benchmarks run in **stub mode** — measuring protocol correctness a
 
 OpenChrome works on servers and in CI/CD pipelines without Chrome login. All 46 tools function with unauthenticated Chrome — navigation, scraping, screenshots, form filling, and parallel workflows all work in clean sessions.
 
+OpenChrome supports three transport modes (`stdio`, `http`, `both`). For stability guarantees, deprecation policy, and migration recipes, see **[docs/transport-lifecycle.md](docs/transport-lifecycle.md)**.
+
 ### Quick start
 
 ```bash
@@ -591,6 +593,46 @@ openchrome serve --server-mode
 | **Parallel workflows** | `workflow_init` with multiple workers, `batch_execute` |
 | **Screenshots & PDF** | `computer(screenshot)`, `page_pdf` |
 | **Network & performance** | `request_intercept`, `performance_metrics`, `console_capture` |
+
+### HTTP daemon mode (multi-client / remote)
+
+OpenChrome ships a first-class HTTP transport that turns the server into a
+long-running daemon. Use it when:
+
+- you need **multiple MCP clients** (Claude Code, a CI job, a dashboard) to
+  share one browser process, or
+- the server must **outlive its launching process** (Docker, systemd, CI
+  orchestrator), or
+- a **sidecar** (monitoring probe, dashboard) needs to poll `/health` or
+  `/metrics` independently.
+
+Quick start (see the full guide for options, security, and Windows recipes):
+
+```bash
+# Start a token-authenticated daemon on loopback port 3100
+npx openchrome serve --http 3100 --auth-token mysecrettoken --idle-timeout 30m
+
+# Verify it is up
+curl -s http://127.0.0.1:3100/health
+# → {"status":"ok","uptime":1.2}
+
+# Send an MCP request
+curl -s -X POST http://127.0.0.1:3100/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer mysecrettoken" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+**[Full walkthrough → docs/getting-started/http-daemon.md](docs/getting-started/http-daemon.md)**
+
+The guide covers: stdio vs http vs both decision table, every flag and env-var
+interaction, multi-client architecture diagram, security model (bearer-token
+auth, loopback-only default, unauthenticated rejection rules), idle-timeout
+behaviour, dashboard endpoints, and troubleshooting.
+
+See also the [`OPENCHROME_PPID_WATCH`](#environment-variables) and
+[`OPENCHROME_HEALTH_ENDPOINT`](#environment-variables) rows in the environment
+variables table below, which cross-reference daemon behaviour.
 
 ### Important: MCP client required
 
@@ -630,6 +672,8 @@ docker run openchrome
 | `OPENCHROME_START_MAXIMIZED` | Set to `1`/`true`/`yes` to start headed Chrome maximized when no explicit bounds, size, or position is configured. |
 | `OPENCHROME_FILE_UPLOAD_ROOTS` | Additional directories allowed for `file_upload`, separated with the platform path delimiter (`:` on POSIX, `;` on Windows). Defaults always include the server process current working directory and the temp upload directory. |
 | `OPENCHROME_FILE_UPLOAD_TEMP_DIR` | Temp/upload directory allowed for `file_upload`. Default: `path.join(os.tmpdir(), 'openchrome-uploads')`. |
+| `OPENCHROME_CONSOLE_BUFFER_MAX_LINES` | Hard cap on retained console log entries per capture session. Default: `1000` (matches the legacy `maxLogs` default). Increase for high-frequency logging pages; decrease to reduce memory pressure. |
+| `OPENCHROME_CONSOLE_BUFFER_MAX_BYTES` | Hard cap on aggregate byte size of retained console entries per session (JSON.stringify length). Default: `4194304` (4 MiB). When a single entry exceeds this cap it is stored as a truncated placeholder with the original size recorded in `truncatedFrom`. |
 
 `file_upload` only accepts files whose resolved real path stays inside the server current working directory, the temp upload directory, or an explicit upload root. Add the narrowest possible root, for example `OPENCHROME_FILE_UPLOAD_ROOTS=/srv/openchrome/uploads`, rather than broad locations such as `$HOME`, browser profiles, SSH/GPG/cloud credential directories, or application config trees. Symlinks and `..` traversal are resolved with `realpath` before allowlist checks, so a symlink inside an allowed root that points outside the root is rejected. For untrusted clients, prefer staging files into `OPENCHROME_FILE_UPLOAD_TEMP_DIR` and upload from there.
 
@@ -673,6 +717,12 @@ openchrome serve --auto-launch --window-bounds 1720,0,1280,900
 ## Authentication
 
 OpenChrome supports per-tenant API keys, JWT/OAuth, a legacy shared token, and an unauthenticated mode. See **[docs/auth.md](docs/auth.md)** for the full guide including quickstart, scope table, key rotation, revocation, and troubleshooting.
+
+---
+
+## Research recipes
+
+Composable multi-source research workflows over the MCP surface — host-LLM driven, no server-side model calls. See **[docs/recipes/](docs/recipes/README.md)** for runnable patterns, including the issue #858 topic survey, single-page deep extract, and changelog watch fixtures.
 
 ---
 

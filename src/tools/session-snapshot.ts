@@ -8,8 +8,14 @@ import * as path from 'path';
 import * as os from 'os';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { getExistingChromeLauncher } from '../chrome/launcher';
+import { getGlobalConfig } from '../config/global';
 import { writeFileAtomicSafe } from '../utils/atomic-file';
+import { safeTitle } from '../utils/safe-title';
+import { currentRequestContext } from '../observability/request-id';
+import { assertFilePathAllowedBySessionRoots } from '../security/mcp-roots';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -19,6 +25,27 @@ export interface SnapshotTab {
   sessionId: string;
   url: string;
   title: string;
+  /** Last observed activity for the owning OpenChrome session. */
+  lastActivityAt?: number;
+  /** Last observed activity for the owning worker/context. */
+  workerLastActivityAt?: number;
+  /** Chrome profile directory when this tab belongs to a profile-scoped worker. */
+  profileDirectory?: string;
+}
+
+export interface SessionLifecycleMetadata {
+  capturedAt: number;
+  recoverySource: 'oc_session_snapshot';
+  profile: {
+    type: string;
+    userDataDir?: string;
+    profileDirectory?: string;
+    cookieCopiedAt?: number;
+  };
+  storageState: {
+    enabled: boolean;
+    dir?: string;
+  };
 }
 
 export interface SnapshotMemo {
@@ -36,6 +63,8 @@ export interface SessionSnapshot {
   tabs: SnapshotTab[];
   memo: SnapshotMemo;
   label?: string;
+  /** Session/profile/storage-state identity captured for long-running recovery. */
+  lifecycle?: SessionLifecycleMetadata;
 }
 
 // ─── Tool Definition ───────────────────────────────────────────────────────
@@ -79,6 +108,7 @@ const definition: MCPToolDefinition = {
     },
     required: ['objective', 'currentStep', 'nextActions'],
   },
+  annotations: TOOL_ANNOTATIONS.oc_session_snapshot,
 };
 
 // ─── Snapshot Directory ────────────────────────────────────────────────────
@@ -119,7 +149,7 @@ export async function collectTabs(): Promise<SnapshotTab[]> {
             if (page) {
               url = page.url() || 'about:blank';
               try {
-                title = await page.title();
+                title = await safeTitle(page);
               } catch {
                 title = '';
               }
@@ -134,6 +164,11 @@ export async function collectTabs(): Promise<SnapshotTab[]> {
             sessionId,
             url,
             title,
+            lastActivityAt: sessionInfo.lastActivityAt,
+            workerLastActivityAt: workerInfo.lastActivityAt,
+            ...((workerInfo as { profileDirectory?: string }).profileDirectory && {
+              profileDirectory: (workerInfo as { profileDirectory?: string }).profileDirectory,
+            }),
           });
         }
       }
@@ -146,21 +181,62 @@ export async function collectTabs(): Promise<SnapshotTab[]> {
   return tabs;
 }
 
+export function collectLifecycleMetadata(): SessionLifecycleMetadata {
+  const config = getGlobalConfig();
+  let profile: SessionLifecycleMetadata['profile'] = { type: 'unknown' };
+
+  try {
+    const launcher = getExistingChromeLauncher(config.port);
+    if (!launcher) {
+      return {
+        capturedAt: Date.now(),
+        recoverySource: 'oc_session_snapshot',
+        profile,
+        storageState: {
+          enabled: process.env.OC_PERSIST_STORAGE !== '0',
+          ...(process.env.OC_STORAGE_DIR && { dir: process.env.OC_STORAGE_DIR }),
+        },
+      };
+    }
+    const state = launcher.getProfileState();
+    profile = {
+      type: state.type,
+      ...(state.userDataDir && { userDataDir: state.userDataDir }),
+      ...(state.profileDirectory && { profileDirectory: state.profileDirectory }),
+      ...(state.cookieCopiedAt && { cookieCopiedAt: state.cookieCopiedAt }),
+    };
+  } catch {
+    // Profile state is best-effort: snapshots must still work before Chrome launches.
+  }
+
+  return {
+    capturedAt: Date.now(),
+    recoverySource: 'oc_session_snapshot',
+    profile,
+    storageState: {
+      enabled: process.env.OC_PERSIST_STORAGE !== '0',
+      ...(process.env.OC_STORAGE_DIR && { dir: process.env.OC_STORAGE_DIR }),
+    },
+  };
+}
+
 // ─── File Management ───────────────────────────────────────────────────────
 
 async function ensureDir(): Promise<void> {
   await fs.promises.mkdir(SNAPSHOT_DIR, { recursive: true });
 }
 
-export async function saveSnapshot(snapshot: SessionSnapshot): Promise<void> {
+export async function saveSnapshot(snapshot: SessionSnapshot, mcpSessionId?: string): Promise<void> {
   await ensureDir();
 
   // Save as latest.json (atomic overwrite)
   const latestPath = path.join(SNAPSHOT_DIR, 'latest.json');
+  if (mcpSessionId) assertFilePathAllowedBySessionRoots(mcpSessionId, latestPath);
   await writeFileAtomicSafe(latestPath, snapshot);
 
   // Save history copy
   const historyPath = path.join(SNAPSHOT_DIR, `${snapshot.id}.json`);
+  if (mcpSessionId) assertFilePathAllowedBySessionRoots(mcpSessionId, historyPath);
   await writeFileAtomicSafe(historyPath, snapshot);
 
   // Prune old snapshots
@@ -203,7 +279,7 @@ export async function pruneSnapshots(): Promise<void> {
 // ─── Handler ───────────────────────────────────────────────────────────────
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const memo: SnapshotMemo = {
@@ -223,10 +299,18 @@ const handler: ToolHandler = async (
     timestamp: Date.now(),
     tabs,
     memo,
+    lifecycle: collectLifecycleMetadata(),
     label: (args.label as string) || undefined,
   };
 
-  await saveSnapshot(snapshot);
+  try {
+    await saveSnapshot(snapshot, currentRequestContext()?.mcpSessionId ?? sessionId);
+  } catch (error) {
+    return {
+      content: [{ type: 'text', text: `Error saving snapshot: ${error instanceof Error ? error.message : String(error)}` }],
+      isError: true,
+    };
+  }
 
   const text = [
     `Snapshot saved: ${snapshotId}`,

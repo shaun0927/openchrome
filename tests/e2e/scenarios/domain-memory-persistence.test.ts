@@ -26,10 +26,49 @@ async function waitForSave(ms = 100): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForNonEmptyFile(file: string, timeoutMs = 2_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = 0;
+  while (Date.now() < deadline) {
+    try {
+      const stat = await fsPromises.stat(file);
+      lastSize = stat.size;
+      if (stat.size > 0) return stat.size;
+    } catch {
+      // file not written yet
+    }
+    await waitForSave(50);
+  }
+  return lastSize;
+}
+
 // Helper: read raw store file
 async function readStoreFile(): Promise<{ version: number; entries: unknown[]; updatedAt: number }> {
   const data = await fsPromises.readFile(STORE_FILE, 'utf-8');
   return JSON.parse(data);
+}
+
+type PersistedStore = { entries?: unknown[]; updatedAt?: number };
+
+async function waitForPersistedStore(
+  filePath: string,
+  predicate: (store: PersistedStore, byteLength: number) => boolean
+): Promise<{ store: PersistedStore; byteLength: number }> {
+  const deadline = Date.now() + 5_000;
+  let lastState = 'unread';
+  while (Date.now() < deadline) {
+    try {
+      const raw = await fsPromises.readFile(filePath, 'utf-8');
+      const store = JSON.parse(raw) as PersistedStore;
+      const byteLength = Buffer.byteLength(raw);
+      lastState = `count=${store.entries?.length ?? 0}, updatedAt=${store.updatedAt ?? 'missing'}, bytes=${byteLength}`;
+      if (byteLength > 0 && predicate(store, byteLength)) return { store, byteLength };
+    } catch {
+      // File may not exist or may be mid-write; retry until deadline.
+    }
+    await waitForSave(50);
+  }
+  throw new Error(`Timed out waiting for persisted store; lastState=${lastState}`);
 }
 
 describe('Issue #493: Domain Memory Persistence E2E', () => {
@@ -366,21 +405,24 @@ describe('Issue #493: Domain Memory Persistence E2E', () => {
       for (let i = 0; i < 200; i++) {
         dm.record(`size-${i}.com`, `key-${i}`, `value-with-some-content-${i}`);
       }
-      await waitForSave(200);
-
       const sizeFile = path.join(sizeDir, 'domain-knowledge.json');
-      const stat1 = await fsPromises.stat(sizeFile);
-      const size200 = stat1.size;
+      const baseline = await waitForPersistedStore(
+        sizeFile,
+        (store) => (store.entries?.length ?? 0) >= 200
+      );
+      const size200 = baseline.byteLength;
 
       // Add 100 more (total 300) and compress
       for (let i = 200; i < 300; i++) {
         dm.record(`size-${i}.com`, `key-${i}`, `value-with-some-content-${i}`);
       }
+      const compressStartedAt = Date.now();
       dm.compress();
-      await waitForSave(200);
-
-      const stat2 = await fsPromises.stat(sizeFile);
-      const sizeAfterCompress = stat2.size;
+      const compressed = await waitForPersistedStore(
+        sizeFile,
+        (store) => (store.updatedAt ?? 0) >= compressStartedAt && (store.entries?.length ?? 0) <= 200
+      );
+      const sizeAfterCompress = compressed.byteLength;
 
       // After compress, file should not be significantly larger than 200 entries
       // Allow 10% tolerance for JSON formatting differences

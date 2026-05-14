@@ -1,8 +1,22 @@
 {
   "name": "openchrome-mcp",
-  "version": "1.11.1",
+  "version": "1.12.0",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./server": {
+      "import": "./dist/core/server.js",
+      "require": "./dist/core/server.js"
+    },
+    "./lifecycle": {
+      "import": "./dist/core/lifecycle/index.js",
+      "require": "./dist/core/lifecycle/index.js"
+    }
+  },
   "bin": {
     "openchrome": "./dist/cli/index.js",
     "oc": "./dist/cli/index.js"
@@ -16,15 +30,26 @@
     "check": "node dist/cli/index.js check",
     "benchmark": "ts-node tests/benchmark/run.ts",
     "benchmark:ci": "ts-node tests/benchmark/run.ts --ci",
+    "bench:webvoyager:mock": "ts-node tests/benchmark/webvoyager/runner.ts --adapter mock",
+    "bench:webvoyager:real": "ts-node tests/benchmark/webvoyager/runner.ts --adapter claude",
     "test": "jest",
     "test:e2e": "node --expose-gc node_modules/.bin/jest --config tests/e2e/jest.e2e.config.js",
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
     "lint:tier": "depcruise --config .dependency-cruiser.cjs src",
+    "lint:tool-schemas": "node dist/index.js serve --introspect-tools-list | node scripts/lint-tool-schemas.mjs -",
     "clean": "rimraf dist",
     "prepare": "npm run build",
     "lint:changed": "node scripts/lint-changed-src.js",
-    "benchmark:perception": "ts-node tests/benchmark/run-perception.ts"
+    "benchmark:perception": "ts-node tests/benchmark/run-perception.ts",
+    "harness:parallel-smoke": "ts-node tests/harness/parallel-smoke.ts",
+    "harness:certify": "ts-node tests/harness/certification/run-certification.ts",
+    "harness:evaluate-candidates": "ts-node tests/harness/candidates/evaluator.ts",
+    "bench:episode": "ts-node tests/benchmark/episode-harness/cli.ts",
+    "bench:episode:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock",
+    "bench:visual-grounding": "node scripts/bench/visual-grounding/run.mjs",
+    "docs:capability-map": "ts-node scripts/gen-capability-map.ts",
+    "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check"
   },
   "keywords": [
     "openchrome",
@@ -53,6 +78,7 @@
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
     "@types/proper-lockfile": "^4.1.4",
+    "@types/turndown": "^5.0.6",
     "@types/uuid": "^9.0.8",
     "@types/write-file-atomic": "^4.0.3",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
@@ -67,19 +93,22 @@
   },
   "dependencies": {
     "argon2": "^0.43.0",
+    "cheerio": "1.0.0-rc.12",
     "commander": "^12.0.0",
     "jose": "^5.10.0",
     "proper-lockfile": "^4.1.2",
     "puppeteer-core": "npm:rebrowser-puppeteer-core@23.10.3",
+    "turndown": "^7.2.4",
     "uuid": "^9.0.0",
-    "write-file-atomic": "^5.0.1"
+    "write-file-atomic": "^5.0.1",
+    "yaml": "^2.9.0"
   },
   "overrides": {
     "basic-ftp": "^5.3.1",
     "ip-address": "^10.1.1"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.17.0"
   },
   "files": [
     "dist",

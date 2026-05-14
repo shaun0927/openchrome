@@ -2,17 +2,80 @@
  * Read Page Tool - Get accessibility tree representation
  */
 
+import crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
+import { isFastProfile } from '../config/runtime-profile';
 import { withTimeout } from '../utils/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
+import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { getGlobalConfig } from '../config/global';
+import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
+import { applyContentFilter, parseContentFilterType } from '../core/extract/content-filter';
+import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
+import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
+import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
+import { decodeCursor, encodeCursor } from '../utils/paginate';
+
+const READ_PAGE_CURSOR_CHARS = 5000;
+
+/**
+ * Build the `[node_refs]` block that surfaces the #844 backend-node uid
+ * contract in `read_page` DOM mode responses.
+ *
+ * P2 contract: this section is **always** present in the response shape so
+ * `tools/list` parity holds regardless of the `OPENCHROME_NODE_REF` env var.
+ * When the flag is off (or loaderId resolution fails), every uid is rendered
+ * as the literal `null`, keeping the field present but the runtime value
+ * inert.
+ *
+ * The format is line-oriented JSON-ish, one `<backendNodeId>=<nodeRef>` per
+ * line, so a trace-replay parser can reconstruct the registry state without
+ * bringing along a full JSON parser.
+ */
+async function formatNodeRefsBlock(
+  page: import('puppeteer-core').Page,
+  cdpClient: { send: (page: import('puppeteer-core').Page, method: string, params?: Record<string, unknown>) => Promise<unknown> },
+  backendNodeIds: number[],
+): Promise<string> {
+  if (backendNodeIds.length === 0) {
+    return '\n\n[node_refs]\n(empty)\n';
+  }
+  let loaderId: string | null = null;
+  try {
+    loaderId = await getCurrentLoaderId(page, cdpClient as any);
+  } catch {
+    loaderId = null;
+  }
+  const lines: string[] = ['', '', '[node_refs]'];
+  for (const backendNodeId of backendNodeIds) {
+    let uid: string | null = null;
+    if (loaderId) {
+      try {
+        uid = mintNodeRefSync(page, loaderId, backendNodeId);
+      } catch {
+        uid = null;
+      }
+    }
+    lines.push(`${backendNodeId}=${uid ?? 'null'}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+import {
+  buildSemanticView,
+  type SemanticAXNode,
+  type SemanticDomElement,
+  type SemanticRuleSet,
+} from '../core/perception/semantic';
+import semanticRulesJson from '../core/perception/semantic-rules.json';
 
 function formatPaginationSection(pagination: PaginationInfo): string {
   if (pagination.type === 'none') return '';
@@ -29,7 +92,7 @@ function formatPaginationSection(pagination: PaginationInfo): string {
 
 const definition: MCPToolDefinition = {
   name: 'read_page',
-  description: 'Get page as DOM, accessibility tree (ax), or CSS diagnostics.',
+  description: 'Get page as DOM, accessibility tree (ax), CSS diagnostics, semantic summary, or clean Markdown (article-shaped).\n\nWhen to use: Reading page structure, verifying content, extracting the full DOM tree, or reducing article-like pages to Markdown.\nWhen NOT to use: Use inspect for targeted state queries or find to locate a specific element.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -56,27 +119,187 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ax', 'dom', 'css'],
-        description: 'Output mode: dom (default), ax, or css',
+        enum: ['ax', 'dom', 'css', 'semantic', 'markdown'],
+        description: 'Output mode: dom (default), ax, css, semantic, or markdown (clean article extraction).',
+      },
+      onlyMainContent: {
+        type: 'boolean',
+        description: 'Markdown mode only: strip nav/header/footer/aside/ads. Default: true.',
+      },
+      includeLinks: {
+        type: 'boolean',
+        description: 'Markdown mode only: preserve <a> as markdown links. Default: true.',
+      },
+      contentFilter: {
+        type: 'string',
+        enum: ['none', 'prune', 'bm25'],
+        description: 'Markdown mode only: deterministic fit_markdown filter. Default: none.',
+      },
+      query: {
+        type: 'string',
+        description: 'Markdown mode only: required when contentFilter="bm25".',
+      },
+      returnRaw: {
+        type: 'boolean',
+        description: 'Markdown mode only: include raw_markdown in JSON response. Default: false.',
+      },
+      returnFit: {
+        type: 'boolean',
+        description: 'Markdown mode only: include fit_markdown and use it as content when filtering. Default: true when filtered.',
+      },
+      filterOptions: {
+        type: 'object',
+        description: 'Markdown mode only: minWords, maxSections, bm25Threshold, pruneThreshold.',
       },
       includePagination: {
         type: 'boolean',
         description: 'Include pagination info. Default: true',
+      },
+      cursor: {
+        type: 'string',
+        description: 'Markdown mode only: opaque cursor returned as nextCursor from a prior paginated read_page markdown call.',
       },
       compression: {
         type: 'string',
         enum: ['none', 'delta'],
         description: 'Compression mode. "delta" returns only changes since last read.',
       },
+      planningProfile: {
+        type: 'string',
+        enum: ['default', 'stable'],
+        description: 'DOM mode only: stable omits decorative/noisy serialization details without mutating the live page. Default: default.',
+      },
       fallback: {
         type: 'string',
         enum: ['none', 'dom'],
         description: 'AX mode only: use "dom" to explicitly fall back to DOM output if AX output exceeds the output budget. Default: none.',
       },
+      compact: {
+        type: 'boolean',
+        description: 'AX mode only: return a compact AX snapshot that keeps actionable/ref-bearing nodes, value/state nodes, and ancestors. Default: false, or true when OPENCHROME_PROFILE=fast.',
+      },
+      diagnostics: {
+        type: 'boolean',
+        description: 'Include structured read_page timing diagnostics in the MCP result metadata. Default: false.',
+      },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate returned size/token metrics in the emitted payload. Default: false.',
+      },
+      boundaryMarkers: {
+        type: 'boolean',
+        description: 'Wrap page-origin plaintext in <oc:page>. Default true; false disables.',
+      },
     },
     required: ['tabId'],
   },
+  annotations: TOOL_ANNOTATIONS.read_page,
 };
+
+
+
+function shortAliasForRef(refId: string): string | undefined {
+  const match = refId.match(/^ref_(\d+)$/);
+  return match ? `@e${match[1]}` : undefined;
+}
+
+function compactAXLines(lines: string[]): string[] {
+  const keep = new Set<number>();
+  const stack: Array<{ indent: number; index: number }> = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+
+    const actionableOrValuable =
+      line.includes('[ref_') ||
+      line.includes(' = "') ||
+      /\((focused|disabled|checked|selected|expanded)/.test(line);
+
+    if (actionableOrValuable) {
+      keep.add(i);
+      for (const ancestor of stack) {
+        keep.add(ancestor.index);
+      }
+    }
+
+    stack.push({ indent, index: i });
+  }
+
+  return lines.filter((_, index) => keep.has(index));
+}
+
+interface ReadPageTextPage {
+  text: string;
+  offset: number;
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string;
+  staleCursor?: true;
+}
+
+function hashReadPageText(text: string): string {
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function paginateReadPageText(text: string, cursor: string | undefined, pageSize = READ_PAGE_CURSOR_CHARS): ReadPageTextPage {
+  if (!Number.isInteger(pageSize) || pageSize <= 0) {
+    throw new Error(`paginateReadPageText: pageSize must be a positive integer, got ${pageSize}`);
+  }
+  const hash = hashReadPageText(text);
+  let offset = 0;
+  if (cursor !== undefined) {
+    const state = decodeCursor(cursor);
+    if (state.hash !== undefined && state.hash !== hash) {
+      return { text: '', offset: state.offset, total: text.length, hasMore: false, staleCursor: true };
+    }
+    offset = Math.min(state.offset, text.length);
+  }
+  const end = Math.min(offset + pageSize, text.length);
+  const hasMore = end < text.length;
+  return {
+    text: text.slice(offset, end),
+    offset,
+    total: text.length,
+    hasMore,
+    ...(hasMore ? { nextCursor: encodeCursor({ offset: end, hash }) } : {}),
+  };
+}
+
+function invalidCursorResult(error: unknown): MCPResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_cursor', message } }) }],
+    structuredContent: { error: { code: 'invalid_cursor', message } },
+  };
+}
+
+function staleCursorResult(): MCPResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }) }],
+    structuredContent: { error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } },
+  };
+}
+
+interface ReadPageDiagnostics {
+  mode: string;
+  requestedMode?: string;
+  pageStatsMs?: number;
+  domGetDocumentMs?: number;
+  axGetFullTreeMs?: number;
+  formatMs?: number;
+  paginationMs?: number;
+  sanitizeMs?: number;
+  deltaMs?: number;
+}
+
+type ReadPageDiagnosticTimingKey = Exclude<keyof ReadPageDiagnostics, 'mode' | 'requestedMode'>;
+
 
 interface AXNode {
   nodeId: number;
@@ -88,6 +311,16 @@ interface AXNode {
   properties?: Array<{ name: string; value: { value: unknown } }>;
 }
 
+
+function createReadPageSnapshotMetadata(tabId: string, url: string, capturedAt = Date.now()): SnapshotRefMetadata {
+  return {
+    snapshotId: `snap_${capturedAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    capturedAt,
+    url,
+    tabId,
+  };
+}
+
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
@@ -97,7 +330,10 @@ const handler: ToolHandler = async (
   const tabId = args.tabId as string;
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;
-  const maxDepth = (args.depth as number) || defaultDepth;
+  const requestedDepth = typeof args.depth === 'number' ? args.depth : undefined;
+  const maxDepth = filter === 'interactive'
+    ? Math.min(requestedDepth ?? defaultDepth, defaultDepth)
+    : requestedDepth ?? defaultDepth;
   const fetchDepth = maxDepth;
 
   const sessionManager = getSessionManager();
@@ -124,16 +360,77 @@ const handler: ToolHandler = async (
     }
 
     const cdpClient = sessionManager.getCDPClient();
+    const boundaryMarkers = areBoundaryMarkersEnabled(args);
+    const wrapPage = (body: string, emittedMode: string) => (
+      boundaryMarkers ? wrapBoundaryMarker('page', { src: page.url(), mode: emittedMode }, body) : body
+    );
 
     // Mode dispatch
-    const mode = (args.mode as string) || 'dom';
-    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css') {
+    const requestedMode = args.mode as string | undefined;
+    const mode = requestedMode || 'dom';
+    const isExplicitDomMode = requestedMode === 'dom';
+    if (mode !== 'ax' && mode !== 'dom' && mode !== 'css' && mode !== 'semantic' && mode !== 'markdown') {
       return {
-        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", or "css".` }],
+        content: [{ type: 'text', text: `Error: Invalid mode "${mode}". Must be "ax", "dom", "css", "semantic", or "markdown".` }],
         isError: true,
       };
     }
+    const diagnosticsEnabled = args.diagnostics === true;
+    const diagnostics: ReadPageDiagnostics = {
+      mode,
+      ...(requestedMode !== undefined && requestedMode !== mode ? { requestedMode } : {}),
+    };
+    const mark = () => Date.now();
+    const measure = async <T>(key: ReadPageDiagnosticTimingKey, fn: () => Promise<T>): Promise<T> => {
+      const start = mark();
+      try {
+        return await fn();
+      } finally {
+        diagnostics[key] = mark() - start;
+      }
+    };
+    const withDiagnostics = (result: MCPResult): MCPResult => (
+      diagnosticsEnabled ? { ...result, _diagnostics: diagnostics } : result
+    );
+    const includeMetrics = args.include_metrics === true;
+    const withTextMetrics = (text: string, emittedMode: string, truncated = hasTruncationMarker(text)): string => {
+      if (!includeMetrics) return text;
+      let baseText = text;
+      let metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+      for (let i = 0; i < 8; i++) {
+        const candidate = appendMetricsFooter(baseText, metrics);
+        const nextMetrics = buildTextMetrics(candidate, { mode: emittedMode, truncated });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) {
+          if (candidate.length <= MAX_OUTPUT_CHARS) return candidate;
+          const reserve = Math.min(512, Math.max(128, candidate.length - baseText.length + 64));
+          baseText = `${baseText.slice(0, Math.max(0, MAX_OUTPUT_CHARS - reserve))}
+
+[Output truncated — metrics footer reserved output budget]`;
+          truncated = true;
+          metrics = buildTextMetrics(baseText, { mode: emittedMode, truncated });
+          continue;
+        }
+        metrics = nextMetrics;
+      }
+      return appendMetricsFooter(baseText, metrics);
+    };
+    const withSemanticMetrics = (view: Record<string, unknown>): string => {
+      if (!includeMetrics) return JSON.stringify(view);
+      const payload: Record<string, unknown> = { ...view };
+      let metrics = buildTextMetrics(JSON.stringify(payload), { mode: 'semantic' });
+      for (let i = 0; i < 8; i++) {
+        payload._metrics = metrics;
+        const text = JSON.stringify(payload);
+        const nextMetrics = buildTextMetrics(text, { mode: 'semantic' });
+        if (nextMetrics.returned_chars === metrics.returned_chars && nextMetrics.estimated_tokens === metrics.estimated_tokens) return text;
+        metrics = nextMetrics;
+      }
+      payload._metrics = metrics;
+      return JSON.stringify(payload);
+    };
+
     const axOverflowFallback = (args.fallback as string | undefined) || 'none';
+    const compactAX = args.compact === true || (args.compact === undefined && isFastProfile());
     if (axOverflowFallback !== 'none' && axOverflowFallback !== 'dom') {
       return {
         content: [{ type: 'text', text: `Error: Invalid fallback "${axOverflowFallback}". Must be "none" or "dom".` }],
@@ -146,6 +443,123 @@ const handler: ToolHandler = async (
       return {
         content: [{ type: 'text', text: 'Error: "selector" parameter is only supported in mode="css". Use ref_id for subtree scoping in "ax" mode.' }],
         isError: true,
+      };
+    }
+
+    // Markdown mode — clean HTML→Markdown extraction.
+    // Keep pagination metadata parity with DOM/AX/CSS modes when requested.
+    if (mode === 'markdown') {
+      const onlyMainContent = args.onlyMainContent !== false;
+      const includeLinks = args.includeLinks !== false;
+      const includePaginationMarkdown = args.includePagination !== false;
+      const contentFilter = parseContentFilterType(args.contentFilter);
+      const returnRaw = args.returnRaw === true;
+      const returnFit = args.returnFit !== false;
+      const filterOptions = (args.filterOptions && typeof args.filterOptions === 'object') ? args.filterOptions as Record<string, unknown> : {};
+      const cursor = args.cursor as string | undefined;
+      const refIdNote = args.ref_id
+        ? '[Note: ref_id is not supported in markdown mode — full-page content returned. Use mode "ax" for ref_id subtree scoping.]\n\n'
+        : '';
+      const html = await withTimeout(
+        page.content(),
+        15000,
+        'read_page.markdown.content',
+        context,
+      );
+      const { html: cleaned } = extractMainContent(html, { onlyMainContent });
+      let md = refIdNote + toMarkdown(cleaned, { includeLinks });
+      const paginationSection = includePaginationMarkdown
+        ? formatPaginationSection(await detectPagination(page, tabId))
+        : '';
+      if (paginationSection) {
+        md += `\n${paginationSection}`;
+      }
+      const fullMarkdown = md;
+      if (cursor !== undefined) {
+        if (contentFilter !== 'none' || returnRaw || args.returnFit === true) {
+          return {
+            content: [{ type: 'text', text: 'Error: cursor is currently supported only for unfiltered mode="markdown" responses.' }],
+            isError: true,
+          };
+        }
+        let pageResult: ReadPageTextPage;
+        try {
+          pageResult = paginateReadPageText(md, cursor);
+        } catch (error) {
+          return invalidCursorResult(error);
+        }
+        if (pageResult.staleCursor) {
+          return staleCursorResult();
+        }
+        const continuation = pageResult.hasMore
+          ? '\n\n[Output truncated — use structuredContent.nextCursor to continue]'
+          : '';
+        const wrappedText = withTextMetrics(wrapPage(pageResult.text + continuation, 'markdown'), 'markdown', pageResult.hasMore);
+        const payload = {
+          action: 'read_page',
+          mode: 'markdown',
+          text: wrappedText,
+          offset: pageResult.offset,
+          total: pageResult.total,
+          hasMore: pageResult.hasMore,
+          ...(pageResult.nextCursor ? { nextCursor: pageResult.nextCursor } : {}),
+        };
+        return {
+          content: [{ type: 'text', text: JSON.stringify(payload) }],
+          structuredContent: payload,
+        };
+      }
+      let truncated = false;
+      if (md.length > MAX_OUTPUT_CHARS) {
+        md = md.slice(0, MAX_OUTPUT_CHARS);
+        truncated = true;
+      }
+      const suffix = truncated ? '\n\n[Output truncated — exceeded MAX_OUTPUT_CHARS]' : '';
+      const rawMarkdown = md + suffix;
+      if (contentFilter !== 'none' || returnRaw || args.returnFit === true) {
+        try {
+          const filtered = applyContentFilter(rawMarkdown, {
+            type: contentFilter,
+            query: args.query as string | undefined,
+            returnRaw,
+            returnFit,
+            minWords: filterOptions.minWords as number | undefined,
+            maxSections: filterOptions.maxSections as number | undefined,
+            bm25Threshold: filterOptions.bm25Threshold as number | undefined,
+            pruneThreshold: filterOptions.pruneThreshold as number | undefined,
+          });
+          const filteredPayload = {
+            ...filtered,
+            content: withTextMetrics(wrapPage(filtered.content, 'markdown'), 'markdown', truncated),
+            ...(filtered.raw_markdown ? { raw_markdown: wrapPage(filtered.raw_markdown, 'markdown') } : {}),
+            ...(filtered.fit_markdown ? { fit_markdown: wrapPage(filtered.fit_markdown, 'markdown') } : {}),
+          };
+          return {
+            content: [{ type: 'text', text: JSON.stringify(filteredPayload) }],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      }
+      const wrappedMarkdown = withTextMetrics(wrapPage(rawMarkdown, 'markdown'), 'markdown', truncated);
+      if (truncated) {
+        const firstPage = paginateReadPageText(fullMarkdown, undefined, MAX_OUTPUT_CHARS);
+        const payload = {
+          action: 'read_page',
+          mode: 'markdown',
+          text: wrappedMarkdown,
+          offset: firstPage.offset,
+          total: firstPage.total,
+          hasMore: firstPage.hasMore,
+          ...(firstPage.nextCursor ? { nextCursor: firstPage.nextCursor } : {}),
+        };
+        return {
+          content: [{ type: 'text', text: wrappedMarkdown }],
+          structuredContent: payload,
+        };
+      }
+      return {
+        content: [{ type: 'text', text: wrappedMarkdown }],
       };
     }
 
@@ -307,7 +721,200 @@ const handler: ToolHandler = async (
       const includePagination = args.includePagination !== false;
       const cssPaginationSection = includePagination ? formatPaginationSection(await detectPagination(page, tabId)) : '';
       return {
-        content: [{ type: 'text', text: cssText + cssPaginationSection }],
+        content: [{ type: 'text', text: withTextMetrics(wrapPage(cssText, 'css') + cssPaginationSection, 'css') }],
+      };
+    }
+
+    // Semantic mode: rule-based NL summary of regions + actions.
+    // Pure deterministic transform; no LLM (P3), no new deps (P5).
+    if (mode === 'semantic') {
+      const semanticPageStats = await withTimeout(page.evaluate(() => ({
+        url: window.location.href,
+        title: document.title,
+      })), 15000, 'read_page', context);
+
+      const { nodes: semanticAxNodes } = await withTimeout(
+        cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
+        15000,
+        'Accessibility.getFullAXTree',
+        context,
+      );
+
+      // Clear previous refs for this target so refs in the semantic
+      // response do not alias older AX/DOM-mode refs.
+      refIdManager.clearTargetRefs(sessionId, tabId);
+
+      // Convert CDP AX nodes into the semantic input shape.
+      // P1 codex fix: extract `url` from CDP AX properties so that
+      // `buildSemanticView` can pick the correct verb for links
+      // (navigate when href is present, click otherwise). Without
+      // this, every link emits `click`.
+      const semanticNodes: SemanticAXNode[] = semanticAxNodes.map((n) => {
+        let href: string | undefined;
+        if (n.role?.value === 'link' && n.properties) {
+          for (const prop of n.properties) {
+            if (prop.name === 'url') {
+              const raw = prop.value?.value;
+              if (typeof raw === 'string' && raw.length > 0) {
+                href = raw;
+              }
+              break;
+            }
+          }
+        }
+        return {
+          nodeId: n.nodeId,
+          backendDOMNodeId: n.backendDOMNodeId,
+          role: n.role?.value ?? 'unknown',
+          name: n.name?.value,
+          value: n.value?.value,
+          href,
+          childIds: n.childIds ? [...n.childIds] : [],
+        };
+      });
+
+      // Best-effort DOM snapshot for state extraction (microdata, classes).
+      // P1 codex fix: pulled via CDP `DOM.getDocument` instead of
+      // `page.evaluate(...)` so each element carries its `backendDOMNodeId`.
+      // Without this, `buildSemanticView`'s `byBackendNodeId` join map was
+      // always empty and every DOM-dependent classifier (microdata, data-*,
+      // class signals) degraded to AX-only behavior. CDP returns the full
+      // tree with backendNodeIds in a single call; we walk it in DFS order
+      // and cap at `SEMANTIC_DOM_MAX_ELEMENTS` to bound work on large pages.
+      const SEMANTIC_DOM_MAX_ELEMENTS = 2000;
+      let semanticDomSnapshot: { elements: SemanticDomElement[] } | undefined;
+      // Minimal CDP DOMNode shape needed for the walk; mirrors what
+      // `DOM.getDocument({depth: -1})` returns. Inlined to avoid pulling
+      // in dom/dom-serializer.ts which carries unrelated dependencies.
+      interface CdpDomNode {
+        backendNodeId?: number;
+        nodeType: number;
+        nodeName: string;
+        localName?: string;
+        attributes?: string[]; // parallel [name1, value1, name2, value2, ...]
+        nodeValue?: string;
+        children?: CdpDomNode[];
+      }
+      try {
+        const { root } = await withTimeout(
+          cdpClient.send<{ root: CdpDomNode }>(page, 'DOM.getDocument', {
+            depth: -1,
+            pierce: false,
+          }),
+          15000,
+          'DOM.getDocument',
+          context,
+        );
+        const elements: SemanticDomElement[] = [];
+        let totalCount = 0;
+        // Iterative DFS (avoids stack overflows on deep pages).
+        const stack: CdpDomNode[] = [root];
+        while (stack.length > 0) {
+          const node = stack.pop()!;
+          if (node.nodeType === 1 /* ELEMENT_NODE */) {
+            totalCount += 1;
+            if (elements.length < SEMANTIC_DOM_MAX_ELEMENTS) {
+              const tagName = (node.localName || node.nodeName || '').toLowerCase();
+              let itemType: string | undefined;
+              let itemProp: string | undefined;
+              let classNames: string | undefined;
+              const attrs: Record<string, string> = {};
+              const attrPairs = node.attributes;
+              if (attrPairs) {
+                for (let k = 0; k + 1 < attrPairs.length; k += 2) {
+                  const name = attrPairs[k];
+                  const value = attrPairs[k + 1];
+                  if (name === 'itemtype') itemType = value || undefined;
+                  else if (name === 'itemprop') itemProp = value || undefined;
+                  else if (name === 'class') classNames = value || undefined;
+                  else if (name === 'data-price') attrs[name] = value;
+                  else if (name === 'data-product-id') attrs[name] = value;
+                }
+              }
+              // Collect descendant text node values, capped at 200 chars.
+              let text = '';
+              const textStack: CdpDomNode[] = [];
+              if (node.children) {
+                for (let i = node.children.length - 1; i >= 0; i--) {
+                  textStack.push(node.children[i]);
+                }
+              }
+              while (textStack.length > 0 && text.length < 200) {
+                const tn = textStack.pop()!;
+                if (tn.nodeType === 3 /* TEXT_NODE */ && tn.nodeValue) {
+                  text += tn.nodeValue;
+                } else if (tn.children) {
+                  for (let i = tn.children.length - 1; i >= 0; i--) {
+                    textStack.push(tn.children[i]);
+                  }
+                }
+              }
+              if (text.length > 200) text = text.slice(0, 200);
+              elements.push({
+                backendDOMNodeId: node.backendNodeId,
+                tagName,
+                itemType,
+                itemProp,
+                classNames,
+                attrs: Object.keys(attrs).length ? attrs : undefined,
+                text: text || undefined,
+              });
+            }
+          }
+          // Always descend (so text nodes inside non-elements like
+          // documents are skipped naturally — they are not ELEMENT_NODE).
+          if (node.children) {
+            // Push children in reverse so iteration order matches DFS.
+            for (let i = node.children.length - 1; i >= 0; i--) {
+              stack.push(node.children[i]);
+            }
+          }
+        }
+        if (totalCount > SEMANTIC_DOM_MAX_ELEMENTS) {
+          // NEVER use console.log — corrupts MCP JSON-RPC on stdout.
+          console.error(
+            `[read_page semantic] DOM truncated: ${totalCount} elements -> cap ${SEMANTIC_DOM_MAX_ELEMENTS}`,
+          );
+        }
+        semanticDomSnapshot = { elements };
+      } catch {
+        semanticDomSnapshot = undefined;
+      }
+
+      const view = buildSemanticView(
+        {
+          url: semanticPageStats.url,
+          title: semanticPageStats.title,
+          axNodes: semanticNodes,
+          domSnapshot: semanticDomSnapshot,
+          allocateRef: (node) => {
+            if (node.backendDOMNodeId === undefined) return undefined;
+            const AX_ROLE_TO_TAG: Record<string, string> = {
+              button: 'button',
+              link: 'a',
+              textbox: 'input',
+              searchbox: 'input',
+              checkbox: 'input',
+              radio: 'input',
+              combobox: 'select',
+              listbox: 'select',
+            };
+            const tagName = AX_ROLE_TO_TAG[node.role];
+            return refIdManager.generateRef(
+              sessionId,
+              tabId,
+              node.backendDOMNodeId,
+              node.role,
+              node.name,
+              tagName,
+            );
+          },
+        },
+        semanticRulesJson as SemanticRuleSet,
+      );
+
+      return {
+        content: [{ type: 'text', text: withSemanticMetrics(view as unknown as Record<string, unknown>) }],
       };
     }
 
@@ -315,16 +922,28 @@ const handler: ToolHandler = async (
       try {
         const refId = args.ref_id as string | undefined;
         const depth = args.depth as number | undefined;
-        const result = await serializeDOM(page, cdpClient, {
+        const planningProfile = (args.planningProfile as 'default' | 'stable' | undefined) ?? 'default';
+        const result = await measure('domGetDocumentMs', () => serializeDOM(page, cdpClient, {
           maxDepth: depth ?? -1,
           filter: filter,
           interactiveOnly: filter === 'interactive',
-        });
+          planningProfile,
+        }));
+        diagnostics.formatMs = diagnostics.domGetDocumentMs;
 
         let outputText = result.content;
         if (refId) {
           outputText = '[Note: ref_id is ignored in DOM mode. Use mode "ax" for subtree scoping.]\n\n' + outputText;
         }
+
+        // #844: build the [node_refs] block from emitted backendNodeIds.
+        // P2 contract — block is always present (never gated by the flag);
+        // the flag only flips uid values to `null` at runtime.
+        const nodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          result.emittedBackendNodeIds ?? [],
+        );
 
         // Delta compression: cache DOM and return diff if applicable
         const compression = args.compression as string | undefined;
@@ -334,7 +953,7 @@ const handler: ToolHandler = async (
           const previous = snapshotStore.get(sessionId, tabId);
 
           if (previous) {
-            const delta = snapshotStore.computeDelta(previous, outputText, currentUrl);
+            const delta = await measure('deltaMs', async () => snapshotStore.computeDelta(previous, outputText, currentUrl));
             // Always update cache with current content
             snapshotStore.set(sessionId, tabId, outputText, currentUrl);
 
@@ -342,10 +961,16 @@ const handler: ToolHandler = async (
               // Return delta instead of full content, but keep page stats header
               const statsLine = `[page_stats] url: ${result.pageStats.url} | title: ${result.pageStats.title} | scroll: ${result.pageStats.scrollX},${result.pageStats.scrollY} | viewport: ${result.pageStats.viewportWidth}x${result.pageStats.viewportHeight} | docSize: ${result.pageStats.scrollWidth}x${result.pageStats.scrollHeight}\n\n`;
               const includePaginationDom = args.includePagination !== false;
-              const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-              return {
-                content: [{ type: 'text', text: statsLine + delta.content + domPaginationSection }],
-              };
+              const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
+              const compressedText = statsLine + delta.content + nodeRefsBlock + domPaginationSection;
+              return withDiagnostics({
+                content: [{ type: 'text', text: withTextMetrics(compressedText, 'dom') }],
+                _compression: {
+                  level: 'delta',
+                  originalChars: outputText.length,
+                  compressedChars: compressedText.length,
+                },
+              });
             }
             // If not delta (too many changes), fall through to full response
           } else {
@@ -355,12 +980,24 @@ const handler: ToolHandler = async (
         }
 
         const includePaginationDom = args.includePagination !== false;
-        const domPaginationSection = includePaginationDom ? formatPaginationSection(await detectPagination(page, tabId)) : '';
-        return {
-          content: [{ type: 'text', text: outputText + domPaginationSection }],
-        };
-      } catch {
+        const domPaginationSection = includePaginationDom ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
+        return withDiagnostics({
+          content: [{ type: 'text', text: withTextMetrics(wrapPage(outputText, 'dom') + nodeRefsBlock + domPaginationSection, 'dom') }],
+        });
+      } catch (error) {
+        if (isExplicitDomMode) {
+          return withDiagnostics({
+            content: [
+              {
+                type: 'text',
+                text: `Read page DOM serialization error: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            isError: true,
+          });
+        }
         // DOM serialization failed — fall through to AX mode as fallback
+        diagnostics.mode = 'ax';
       }
     }
 
@@ -386,8 +1023,21 @@ const handler: ToolHandler = async (
       }
     }
 
-    // Add page stats header for AX mode (matching DOM mode format)
-    const axPageStats = await withTimeout(page.evaluate(() => ({
+    // Snapshot ref entry BEFORE clearing refs (needed for post-clear recovery)
+    const refEntrySnapshot = refIdParam
+      ? refIdManager.getRef(sessionId, tabId, refIdParam)
+      : undefined;
+
+    // Get the accessibility tree
+    const { nodes } = await measure('axGetFullTreeMs', () => withTimeout(
+      cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
+      15000,
+      'Accessibility.getFullAXTree',
+      context,
+    ));
+
+    // Add page stats header for AX mode after the AX snapshot so stats are not older than the tree.
+    const axPageStats = await measure('pageStatsMs', () => withTimeout(page.evaluate(() => ({
       url: window.location.href,
       title: document.title,
       scrollX: Math.round(window.scrollX),
@@ -396,21 +1046,10 @@ const handler: ToolHandler = async (
       scrollHeight: document.documentElement.scrollHeight,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
-    })), 15000, 'read_page', context);
+    })), 15000, 'read_page', context));
     const pageStatsLine = `[page_stats] url: ${axPageStats.url} | title: ${axPageStats.title} | scroll: ${axPageStats.scrollX},${axPageStats.scrollY} | viewport: ${axPageStats.viewportWidth}x${axPageStats.viewportHeight} | docSize: ${axPageStats.scrollWidth}x${axPageStats.scrollHeight}\n\n`;
 
-    // Snapshot ref entry BEFORE clearing refs (needed for post-clear recovery)
-    const refEntrySnapshot = refIdParam
-      ? refIdManager.getRef(sessionId, tabId, refIdParam)
-      : undefined;
-
-    // Get the accessibility tree
-    const { nodes } = await withTimeout(
-      cdpClient.send<{ nodes: AXNode[] }>(page, 'Accessibility.getFullAXTree', { depth: fetchDepth }),
-      15000,
-      'Accessibility.getFullAXTree',
-      context,
-    );
+    const formatStart = mark();
 
     // Clear previous refs for this target
     refIdManager.clearTargetRefs(sessionId, tabId);
@@ -455,6 +1094,25 @@ const handler: ToolHandler = async (
     const lines: string[] = [];
     let charCount = 0;
     const MAX_OUTPUT = MAX_OUTPUT_CHARS;
+
+    /**
+     * Per-snapshot refs map (#831). Populated as the AX tree is walked so that
+     * the final response carries a structured `refs` map alongside the textual
+     * tree. Additive to the existing ax response — `mode='ax'` is unchanged.
+     */
+    const refsMap: Record<string, {
+      role: string;
+      name?: string;
+      tag_name?: string;
+      text_content?: string;
+      frame_id?: string;
+      created_at: number;
+      stale_after_ms: number;
+      snapshot_id: string;
+      snapshot_captured_at: number;
+      snapshot_url: string;
+    }> = {};
+    const snapshotMetadata = createReadPageSnapshotMetadata(tabId, axPageStats.url);
 
     function formatNode(node: AXNode, indent: number): void {
       if (charCount > MAX_OUTPUT) return;
@@ -506,13 +1164,33 @@ const handler: ToolHandler = async (
           node.backendDOMNodeId,
           role,
           name,
-          tagName
+          tagName,
+          undefined,
+          { snapshot: snapshotMetadata }
         );
+
+        // #831: record the structured ref entry for the response `refs` map.
+        // Fields mirror the RefEntry contract documented in the issue.
+        const entry = refIdManager.getRef(sessionId, tabId, refId);
+        const textContent = value || undefined;
+        refsMap[refId] = {
+          role,
+          ...(name ? { name } : {}),
+          ...(tagName ? { tag_name: tagName } : {}),
+          ...(textContent ? { text_content: textContent } : {}),
+          ...(entry?.frameId ? { frame_id: entry.frameId } : {}),
+          created_at: entry?.createdAt ?? Date.now(),
+          stale_after_ms: entry?.staleAfterMs ?? REF_TTL_MS,
+          snapshot_id: snapshotMetadata.snapshotId,
+          snapshot_captured_at: snapshotMetadata.capturedAt,
+          snapshot_url: snapshotMetadata.url,
+        };
       }
 
       // Build line
       const indentStr = '  '.repeat(indent);
-      let line = `${indentStr}[${refId || 'no-ref'}] ${role}`;
+      const refLabel = refId ? `${refId} ${shortAliasForRef(refId) ?? ''}`.trim() : 'no-ref';
+      let line = `${indentStr}[${refLabel}] ${role}`;
       if (name) line += `: "${name}"`;
       if (value) line += ` = "${value}"`;
 
@@ -563,10 +1241,10 @@ const handler: ToolHandler = async (
         });
       }
       if (!scopedNode) {
-        return {
+        return withDiagnostics({
           content: [{ type: 'text', text: `Error: ref_id or node ID "${refIdParam}" not found or expired` }],
           isError: true,
-        };
+        });
       }
       startNodes = [scopedNode];
     } else {
@@ -576,16 +1254,37 @@ const handler: ToolHandler = async (
       formatNode(root, 0);
     }
 
-    const output = lines.join('\n');
+    const outputLines = compactAX ? compactAXLines(lines) : lines;
+    const output = outputLines.join('\n');
+    const outputCharCount = output.length;
+    diagnostics.formatMs = mark() - formatStart;
     const includePaginationAx = args.includePagination !== false;
-    const axPaginationSection = includePaginationAx ? formatPaginationSection(await detectPagination(page, tabId)) : '';
+    const axPaginationSection = includePaginationAx ? await measure('paginationMs', async () => formatPaginationSection(await detectPagination(page, tabId))) : '';
 
-    if (charCount > MAX_OUTPUT) {
+    const compression = args.compression as string | undefined;
+    if (compression === 'delta') {
+      const snapshotStore = SnapshotStore.getInstance();
+      const axCacheTabId = `${tabId}:ax${compactAX ? ':compact' : ''}`;
+      const previous = snapshotStore.get(sessionId, axCacheTabId);
+      if (previous) {
+        const delta = snapshotStore.computeDelta(previous, output, axPageStats.url);
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+        if (delta.isDelta) {
+          return {
+            content: [{ type: 'text', text: pageStatsLine + delta.content.replace('[DOM Delta', '[AX Delta') + axPaginationSection }],
+          };
+        }
+      } else {
+        snapshotStore.set(sessionId, axCacheTabId, output, axPageStats.url);
+      }
+    }
+
+    if (outputCharCount > MAX_OUTPUT) {
       // Large AX output should not trigger a second full DOM traversal unless
       // the caller explicitly opts into that fallback. Otherwise preserve AX
       // intent and return the bounded/truncated AX representation.
       if (axOverflowFallback !== 'dom') {
-        return {
+        return withDiagnostics({
           content: [
             {
               type: 'text',
@@ -596,7 +1295,9 @@ const handler: ToolHandler = async (
                 axPaginationSection,
             },
           ],
-        };
+          refs: refsMap,
+          snapshot: snapshotMetadata,
+        });
       }
 
       // Explicit fallback: DOM mode often produces equivalent page structure at
@@ -608,22 +1309,35 @@ const handler: ToolHandler = async (
           interactiveOnly: filter === 'interactive',
         });
 
+        // #844: include the [node_refs] block in the AX-overflow DOM
+        // fallback path too — P2 contract is unconditional across response
+        // shapes that ship DOM content.
+        const fallbackNodeRefsBlock = await formatNodeRefsBlock(
+          page,
+          cdpClient,
+          domResult.emittedBackendNodeIds ?? [],
+        );
+
         const fallbackNote =
           '\n\n[AX tree exceeded output limit (' + charCount + ' chars). ' +
           'Switched to DOM mode because fallback: "dom" was requested. ' +
           'Use mode: "ax" with smaller depth / ref_id to scope specific subtrees for AX format.]';
 
-        return {
+        // Update diagnostics to reflect the effective output mode (DOM), not the requested one (AX).
+        diagnostics.requestedMode = diagnostics.requestedMode ?? diagnostics.mode;
+        diagnostics.mode = 'dom';
+
+        return withDiagnostics({
           content: [
             {
               type: 'text',
-              text: domResult.content + fallbackNote + axPaginationSection,
+              text: domResult.content + fallbackNote + fallbackNodeRefsBlock + axPaginationSection,
             },
           ],
-        };
+        });
       } catch {
         // If DOM serialization fails, fall back to truncated AX (original behavior)
-        return {
+        return withDiagnostics({
           content: [
             {
               type: 'text',
@@ -634,13 +1348,17 @@ const handler: ToolHandler = async (
                 axPaginationSection,
             },
           ],
-        };
+          refs: refsMap,
+          snapshot: snapshotMetadata,
+        });
       }
     }
 
-    return {
-      content: [{ type: 'text', text: pageStatsLine + output + axPaginationSection }],
-    };
+    return withDiagnostics({
+      content: [{ type: 'text', text: pageStatsLine + wrapPage(output, 'ax') + axPaginationSection }],
+      refs: refsMap,
+      snapshot: snapshotMetadata,
+    });
   } catch (error) {
     return {
       content: [
@@ -668,9 +1386,77 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return result;
   }
 
+  // P1 codex fix: semantic mode emits a JSON payload via `JSON.stringify(view)`.
+  // Running the string-level sanitizer over the serialized JSON would let
+  // patterns like `<!--` in one field and `-->` in a later field cross JSON
+  // delimiters and corrupt the structure. Parse first, sanitize each string
+  // value in place, then re-serialize. Sanitization metadata is attached as a
+  // structural `_sanitization` field so JSON.parse always succeeds. Other
+  // modes keep the legacy text-suffix behavior.
+  const isSemanticMode =
+    typeof (args as { mode?: unknown })?.mode === 'string' &&
+    (args as { mode: string }).mode === 'semantic';
+
+  function sanitizeStringsDeep(
+    value: unknown,
+    notes: string[],
+  ): unknown {
+    if (typeof value === 'string') {
+      const s = sanitizeContent(value);
+      if (s.sanitizationNote && s.sanitizationNote.length > 0) {
+        notes.push(s.sanitizationNote.trim());
+      }
+      return s.text;
+    }
+    if (Array.isArray(value)) {
+      return value.map((v) => sanitizeStringsDeep(v, notes));
+    }
+    if (value && typeof value === 'object') {
+      // P1 codex fix: object KEYS can be attacker-controlled too
+      // (`buildSemanticView` lifts `itemprop` strings into `state` keys),
+      // so sanitize keys as well as values. Previous version only walked
+      // values, which reopened a prompt-injection vector via keys.
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        const sk = sanitizeContent(k);
+        if (sk.sanitizationNote && sk.sanitizationNote.length > 0) {
+          notes.push(sk.sanitizationNote.trim());
+        }
+        // Reserve `_sanitization` for our own metadata channel: if a
+        // sanitized key collides, prefix it to keep the metadata intact.
+        const keyOut = sk.text === '_sanitization' ? '_sanitization_input' : sk.text;
+        out[keyOut] = sanitizeStringsDeep(v, notes);
+      }
+      return out;
+    }
+    return value;
+  }
+
+  const sanitizeStart = Date.now();
+
   // Sanitize all text content blocks
   const sanitizedContent = result.content.map((block) => {
     if (block.type === 'text' && typeof block.text === 'string') {
+      if (isSemanticMode) {
+        // Parse first, then sanitize each string value inside. This prevents
+        // the sanitizer from stripping content across JSON delimiters.
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          const notes: string[] = [];
+          const cleaned = sanitizeStringsDeep(parsed, notes) as Record<string, unknown>;
+          if (notes.length > 0) {
+            // Deduplicate identical notes; join the rest with `; `.
+            const unique = Array.from(new Set(notes));
+            cleaned['_sanitization'] = unique.join('; ');
+          }
+          return { ...block, text: JSON.stringify(cleaned) };
+        } catch {
+          // Parse failed — fall back to string-level sanitization so the
+          // security signal is not silently lost.
+          const sanitized = sanitizeContent(block.text);
+          return { ...block, text: sanitized.text + sanitized.sanitizationNote };
+        }
+      }
       const sanitized = sanitizeContent(block.text);
       return {
         ...block,
@@ -680,9 +1466,105 @@ const sanitizedHandler: ToolHandler = async (sessionId, args, context) => {
     return block;
   });
 
-  return { ...result, content: sanitizedContent };
+  const sanitizedResult: MCPResult = { ...result, content: sanitizedContent };
+  if (args.diagnostics === true && sanitizedResult._diagnostics && typeof sanitizedResult._diagnostics === 'object') {
+    (sanitizedResult._diagnostics as ReadPageDiagnostics).sanitizeMs = Date.now() - sanitizeStart;
+  }
+  return sanitizedResult;
 };
 
-export function registerReadPageTool(server: MCPServer): void {
-  server.registerTool('read_page', sanitizedHandler, definition);
+/**
+ * Snapshot-cache wrapper (#879).
+ *
+ * read_page stays uncached for now. AX/semantic responses embed ephemeral
+ * ref_* ids owned by RefIdManager, and DOM/CSS outputs include scroll-sensitive
+ * page stats/content. Until cache identity can include scroll state and ref
+ * mappings can be replayed or made stable, returning cached read_page payloads
+ * risks stale refs or stale post-scroll snapshots. Keep the wrapper as a
+ * behavior-preserving seam so the feature can be re-enabled safely later.
+ */
+const cachedHandler: ToolHandler = async (sessionId, args, context) => {
+  const result = await sanitizedHandler(sessionId, args, context);
+  if (!isStateHeaderEnabled() || result.isError || !result.content) return result;
+
+  const tabId = typeof args.tabId === 'string' ? args.tabId : '';
+  if (!tabId) return result;
+
+  let page: Awaited<ReturnType<ReturnType<typeof getSessionManager>['getPage']>> | null = null;
+  try {
+    page = await getSessionManager().getPage(sessionId, tabId);
+  } catch {
+    page = null;
+  }
+  if (!page) return result;
+
+  let url = '';
+  let title = '';
+  try {
+    url = page.url() || '';
+  } catch {
+    url = '';
+  }
+  try {
+    title = await page.title();
+  } catch {
+    title = '';
+  }
+
+  const requestedMode = typeof args.mode === 'string' ? args.mode : 'dom';
+  const mode = ['ax', 'dom', 'css', 'semantic', 'markdown'].includes(requestedMode)
+    ? requestedMode
+    : 'dom';
+  const headerMode = mode === 'markdown' ? 'html' : mode;
+  const header = { url, title, mode: headerMode as 'ax' | 'dom' | 'css' | 'html', capturedAt: Date.now(), tabId };
+  const includeMetrics = args.include_metrics === true;
+  const refreshSemanticMetrics = (payload: Record<string, unknown>): Record<string, unknown> => {
+    if (!includeMetrics || !('_metrics' in payload)) return payload;
+    const next = { ...payload };
+    delete next._metrics;
+    let metrics = buildTextMetrics(JSON.stringify(next), { mode: 'semantic' });
+    for (let i = 0; i < 8; i++) {
+      next._metrics = metrics;
+      const text = JSON.stringify(next);
+      const candidate = buildTextMetrics(text, { mode: 'semantic' });
+      if (candidate.returned_chars === metrics.returned_chars && candidate.estimated_tokens === metrics.estimated_tokens) return next;
+      metrics = candidate;
+    }
+    next._metrics = metrics;
+    return next;
+  };
+
+  return {
+    ...result,
+    content: result.content.map((block) => {
+      if (block.type !== 'text' || typeof block.text !== 'string') return block;
+      if (mode === 'semantic') {
+        try {
+          const parsed = JSON.parse(block.text) as Record<string, unknown>;
+          const merged = mergeHeaderJson(header, parsed) as Record<string, unknown>;
+          return { ...block, text: JSON.stringify(refreshSemanticMetrics(merged)) };
+        } catch {
+          return { ...block, text: prependHeaderText(header, block.text) };
+        }
+      }
+      return { ...block, text: prependHeaderText(header, block.text) };
+    }),
+  };
+};
+
+function hasTruncationMarker(text: string): boolean {
+  return text.includes('...[truncated]') || text.includes('[Output truncated') || text.includes('Content omitted due to size constraints');
 }
+
+export function registerReadPageTool(server: MCPServer): void {
+  server.registerTool('read_page', cachedHandler, definition);
+}
+
+/**
+ * Internal handler exported for in-process reuse (e.g. the
+ * `returnAfterState` chaining option on input tools). External callers should
+ * register the tool via `registerReadPageTool` and invoke it through the MCP
+ * server. This export wraps the sanitized handler so callers get the same
+ * post-processing the public tool applies.
+ */
+export const readPageHandlerForReuse: ToolHandler = sanitizedHandler;

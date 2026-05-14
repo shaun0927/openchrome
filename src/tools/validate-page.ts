@@ -14,10 +14,13 @@
 import type { CDPSession, Page } from 'puppeteer-core';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { buildTextMetrics } from '../core/metrics/token-estimate';
+import { isStateHeaderEnabled, prependHeaderText } from './_shared/state-header';
 
 interface ConsoleLogEntry {
   type: string;
@@ -80,7 +83,7 @@ function argText(arg: { type: string; value?: unknown; description?: string }): 
 const definition: MCPToolDefinition = {
   name: 'validate_page',
   description:
-    'Composite "is this page healthy?" check. Navigates to a URL, waits for readiness, captures console errors for a short window, and returns a single structured summary (title, console errors/warnings, interactive element counts, body text sample). Use this instead of chaining navigate + wait_for + console_capture + read_page when you only need to verify a page renders correctly. Returns ~600 tokens vs ~4000 for the multi-call equivalent.',
+    'Composite health check: navigate, wait, capture console errors, return structured summary (title, errors, interactive count, body sample).\n\nWhen to use: Verifying a page renders correctly without errors in a single call instead of chaining navigate + wait_for + console_capture + read_page.\nWhen NOT to use: Use navigate + read_page when you need full DOM content, not just a health summary.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -104,9 +107,14 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: `How much visible body text to include in the summary. Default: ${DEFAULT_BODY_SAMPLE}, max: ${MAX_BODY_SAMPLE}.`,
       },
+      include_metrics: {
+        type: 'boolean',
+        description: 'When true, include approximate output size/token metrics for the returned summary and body sample. Default: false.',
+      },
     },
     required: ['url'],
   },
+  annotations: TOOL_ANNOTATIONS.validate_page,
 };
 
 const handler: ToolHandler = async (
@@ -124,6 +132,7 @@ const handler: ToolHandler = async (
     Math.max((args.bodyTextSampleChars as number) ?? DEFAULT_BODY_SAMPLE, 0),
     MAX_BODY_SAMPLE,
   );
+  const includeMetrics = args.include_metrics === true;
 
   if (!rawUrl) {
     return {
@@ -322,8 +331,12 @@ const handler: ToolHandler = async (
         ? `validate_page auth_redirect_required — redirected to ${authRedirect?.host ?? 'unknown'}`
         : `validate_page ${status}${navError ? ': ' + navError : ''}`;
 
+  const state = { url: finalUrl, title, mode: 'validate' as const, capturedAt: Date.now(), tabId: tabId! };
+  const stateHeader = isStateHeaderEnabled() ? { state } : {};
+  const text = prependHeaderText(state, summaryLine);
+
   return {
-    content: [{ type: 'text', text: summaryLine }],
+    content: [{ type: 'text', text }],
     tabId,
     created,
     url: finalUrl,
@@ -337,12 +350,19 @@ const handler: ToolHandler = async (
       totalWarnings,
     },
     summary,
+    ...stateHeader,
     ...(authRedirect && {
       authRedirect: true,
       redirectedFrom: authRedirect.from,
       authRedirectHost: authRedirect.host,
     }),
     ...(navError && { error: navError }),
+    ...(includeMetrics && {
+      metrics: {
+        summary: buildTextMetrics(summaryLine, { mode: 'validate_page:summary' }),
+        bodyTextSample: buildTextMetrics(summary.bodyTextSample || '', { mode: 'validate_page:bodyTextSample' }),
+      },
+    }),
   };
 };
 
