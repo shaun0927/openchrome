@@ -18,6 +18,13 @@ export {
 
 // Competitor adapters — same callTool surface, different library underneath.
 export {
+  PuppeteerAdapter,
+  PuppeteerAdapterOptions,
+  PuppeteerBrowserLike,
+  PuppeteerPageLike,
+} from './puppeteer-adapter';
+
+export {
   PlaywrightAdapter,
   PlaywrightAdapterOptions,
   PlaywrightBrowserLike,
