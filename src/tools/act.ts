@@ -39,6 +39,7 @@ import {
   WorkflowPageSignature,
 } from '../actions/action-cache';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA, VerifyReport } from '../core/perception/verify';
+import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 // ─── Types ───
 
@@ -93,6 +94,7 @@ const definition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Include concise workflow cache accept/reject metadata in the response. Default: false',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['tabId', 'instruction'],
   },
@@ -551,7 +553,7 @@ async function executeCheckUncheck(
 
 // ─── Handler ───
 
-const handler: ToolHandler = async (
+const coreHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
@@ -851,6 +853,26 @@ Suggestion: ${suggestion}`,
 };
 
 // ─── Registration ───
+
+
+const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
+  const result = await coreHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+
+  try {
+    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'act');
+    if (page) {
+      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+    }
+  } catch {
+    // Snapshot chaining is best-effort; never mask the successful action result.
+  }
+  return result;
+};
 
 export function registerActTool(server: MCPServer): void {
   server.registerTool('act', handler, definition);

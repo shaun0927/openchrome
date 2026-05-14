@@ -572,6 +572,85 @@ describe('query_dom shadow DOM support', () => {
     });
   });
 
+
+
+    test('paginates light DOM multiple CSS results with opaque cursor metadata', async () => {
+      const handler = getQueryDomHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+
+      const handles = [
+        {} as import('puppeteer-core').ElementHandle,
+        {} as import('puppeteer-core').ElementHandle,
+        {} as import('puppeteer-core').ElementHandle,
+      ];
+      (page.$$ as jest.Mock).mockResolvedValue(handles);
+      (page.evaluate as jest.Mock)
+        .mockResolvedValueOnce({
+          ref: 'el_0',
+          nodeRef: null,
+          tagName: 'li',
+          id: null,
+          className: 'item',
+          attributes: {},
+          textContent: 'Item 1',
+          isVisible: true,
+          boundingBox: { x: 0, y: 0, width: 100, height: 20 },
+        })
+        .mockResolvedValueOnce({
+          ref: 'el_1',
+          nodeRef: null,
+          tagName: 'li',
+          id: null,
+          className: 'item',
+          attributes: {},
+          textContent: 'Item 2',
+          isVisible: true,
+          boundingBox: { x: 0, y: 20, width: 100, height: 20 },
+        })
+        .mockResolvedValueOnce({
+          ref: 'el_2',
+          nodeRef: null,
+          tagName: 'li',
+          id: null,
+          className: 'item',
+          attributes: {},
+          textContent: 'Item 3',
+          isVisible: true,
+          boundingBox: { x: 0, y: 40, width: 100, height: 20 },
+        });
+
+      const first = await handler(testSessionId, {
+        tabId: testTargetId,
+        method: 'css',
+        selector: 'li.item',
+        multiple: true,
+        limit: 2,
+      }) as { content: Array<{ type: string; text: string }>; structuredContent?: Record<string, unknown> };
+
+      const firstParsed = JSON.parse(first.content[0].text);
+      expect(firstParsed.elements).toHaveLength(2);
+      expect(firstParsed.totalCount).toBe(3);
+      expect(firstParsed.hasMore).toBe(true);
+      expect(typeof firstParsed.nextCursor).toBe('string');
+      expect(first.structuredContent?.nextCursor).toBe(firstParsed.nextCursor);
+
+      const second = await handler(testSessionId, {
+        tabId: testTargetId,
+        method: 'css',
+        selector: 'li.item',
+        multiple: true,
+        limit: 2,
+        cursor: firstParsed.nextCursor,
+      }) as { content: Array<{ type: string; text: string }>; structuredContent?: Record<string, unknown> };
+
+      const secondParsed = JSON.parse(second.content[0].text);
+      expect(secondParsed.elements).toHaveLength(1);
+      expect(secondParsed.elements[0].ref).toBe('el_2');
+      expect(secondParsed.hasMore).toBe(false);
+      expect(secondParsed.nextCursor).toBeUndefined();
+      expect(second.structuredContent?.hasMore).toBe(false);
+    });
+
   // -------------------------------------------------------------------------
   // 6. Error / edge cases
   // -------------------------------------------------------------------------

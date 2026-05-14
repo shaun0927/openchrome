@@ -6,6 +6,7 @@
 
 import * as http from 'node:http';
 import * as net from 'node:net';
+import type { AddressInfo } from 'node:net';
 
 // Inline require to avoid TS module resolution issues with dynamic transport loading
 const { HTTPTransport } = require('../../src/transports/http');
@@ -17,9 +18,11 @@ async function allocatePort(): Promise<number> {
     const server = net.createServer();
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close((err) => err ? reject(err) : resolve(port));
+      const address = server.address() as AddressInfo;
+      server.close((err) => {
+        if (err) reject(err);
+        else resolve(address.port);
+      });
     });
   });
   activePort = port;
@@ -208,7 +211,8 @@ describe('HTTP Bearer Token Auth', () => {
 
   describe('unauthenticated HTTP policy', () => {
     it('fails closed by default when no auth is configured', async () => {
-      await expect(async () => new HTTPTransport(await allocatePort(), '127.0.0.1')).rejects.toThrow(/Refusing to start unauthenticated HTTP transport/);
+      const port = await allocatePort();
+      expect(() => new HTTPTransport(port, '127.0.0.1')).toThrow(/Refusing to start unauthenticated HTTP transport/);
     });
 
     it('allows explicit loopback-only development mode', async () => {
@@ -228,8 +232,9 @@ describe('HTTP Bearer Token Auth', () => {
     });
 
     it('refuses external bind without auth even with development opt-in', async () => {
-      await expect(async () => new HTTPTransport(await allocatePort(), '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
-        .rejects.toThrow(/non-loopback host/);
+      const port = await allocatePort();
+      expect(() => new HTTPTransport(port, '0.0.0.0', undefined, { allowUnauthenticatedHttp: true }))
+        .toThrow(/non-loopback host/);
     });
   });
 

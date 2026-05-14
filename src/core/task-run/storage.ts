@@ -8,6 +8,7 @@ import {
   EvidencePointer,
   FailedItem,
   NeedsHelpState,
+  TaskRunAutoSessionSnapshotPolicy,
   TaskRunCheckpoint,
   TaskRunEvent,
   TaskRunListFilter,
@@ -35,6 +36,11 @@ export interface StartTaskRunInput {
   session_id?: string;
   workflow_id?: string;
   ledger_task_ids?: string[];
+  auto_session_snapshot?: {
+    enabled?: boolean;
+    mode?: 'best-effort' | 'strict';
+    max_snapshots?: number;
+  };
 }
 
 export interface UpdateTaskRunInput {
@@ -92,6 +98,8 @@ export class TaskRunStore {
       session_id: optionalString(input.session_id),
       workflow_id: optionalString(input.workflow_id),
       ledger_task_ids: uniqueStrings(input.ledger_task_ids),
+      auto_session_snapshot_policy: sanitizeAutoSessionSnapshotPolicy(input.auto_session_snapshot),
+      auto_session_snapshot_state: sanitizeAutoSessionSnapshotPolicy(input.auto_session_snapshot) ? { snapshot_ids: [] } : undefined,
       created_at: ts,
       updated_at: ts,
     };
@@ -258,6 +266,45 @@ export class TaskRunStore {
     });
   }
 
+  async recordAutoSessionSnapshot(runId: string, snapshotId: string): Promise<TaskRunMeta> {
+    return this.withRunLock(runId, async () => {
+      const current = await this.get(runId);
+      const ts = this.now();
+      const maxSnapshots = current.auto_session_snapshot_policy?.max_snapshots || 10;
+      const ids = [...(current.auto_session_snapshot_state?.snapshot_ids || []), scrub(snapshotId)].slice(-maxSnapshots);
+      const meta: TaskRunMeta = pruneUndefined({
+        ...current,
+        auto_session_snapshot_state: {
+          snapshot_ids: ids,
+          last_snapshot_at: ts,
+        },
+        updated_at: ts,
+      });
+      await this.writeMeta(meta);
+      await this.appendEvent(runId, { ts, kind: 'auto_session_snapshot', data: { snapshot_id: snapshotId } });
+      return meta;
+    });
+  }
+
+  async recordAutoSessionSnapshotFailure(runId: string, error: unknown): Promise<TaskRunMeta> {
+    return this.withRunLock(runId, async () => {
+      const current = await this.get(runId);
+      const ts = this.now();
+      const meta: TaskRunMeta = pruneUndefined({
+        ...current,
+        auto_session_snapshot_state: {
+          snapshot_ids: current.auto_session_snapshot_state?.snapshot_ids || [],
+          last_snapshot_at: current.auto_session_snapshot_state?.last_snapshot_at,
+          last_error: limit(error instanceof Error ? error.message : String(error), 1024),
+        },
+        updated_at: ts,
+      });
+      await this.writeMeta(meta);
+      await this.appendEvent(runId, { ts, kind: 'auto_session_snapshot', data: { error: meta.auto_session_snapshot_state?.last_error } });
+      return meta;
+    });
+  }
+
   async readEvents(runId: string): Promise<TaskRunEvent[]> {
     const eventsPath = this.eventsPath(runId);
     if (!fs.existsSync(eventsPath)) return [];
@@ -370,6 +417,20 @@ function sanitizeStringArray(values: unknown, maxItems: number, maxChars: number
 function uniqueStrings(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
   return Array.from(new Set(values.filter((v): v is string => typeof v === 'string' && v.trim().length > 0).map(v => scrub(v.trim()))));
+}
+
+function sanitizeAutoSessionSnapshotPolicy(value: unknown): TaskRunAutoSessionSnapshotPolicy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const input = value as { enabled?: unknown; mode?: unknown; max_snapshots?: unknown };
+  if (input.enabled !== true) return undefined;
+  const max = typeof input.max_snapshots === 'number' && Number.isFinite(input.max_snapshots)
+    ? Math.max(1, Math.min(100, Math.floor(input.max_snapshots)))
+    : 10;
+  return {
+    enabled: true,
+    mode: input.mode === 'strict' ? 'strict' : 'best-effort',
+    max_snapshots: max,
+  };
 }
 
 function sanitizeEvidence(values: unknown): EvidencePointer[] | undefined {
