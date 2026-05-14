@@ -240,6 +240,24 @@ describe('HintEngine', () => {
       expect(hint?.hint).toContain('wait_for');
     });
 
+    it('should hint to record skill memory after element_pick followed by successful same-node interact', () => {
+      const tracker = makeTracker([
+        { toolName: 'element_pick', args: { tabId: 'tab-1', action: 'start' }, result: 'success' },
+      ]);
+      const engine = new HintEngine(tracker);
+      const result = makeResult('Clicked picked element successfully');
+      const hint = engine.getHint(
+        'interact',
+        result,
+        false,
+        'test',
+        { target: { nodeRef: 'bnr:loader-1:42' } },
+      );
+      expect(hint?.rule).toBe('element-pick-skill-record');
+      expect(hint?.hint).toContain('oc_skill_record');
+      expect(hint?.hint).toContain('bnr:loader-1:42');
+    });
+
     it('should hint after form submission', () => {
       const engine = new HintEngine(new ActivityTracker());
       const result = makeResult('Form submitted successfully');

@@ -49,6 +49,7 @@ export interface HintContext {
   isError: boolean;
   recentCalls: ToolCallEvent[];
   fireCounts: Map<string, number>;
+  currentArgs?: Record<string, unknown>;
   episodeContext?: FailureEpisodeContext;
 }
 
@@ -290,6 +291,7 @@ export class HintEngine {
       isError,
       recentCalls,
       fireCounts: this.hintEscalation,
+      currentArgs,
       episodeContext,
     };
 
