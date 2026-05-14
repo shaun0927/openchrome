@@ -98,43 +98,46 @@ const getConnectionInfoHandler: ToolHandler = async (
   const hostArg = args.host as string;
   const state = getServerState();
 
+  // Fetch devtools info in parallel with host-info generation. This is also
+  // used by host="openchrome" so self-introspection includes the same #860
+  // live DevTools metadata as external host config responses.
+  const devToolsPromise = collectDevToolsInfo();
+
   if (hostArg === 'openchrome') {
     // Issue #849: surface the auto-connect state so MCP clients can verify
     // they are talking to an externally-launched Chrome.
     const autoConnect = getAutoConnectState();
+    const devtools = await devToolsPromise;
     if (autoConnect) {
+      const response = {
+        mode: autoConnect.mode,
+        userDataDir: autoConnect.userDataDir,
+        port: autoConnect.port,
+        wsEndpoint: autoConnect.wsEndpoint,
+        attachedAt: new Date(autoConnect.attachedAt).toISOString(),
+        runtimeProfile: getRuntimeProfile(),
+        ...(devtools ? { devtools } : {}),
+      };
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(
-              {
-                mode: autoConnect.mode,
-                userDataDir: autoConnect.userDataDir,
-                port: autoConnect.port,
-                wsEndpoint: autoConnect.wsEndpoint,
-                attachedAt: new Date(autoConnect.attachedAt).toISOString(),
-                runtimeProfile: getRuntimeProfile(),
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };
     }
+    const response = { mode: 'managed', runtimeProfile: getRuntimeProfile(), ...(devtools ? { devtools } : {}) };
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify({ mode: 'managed', runtimeProfile: getRuntimeProfile() }, null, 2),
+          text: JSON.stringify(response, null, 2),
         },
       ],
     };
   }
 
-  // Fetch devtools info in parallel with host-info generation
-  const devToolsPromise = collectDevToolsInfo();
 
   if (hostArg === 'all') {
     const [all, devtools] = await Promise.all([
