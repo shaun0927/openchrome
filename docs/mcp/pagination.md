@@ -103,7 +103,7 @@ return {
 | `query_dom` | `elements` / `results` | 50 | ✅ multiple CSS/XPath results accept `cursor` and return `nextCursor` / `hasMore` / `totalCount` |
 | `console_capture` `get` | `entries` / `logs` | 200 when cursoring; no-cursor output remains legacy-compatible | ✅ cursor support in PR #1234 |
 | `network_capture_lite/full` `getLogs` | `requests` / `entries` | 100 | ✅ cursor support in PR #1235 |
-| `read_page` | text chunks | 5,000 chars | Follow-up slice |
+| `read_page` markdown | `text` | 5,000 chars after the legacy first chunk | ✅ markdown cursor support in this PR |
 | `crawl` | pages | 25 pages | Follow-up slice |
 
 Each adoption should stay a small per-tool PR: import `paginate`, preserve
@@ -133,6 +133,15 @@ For `action: "getLogs"`, pass a previous `nextCursor` as `cursor`. Cursoring
 returns paged requests in `structuredContent.requests`; the text payload keeps
 the legacy `entries` field and includes `hasMore` / `nextCursor` only for cursor
 calls. `limit: 0` still means "all retained entries" for compatibility.
+
+### `read_page` markdown
+
+For `mode: "markdown"`, long no-cursor responses keep the legacy text body and
+truncation marker, while adding `structuredContent.nextCursor` / `hasMore` /
+`total` metadata when more markdown remains. Pass that `nextCursor` back as
+`cursor` to retrieve the next 5,000-character markdown chunk as JSON text plus
+matching `structuredContent`. Cursor hashes cover the full generated markdown so
+stale page content is rejected with `stale_cursor` instead of silently resetting.
 
 ## Why opaque cursors (and not `start_index`)
 

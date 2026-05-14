@@ -125,6 +125,95 @@ describe('ReadPageTool', () => {
   });
 
   describe('Accessibility Tree', () => {
+    test('markdown exposes nextCursor for truncated output without changing text output shape', async () => {
+      process.env.OPENCHROME_STATE_HEADER = 'off';
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'A'.repeat(60000)}</p></main>`);
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+      }) as {
+        content: Array<{ type: string; text: string }>;
+        structuredContent?: { hasMore: boolean; nextCursor?: string; total: number; offset: number; text: string };
+      };
+
+      expect(result.content[0].text).toContain('[Output truncated — exceeded MAX_OUTPUT_CHARS]');
+      expect(result.structuredContent?.hasMore).toBe(true);
+      expect(result.structuredContent?.offset).toBe(0);
+      expect(result.structuredContent?.total).toBeGreaterThan(result.content[0].text.length);
+      expect(result.structuredContent?.nextCursor).toEqual(expect.any(String));
+      expect(result.structuredContent?.text).toBe(result.content[0].text);
+    });
+
+    test('markdown cursor returns subsequent page as structuredContent JSON', async () => {
+      process.env.OPENCHROME_STATE_HEADER = 'off';
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'A'.repeat(60000)}</p></main>`);
+
+      const first = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+      }) as { structuredContent?: { nextCursor?: string } };
+
+      const second = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+        cursor: first.structuredContent?.nextCursor,
+      }) as {
+        content: Array<{ type: string; text: string }>;
+        structuredContent?: { action: string; mode: string; hasMore: boolean; offset: number; text: string };
+      };
+
+      expect(JSON.parse(second.content[0].text)).toEqual(second.structuredContent);
+      expect(second.structuredContent?.action).toBe('read_page');
+      expect(second.structuredContent?.mode).toBe('markdown');
+      expect(second.structuredContent?.offset).toBeGreaterThan(0);
+      expect(second.structuredContent?.hasMore).toBe(true);
+      expect(second.structuredContent?.text).not.toContain('[Output truncated — exceeded MAX_OUTPUT_CHARS]');
+    });
+
+    test('markdown cursor rejects malformed and stale cursors', async () => {
+      process.env.OPENCHROME_STATE_HEADER = 'off';
+      const handler = await getReadPageHandler();
+      const page = mockSessionManager.pages.get(testTargetId)!;
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'A'.repeat(60000)}</p></main>`);
+
+      const malformed = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        cursor: 'not-a-cursor',
+      }) as { isError?: boolean; structuredContent?: { error?: { code: string } } };
+      expect(malformed.isError).toBe(true);
+      expect(malformed.structuredContent?.error?.code).toBe('invalid_cursor');
+
+      const first = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        boundaryMarkers: false,
+      }) as { structuredContent?: { nextCursor?: string } };
+      (page.content as jest.Mock).mockResolvedValue(`<main><p>${'B'.repeat(60000)}</p></main>`);
+
+      const stale = await handler(testSessionId, {
+        tabId: testTargetId,
+        mode: 'markdown',
+        includePagination: false,
+        cursor: first.structuredContent?.nextCursor,
+      }) as { isError?: boolean; structuredContent?: { error?: { code: string; retry: string } } };
+      expect(stale.isError).toBe(true);
+      expect(stale.structuredContent?.error).toEqual({ code: 'stale_cursor', retry: 'restart_from_no_cursor' });
+    });
+
     test('semantic include_metrics reports the final serialized payload size', async () => {
       const handler = await getReadPageHandler();
 
