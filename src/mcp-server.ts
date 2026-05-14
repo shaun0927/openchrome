@@ -70,6 +70,13 @@ import {
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+import {
+  buildInvalidJsonRpcRequestResponse,
+  extractPrincipalAndScrub,
+  isInitializedNotification,
+  isJsonRpcNotification,
+  isServerToClientResponseMessage,
+} from './mcp/request-ingress';
 export { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { isRunHarnessEnabled } from './run-harness/flags';
@@ -915,15 +922,7 @@ export class MCPServer {
     // sent earlier via `requestFromClient`. Route it to the pending resolver
     // and short-circuit BEFORE the regular client-request validation (which
     // would otherwise reject the response as "missing method field").
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      parsed.jsonrpc === '2.0' &&
-      parsed.id !== undefined &&
-      parsed.id !== null &&
-      typeof parsed.method !== 'string' &&
-      ('result' in parsed || 'error' in parsed)
-    ) {
+    if (isServerToClientResponseMessage(parsed)) {
       const idKey = String(parsed.id);
       const entry = this.pendingClientRequests.get(idKey);
       if (entry) {
@@ -945,41 +944,20 @@ export class MCPServer {
     }
 
     // Validate JSON-RPC 2.0 envelope
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      parsed.jsonrpc !== '2.0' ||
-      typeof parsed.method !== 'string'
-    ) {
-      return {
-        jsonrpc: '2.0' as const,
-        id: (parsed.id as string | number) ?? 0,
-        error: {
-          code: MCPErrorCodes.INVALID_REQUEST,
-          message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
-        },
-      };
-    }
+    const invalidRequest = buildInvalidJsonRpcRequestResponse(parsed);
+    if (invalidRequest) return invalidRequest;
 
     // Read the transport-injected principal via the non-forgeable Symbol key
     // (see PRINCIPAL_SYM in src/middleware/auth.ts). JSON.parse cannot produce
     // symbol-keyed properties, so anything under PRINCIPAL_SYM was placed here
     // by the transport after authenticating the request — clients cannot
     // spoof a principal by including `"__principal": {...}` in their JSON body.
-    const principal = (parsed as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] as
-      | Principal
-      | undefined;
-    // Scrub any string-named `__principal` that a malicious caller may have
-    // embedded in the JSON. We don't read it, but deleting here prevents it
-    // from echoing back out via JSON.stringify in later response paths.
-    if ('__principal' in parsed) {
-      delete (parsed as Record<string, unknown>).__principal;
-    }
+    const principal = extractPrincipalAndScrub(parsed as Record<PropertyKey, unknown>);
 
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
-    if (parsed.id === undefined || parsed.id === null) {
+    if (isJsonRpcNotification(parsed)) {
       const method = parsed.method as string;
-      if (method === 'notifications/initialized' || method === 'initialized') {
+      if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
       }
       // All notifications are silently ignored (no response sent)
