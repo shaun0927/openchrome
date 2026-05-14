@@ -1,0 +1,55 @@
+# Benchmark CI — cross-platform pass rate for the competitive benchmark suite.
+#
+# Part of the Reliability & Fault-Recovery axis (#1259, Epic #1254): one of
+# that axis's headline metrics is the cross-platform pass rate, so the
+# benchmark suites must be exercised on macOS / Linux / Windows. This workflow
+# also gives every other axis's pure-logic cores + fixtures continuous
+# cross-platform coverage.
+#
+# Scoped to benchmark code via path filters so it does not duplicate the main
+# ci.yml run on unrelated changes.
+
+name: Benchmark
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'tests/benchmark/**'
+      - 'benchmark/**'
+      - '.github/workflows/benchmark-reliability.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'tests/benchmark/**'
+      - 'benchmark/**'
+      - '.github/workflows/benchmark-reliability.yml'
+
+jobs:
+  benchmark-suite:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Do not cancel the whole matrix on a single-OS failure — the
+      # cross-platform pass rate is itself a benchmark metric, so every cell
+      # must run to completion and be recorded.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run benchmark suites
+        run: npx jest tests/benchmark
+        env:
+          CI: true
