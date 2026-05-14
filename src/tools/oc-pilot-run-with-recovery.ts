@@ -6,6 +6,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
 const SAFE_RECIPES = ['refresh_dom_state', 'wait_for_page_ready', 'restore_checkpoint'] as const;
 const FUTURE_RECIPES = ['reacquire_ref', 'switch_to_programmatic_click'] as const;
+const ALL_RECIPES = [...SAFE_RECIPES, ...FUTURE_RECIPES] as const;
 type SafeRecipeId = typeof SAFE_RECIPES[number];
 type RecoveryRecipeId = SafeRecipeId | typeof FUTURE_RECIPES[number];
 
@@ -31,7 +32,7 @@ const definition: MCPToolDefinition = {
       postcondition: { type: 'object', description: 'Optional Outcome Contract assertion metadata.', additionalProperties: true },
       maxRecoveryAttempts: { type: 'number', description: 'Default 1, maximum 3.' },
       checkpointBefore: { type: 'boolean', description: 'Default true. Records a redacted checkpoint reference in the response.' },
-      allowedRecipes: { type: 'array', items: { type: 'string', enum: [...SAFE_RECIPES, ...FUTURE_RECIPES] } },
+      allowedRecipes: { type: 'array', items: { type: 'string', enum: [...ALL_RECIPES] } },
       dryRun: { type: 'boolean', description: 'Classify and propose recipes without executing the original action.' },
     },
     required: ['action'],
@@ -95,9 +96,20 @@ function parseAttempts(raw: unknown): number | string {
   return attempts;
 }
 
-function allowedRecipeSet(raw: unknown): Set<RecoveryRecipeId> {
-  if (!Array.isArray(raw) || raw.length === 0) return new Set(SAFE_RECIPES);
-  return new Set(raw as RecoveryRecipeId[]);
+function allowedRecipeSet(raw: unknown): { recipes: Set<RecoveryRecipeId>; error?: string } {
+  if (!Array.isArray(raw) || raw.length === 0) return { recipes: new Set(SAFE_RECIPES) };
+
+  const recipes = new Set<RecoveryRecipeId>();
+  for (const value of raw) {
+    if (typeof value !== 'string' || !(ALL_RECIPES as readonly string[]).includes(value)) {
+      return { recipes, error: `unknown recovery recipe: ${String(value)}` };
+    }
+    if ((FUTURE_RECIPES as readonly string[]).includes(value)) {
+      return { recipes, error: `recipe ${value} is declared but not implemented yet` };
+    }
+    recipes.add(value as RecoveryRecipeId);
+  }
+  return { recipes };
 }
 
 async function callTool(server: MCPServer, sessionId: string, tool: string, args: Record<string, unknown>): Promise<RecoveryActionResult> {
@@ -141,7 +153,11 @@ export function registerOcPilotRunWithRecoveryTool(server: MCPServer): void {
     }
 
     const checkpointId = args.checkpointBefore === false ? undefined : `pilot-checkpoint-${Date.now()}`;
-    const allowed = allowedRecipeSet(args.allowedRecipes);
+    const allowedResult = allowedRecipeSet(args.allowedRecipes);
+    if (allowedResult.error) {
+      return { content: [{ type: 'text', text: `INVALID_INPUT: ${allowedResult.error}` }], isError: true };
+    }
+    const allowed = allowedResult.recipes;
     const recovery: Array<{ attempt: number; recipe: RecoveryRecipeId; reason: string; actions: RecoveryActionResult[]; postcondition?: { evaluated: boolean; passed: boolean } }> = [];
 
     if (args.dryRun === true) {

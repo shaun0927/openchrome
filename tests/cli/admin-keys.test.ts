@@ -33,32 +33,60 @@ interface RunResult {
  * emits exactly one token, so a regex match is both sufficient and robust.
  */
 
-/**
- * Parse the CLI JSON payload from captured stdout while ignoring unrelated
- * Jest console-rendering noise that can be captured by the in-process stdout
- * hook when another timer logs in the same worker. The admin list command emits
- * one top-level array, so selecting the first complete JSON array preserves the
- * assertion that plaintext does not leak into the actual CLI JSON output.
- */
-function parseJsonArrayFromStdout<T>(stdout: string): T[] {
-  const start = stdout.indexOf('[');
-  if (start < 0) throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
-  for (let end = stdout.length - 1; end >= start; end--) {
-    if (stdout[end] !== ']') continue;
-    const candidate = stdout.slice(start, end + 1);
-    try {
-      return JSON.parse(candidate) as T[];
-    } catch {
-      // Keep scanning left: prefixed Jest noise may contain bracketed labels.
-    }
-  }
-  throw new Error(`No parseable JSON array found in stdout: ${JSON.stringify(stdout)}`);
-}
-
 function extractToken(stdout: string): string {
   const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
   if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
   return m[0];
+}
+
+/**
+ * Extract the JSON array emitted by `admin keys list --json` while ignoring
+ * unrelated Jest worker noise captured by the shared stdout hook on Windows CI.
+ * The command output contract is a single top-level array, so the parser scans
+ * for the first balanced array that decodes successfully instead of accepting
+ * arbitrary prefixes as JSON.
+ */
+function parseJsonArrayFromStdout<T>(stdout: string): T[] {
+  for (let start = stdout.indexOf('['); start !== -1; start = stdout.indexOf('[', start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < stdout.length; i++) {
+      const ch = stdout[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '[') depth++;
+      if (ch === ']') {
+        depth--;
+        if (depth === 0) {
+          const candidate = stdout.slice(start, i + 1);
+          try {
+            const parsed = JSON.parse(candidate);
+            if (Array.isArray(parsed)) return parsed as T[];
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
 }
 
 async function runCli(argv: string[]): Promise<RunResult> {

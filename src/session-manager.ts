@@ -6,6 +6,7 @@
 import path from 'path';
 import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
+import { TargetOwnershipRegistry } from './session/target-registry';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -109,7 +110,7 @@ const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'str
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
-  private targetToWorker: Map<string, { sessionId: string; workerId: string }> = new Map();
+  private targetToWorker = new TargetOwnershipRegistry();
   /**
    * Maps targetId → `{browser, name}` for the owning named context (#848).
    * Targets opened in the default Chrome context are not present here;
