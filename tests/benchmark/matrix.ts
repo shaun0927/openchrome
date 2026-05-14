@@ -1,5 +1,6 @@
 import { BenchmarkTask, MCPAdapter, MCPToolResult, TaskResult } from './benchmark-runner';
 import { measureCall } from './utils';
+import { countTokens } from './utils/tokenizer';
 
 export type BenchmarkCategory =
   | 'cold-start'
@@ -21,18 +22,20 @@ export interface MatrixFilter {
   category?: string;
 }
 
-export function estimateTokensFromChars(chars: number): number {
-  if (!Number.isFinite(chars) || chars <= 0) return 0;
-  return Math.ceil(chars / 4);
-}
-
-export function responsePayloadSize(result: MCPToolResult): { responseChars: number; screenshotBytes: number } {
+export function responsePayloadSize(
+  result: MCPToolResult,
+): { responseChars: number; responseTokens: number; screenshotBytes: number } {
   let responseChars = 0;
+  let responseTokens = 0;
   let screenshotBytes = 0;
 
   for (const item of result.content ?? []) {
     if (typeof item.text === 'string') {
       responseChars += item.text.length;
+      // Exact token count of the text payload an agent would receive.
+      // Base64 image data is intentionally excluded — it is measured in
+      // screenshotBytes, and tokenizing base64 is meaningless.
+      responseTokens += countTokens(item.text);
     }
     if (typeof item.data === 'string') {
       responseChars += item.data.length;
@@ -40,7 +43,7 @@ export function responsePayloadSize(result: MCPToolResult): { responseChars: num
     }
   }
 
-  return { responseChars, screenshotBytes };
+  return { responseChars, responseTokens, screenshotBytes };
 }
 
 function extractTabId(result: MCPToolResult): string | undefined {
@@ -157,6 +160,7 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
       let startTime = Date.now();
       const counters = { inputChars: 0, outputChars: 0, toolCallCount: 0 };
       let responseChars = 0;
+      let responseTokens = 0;
       let screenshotBytes = 0;
       const createdTabIds: string[] = [];
 
@@ -195,6 +199,7 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
           measureCall(result, args, counters);
           const payload = responsePayloadSize(result);
           responseChars += payload.responseChars;
+          responseTokens += payload.responseTokens;
           screenshotBytes += payload.screenshotBytes;
           if (step.tool === 'tabs_create') {
             const createdTabId = extractTabId(result);
@@ -224,7 +229,7 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           responseChars,
-          estimatedOutputTokens: estimateTokensFromChars(responseChars || counters.outputChars),
+          estimatedOutputTokens: responseTokens,
           screenshotBytes,
           nodeRssBytes,
           chromeRssBytes: null,
@@ -242,7 +247,7 @@ export function createMatrixTask(scenario: BenchmarkMatrixScenario): BenchmarkTa
           inputChars: counters.inputChars,
           outputChars: counters.outputChars,
           responseChars,
-          estimatedOutputTokens: estimateTokensFromChars(responseChars || counters.outputChars),
+          estimatedOutputTokens: responseTokens,
           screenshotBytes,
           nodeRssBytes: process.memoryUsage().rss,
           chromeRssBytes: null,

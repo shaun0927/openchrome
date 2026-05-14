@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { countTokens } from '../utils/tokenizer';
 
 export interface ExtractionFormatEntry {
   fixture: string;
@@ -8,7 +9,8 @@ export interface ExtractionFormatEntry {
   wallTimeMs: number;
   inputChars: number;
   outputChars: number;
-  approxTokens: number;
+  /** Exact token count of the output payload (cl100k_base via js-tiktoken). */
+  tokens: number;
   fieldsFound: number;
   fieldsTotal: number;
   fallbackUsed: boolean;
@@ -37,10 +39,6 @@ export interface ExtractionWorkingDocument {
 
 function checksum(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function approxTokens(chars: number): number {
-  return Math.ceil(chars / 4);
 }
 
 function stripNoise(html: string): string {
@@ -114,7 +112,7 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
       wallTimeMs: dom.wallTimeMs,
       inputChars: html.length,
       outputChars: dom.value.length,
-      approxTokens: approxTokens(dom.value.length),
+      tokens: countTokens(dom.value),
       fieldsFound: 0,
       fieldsTotal: 0,
       fallbackUsed: false,
@@ -129,7 +127,7 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
       wallTimeMs: extracted.wallTimeMs,
       inputChars: html.length,
       outputChars: extracted.value.output.length,
-      approxTokens: approxTokens(extracted.value.output.length),
+      tokens: countTokens(extracted.value.output),
       fieldsFound: extracted.value.fieldsFound,
       fieldsTotal: extracted.value.fieldsTotal,
       fallbackUsed: false,
@@ -144,7 +142,7 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
       wallTimeMs: readable.wallTimeMs,
       inputChars: html.length,
       outputChars: readable.value.length,
-      approxTokens: approxTokens(readable.value.length),
+      tokens: countTokens(readable.value),
       fieldsFound: 0,
       fieldsTotal: 0,
       fallbackUsed: false,
@@ -159,7 +157,7 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
         wallTimeMs: 0,
         inputChars: html.length,
         outputChars: 0,
-        approxTokens: 0,
+        tokens: 0,
         fieldsFound: 0,
         fieldsTotal: 0,
         fallbackUsed: mode === 'llm_fallback_mock',
@@ -187,13 +185,13 @@ export function runExtractionFormatsBenchmark(options: { ciMode?: boolean } = {}
 }
 
 export function formatExtractionFormatsReport(report: ExtractionFormatsReport): string {
-  const lines = ['Extraction format benchmark', 'fixture,mode,outputChars,approxTokens,fields,mutated,skip'];
+  const lines = ['Extraction format benchmark', 'fixture,mode,outputChars,tokens,fields,mutated,skip'];
   for (const e of report.entries) {
     lines.push([
       e.fixture,
       e.mode,
       e.outputChars,
-      e.approxTokens,
+      e.tokens,
       `${e.fieldsFound}/${e.fieldsTotal}`,
       e.contentMutated,
       e.skippedReason || '',

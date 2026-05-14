@@ -3,10 +3,10 @@
 import {
   createBenchmarkMatrix,
   createMatrixTasks,
-  estimateTokensFromChars,
   filterBenchmarkMatrix,
   responsePayloadSize,
 } from './matrix';
+import { countTokens } from './utils/tokenizer';
 
 const requiredScenarios = [
   'cold-start-first-tab',
@@ -35,11 +35,7 @@ describe('benchmark matrix', () => {
     expect(filterBenchmarkMatrix(createBenchmarkMatrix(), { category: 'warm-read-page-dom' })[0].name).toBe('warm-read-page-dom');
   });
 
-  test('estimates tokens and screenshot payload sizes safely', () => {
-    expect(estimateTokensFromChars(0)).toBe(0);
-    expect(estimateTokensFromChars(1)).toBe(1);
-    expect(estimateTokensFromChars(9)).toBe(3);
-
+  test('counts exact tokens and screenshot payload sizes safely', () => {
     const payload = responsePayloadSize({
       content: [
         { type: 'text', text: 'hello' },
@@ -48,6 +44,9 @@ describe('benchmark matrix', () => {
     });
     expect(payload.responseChars).toBeGreaterThan(5);
     expect(payload.screenshotBytes).toBe(5);
+    // Real tokenizer, not chars/4 — base64 image data is excluded from tokens.
+    expect(payload.responseTokens).toBe(countTokens('hello'));
+    expect(payload.responseTokens).toBeGreaterThan(0);
   });
 
   test('matrix tasks run without external network using an adapter', async () => {
@@ -69,7 +68,9 @@ describe('benchmark matrix', () => {
     expect(result.success).toBe(true);
     expect(result.toolCallCount).toBe(3);
     expect(result.responseChars).toBe(6);
-    expect(result.estimatedOutputTokens).toBe(Math.ceil(result.responseChars! / 4));
+    // Three steps each return the text 'ok'; estimatedOutputTokens is the
+    // exact tokenizer sum, not a chars/4 estimate.
+    expect(result.estimatedOutputTokens).toBe(countTokens('ok') * 3);
     expect(result.nodeRssBytes).toBeGreaterThan(0);
     expect(adapter.callTool).toHaveBeenLastCalledWith('tabs_close', { tabId: 'real-tab-1' });
   });

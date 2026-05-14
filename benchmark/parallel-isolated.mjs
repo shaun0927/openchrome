@@ -1,8 +1,15 @@
 /**
- * Isolated Parallel Benchmark
+ * Isolated Parallel Benchmark — Playwright only.
  *
  * Runs ONE strategy at a time (passed via CLI arg).
  * Must be run separately for each strategy to avoid contamination.
+ *
+ * NOTE: This script measures Playwright only. It does NOT run OpenChrome.
+ * It previously *estimated* OpenChrome token counts by dividing raw HTML by a
+ * hard-coded `OC_COMPRESSION_RATIO = 15.3` — an unverified guess, now removed
+ * (Epic #1254, sub-issue #1255). Real, measured OpenChrome vs competitor
+ * throughput numbers come from the unified harness in #1258 (Speed &
+ * Throughput); raw HTML is reported here only as a real Playwright measurement.
  *
  * Usage:
  *   node parallel-isolated.mjs 1    # sequential (1 tab)
@@ -16,7 +23,6 @@ import { writeFileSync } from 'fs';
 import { TARGETS, CDP_ENDPOINT, RESULTS_DIR } from './config.mjs';
 
 const BATCH_SIZE = parseInt(process.argv[2] || '1', 10);
-const OC_COMPRESSION_RATIO = 15.3;
 
 async function extractFromPage(page, target) {
   const start = Date.now();
@@ -38,7 +44,6 @@ async function extractFromPage(page, target) {
     });
 
     const totalTime = Date.now() - start;
-    const rawHtmlTokens = Math.ceil(data.rawHtmlChars / 4);
 
     return {
       handle: target.handle,
@@ -47,11 +52,10 @@ async function extractFromPage(page, target) {
       tweetCount: data.tweetCount,
       tweets: data.tweets,
       timing: { totalMs: totalTime },
+      // Real Playwright measurements only — no estimated OpenChrome figures.
       dataSize: {
         rawHtmlChars: data.rawHtmlChars,
-        rawHtmlTokens,
-        ocCompactTokens: Math.round(rawHtmlTokens / OC_COMPRESSION_RATIO),
-        ocCompactKB: parseFloat(((data.rawHtmlChars / OC_COMPRESSION_RATIO) / 1024).toFixed(1)),
+        rawTextChars: data.rawTextChars,
       },
     };
   } catch (err) {
@@ -59,7 +63,7 @@ async function extractFromPage(page, target) {
       handle: target.handle, name: target.name,
       success: false, tweetCount: 0, tweets: [],
       timing: { totalMs: Date.now() - start },
-      dataSize: { rawHtmlChars: 0, rawHtmlTokens: 0, ocCompactTokens: 0, ocCompactKB: 0 },
+      dataSize: { rawHtmlChars: 0, rawTextChars: 0 },
       error: err.message,
     };
   }
