@@ -31,6 +31,7 @@ type MockPage = {
   target: jest.Mock;
   setViewport: jest.Mock;
   close: jest.Mock;
+  url: jest.Mock;
 };
 
 type StealthHarness = {
@@ -60,6 +61,7 @@ function createPage(targetId: string): MockPage {
     target: jest.fn().mockReturnValue({ _targetId: targetId }),
     setViewport: jest.fn().mockResolvedValue(undefined),
     close: jest.fn().mockResolvedValue(undefined),
+    url: jest.fn().mockReturnValue('https://example.com/challenge'),
   };
 }
 

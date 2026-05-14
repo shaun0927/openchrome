@@ -189,6 +189,12 @@ const definition: MCPToolDefinition = {
 };
 
 
+
+function shortAliasForRef(refId: string): string | undefined {
+  const match = refId.match(/^ref_(\d+)$/);
+  return match ? `@e${match[1]}` : undefined;
+}
+
 function compactAXLines(lines: string[]): string[] {
   const keep = new Set<number>();
   const stack: Array<{ indent: number; index: number }> = [];
@@ -1068,7 +1074,8 @@ const handler: ToolHandler = async (
 
       // Build line
       const indentStr = '  '.repeat(indent);
-      let line = `${indentStr}[${refId || 'no-ref'}] ${role}`;
+      const refLabel = refId ? `${refId} ${shortAliasForRef(refId) ?? ''}`.trim() : 'no-ref';
+      let line = `${indentStr}[${refLabel}] ${role}`;
       if (name) line += `: "${name}"`;
       if (value) line += ` = "${value}"`;
 

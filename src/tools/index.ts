@@ -118,10 +118,12 @@ import { registerOcAssertTool } from './oc-assert';
 
 // Outcome Contracts (#792) — evidence bundle capture
 import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
+import { registerOcDiffTool } from './oc-diff';
 
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+import { isPilotEnabled } from '../harness/flags';
 
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
 import { registerOcTaskStartTool, getTaskStore, setTaskStartupReapPromise } from './oc-task-start';
@@ -145,9 +147,16 @@ import { getPerfTraceStore } from '../core/performance/insights/trace-store';
 // are set. The pilot module is loaded via `require()` only when the gate is
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
-import { isContractRuntimeEnabled, isProxyHookEnabled, isSkillReplayEnabled, isTruthy } from '../harness/flags';
+import {
+  isContractRuntimeEnabled,
+  isProxyHookEnabled,
+  isReactPilotEnabled,
+  isSkillReplayEnabled,
+  isTruthy,
+} from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
+import { registerElementPickTool } from './element-pick';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
@@ -160,6 +169,8 @@ import { registerRunHarnessTools } from '../run-harness/tools';
 import { registerTaskRunTools } from './task-run';
 // Read-only progress diagnostics (#1060).
 import { registerOcProgressStatusTool } from './oc-progress-status';
+// Web Vitals snapshot (#840).
+import { registerOcVitalsTool } from './oc-vitals';
 // 2-stage large-output fetch (#887) — store + paging tool.
 import { registerOcOutputFetchTool } from './oc-output-fetch';
 import { registerOcPilotRunWithRecoveryTool } from './oc-pilot-run-with-recovery';
@@ -214,11 +225,13 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_policy: 'core',
   oc_copy_to_clipboard: 'core',
   oc_devtools_url: 'core',
+  oc_diff: 'core',
   oc_doctor_report: 'core',
   oc_evidence_bundle: 'core',
   oc_get_connection_info: 'core',
   oc_journal: 'core',
   oc_observe: 'core',
+  element_pick: 'core',
   oc_open_host_settings: 'core',
   oc_output_fetch: 'core',
   oc_performance_analyze: 'core',
@@ -286,16 +299,19 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_totp_generate: 'totp',
 
   // pilot — experimental pilot-tier tools
+  oc_credentials: 'pilot',
   oc_pilot_handoff_create: 'pilot',
   oc_pilot_run_with_recovery: 'pilot',
   oc_pilot_handoff_redeem: 'pilot',
   oc_proxy_hook: 'pilot',
+  oc_react: 'pilot',
 
   // core — develop-era additions (#1062 normalize, #1060 progress, #1019
   // reflect, #855 task ledger, run-harness ledger). All are diagnostics or
   // ledger ops with no special filter group.
   oc_normalize_action: 'core',
   oc_progress_status: 'core',
+  oc_vitals: 'core',
   oc_reflect: 'core',
   oc_run_events: 'core',
   oc_run_finish: 'core',
@@ -478,12 +494,14 @@ export function registerAllTools(server: MCPServer): void {
 
   // Read-only anti-wandering diagnostics (#1060).
   registerOcProgressStatusTool(server);
+  registerOcVitalsTool(proxy);
 
   // 2-stage large-output fetch (#887) — paging tool for handle payloads.
   registerOcOutputFetchTool(proxy);
 
   // Outcome Contracts (#792) — evidence bundle capture
   registerOcEvidenceBundleTool(proxy);
+  registerOcDiffTool(proxy);
 
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(proxy);
@@ -495,6 +513,13 @@ export function registerAllTools(server: MCPServer): void {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { registerOcSkillReplayTool: _reg } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
     _reg(proxy);
+  }
+
+  // Pilot-tier React DevTools hook inspection (#838). Loaded only when --pilot keeps the family on.
+  if (isReactPilotEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcReactTool } = require('../pilot/tools/oc-react') as typeof import('../pilot/tools/oc-react');
+    registerOcReactTool(proxy);
   }
 
   // Pilot contract runtime (#1061) — off unless --pilot and OPENCHROME_CONTRACT_RUNTIME are active.
@@ -571,6 +596,11 @@ export function registerAllTools(server: MCPServer): void {
   }
   // oc_observe (#866) — deterministic actionable-element enumeration
   registerOcObserveTool(proxy);
+  // element_pick (#899) — default-on for deterministic clients, but allow
+  // strict byte-parity operators to suppress it from tools/list.
+  if (process.env.OPENCHROME_ELEMENT_PICK !== '0') {
+    registerElementPickTool(proxy);
+  }
   // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
   registerOcDevToolsUrlTool(proxy);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
@@ -583,6 +613,17 @@ export function registerAllTools(server: MCPServer): void {
 
   // Goal-level TaskRun lifecycle (#1039) — opt-in, no effect on existing tools.
   registerTaskRunTools(server);
+
+  // Pilot-only tools. Keep require() behind the runtime flag so core startup
+  // does not load src/pilot/** when --pilot is unset.
+  if (isPilotEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcPilotHandoffTool } = require('../pilot/handoff/tool') as typeof import('../pilot/handoff/tool');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcCredentialsTool } = require('../pilot/tools/oc-credentials') as typeof import('../pilot/tools/oc-credentials');
+    registerOcPilotHandoffTool(server);
+    registerOcCredentialsTool(server);
+  }
 
   console.error(`[Tools] Registered ${server.getToolNames().length} tools`);
 }

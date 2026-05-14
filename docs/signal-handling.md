@@ -114,6 +114,13 @@ lifecycle:
 
 Set `terminationGracePeriodSeconds: 30` on the Pod spec to match the `--stop-timeout 30` guidance above.
 
+For an end-to-end local smoke test of `/ready` startup ordering and SIGTERM forwarding, run:
+
+```bash
+npm run build
+scripts/verify/A6-ready-probe.sh
+```
+
 ### `/ready` component states
 
 `GET /ready` returns a JSON body with per-component states:

@@ -1,3 +1,6 @@
+import * as path from 'path';
+import { pathToFileURL } from 'url';
+
 import { MCPServer } from '../../src/mcp-server';
 import { TOOL_ANNOTATIONS } from '../../src/types/tool-annotations';
 import type { MCPToolDefinition } from '../../src/types/mcp';
@@ -55,7 +58,9 @@ describe('MCPServer roots narrowing integration (#880)', () => {
       },
       annotations: TOOL_ANNOTATIONS.page_pdf,
     });
-    setSessionMcpRoots('mcp-session-a', { roots: [{ uri: 'file:///tmp/allowed-output' }] });
+    const allowedOutput = path.resolve('tmp', 'allowed-output');
+    const deniedOutput = path.resolve('tmp', 'other-output', 'page.pdf');
+    setSessionMcpRoots('mcp-session-a', { roots: [{ uri: pathToFileURL(allowedOutput).href }] });
 
     const response = await runWithRequestContext(
       { requestId: 'req-roots-file-deny', mcpSessionId: 'mcp-session-a' },
@@ -65,7 +70,7 @@ describe('MCPServer roots narrowing integration (#880)', () => {
         method: 'tools/call',
         params: {
           name: 'page_pdf',
-          arguments: { sessionId: 'browser-session-a', tabId: 'tab-a', path: '/tmp/other-output/page.pdf' },
+          arguments: { sessionId: 'browser-session-a', tabId: 'tab-a', path: deniedOutput },
         },
       }),
     );
