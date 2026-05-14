@@ -37,6 +37,16 @@ export function formatStaleRefError(refId: string): string {
   return `STALE_REF: ref_id="${refId}" — ${STALE_REF_HINT}`;
 }
 
+export function aliasFor(refId: string): string | undefined {
+  const match = refId.match(/^ref_(\d+)$/);
+  return match ? `@e${match[1]}` : undefined;
+}
+
+export function refIdFromAlias(alias: string): string | undefined {
+  const match = alias.match(/^@e(\d+)$/);
+  return match ? `ref_${match[1]}` : undefined;
+}
+
 export interface SnapshotRefMetadata {
   snapshotId: string;
   capturedAt: number;
@@ -137,8 +147,12 @@ export class RefIdManager {
     return refId;
   }
 
+  normalizeAlias(refId: string): string {
+    return refIdFromAlias(refId) ?? refId;
+  }
+
   getRef(sessionId: string, targetId: string, refId: string): RefEntry | undefined {
-    return this.refs.get(sessionId)?.get(targetId)?.get(refId);
+    return this.refs.get(sessionId)?.get(targetId)?.get(this.normalizeAlias(refId));
   }
 
   getBackendDOMNodeId(sessionId: string, targetId: string, refId: string): number | undefined {

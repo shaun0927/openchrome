@@ -12,6 +12,8 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { CHECKPOINT_DIR, CHECKPOINT_FILE } from './checkpoint';
+import { TaskRunStore } from '../core/task-run';
+import type { TaskRunCheckpoint, TaskRunEvent, TaskRunMeta } from '../core/task-run';
 
 // ─── Shared Types (same as session-snapshot.ts) ────────────────────────────
 
@@ -78,10 +80,24 @@ interface RecentJournalEntry {
   summary: string;
 }
 
+export interface TaskRunResumeContext {
+  taskId: string;
+  status: string;
+  objective: string;
+  currentCursor?: string;
+  latestCheckpoint?: TaskRunCheckpoint;
+  latestCheckpointAgeMs?: number;
+  recentEvents: TaskRunEvent[];
+  lastSuccessfulAction?: string;
+  lastFailure?: string;
+  nextHostAction: 'resume' | 'verify' | 'checkpoint_again' | 'restart_from_url' | 'ask_user';
+}
+
 export interface ResumeGuideContext {
   checkpoint?: AutomationCheckpoint | null;
   recentJournal?: RecentJournalEntry[];
   evidenceBundles?: Array<{ id?: string; path: string }>;
+  taskRun?: TaskRunResumeContext | null;
 }
 
 // ─── Tab Status Analysis ───────────────────────────────────────────────────
@@ -110,6 +126,10 @@ const definition: MCPToolDefinition = {
       snapshotId: {
         type: 'string',
         description: 'Specific snapshot ID to restore (default: latest)',
+      },
+      taskId: {
+        type: 'string',
+        description: 'Optional TaskRun id. When present, include latest task checkpoint/resume context if available.',
       },
     },
     required: [],
@@ -147,6 +167,65 @@ export function loadCheckpoint(): AutomationCheckpoint | null {
     if (!Array.isArray(checkpoint.completedSteps) || !Array.isArray(checkpoint.pendingSteps)) return null;
     if (!Array.isArray(checkpoint.tabStates) || typeof checkpoint.timestamp !== 'number') return null;
     return checkpoint;
+  } catch {
+    return null;
+  }
+}
+
+
+function pickNextHostAction(args: {
+  meta: TaskRunMeta;
+  checkpoint?: TaskRunCheckpoint;
+  events: TaskRunEvent[];
+}): TaskRunResumeContext['nextHostAction'] {
+  if (args.meta.status === 'NEEDS_HELP') return 'ask_user';
+  if (args.meta.current_cursor) return 'resume';
+  if (args.checkpoint) return 'verify';
+  if (args.events.some(event => event.kind === 'checkpointed')) return 'checkpoint_again';
+  return 'verify';
+}
+
+function latestTaskCheckpoint(store: TaskRunStore, taskId: string): TaskRunCheckpoint | undefined {
+  const checkpointsDir = path.join(store.rootDir, taskId, 'checkpoints');
+  try {
+    const files = fs.readdirSync(checkpointsDir)
+      .filter(file => file.endsWith('.json'))
+      .sort();
+    for (const file of files.reverse()) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(checkpointsDir, file), 'utf8')) as TaskRunCheckpoint;
+        if (parsed && parsed.run_id === taskId && typeof parsed.created_at === 'number') return parsed;
+      } catch {
+        // Corrupt checkpoint files must not block resume (#1035).
+      }
+    }
+  } catch {
+    // No checkpoints yet, or no task-run store.
+  }
+  return undefined;
+}
+
+export async function loadTaskRunResumeContext(taskId?: string): Promise<TaskRunResumeContext | null> {
+  if (!taskId) return null;
+  try {
+    const store = new TaskRunStore();
+    const meta = await store.get(taskId);
+    const events = (await store.readEvents(taskId)).slice(-8);
+    const checkpoint = latestTaskCheckpoint(store, taskId);
+    const lastFailure = [...(meta.failed_items || [])].reverse()[0]?.reason;
+    const lastSuccessfulAction = [...(meta.completed_items || [])].reverse()[0];
+    return {
+      taskId,
+      status: meta.status,
+      objective: meta.goal,
+      currentCursor: meta.current_cursor,
+      latestCheckpoint: checkpoint,
+      latestCheckpointAgeMs: checkpoint ? Date.now() - checkpoint.created_at : undefined,
+      recentEvents: events,
+      lastSuccessfulAction,
+      lastFailure,
+      nextHostAction: pickNextHostAction({ meta, checkpoint, events }),
+    };
   } catch {
     return null;
   }
@@ -388,6 +467,32 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
     }
   }
 
+  if (context.taskRun) {
+    const task = context.taskRun;
+    lines.push('');
+    lines.push('Task checkpoint context:');
+    lines.push(`  Task ID: ${task.taskId}`);
+    lines.push(`  Objective: ${task.objective}`);
+    lines.push(`  Status: ${task.status}`);
+    if (task.currentCursor) lines.push(`  Current cursor: ${task.currentCursor}`);
+    if (task.latestCheckpoint) {
+      lines.push(`  Latest checkpoint: ${task.latestCheckpoint.checkpoint_id}`);
+      lines.push(`  Latest checkpoint age: ${formatRelativeAge(task.latestCheckpointAgeMs ?? 0)}`);
+      lines.push(`  Latest checkpoint summary: ${task.latestCheckpoint.summary}`);
+    } else {
+      lines.push('  Latest checkpoint: none');
+    }
+    if (task.lastSuccessfulAction) lines.push(`  Last successful action: ${task.lastSuccessfulAction}`);
+    if (task.lastFailure) lines.push(`  Last failure: ${task.lastFailure}`);
+    if (task.recentEvents.length > 0) {
+      lines.push('  Recent task events:');
+      task.recentEvents.slice(-5).forEach(event => {
+        lines.push(`    - ${event.kind} @ ${new Date(event.ts).toISOString()}`);
+      });
+    }
+    lines.push(`  Next host action class: ${task.nextHostAction}`);
+  }
+
   if (context.evidenceBundles && context.evidenceBundles.length > 0) {
     lines.push('');
     lines.push('Evidence bundles:');
@@ -419,6 +524,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const snapshotId = args.snapshotId as string | undefined;
+  const taskId = args.taskId as string | undefined;
 
   const snapshot = loadSnapshot(snapshotId);
   if (!snapshot) {
@@ -446,6 +552,7 @@ const handler: ToolHandler = async (
   const guide = generateResumeGuide(snapshot, tabAnalysis, {
     checkpoint: loadCheckpoint(),
     recentJournal: loadRecentJournalEntries(),
+    taskRun: await loadTaskRunResumeContext(taskId),
   });
 
   return {

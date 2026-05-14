@@ -12,7 +12,7 @@
  *  - `start()` is idempotent (second call is a no-op).
  *  - `stop()` is idempotent (second call is a no-op).
  *  - HTTP `port: 0` selects an ephemeral port; resolved URL returned from `start()`.
- *  - `events` is `null` until A1 (lifecycle bus) lands.
+ *  - `events` exposes the process-wide lifecycle bus when A1 is present.
  */
 
 import * as net from 'net';
@@ -38,6 +38,7 @@ import { resolveHealthEndpointEnabled } from '../utils/health-endpoint-gating';
 import { DiskMonitor } from '../watchdog/disk-monitor';
 import { ChromeProcessMonitor } from '../watchdog/chrome-monitor';
 import { SessionStatePersistence } from '../session-state-persistence';
+import { getLifecycleBus, type LifecycleEventBus } from './lifecycle';
 import { writePidFile, cleanOrphanedChromeProcesses } from '../utils/pid-manager';
 import { installParentWatcher } from '../utils/parent-watcher';
 import { installIdleTimeout } from '../utils/idle-timeout';
@@ -108,8 +109,8 @@ export interface ServerStartResult {
 export interface OpenChromeServer {
   start(): Promise<ServerStartResult>;
   stop(reason?: 'sigterm' | 'idle' | 'caller'): Promise<void>;
-  /** null until A1 (lifecycle bus) lands. */
-  readonly events: null;
+  /** Process-wide browser lifecycle bus for embedders and in-tree subscribers. */
+  readonly events: LifecycleEventBus;
   readonly mcp: MCPServer;
 }
 
@@ -155,7 +156,7 @@ async function resolveEphemeralPort(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 class OpenChromeServerImpl implements OpenChromeServer {
-  readonly events: null = null;
+  readonly events: LifecycleEventBus;
   readonly mcp: MCPServer;
 
   private _startResult: ServerStartResult | null = null;
@@ -176,6 +177,7 @@ class OpenChromeServerImpl implements OpenChromeServer {
 
   constructor(opts: CreateServerOptions) {
     this._opts = opts;
+    this.events = getLifecycleBus();
     this.mcp = getMCPServer();
   }
 

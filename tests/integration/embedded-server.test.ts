@@ -11,7 +11,7 @@
  *  - stop() idempotency: second call resolves without error
  *  - stop() clears the singleton so a fresh factory call succeeds (cycle test)
  *  - HTTP port:0 is resolved to a non-zero URL before start() returns
- *  - events field is null (A1 lifecycle bus not yet landed)
+ *  - events field exposes the lifecycle bus now that A1 has landed
  */
 
 // ---------------------------------------------------------------------------
@@ -302,10 +302,12 @@ describe('createOpenChromeServer() — HTTP transport with port:0', () => {
 
 // ---------------------------------------------------------------------------
 describe('createOpenChromeServer() — events field', () => {
-  test('events is null (A1 lifecycle bus not yet landed)', async () => {
+  test('events exposes the lifecycle bus for embedded hosts', async () => {
     const server = await createOpenChromeServer(STDIO_OPTS);
     try {
-      expect(server.events).toBeNull();
+      expect(server.events).toBeDefined();
+      expect(typeof server.events.emit).toBe('function');
+      expect(typeof server.events.on).toBe('function');
     } finally {
       await server.stop('caller');
     }

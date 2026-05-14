@@ -49,7 +49,9 @@ if (pkg.main !== 'dist/index.js') {
 }
 
 console.log('[A2-export-paths] Packing repository...');
-run('npm', ['pack', '--pack-destination', workDir], { stdio: 'ignore' });
+// The verifier is intentionally run after `npm run build`; avoid letting
+// npm pack re-run prepare/build inside this bounded export check.
+run('npm', ['pack', '--ignore-scripts', '--pack-destination', workDir], { stdio: 'ignore' });
 const tgz = readdirSync(workDir).find((name) => name.endsWith('.tgz'));
 if (!tgz) fail(`npm pack did not create a tarball in ${workDir}`);
 

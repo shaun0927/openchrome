@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OpenChrome Skill Resume Cart Fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    .catalog, .cart { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    button { cursor: pointer; padding: 0.5rem 0.75rem; }
+    [data-testid="status"] { font-weight: 700; color: #14532d; }
+  </style>
+</head>
+<body data-state="cart-populated">
+  <h1>Static cart fixture</h1>
+  <section class="cart" aria-label="Shopping cart">
+    <h2>Your cart</h2>
+    <ul data-testid="cart-items">
+      <li data-sku="baseline-book">Baseline Book</li>
+    </ul>
+    <p data-testid="status">Cart ready</p>
+  </section>
+  <section class="catalog" aria-label="Recommended items">
+    <article data-sku="target-headphones">
+      <h2>Target Headphones</h2>
+      <button data-testid="add-target" onclick="addTargetItem()">Add target item to cart</button>
+    </article>
+  </section>
+  <script>
+    function addTargetItem() {
+      const list = document.querySelector('[data-testid="cart-items"]');
+      if (!list.querySelector('[data-sku="target-headphones"]')) {
+        const item = document.createElement('li');
+        item.dataset.sku = 'target-headphones';
+        item.textContent = 'Target Headphones';
+        list.appendChild(item);
+      }
+      document.querySelector('[data-testid="status"]').textContent = 'Target item added';
+      document.body.dataset.state = 'target-added';
+    }
+  </script>
+</body>
+</html>
