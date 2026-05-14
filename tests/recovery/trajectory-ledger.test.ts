@@ -12,7 +12,7 @@ describe('RecoveryTrajectoryLedger', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('records bounded success, error, and recovered nodes', () => {

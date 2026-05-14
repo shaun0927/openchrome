@@ -118,6 +118,9 @@
       "name": "oc_devtools_url"
     },
     {
+      "name": "oc_diff"
+    },
+    {
       "name": "oc_doctor_report"
     },
     {
@@ -251,6 +254,9 @@
     },
     {
       "name": "oc_totp_generate"
+    },
+    {
+      "name": "oc_vitals"
     },
     {
       "name": "page_content"
