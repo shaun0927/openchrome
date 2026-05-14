@@ -59,6 +59,7 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
 import {
   substituteSecrets,
   redactSecrets,
@@ -69,6 +70,15 @@ import {
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+import {
+  buildInvalidJsonRpcRequestResponse,
+  extractPrincipalAndScrub,
+  isInitializedNotification,
+  isJsonRpcNotification,
+  isServerToClientResponseMessage,
+} from './mcp/request-ingress';
+export { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
+import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 
@@ -87,15 +97,6 @@ const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_status',
   'oc_recording_export',
 ]);
-
-/**
- * Detect if an error is a Chrome/CDP connection error that may be recoverable
- * by reconnecting to the browser.
- */
-export function estimateOutputTokensFromChars(chars: number): number {
-  // Heuristic only; intentionally avoids provider-specific tokenizer deps.
-  return Math.max(0, Math.ceil(chars / 4));
-}
 
 /**
  * Summarize an MCPResult for journal recording, stripping injected hint text.
@@ -136,47 +137,10 @@ function stringifyResultPayload(result: MCPResult): string {
   }
 }
 
-const CACHE_STATUS_LABELS = new Set(['HIT', 'MISS', 'BYPASS', 'ERROR']);
-const CACHE_KEY_VERSION_LABEL_RE = /^v?\d{1,3}$/i;
-
-function normalizeCacheStatusLabel(raw: string): string {
-  const normalized = raw.trim().toUpperCase();
-  return CACHE_STATUS_LABELS.has(normalized) ? normalized : 'UNKNOWN';
-}
-
-function normalizeCacheKeyVersionLabel(raw: unknown): string {
-  if (raw === undefined || raw === null || raw === '') return 'unknown';
-  const normalized = String(raw).trim();
-  if (normalized === '') return 'unknown';
-  return CACHE_KEY_VERSION_LABEL_RE.test(normalized) ? normalized : 'other';
-}
-
-export function extractCacheStatus(result: MCPResult): { status: string; keyVersion: string } | null {
-  const raw = (result as Record<string, unknown>)._cache
-    ?? (result as Record<string, unknown>).cache
-    ?? (result as Record<string, unknown>).cacheStatus;
-  if (typeof raw === 'string') {
-    return { status: normalizeCacheStatusLabel(raw), keyVersion: 'unknown' };
-  }
-  if (raw && typeof raw === 'object') {
-    const obj = raw as Record<string, unknown>;
-    const status = typeof obj.status === 'string' ? obj.status : typeof obj.cacheStatus === 'string' ? obj.cacheStatus : null;
-    if (!status) return null;
-    const keyVersion = obj.keyVersion ?? obj.version ?? 'unknown';
-    return {
-      status: normalizeCacheStatusLabel(status),
-      keyVersion: normalizeCacheKeyVersionLabel(keyVersion),
-    };
-  }
-  if (result.structuredContent && typeof result.structuredContent.cacheStatus === 'string') {
-    return {
-      status: normalizeCacheStatusLabel(result.structuredContent.cacheStatus),
-      keyVersion: normalizeCacheKeyVersionLabel(result.structuredContent.cacheKeyVersion),
-    };
-  }
-  return null;
-}
-
+/**
+ * Detect if an error is a Chrome/CDP connection error that may be recoverable
+ * by reconnecting to the browser.
+ */
 export function isConnectionError(error: unknown): boolean {
   if (error instanceof OpenChromeConnectionError) return true;
   const message = formatError(error);
@@ -203,8 +167,35 @@ export function isConnectionError(error: unknown): boolean {
 }
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish', 'oc_progress_status']);
+ *  sleep/wake). Skip session initialization so recovery handlers can always run.
+ *
+ *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
+ *  ledger operations (or, for `oc_task_start`, just persist a meta row before
+ *  background work begins). They never touch the browser themselves, so they
+ *  must not trigger Chrome auto-launch on malformed input (#1034).
+ *
+ *  Run-harness tools (`oc_run_*`) and `oc_progress_status` are pure read /
+ *  bookkeeping calls landed on develop after this PR branched — also skip. */
+const SKIP_SESSION_INIT_TOOLS = new Set([
+  'oc_stop',
+  'oc_reap_orphans',
+  'oc_profile_status',
+  'oc_session_snapshot',
+  'oc_session_resume',
+  'oc_journal',
+  'oc_task_start',
+  'oc_task_list',
+  'oc_task_get',
+  'oc_task_cancel',
+  'oc_task_wait',
+  'oc_task_update',
+  'oc_task_finish',
+  'oc_run_start',
+  'oc_run_status',
+  'oc_run_events',
+  'oc_run_finish',
+  'oc_progress_status',
+]);
 
 const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
   'execute_plan',
@@ -362,6 +353,30 @@ export interface MCPServerOptions {
    * When undefined, all capabilities are exposed (default, P2-compliant).
    */
   capabilityFilter?: Set<ToolCapability>;
+}
+
+
+const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
+  'navigate',
+  'read_page',
+  'find',
+  'interact',
+  'act',
+  'fill_form',
+  'form_input',
+  'computer',
+  'page_screenshot',
+  'tabs_context',
+  'tabs_list',
+  'tabs_get',
+  'inspect',
+  'vision_find',
+  'oc_assert',
+]);
+
+function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>): string | undefined {
+  if (!TASK_ENVELOPE_BROWSER_TOOLS.has(toolName)) return undefined;
+  return extractTaskId(args);
 }
 
 export class MCPServer {
@@ -899,15 +914,7 @@ export class MCPServer {
     // sent earlier via `requestFromClient`. Route it to the pending resolver
     // and short-circuit BEFORE the regular client-request validation (which
     // would otherwise reject the response as "missing method field").
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      parsed.jsonrpc === '2.0' &&
-      parsed.id !== undefined &&
-      parsed.id !== null &&
-      typeof parsed.method !== 'string' &&
-      ('result' in parsed || 'error' in parsed)
-    ) {
+    if (isServerToClientResponseMessage(parsed)) {
       const idKey = String(parsed.id);
       const entry = this.pendingClientRequests.get(idKey);
       if (entry) {
@@ -929,41 +936,20 @@ export class MCPServer {
     }
 
     // Validate JSON-RPC 2.0 envelope
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      parsed.jsonrpc !== '2.0' ||
-      typeof parsed.method !== 'string'
-    ) {
-      return {
-        jsonrpc: '2.0' as const,
-        id: (parsed.id as string | number) ?? 0,
-        error: {
-          code: MCPErrorCodes.INVALID_REQUEST,
-          message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
-        },
-      };
-    }
+    const invalidRequest = buildInvalidJsonRpcRequestResponse(parsed);
+    if (invalidRequest) return invalidRequest;
 
     // Read the transport-injected principal via the non-forgeable Symbol key
     // (see PRINCIPAL_SYM in src/middleware/auth.ts). JSON.parse cannot produce
     // symbol-keyed properties, so anything under PRINCIPAL_SYM was placed here
     // by the transport after authenticating the request — clients cannot
     // spoof a principal by including `"__principal": {...}` in their JSON body.
-    const principal = (parsed as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] as
-      | Principal
-      | undefined;
-    // Scrub any string-named `__principal` that a malicious caller may have
-    // embedded in the JSON. We don't read it, but deleting here prevents it
-    // from echoing back out via JSON.stringify in later response paths.
-    if ('__principal' in parsed) {
-      delete (parsed as Record<string, unknown>).__principal;
-    }
+    const principal = extractPrincipalAndScrub(parsed as Record<PropertyKey, unknown>);
 
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
-    if (parsed.id === undefined || parsed.id === null) {
+    if (isJsonRpcNotification(parsed)) {
       const method = parsed.method as string;
-      if (method === 'notifications/initialized' || method === 'initialized') {
+      if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
       }
       // All notifications are silently ignored (no response sent)
@@ -1665,6 +1651,8 @@ export class MCPServer {
       // CDPClient may not be initialized — proceed with normal flow
     }
 
+    const taskEnvelopeId = taskEnvelopeIdForTool(toolName, toolArgs);
+
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
     getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
@@ -2067,6 +2055,17 @@ export class MCPServer {
         };
       }
 
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: result.isError !== true,
+      });
 
       if (runHarnessId && !toolName.startsWith('oc_run_')) {
         try {
@@ -2305,6 +2304,18 @@ export class MCPServer {
         }
 
       }
+
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: !errorIsError,
+      });
 
       // Secrets redaction (#834) — see success path. Error messages can
       // include the literal value (e.g. "type ... failed for value X").

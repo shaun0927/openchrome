@@ -3,11 +3,23 @@ import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp.js'
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations.js';
 import { evaluateRunBudget, normalizeRunBudget } from './budget.js';
 import { getRunStore } from './store.js';
-import { RUN_STATUSES, TERMINAL_RUN_STATUSES, type RunRecord, type RunStatus } from './types.js';
+import { RUN_STATUSES, TERMINAL_RUN_STATUSES, type RunBudgets, type RunRecord, type RunStatus } from './types.js';
 
 const runIdProperty = {
   type: 'string',
   description: 'REQUIRED Run identifier returned by oc_run_start.',
+};
+
+const budgetSchema = {
+  type: 'object',
+  description: 'Optional run-level wandering budget. When exceeded, oc_run_status records a needs_strategy_change finish event.',
+  properties: {
+    max_tool_calls: { type: 'number', description: 'Maximum finished tool calls before stopping.' },
+    max_same_tool_retries: { type: 'number', description: 'Maximum consecutive same-tool finished calls, excluding batch tools.' },
+    max_observation_only_calls: { type: 'number', description: 'Maximum trailing read-only observation calls.' },
+    max_no_progress_streak: { type: 'number', description: 'Maximum trailing no-progress/error calls.' },
+    max_wall_ms: { type: 'number', description: 'Maximum run age in milliseconds.' },
+  },
 };
 
 const startDefinition: MCPToolDefinition = {
@@ -21,20 +33,9 @@ const startDefinition: MCPToolDefinition = {
       session_id: { type: 'string', description: 'Optional session id to associate with the run.' },
       tab_id: { type: 'string', description: 'Optional tab id to associate with the run.' },
       metadata: { type: 'object', description: 'Optional JSON metadata.' },
+      budget: budgetSchema,
     },
     required: [],
-  },
-};
-
-const budgetSchema = {
-  type: 'object',
-  description: 'Optional run-level wandering budget. When exceeded, oc_run_status records a needs_strategy_change finish event.',
-  properties: {
-    max_tool_calls: { type: 'number', description: 'Maximum finished tool calls before stopping.' },
-    max_same_tool_retries: { type: 'number', description: 'Maximum consecutive same-tool finished calls, excluding batch tools.' },
-    max_observation_only_calls: { type: 'number', description: 'Maximum trailing read-only observation calls.' },
-    max_no_progress_streak: { type: 'number', description: 'Maximum trailing no-progress/error calls.' },
-    max_wall_ms: { type: 'number', description: 'Maximum run age in milliseconds.' },
   },
 };
 
@@ -81,6 +82,7 @@ const startHandler: ToolHandler = async (_sessionId, args): Promise<MCPResult> =
     session_id: stringArg(args.session_id),
     tab_id: stringArg(args.tab_id),
     metadata: objectArg(args.metadata),
+    budget: normalizeRunBudget(args.budget) as RunBudgets | undefined,
   });
   return json(recordSummary(record));
 };
@@ -90,7 +92,7 @@ const statusHandler: ToolHandler = async (_sessionId, args): Promise<MCPResult> 
   const store = getRunStore();
   let record = store.getRun(run_id);
   if (!record) return json({ run_id, found: false }, true);
-  const budget = normalizeRunBudget(args.budget);
+  const budget = normalizeRunBudget(args.budget) ?? record.budget;
   const budgetVerdict = budget ? evaluateRunBudget(record, budget) : undefined;
   if (budgetVerdict?.exceeded && !TERMINAL_RUN_STATUSES.has(record.status)) {
     record = store.finishRun(run_id, {
@@ -143,6 +145,7 @@ function recordSummary(record: RunRecord): Record<string, unknown> {
     session_id: record.session_id,
     tab_id: record.tab_id,
     event_count: record.events.length,
+    budget: record.budget,
     retention: { max_records_env: 'OPENCHROME_RUN_MAX_RECORDS', default_max_records: 500 },
     terminal: TERMINAL_RUN_STATUSES.has(record.status),
   };
