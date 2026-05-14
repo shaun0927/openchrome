@@ -111,16 +111,22 @@ function jsonResult(payload: object, isError = false): MCPResult {
 }
 
 async function startElementPick(page: any, timeoutMs: number, context?: ToolContext): Promise<ElementPickOverlayResult> {
-  let cleanupNavigationListener = () => {};
-  const navigationResult = new Promise<ElementPickFailure>((resolve) => {
+  let cleanupLifecycleListeners = () => {};
+  const lifecycleResult = new Promise<ElementPickFailure>((resolve) => {
     const onFrameNavigated = (frame: unknown) => {
       if (!isMainFrameNavigation(page, frame)) return;
-      cleanupNavigationListener();
+      cleanupLifecycleListeners();
       resolve({ success: false, error: 'navigated' });
     };
+    const onTargetClosed = () => {
+      cleanupLifecycleListeners();
+      resolve({ success: false, error: 'target_destroyed' });
+    };
     page.on?.('framenavigated', onFrameNavigated);
-    cleanupNavigationListener = () => {
+    page.on?.('close', onTargetClosed);
+    cleanupLifecycleListeners = () => {
       page.off?.('framenavigated', onFrameNavigated);
+      page.off?.('close', onTargetClosed);
     };
   });
 
@@ -130,6 +136,9 @@ async function startElementPick(page: any, timeoutMs: number, context?: ToolCont
     'element_pick.start',
     context,
   ).catch((error) => {
+    if (isTargetDestroyedAbort(error)) {
+      return { success: false, error: 'target_destroyed' };
+    }
     if (isNavigationAbort(error)) {
       return { success: false, error: 'navigated' };
     }
@@ -137,9 +146,9 @@ async function startElementPick(page: any, timeoutMs: number, context?: ToolCont
   }) as Promise<ElementPickOverlayResult>;
 
   try {
-    return await Promise.race([overlayResult, navigationResult]);
+    return await Promise.race([overlayResult, lifecycleResult]);
   } finally {
-    cleanupNavigationListener();
+    cleanupLifecycleListeners();
   }
 }
 
@@ -154,7 +163,12 @@ function isMainFrameNavigation(page: any, frame: unknown): boolean {
 
 function isNavigationAbort(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /execution context was destroyed|cannot find context|frame was detached|navigation|target closed/i.test(message);
+  return /execution context was destroyed|cannot find context|frame was detached|navigation/i.test(message);
+}
+
+function isTargetDestroyedAbort(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /target closed|session closed|target destroyed|page closed/i.test(message);
 }
 
 export function registerElementPickTool(server: MCPServer): void {
