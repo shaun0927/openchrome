@@ -31,6 +31,10 @@ export interface ScreenshotValidationResult {
 
 export function buildPickedElement(input: ElementPickRecorderInput): PickedElement {
   return {
+    // TODO(#844): populate these stable backend-node identity fields from the
+    // BackendNodeRegistry once the cross-snapshot nodeRef contract lands.
+    // Until then #899 intentionally returns null rather than inventing an
+    // unstable selector-derived identity.
     nodeRef: input.nodeRef ?? null,
     backendNodeId: input.backendNodeId ?? null,
     loaderId: input.loaderId ?? null,
