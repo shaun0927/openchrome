@@ -50,6 +50,8 @@ describe('element_pick tool (#899)', () => {
   test('start installs overlay and returns a redacted PickedElement payload', async () => {
     const { handler } = await loadHandler(mockSessionManager);
     const page = mockSessionManager.pages.get(tabId)!;
+    const cdpSession = await page.createCDPSession();
+    (cdpSession.send as jest.Mock).mockResolvedValueOnce({ data: Buffer.from('png').toString('base64') });
     (page.evaluate as jest.Mock)
       .mockResolvedValueOnce({ success: true, installed: true })
       .mockResolvedValueOnce({
@@ -79,8 +81,42 @@ describe('element_pick tool (#899)', () => {
     expect(result.structuredContent.element.selectors.cssPath).toContain('button#submit');
     expect(result.structuredContent.element.domSnippet).toContain('[REDACTED]');
     expect(result.structuredContent.element.computedStyle).toEqual({ display: 'block', cursor: 'pointer' });
+    expect(result.structuredContent.element.screenshotPng).toBe(Buffer.from('png').toString('base64'));
     expect(page.evaluate).toHaveBeenNthCalledWith(1, expect.stringContaining('__openchromeElementPick'));
     expect(page.evaluate).toHaveBeenNthCalledWith(2, 'window.__openchromeElementPick.startAsync({ timeoutMs: 25 })');
+    expect(cdpSession.send).toHaveBeenCalledWith('Page.captureScreenshot', {
+      format: 'png',
+      clip: { x: 2, y: 12, width: 116, height: 46, scale: 1 },
+    });
+    expect(cdpSession.detach).toHaveBeenCalled();
+  });
+
+  test('start returns snapshot_too_large when the clipped screenshot exceeds the cap', async () => {
+    const { handler } = await loadHandler(mockSessionManager);
+    const page = mockSessionManager.pages.get(tabId)!;
+    const cdpSession = await page.createCDPSession();
+    (cdpSession.send as jest.Mock).mockResolvedValueOnce({
+      data: Buffer.alloc((200 * 1024) + 1).toString('base64'),
+    });
+    (page.evaluate as jest.Mock)
+      .mockResolvedValueOnce({ success: true, installed: true })
+      .mockResolvedValueOnce({
+        success: true,
+        element: {
+          ancestry: [{ tagName: 'button', nthOfType: 1 }],
+          boundingBox: { x: 0, y: 0, width: 10, height: 10 },
+          viewport: { width: 100, height: 100 },
+          domSnippet: '<button>Submit</button>',
+          pageUrl: 'https://example.test',
+          pageTitle: 'Example',
+        },
+      });
+
+    const result = await handler(sessionId, { tabId, action: 'start', timeoutMs: 25 });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ success: false, error: 'snapshot_too_large' });
+    expect(cdpSession.detach).toHaveBeenCalled();
   });
 
   test('cancel installs overlay controller and returns cancel result', async () => {
