@@ -1,6 +1,6 @@
 [page_stats] url: https://example.com | title: Test Page | scroll: 0,0 | viewport: 1920x1080 | docSize: 1920x3000
 
-<oc:page src="https://example.com" mode="ax">[ref_1] document: "Test Page"
-  [ref_2] button: "Submit" (focused)
-  [ref_3] textbox: "Username"
-  [ref_4] link: "Learn more"</oc:page>
+<oc:page src="https://example.com" mode="ax">[ref_1 @e1] document: "Test Page"
+  [ref_2 @e2] button: "Submit" (focused)
+  [ref_3 @e3] textbox: "Username"
+  [ref_4 @e4] link: "Learn more"</oc:page>
