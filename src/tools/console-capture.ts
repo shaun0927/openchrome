@@ -8,12 +8,14 @@
  */
 
 import { CDPSession } from 'puppeteer-core';
+import * as crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '../core/console-buffer/ring-buffer';
 import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
+import { paginate } from '../utils/paginate';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 
 /**
@@ -202,6 +204,10 @@ const definition: MCPToolDefinition = {
         type: 'number',
         description: 'Max logs to return (get action)',
       },
+      cursor: {
+        type: 'string',
+        description: 'Opaque pagination cursor returned as nextCursor from a prior console_capture get call.',
+      },
       maxLogs: {
         type: 'number',
         description: 'Max logs to store. Default: 1000',
@@ -264,6 +270,7 @@ const handler: ToolHandler = async (
   const action = args.action as string;
   const filter = args.filter as string[] | undefined;
   const limit = args.limit as number | undefined;
+  const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
   // maxLogs is a backward-compatible alias for maxLines. Defense-in-depth:
   // reject zero / non-positive / non-integer values BEFORE forwarding to
   // createConsoleRingBuffer so a malformed `start` request returns a clear
@@ -543,6 +550,13 @@ const handler: ToolHandler = async (
         }
 
         const bufferStats: ConsoleRingBufferStats = bufStats;
+        const pagination = buildConsoleCapturePagination(deduplicatedLogs, {
+          cursor,
+          pageSize: cursor ? Math.max(1, Math.floor(limit ?? 200)) : Math.max(1, Math.floor(limit ?? Math.max(deduplicatedLogs.length, 1))),
+        });
+        if (pagination.staleCursor) return staleCursorResult();
+        if (pagination.invalidCursor) return invalidCursorResult(pagination.invalidCursor);
+        if (cursor) stats.returned = pagination.logs.length;
 
         return {
           content: [
@@ -551,13 +565,23 @@ const handler: ToolHandler = async (
               text: JSON.stringify({
                 action: 'get',
                 status: 'running',
-                logs: deduplicatedLogs,
+                logs: cursor ? pagination.logs : deduplicatedLogs,
                 stats,
                 durationMs: Date.now() - state.startedAt,
                 bufferStats,
+                ...(cursor ? { hasMore: pagination.hasMore } : {}),
+                ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
               }),
             },
           ],
+          structuredContent: {
+            action: 'get',
+            status: 'running',
+            entries: cursor ? pagination.logs : deduplicatedLogs,
+            hasMore: cursor ? pagination.hasMore : false,
+            ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
+            total: pagination.total,
+          },
         };
       }
 
@@ -619,6 +643,70 @@ const handler: ToolHandler = async (
     };
   }
 };
+
+export function buildConsoleCapturePagination(
+  logs: DedupedLogEntry[],
+  opts: { cursor?: string; pageSize: number },
+): {
+  logs: DedupedLogEntry[];
+  hasMore: boolean;
+  total: number;
+  nextCursor?: string;
+  staleCursor?: true;
+  invalidCursor?: unknown;
+} {
+  try {
+    const page = paginate(logs, {
+      cursor: opts.cursor,
+      pageSize: opts.pageSize,
+      contentHash: hashConsoleEntries(logs),
+    });
+    if (page.staleCursor) return { logs: [], hasMore: false, total: page.total, staleCursor: true };
+    return {
+      logs: page.items,
+      hasMore: page.hasMore,
+      total: page.total,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  } catch (error) {
+    return { logs: [], hasMore: false, total: logs.length, invalidCursor: error };
+  }
+}
+
+function hashConsoleEntries(logs: DedupedLogEntry[]): string {
+  const hash = crypto.createHash('sha256');
+  for (const log of logs) {
+    hash
+      .update(log.type)
+      .update('\0')
+      .update(log.text)
+      .update('\0')
+      .update(String(log.firstTimestamp ?? ''))
+      .update('\0')
+      .update(String(log.lastTimestamp ?? ''))
+      .update('\0')
+      .update(String(log.count ?? 1))
+      .update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function invalidCursorResult(error: unknown): MCPResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_cursor', message } }) }],
+    structuredContent: { error: { code: 'invalid_cursor', message } },
+  };
+}
+
+function staleCursorResult(): MCPResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }) }],
+    structuredContent: { error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } },
+  };
+}
 
 export function registerConsoleCaptureTool(server: MCPServer): void {
   server.registerTool('console_capture', handler, definition);

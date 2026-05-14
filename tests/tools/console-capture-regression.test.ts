@@ -181,3 +181,35 @@ describe('console_capture get response — v1.11.0 baseline regression', () => {
     expect(s).toHaveProperty('lastEntryAt');
   });
 });
+
+describe('console_capture cursor pagination (#881)', () => {
+  test('paginates deduplicated console entries with opaque nextCursor', async () => {
+    const { buildConsoleCapturePagination } = await import('../../src/tools/console-capture');
+    const logs = deduplicateLogs(buildFrozenLogs());
+
+    const first = buildConsoleCapturePagination(logs, { pageSize: 50 });
+    expect(first.logs).toHaveLength(50);
+    expect(first.hasMore).toBe(true);
+    expect(first.total).toBe(100);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = buildConsoleCapturePagination(logs, { pageSize: 50, cursor: first.nextCursor });
+    expect(second.logs).toHaveLength(50);
+    expect(second.logs[0].text).toBe('hello 50');
+    expect(second.hasMore).toBe(false);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  test('marks stale console cursors when retained entries change', async () => {
+    const { buildConsoleCapturePagination } = await import('../../src/tools/console-capture');
+    const logs = deduplicateLogs(buildFrozenLogs());
+    const first = buildConsoleCapturePagination(logs, { pageSize: 50 });
+
+    const changed = logs.slice();
+    changed[0] = { ...changed[0], text: 'changed entry' };
+    const stale = buildConsoleCapturePagination(changed, { pageSize: 50, cursor: first.nextCursor });
+
+    expect(stale.staleCursor).toBe(true);
+    expect(stale.logs).toEqual([]);
+  });
+});
