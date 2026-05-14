@@ -85,6 +85,7 @@
     "dependency-cruiser": "^16.0.0",
     "eslint": "^8.57.0",
     "jest": "^29.7.0",
+    "js-tiktoken": "^1.0.21",
     "rimraf": "^5.0.0",
     "ts-jest": "^29.1.0",
     "ts-node": "^10.9.2",

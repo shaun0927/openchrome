@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/shaun0927/openchrome/tests/benchmark/schemas/result.schema.json",
+  "title": "OpenChrome Competitive Benchmark Result",
+  "description": "Common envelope every benchmark axis (#A-#F) must emit. Guarantees every published number carries environment metadata and competitor version pins. See Epic #1254.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["axis", "environment", "competitors", "results"],
+  "properties": {
+    "axis": {
+      "description": "Which benchmark axis produced this file.",
+      "type": "string",
+      "enum": [
+        "foundation",
+        "token-efficiency",
+        "agent-success",
+        "speed-throughput",
+        "reliability",
+        "auth-usability",
+        "developer-experience"
+      ]
+    },
+    "schemaVersion": {
+      "description": "Version of this result schema the file was written against.",
+      "type": "string",
+      "default": "1.0.0"
+    },
+    "environment": {
+      "description": "Environment metadata captured by tests/benchmark/utils/environment.ts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capturedAt",
+        "gitSha",
+        "gitDirty",
+        "nodeVersion",
+        "os",
+        "arch",
+        "cpuModel",
+        "cpuCount",
+        "totalMemoryBytes",
+        "chromeVersion",
+        "networkProfile"
+      ],
+      "properties": {
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "gitSha": { "type": "string" },
+        "gitDirty": { "type": "boolean" },
+        "nodeVersion": { "type": "string" },
+        "os": { "type": "string" },
+        "arch": { "type": "string" },
+        "cpuModel": { "type": "string" },
+        "cpuCount": { "type": "integer", "minimum": 1 },
+        "totalMemoryBytes": { "type": "integer", "minimum": 0 },
+        "chromeVersion": { "type": "string" },
+        "networkProfile": { "type": "string" },
+        "llm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "temperature"],
+          "properties": {
+            "model": { "type": "string" },
+            "temperature": { "type": "number" }
+          }
+        }
+      }
+    },
+    "competitors": {
+      "description": "Version pins for every library compared in this run. Mirrors benchmark/COMPETITORS.md.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version"],
+        "properties": {
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "commit": { "type": "string" },
+          "measuredAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "tokenizer": {
+      "description": "Tokenizer encoding used for any token counts in this file.",
+      "type": "string"
+    },
+    "results": {
+      "description": "Per-cell benchmark rows. Shape is axis-specific; only the presence of the array is enforced here.",
+      "type": "array"
+    }
+  }
+}
