@@ -322,7 +322,7 @@ const coreHandler: ToolHandler = async (
       } as MCPResult;
     }
 
-    const backendDOMNodeId = refIdManager.getBackendDOMNodeId(sessionId, tabId, refArg);
+    const backendDOMNodeId = refIdManager.resolveToBackendNodeId(sessionId, tabId, refArg);
     if (!backendDOMNodeId) {
       const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact').catch(() => null);
       if (page) {
