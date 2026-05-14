@@ -97,19 +97,19 @@ return {
 
 ## Tool adoption status
 
-| Tool              | Status                             |
-| ----------------- | ---------------------------------- |
-| `paginate` helper | ✅ shipped (this PR)                |
-| `read_page`       | Follow-up issue                    |
-| `query_dom`       | ✅ multiple CSS/XPath results accept `cursor` and return `nextCursor` / `hasMore` / `totalCount` |
-| `console_capture` | Follow-up issue                    |
-| `network`         | Follow-up issue                    |
-| `crawl`           | Follow-up issue                    |
+| Tool / surface | Pageable field | Default page size | Status |
+| -------------- | -------------- | ----------------- | ------ |
+| `paginate` helper | `items` | caller supplied | ✅ shipped |
+| `query_dom` | `elements` / `results` | 50 | ✅ multiple CSS/XPath results accept `cursor` and return `nextCursor` / `hasMore` / `totalCount` |
+| `console_capture` `get` | `entries` / `logs` | 200 when cursoring; no-cursor output remains legacy-compatible | ✅ cursor support in PR #1234 |
+| `network_capture_lite/full` `getLogs` | `requests` / `entries` | 100 | ✅ cursor support in PR #1235 |
+| `read_page` | text chunks | 5,000 chars | Follow-up slice |
+| `crawl` | pages | 25 pages | Follow-up slice |
 
-Each adoption is a small per-tool PR: import `paginate`, replace existing
-chunking logic with a `paginate(...)` call, route the result fields into the
-tool's `structuredContent`. Bundling them here would multiply review
-surface — separate PRs keep each adoption reviewable against the tool's
+Each adoption should stay a small per-tool PR: import `paginate`, preserve
+cursor-omitted compatibility for one minor version, and route cursor page
+fields into `structuredContent`. Bundling the remaining surfaces would multiply
+review surface — separate PRs keep each adoption reviewable against the tool's
 specific data-shape and ordering invariants.
 
 ### `query_dom`
@@ -119,6 +119,20 @@ For `multiple: true`, pass `limit` as the page size and pass a previous
 `results`. Both include `totalCount`, `hasMore`, and optional `nextCursor` in
 text JSON and `structuredContent`. Calls without `cursor` preserve first-page
 behavior and the default page size remains 50.
+
+### `console_capture`
+
+For `action: "get"`, pass a previous `nextCursor` as `cursor`. Cursoring returns
+paged console entries in `structuredContent.entries`; the text payload uses the
+legacy `logs` field and includes `hasMore` / `nextCursor` only for cursor calls.
+Calls without `cursor` preserve the v1.11 text response baseline.
+
+### `network_capture_lite/full`
+
+For `action: "getLogs"`, pass a previous `nextCursor` as `cursor`. Cursoring
+returns paged requests in `structuredContent.requests`; the text payload keeps
+the legacy `entries` field and includes `hasMore` / `nextCursor` only for cursor
+calls. `limit: 0` still means "all retained entries" for compatibility.
 
 ## Why opaque cursors (and not `start_index`)
 
