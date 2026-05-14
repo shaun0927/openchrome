@@ -3,7 +3,13 @@ import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler, throwIfAborted 
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
-import { buildPickedElement, elementPickInstallExpression, type ElementPickRecorderInput } from '../core/element-picker';
+import {
+  buildPickedElement,
+  clampBoundingBox,
+  elementPickInstallExpression,
+  validateScreenshotPng,
+  type ElementPickRecorderInput,
+} from '../core/element-picker';
 import { getGlobalConfig } from '../config/global';
 
 interface ElementPickSuccess {
@@ -86,7 +92,15 @@ const handler: ToolHandler = async (sessionId: string, args: Record<string, unkn
       return jsonResult(overlayResult ?? { success: false, error: 'unknown' }, true);
     }
 
-    const picked = buildPickedElement(overlayResult.element);
+    const screenshot = await captureElementScreenshot(page, overlayResult.element, context);
+    if (screenshot && !screenshot.success) {
+      return jsonResult(screenshot, true);
+    }
+
+    const picked = buildPickedElement({
+      ...overlayResult.element,
+      ...(screenshot?.screenshotPng ? { screenshotPng: screenshot.screenshotPng } : {}),
+    });
     return jsonResult({ success: true, element: picked });
   } catch (error) {
     throwIfAborted(context);
@@ -169,6 +183,57 @@ function isNavigationAbort(error: unknown): boolean {
 function isTargetDestroyedAbort(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /target closed|session closed|target destroyed|page closed/i.test(message);
+}
+
+async function captureElementScreenshot(
+  page: any,
+  element: ElementPickRecorderInput,
+  context?: ToolContext,
+): Promise<{ success: true; screenshotPng?: string } | ElementPickFailure> {
+  const clip = clampBoundingBox(element.boundingBox, element.viewport);
+  if (clip.width <= 0 || clip.height <= 0) {
+    return { success: true };
+  }
+
+  let session: { send: (method: string, params?: unknown) => Promise<unknown>; detach?: () => Promise<void> } | undefined;
+  try {
+    session = await withTimeout(
+      page.createCDPSession(),
+      5000,
+      'element_pick.screenshot_session',
+      context,
+    ) as typeof session;
+    if (!session) return { success: true };
+    const response = await withTimeout(
+      session.send('Page.captureScreenshot', {
+        format: 'png',
+        clip: {
+          x: clip.x,
+          y: clip.y,
+          width: clip.width,
+          height: clip.height,
+          scale: 1,
+        },
+      }),
+      5000,
+      'element_pick.screenshot',
+      context,
+    ) as { data?: string } | undefined;
+    const data = response?.data;
+    if (!data) return { success: true };
+    const validation = validateScreenshotPng(data);
+    if (!validation.ok) {
+      return { success: false, error: validation.error ?? 'snapshot_too_large' };
+    }
+    return { success: true, screenshotPng: data };
+  } finally {
+    try {
+      await session?.detach?.();
+    } catch {
+      // Best effort cleanup only; screenshot capture should not fail after a
+      // successful pick just because the temporary CDP session already closed.
+    }
+  }
 }
 
 export function registerElementPickTool(server: MCPServer): void {
