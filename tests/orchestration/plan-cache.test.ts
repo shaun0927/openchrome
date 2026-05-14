@@ -970,6 +970,33 @@ describeIntegration('Integration: PlanRegistry + PlanExecutor', () => {
     // Two successes should drive confidence up from the initial 0.5
     expect(after).toBeGreaterThan(before);
   });
+
+  test('classifies unauthorized tool errors as auth_redirect', async () => {
+    const handler: ToolHandler = jest.fn(async () => ({ ...makeMCPResult('unauthorized: login required'), isError: true }));
+    const executor = new PlanExecutor((toolName: string) => toolName === 'mock_tool' ? handler : null);
+    const plan = buildPlan({
+      steps: [{ order: 1, tool: 'mock_tool', args: {}, timeout: 1000 }],
+    });
+
+    const result = await executor.execute(plan, 'test-session-001', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({ class: 'auth_redirect', stepOrder: 1, tool: 'mock_tool' });
+  });
+
+  test('maps empty-result success-criteria failures to empty_result metadata', async () => {
+    const handler: ToolHandler = jest.fn(async () => makeMCPResult('[]'));
+    const executor = new PlanExecutor((toolName: string) => toolName === 'mock_tool' ? handler : null);
+    const plan = buildPlan({
+      steps: [{ order: 1, tool: 'mock_tool', args: {}, timeout: 1000 }],
+      successCriteria: { minDataItems: 1 },
+    });
+
+    const result = await executor.execute(plan, 'test-session-001', {});
+
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({ class: 'empty_result', stepOrder: 1, tool: 'mock_tool' });
+  });
 });
 
 describe('PlanExecutor task signatures', () => {

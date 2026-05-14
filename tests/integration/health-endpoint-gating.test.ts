@@ -80,6 +80,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function allocatePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      server.close((closeError) => {
+        if (closeError) {
+          reject(closeError);
+          return;
+        }
+        if (typeof address === 'object' && address !== null) {
+          resolve(address.port);
+        } else {
+          reject(new Error('ephemeral port allocation did not return an address'));
+        }
+      });
+    });
+  });
+}
+
 async function waitForLog(getLog: () => string, pattern: RegExp, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -168,24 +189,11 @@ describeFn('health endpoint gating (issue #648)', () => {
     },
   ];
 
-  // We pick a fresh high port per test to avoid colliding with the
-  // developer's stray openchrome on 9090, or with a previous test run.
-  const pickPort = (() => {
-    let next = 38000 + Math.floor(Math.random() * 2000);
-    return () => next++;
-  })();
-
-  // Pick fresh Chrome/HTTP transport ports too so parallel jest workers
-  // (or a stray dev-mode openchrome on 9222/3100) never collide.
-  const pickTransportPorts = (() => {
-    let next = 40000 + Math.floor(Math.random() * 4000);
-    return () => ({ chromePort: next++, httpPort: next++ });
-  })();
-
   scenarios.forEach((scenario) => {
     test(scenario.name, async () => {
-      const healthPort = pickPort();
-      const { chromePort, httpPort } = pickTransportPorts();
+      const healthPort = await allocatePort();
+      const chromePort = await allocatePort();
+      const httpPort = await allocatePort();
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         OPENCHROME_HEALTH_PORT: String(healthPort),

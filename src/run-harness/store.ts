@@ -5,7 +5,7 @@ import * as path from 'node:path';
 
 import { redactValue } from '../core/trace/redactor.js';
 import { evidenceTriggerForEvent, RunEvidenceCapture, shouldAutoCaptureRunEvidence } from './evidence.js';
-import { TERMINAL_RUN_STATUSES, type RunEvent, type RunRecord, type RunStatus } from './types.js';
+import { TERMINAL_RUN_STATUSES, type RunBudgets, type RunEvent, type RunRecord, type RunStatus } from './types.js';
 
 export interface RunStoreOptions {
   rootDir?: string;
@@ -20,6 +20,7 @@ export interface StartRunInput {
   session_id?: string;
   tab_id?: string;
   metadata?: Record<string, unknown>;
+  budget?: RunBudgets;
 }
 
 export interface FinishRunInput {
@@ -91,6 +92,7 @@ export class RunStore {
       session_id: input.session_id,
       tab_id: input.tab_id,
       metadata: sanitizeMetadata(input.metadata),
+      budget: sanitizeBudgets(input.budget),
       events: [],
     };
     record.events.push(this.event(run_id, 'run_started', {
@@ -194,6 +196,7 @@ export class RunStore {
     return event;
   }
 
+
   private event(run_id: string, kind: RunEvent['kind'], partial: Partial<RunEvent>): RunEvent {
     return {
       id: `evt-${this.idFactory()}`,
@@ -276,6 +279,23 @@ const RUN_LEDGER_REDACTED = '[REDACTED]';
 const RUN_LEDGER_SENSITIVE_KEY = /password|token|secret|credential|api[_-]?key/i;
 const RUN_LEDGER_SENSITIVE_TEXT = /(password|token|secret|credential|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi;
 const RUN_LEDGER_BEARER_TEXT = /Bearer\s+[^\s,;]+/gi;
+
+function sanitizeBudgets(value: RunBudgets | undefined): RunBudgets | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const budgets: RunBudgets = {};
+  setPositiveIntBudget(budgets, 'max_tool_calls', value.max_tool_calls);
+  setPositiveIntBudget(budgets, 'max_same_tool_retries', value.max_same_tool_retries);
+  setPositiveIntBudget(budgets, 'max_observation_only_calls', value.max_observation_only_calls);
+  setPositiveIntBudget(budgets, 'max_no_progress_streak', value.max_no_progress_streak);
+  setPositiveIntBudget(budgets, 'max_wall_ms', value.max_wall_ms);
+  return Object.keys(budgets).length > 0 ? budgets : undefined;
+}
+
+function setPositiveIntBudget(target: RunBudgets, key: keyof RunBudgets, value: unknown): void {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return;
+  const n = Math.floor(value);
+  if (n > 0) target[key] = n;
+}
 
 function sanitizeMetadata(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!value) return undefined;

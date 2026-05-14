@@ -153,6 +153,7 @@ describe('harness/flags', () => {
         'handoff_persist',
         'perception_voting',
         'skill_curator',
+        'react_pilot',
       ]);
     });
 
@@ -166,6 +167,7 @@ describe('harness/flags', () => {
         'contract_runtime',
         'handoff_persist',
         'skill_curator',
+        'react_pilot',
       ]);
     });
   });
@@ -200,7 +202,7 @@ describe('harness/flags', () => {
       logActiveFlags();
       expect(stderrChunks).toHaveLength(1);
       expect(stderrChunks[0]).toMatch(
-        /^\[harness\] core\+pilot enabled \(trace,state_graph,contract_runtime,handoff_persist,perception_voting,skill_curator\)\n$/,
+        /^\[harness\] core\+pilot enabled \(trace,state_graph,contract_runtime,handoff_persist,perception_voting,skill_curator,react_pilot\)\n$/,
       );
     });
 
@@ -212,6 +214,7 @@ describe('harness/flags', () => {
       process.env.OPENCHROME_HANDOFF_PERSIST = '0';
       process.env.OPENCHROME_PERCEPTION_VOTING = '0';
       process.env.OPENCHROME_SKILL_CURATOR = '0';
+      process.env.OPENCHROME_REACT_PILOT = '0';
       resetFlagsCache();
       logActiveFlags();
       expect(stderrChunks).toEqual(['[harness] core+pilot enabled (no families active)\n']);

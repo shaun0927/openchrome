@@ -374,7 +374,7 @@ describe('ReadPageTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       const text = result.content[0].text;
-      expect(text).toMatch(/\[ref_\d+\]/);
+      expect(text).toMatch(/\[ref_\d+ @e\d+\]/);
     });
   });
 

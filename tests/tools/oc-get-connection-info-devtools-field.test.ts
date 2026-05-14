@@ -104,6 +104,28 @@ describe('oc_get_connection_info devtools field (#860)', () => {
     expect(data.runtimeProfile.guidance.join(' ')).toContain('read_page AX defaults to compact');
   });
 
+
+  test('host=openchrome managed response includes devtools block when Chrome is reachable', async () => {
+    const result = await handler('default', { host: 'openchrome' });
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text);
+    expect(data.mode).toBe('managed');
+    expect(data.devtools).toBeDefined();
+    expect(data.devtools.instances[0].pages[0].devtoolsFrontendUrl).toBe(
+      FIXTURE_INSTANCE.pages[0].devtoolsFrontendUrl
+    );
+  });
+
+  test('host=openchrome omits devtools block when exposure is disabled', async () => {
+    process.env.OPENCHROME_EXPOSE_DEVTOOLS_URL = '0';
+
+    const result = await handler('default', { host: 'openchrome' });
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text);
+    expect(data.mode).toBe('managed');
+    expect(data.devtools).toBeUndefined();
+  });
+
   test('tool is registered', () => {
     expect(server.getToolNames()).toContain('oc_get_connection_info');
   });

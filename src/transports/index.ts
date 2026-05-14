@@ -41,6 +41,9 @@ export interface MCPTransport {
   /** Send to one logical MCP session when the transport supports it. */
   sendToSession?(sessionId: string, response: MCPResponse): boolean;
 
+  /** Register cleanup for logical MCP session close/disconnect when supported. */
+  onSessionClose?(handler: (sessionId: string) => void): void;
+
   /** Start listening for messages (bind port or attach readline). */
   start(): void;
 

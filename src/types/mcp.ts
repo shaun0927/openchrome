@@ -185,6 +185,18 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** Transport-authenticated caller principal. Not forgeable via tool args. */
   principal?: Principal;
+  /** Client capabilities advertised during initialize, scoped to this MCP session when known. */
+  clientCapabilities?: { roots?: object; sampling?: object; elicitation?: object };
+  /**
+   * Send a request back to the connected MCP client (for spec features such
+   * as roots, sampling, and elicitation). Tools must check clientCapabilities
+   * and provide a safe fallback when the relevant capability is absent.
+   */
+  requestClient?: <T = unknown>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ) => Promise<T>;
   /**
    * Emit a progress update for the in-flight tool call.
    *
