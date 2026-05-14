@@ -49,6 +49,22 @@ export function captureNavigationReplayStep(input: NavigationCaptureInput): void
 }
 
 /**
+ * Capture a pre-resolved replay step for the page's current target. Use this
+ * only when the tool already resolved stable selectors in page context and no
+ * backendNodeId/objectId is available (for example coordinate-only submit
+ * buttons).
+ */
+export function capturePageReplayStep(page: any, step: ReplayArtifactStep): void {
+  try {
+    if (!Array.isArray(step.selectors) || step.selectors.length === 0) return;
+    const target = (page as { target?: () => unknown }).target?.();
+    captureReplayStep(target ? getTargetId(target as never) : '', step);
+  } catch {
+    // Best-effort recorder hook: never change action-tool behaviour.
+  }
+}
+
+/**
  * Capture a replay step for a DOM node addressed by backendNodeId.
  */
 export async function captureBackendNodeReplayStep(input: BackendNodeCaptureInput): Promise<void> {
