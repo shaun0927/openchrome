@@ -6,7 +6,8 @@
  * place.
  */
 
-import { CaptureMode, CaptureOptions } from '../core/network-capture/types';
+import * as crypto from 'crypto';
+import { CaptureMode, CaptureOptions, type NetworkCaptureEntry } from '../core/network-capture/types';
 import {
   NetworkCaptureRecorder,
   deleteActiveRecorder,
@@ -15,6 +16,7 @@ import {
 } from '../core/network-capture/recorder';
 import { MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
+import { paginate } from '../utils/paginate';
 
 export const NETWORK_CAPTURE_INPUT_SCHEMA = {
   type: 'object' as const,
@@ -47,14 +49,19 @@ export const NETWORK_CAPTURE_INPUT_SCHEMA = {
       type: 'number',
       description: 'Max entries to return on getLogs. Default 100; 0 = all.',
     },
+    cursor: {
+      type: 'string',
+      description: 'Opaque pagination cursor returned as nextCursor from a prior getLogs call.',
+    },
   },
   required: ['tabId', 'action'],
 };
 
-function jsonResult(payload: unknown, isError = false): MCPResult {
+function jsonResult(payload: unknown, isError = false, structuredContent?: Record<string, unknown>): MCPResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(payload) }],
     isError,
+    ...(structuredContent ? { structuredContent } : {}),
   };
 }
 
@@ -91,6 +98,7 @@ export function createNetworkCaptureHandler(captureMode: CaptureMode): ToolHandl
     const options = (args.options as Partial<CaptureOptions> | undefined) || undefined;
     const keepBodies = args.keepBodies as boolean | undefined;
     const limit = args.limit as number | undefined;
+    const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
 
     setupCleanupListener();
 
@@ -167,7 +175,12 @@ export function createNetworkCaptureHandler(captureMode: CaptureMode): ToolHandl
               requestedMode: captureMode,
             });
           }
-          const entries = recorder.getLogs(limit);
+          const allEntries = recorder.getLogs(0);
+          const pageSize = resolveNetworkCapturePageSize(limit, allEntries.length);
+          const page = paginateNetworkCaptureEntries(allEntries, { cursor, pageSize });
+          if (page.staleCursor) return staleCursorResult();
+          if (page.invalidCursor) return invalidCursorResult(page.invalidCursor);
+          const entries = cursor ? page.entries : recorder.getLogs(limit);
           return jsonResult({
             success: true,
             action: 'getLogs',
@@ -175,6 +188,16 @@ export function createNetworkCaptureHandler(captureMode: CaptureMode): ToolHandl
             entries,
             totalEntries: recorder.getEntryCount(),
             returned: entries.length,
+            ...(cursor ? { hasMore: page.hasMore } : {}),
+            ...(cursor && page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+          }, false, {
+            success: true,
+            action: 'getLogs',
+            mode: captureMode,
+            requests: entries,
+            total: page.total,
+            hasMore: cursor ? page.hasMore : page.hasMore,
+            ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
           });
         }
 
@@ -214,4 +237,73 @@ export function createNetworkCaptureHandler(captureMode: CaptureMode): ToolHandl
       );
     }
   };
+}
+
+export function paginateNetworkCaptureEntries(
+  entries: NetworkCaptureEntry[],
+  opts: { cursor?: string; pageSize: number },
+): {
+  entries: NetworkCaptureEntry[];
+  hasMore: boolean;
+  total: number;
+  nextCursor?: string;
+  staleCursor?: true;
+  invalidCursor?: unknown;
+} {
+  try {
+    const page = paginate(entries, {
+      cursor: opts.cursor,
+      pageSize: opts.pageSize,
+      contentHash: hashNetworkCaptureEntries(entries),
+    });
+    if (page.staleCursor) return { entries: [], hasMore: false, total: page.total, staleCursor: true };
+    return {
+      entries: page.items,
+      hasMore: page.hasMore,
+      total: page.total,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  } catch (error) {
+    return { entries: [], hasMore: false, total: entries.length, invalidCursor: error };
+  }
+}
+
+function resolveNetworkCapturePageSize(limit: number | undefined, total: number): number {
+  if (limit === 0) return Math.max(1, total);
+  return Math.max(1, Math.floor(limit ?? 100));
+}
+
+function hashNetworkCaptureEntries(entries: NetworkCaptureEntry[]): string {
+  const hash = crypto.createHash('sha256');
+  for (const entry of entries) {
+    hash
+      .update(entry.requestId)
+      .update('\0')
+      .update(entry.url)
+      .update('\0')
+      .update(entry.method)
+      .update('\0')
+      .update(entry.resourceType)
+      .update('\0')
+      .update(String(entry.status ?? ''))
+      .update('\0')
+      .update(String(entry.timing.startedAt))
+      .update('\0')
+      .update(String(entry.timing.finishedAt ?? ''))
+      .update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function invalidCursorResult(error: unknown): MCPResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return jsonResult({ error: { code: 'invalid_cursor', message } }, true, {
+    error: { code: 'invalid_cursor', message },
+  });
+}
+
+function staleCursorResult(): MCPResult {
+  return jsonResult({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }, true, {
+    error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' },
+  });
 }
