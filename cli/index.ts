@@ -49,6 +49,7 @@ import { registerAdminKeysCommand } from './admin-keys';
 import { registerContractCommand } from './contract-teach';
 import { registerPlaybookCommand } from './playbook/index';
 import { registerReplayCommand } from './replay';
+import { registerRunCommand } from './run';
 import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
 
 const program = new Command();
@@ -1376,6 +1377,9 @@ totp
       process.exit(1);
     }
   });
+
+// One-shot MCP tool runner (issue #843).
+registerRunCommand(program);
 
 // Admin CLI — tenant API key management (issue #9 / PR3).
 registerAdminKeysCommand(program);

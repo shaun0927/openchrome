@@ -21,6 +21,7 @@ import { isPilotEnabled } from '../harness/flags';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
+import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 
 async function resolveFormVaultFields(fields: Record<string, string | boolean | number>): Promise<{
@@ -116,6 +117,7 @@ const definition: MCPToolDefinition = {
         description: 'Human-readable label for this action in audit logs (≤120 chars)',
         maxLength: 120,
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['tabId'],
   },
@@ -123,7 +125,7 @@ const definition: MCPToolDefinition = {
 };
 
 
-const handler: ToolHandler = async (
+const coreHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
@@ -724,6 +726,26 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+};
+
+
+const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
+  const result = await coreHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+
+  try {
+    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'fill_form');
+    if (page) {
+      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+    }
+  } catch {
+    // Snapshot chaining is best-effort; never mask the successful action result.
+  }
+  return result;
 };
 
 export function registerFillFormTool(server: MCPServer): void {

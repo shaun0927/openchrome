@@ -47,6 +47,7 @@ Categories below are documentation-only — the runtime source is
 | `tabs_context`             | Tab list snapshot                                    |
 | `list_profiles`            | Chrome profile enumeration                           |
 | `performance_metrics`      | Page performance read                                |
+| `oc_vitals`                | Web Vitals performance read                          |
 | `oc_profile_status`        | Profile status read                                  |
 | `oc_get_connection_info`   | Server/Chrome connection metadata read               |
 | `oc_connection_health`     | Health probe                                         |
@@ -63,6 +64,7 @@ Categories below are documentation-only — the runtime source is
 | `oc_context_export`       | Portable context envelope export                     |
 | `oc_observe`              | Deterministic actionable-element enumeration         |
 | `oc_performance_analyze`  | Analyze an existing performance trace                |
+| `oc_progress_status`       | Session progress diagnostics                         |
 
 ### Network egress — `{ readOnly:F, destructive:F, idempotent:F, openWorld:T }`
 
@@ -84,7 +86,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | Tool                | Notes                                                                                                                                                                          |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `network`           | `Network.emulateNetworkConditions({ offline: true, ... })` blocks every request — destructive against network                                                                  |
-| `request_intercept` | Installs request-blocking rules                                                                                                                                                |
+| `request_intercept` | Installs request-blocking rules; see [`request-intercept-presets.md`](request-intercept-presets.md) for #861 bandwidth presets                                                 |
 | `javascript_tool`   | Arbitrary JS via `Runtime.evaluate` — worst case includes `document.cookie = ''`, `window.close()`, `fetch()` to any origin, or invoking a sibling destructive tool            |
 | `batch_execute`     | Batch dispatcher that can invoke arbitrary tools and evaluate arbitrary JS expressions — worst case is its worst sub-call                                                      |
 | `act`               | NL action router — click can trigger irreversible browser-side mutations (Delete-account, payment confirmation, etc.)                                                          |

@@ -33,6 +33,12 @@ interface RunResult {
  * emits exactly one token, so a regex match is both sufficient and robust.
  */
 
+function extractToken(stdout: string): string {
+  const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
+  if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
+  return m[0];
+}
+
 /**
  * Extract the JSON array emitted by `admin keys list --json` while ignoring
  * unrelated Jest worker noise captured by the shared stdout hook on Windows CI.
@@ -81,13 +87,6 @@ function parseJsonArrayFromStdout<T>(stdout: string): T[] {
   }
 
   throw new Error(`No JSON array found in stdout: ${JSON.stringify(stdout)}`);
-}
-
-
-function extractToken(stdout: string): string {
-  const m = stdout.match(/oc_live_[A-Za-z0-9_]+/);
-  if (!m) throw new Error(`No oc_live_* token found in stdout: ${JSON.stringify(stdout)}`);
-  return m[0];
 }
 
 async function runCli(argv: string[]): Promise<RunResult> {

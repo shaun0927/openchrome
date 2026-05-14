@@ -19,6 +19,18 @@ export interface NeedsHelpState {
   resume_hint?: string;
 }
 
+export interface TaskRunAutoSessionSnapshotPolicy {
+  enabled: boolean;
+  mode: 'best-effort' | 'strict';
+  max_snapshots: number;
+}
+
+export interface TaskRunAutoSessionSnapshotState {
+  snapshot_ids: string[];
+  last_snapshot_at?: number;
+  last_error?: string;
+}
+
 export interface TaskRunMeta {
   run_id: string;
   status: TaskRunStatus;
@@ -27,6 +39,8 @@ export interface TaskRunMeta {
   session_id?: string;
   workflow_id?: string;
   ledger_task_ids: string[];
+  auto_session_snapshot_policy?: TaskRunAutoSessionSnapshotPolicy;
+  auto_session_snapshot_state?: TaskRunAutoSessionSnapshotState;
   progress_summary?: string;
   completed_items?: string[];
   failed_items?: FailedItem[];
@@ -42,7 +56,7 @@ export interface TaskRunMeta {
 
 export interface TaskRunEvent {
   ts: number;
-  kind: 'started' | 'updated' | 'checkpointed' | 'needs_help' | 'completed' | 'failed' | 'cancelled';
+  kind: 'started' | 'updated' | 'checkpointed' | 'needs_help' | 'completed' | 'failed' | 'cancelled' | 'auto_session_snapshot';
   data?: Record<string, unknown>;
 }
 
