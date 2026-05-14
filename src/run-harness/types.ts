@@ -48,6 +48,14 @@ export interface RunEvent {
   metadata?: Record<string, unknown>;
 }
 
+export interface RunBudgets {
+  max_tool_calls?: number;
+  max_same_tool_retries?: number;
+  max_observation_only_calls?: number;
+  max_no_progress_streak?: number;
+  max_wall_ms?: number;
+}
+
 export interface RunRecord {
   run_id: string;
   status: RunStatus;
@@ -56,5 +64,6 @@ export interface RunRecord {
   session_id?: string;
   tab_id?: string;
   metadata?: Record<string, unknown>;
+  budget?: RunBudgets;
   events: RunEvent[];
 }
