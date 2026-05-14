@@ -37,6 +37,9 @@
       "name": "drag_drop"
     },
     {
+      "name": "element_pick"
+    },
+    {
       "name": "emulate_device"
     },
     {

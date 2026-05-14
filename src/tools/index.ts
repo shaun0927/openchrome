@@ -155,6 +155,7 @@ import {
 } from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
+import { registerElementPickTool } from './element-pick';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
 import { registerOcDevToolsUrlTool } from './oc-devtools-url';
 // Portable context envelope (#873) — export/import surface
@@ -229,6 +230,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_get_connection_info: 'core',
   oc_journal: 'core',
   oc_observe: 'core',
+  element_pick: 'core',
   oc_open_host_settings: 'core',
   oc_output_fetch: 'core',
   oc_performance_analyze: 'core',
@@ -592,6 +594,7 @@ export function registerAllTools(server: MCPServer): void {
   }
   // oc_observe (#866) — deterministic actionable-element enumeration
   registerOcObserveTool(proxy);
+  registerElementPickTool(proxy);
   // DevTools URL tool (#860) — gated by OPENCHROME_EXPOSE_DEVTOOLS_URL !== '0'
   registerOcDevToolsUrlTool(proxy);
   // Portable context envelope (#873) — oc_context_export / oc_context_import
