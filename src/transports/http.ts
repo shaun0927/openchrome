@@ -15,8 +15,6 @@ import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport, TransportMessageContext } from './index';
-import { renderPrometheusMetrics, type PrometheusMetric } from './prometheus';
-import { getDashboardState } from '../desktop/dashboard-state';
 import type { SessionManager } from '../session-manager';
 import {
   REQUEST_ID_HEADER,
@@ -34,7 +32,6 @@ import {
   type Principal,
 } from '../middleware/auth';
 import { logAuditEntry } from '../security/audit-logger';
-import { authorizeDashboardEndpoint, canSeeTenant } from '../middleware/dashboard-authz';
 import { extractTenantId, TenantIdError } from '../middleware/tenant-extractor';
 import { isStrictTenantIsolationEnabled } from '../tenant/registry';
 import type { TenantId } from '../tenant/types';
@@ -56,6 +53,13 @@ import {
   validateUnauthenticatedHttpPolicy,
 } from './http/auth';
 import { createBatchTooLargeError, mapBatchWithConcurrency } from './http/batch';
+import {
+  handleDashboardMetrics,
+  handleDashboardPrometheusMetrics,
+  handleDashboardScreenshot,
+  handleDashboardSessions,
+  handleDashboardToolCalls,
+} from './http/dashboard-routes';
 
 export { HTTP_TIMEOUTS } from './http/config';
 
@@ -508,335 +512,35 @@ export class HTTPTransport implements MCPTransport {
    * GET /api/screenshot - capture active tab screenshot as base64 WebP
    */
   private handleScreenshot(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
-    const requestedSessionId = url.searchParams.get('session_id') || url.searchParams.get('sessionId');
-    const sessionId = requestedSessionId || 'default';
-
-    if (!this.sessionManager) {
-      const authz = authorizeDashboardEndpoint(req, 'screenshot');
-      if (!authz.ok) {
-        this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
-        return;
-      }
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Session manager not available' }));
-      return;
-    }
-
-    // Always look up the resolved session — including the implicit "default" —
-    // so that a tenant-scoped caller cannot read another tenant's default
-    // session screenshot just by omitting `session_id`.
-    const session = this.sessionManager.getSession(sessionId);
-    const authz = authorizeDashboardEndpoint(req, 'screenshot', {
-      requireSessionOwnership: true,
-      requestedSessionTenantId: session?.tenantId,
-    });
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'screenshot', sessionId, authz.status, authz.error);
-      return;
-    }
-
-    this.captureScreenshot(sessionId)
-      .then((data) => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(data));
-      })
-      .catch((err) => {
-        console.error('[HTTPTransport] Screenshot error:', err);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Screenshot failed' }));
-      });
-  }
-
-  private writeDashboardAuthzFailure(
-    res: http.ServerResponse,
-    endpoint: 'screenshot' | 'sessions' | 'tool-calls' | 'metrics',
-    sessionId: string,
-    status: 401 | 403,
-    error: string,
-  ): void {
-    // Audit denial so that probing of cross-tenant resources is observable in
-    // the same place that auth_failure entries already live.
-    try {
-      logAuditEntry('dashboard_authz_failure', sessionId, { endpoint, status }, undefined, { status: 'error' });
-    } catch {
-      // best-effort
-    }
-    res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error }));
-  }
-
-  private async captureScreenshot(sessionId: string): Promise<{ base64: string; format: string; sessionId: string }> {
-    const sm = this.sessionManager!;
-    const infos = sm.getAllSessionInfos();
-    const sessionInfo = infos.find((s) => s.id === sessionId);
-
-    if (!sessionInfo || sessionInfo.targetCount === 0) {
-      throw new Error(`No tabs found for session "${sessionId}"`);
-    }
-
-    // Get the first worker's first target as the "active" page
-    const cdpClient = sm.getCDPClient();
-    let targetId: string | undefined;
-
-    for (const worker of sessionInfo.workers) {
-      const workerData = sm.getWorker(sessionId, worker.id);
-      if (workerData && workerData.targets.size > 0) {
-        // Get the most recently added target (last in insertion order)
-        for (const tid of workerData.targets) {
-          targetId = tid;
-        }
-        break;
-      }
-    }
-
-    if (!targetId) {
-      throw new Error(`No active target found for session "${sessionId}"`);
-    }
-
-    const page = await cdpClient.getPageByTargetId(targetId);
-    if (!page || page.isClosed()) {
-      throw new Error(`Page for target ${targetId} is closed or unavailable`);
-    }
-
-    const cdpSession = await page.createCDPSession();
-    try {
-      const result = await cdpSession.send('Page.captureScreenshot', {
-        format: 'webp',
-        quality: 60,
-      }) as { data: string };
-      return { base64: result.data, format: 'webp', sessionId };
-    } finally {
-      await cdpSession.detach().catch(() => { /* ignore */ });
-    }
+    handleDashboardScreenshot(req, url, res, this.sessionManager);
   }
 
   /**
    * GET /api/sessions - return connected sessions with tab counts
    */
   private handleSessions(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const authz = authorizeDashboardEndpoint(req, 'sessions');
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'sessions', 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    if (!this.sessionManager) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ sessions: [] }));
-      return;
-    }
-
-    const infos = this.sessionManager.getAllSessionInfos()
-      .filter((info) => canSeeTenant(authz.principal, info.tenantId));
-    const sessions = infos.map((info) => ({
-      id: info.id,
-      name: info.name,
-      tabCount: info.targetCount,
-      workerCount: info.workerCount,
-      createdAt: info.createdAt,
-      lastActivityAt: info.lastActivityAt,
-    }));
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ sessions }));
+    handleDashboardSessions(req, res, this.sessionManager);
   }
 
   /**
    * GET /api/tool-calls - return recent tool calls from dashboard state
    */
   private handleToolCalls(req: http.IncomingMessage, url: URL, res: http.ServerResponse): void {
-    const sessionId = url.searchParams.get('session_id') || undefined;
-    const requestedSession = sessionId && this.sessionManager
-      ? this.sessionManager.getSession(sessionId)
-      : undefined;
-
-    const authz = authorizeDashboardEndpoint(req, 'tool-calls', {
-      requireSessionOwnership: sessionId !== undefined,
-      requestedSessionTenantId: requestedSession?.tenantId,
-    });
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'tool-calls', sessionId ?? 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
-    const clampedLimit = Math.min(Math.max(1, limit), 100);
-
-    const dashboardState = getDashboardState();
-    let calls = dashboardState.getToolCalls(sessionId, clampedLimit);
-
-    // Tenant-scoped admins must not see tool calls from other tenants. When the
-    // session has been deleted we cannot prove ownership, so the call is hidden.
-    const sm = this.sessionManager;
-    if (sm) {
-      calls = calls.filter((c) => canSeeTenant(authz.principal, sm.getSession(c.sessionId)?.tenantId));
-    } else if (!canSeeTenant(authz.principal, undefined)) {
-      calls = [];
-    }
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ calls }));
+    handleDashboardToolCalls(req, url, res, this.sessionManager);
   }
 
   /**
    * GET /api/metrics - return server metrics
    */
   private handleMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const authz = authorizeDashboardEndpoint(req, 'metrics');
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'metrics', 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    const mem = process.memoryUsage();
-    const dashboardState = getDashboardState();
-
-    let tabCount = 0;
-    let sessionCount = 0;
-    if (this.sessionManager) {
-      // Tenant-scoped principals must only see counts for their own tenant —
-      // the global getStats() exposes activity from every tenant.
-      const visible = this.sessionManager.getAllSessionInfos()
-        .filter((info) => canSeeTenant(authz.principal, info.tenantId));
-      sessionCount = visible.length;
-      for (const info of visible) {
-        tabCount += info.targetCount;
-      }
-    }
-
-    const metrics = {
-      ram_mb: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
-      tab_count: tabCount,
-      uptime_secs: dashboardState.getUptimeSecs(),
-      session_count: sessionCount,
-    };
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(metrics));
+    handleDashboardMetrics(req, res, this.sessionManager);
   }
 
   /**
    * GET /metrics — Prometheus text exposition format (#839).
-   *
-   * Auth-required via the existing bearer/api-key chain used by
-   * /api/metrics. Counters are read-only views over already-tracked
-   * in-process state; no new persistence is introduced. Hand-rolled
-   * exposition format avoids the prom-client dependency (P5).
    */
   private handlePrometheusMetrics(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const authz = authorizeDashboardEndpoint(req, 'metrics');
-    if (!authz.ok) {
-      this.writeDashboardAuthzFailure(res, 'metrics', 'anonymous', authz.status, authz.error);
-      return;
-    }
-
-    const mem = process.memoryUsage();
-    const dashboardState = getDashboardState();
-
-    let tabCount = 0;
-    let sessionCount = 0;
-    const toolCallCounts: Record<string, { success: number; error: number }> = {};
-    if (this.sessionManager) {
-      const visible = this.sessionManager.getAllSessionInfos()
-        .filter((info) => canSeeTenant(authz.principal, info.tenantId));
-      sessionCount = visible.length;
-      for (const info of visible) {
-        tabCount += info.targetCount;
-      }
-    }
-
-    // `openchrome_tool_calls_total` is read from the process-lifetime
-    // monotonic counter in DashboardState (#839, P2) — the ring buffer
-    // is bounded so deriving counts from it would let values shrink as
-    // old entries age out, violating Prometheus counter semantics.
-    //
-    // Each counter row carries the session that produced the call; we
-    // resolve that session's tenant and skip rows the principal cannot
-    // see, mirroring `handleToolCalls` (#839, P1). Sessions that have
-    // been deleted cannot be attributed to a tenant and are hidden.
-    const sm = this.sessionManager;
-    for (const row of dashboardState.getToolCallTotals()) {
-      if (!row.toolName) continue;
-      if (sm) {
-        const sessionTenantId = sm.getSession(row.sessionId)?.tenantId;
-        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
-      } else if (!canSeeTenant(authz.principal, undefined)) {
-        continue;
-      }
-      const slot = toolCallCounts[row.toolName] ?? { success: 0, error: 0 };
-      slot[row.result] += row.count;
-      toolCallCounts[row.toolName] = slot;
-    }
-
-    // `openchrome_tool_calls_active` is an inherently transient gauge: it
-    // reflects in-flight calls at scrape time. We read it from the dashboard
-    // ring (the only place active calls are tracked) and apply the same
-    // tenant filter as above.
-    let activeCount = 0;
-    for (const call of dashboardState.getToolCalls(undefined, 1000)) {
-      if (call.status !== 'running') continue;
-      if (sm) {
-        const sessionTenantId = sm.getSession(call.sessionId)?.tenantId;
-        if (!canSeeTenant(authz.principal, sessionTenantId)) continue;
-      } else if (!canSeeTenant(authz.principal, undefined)) {
-        continue;
-      }
-      activeCount++;
-    }
-
-    const toolCallSamples: Array<{ labels: Record<string, string>; value: number }> = [];
-    for (const [tool, counts] of Object.entries(toolCallCounts)) {
-      if (counts.success > 0) {
-        toolCallSamples.push({ labels: { tool, result: 'success' }, value: counts.success });
-      }
-      if (counts.error > 0) {
-        toolCallSamples.push({ labels: { tool, result: 'error' }, value: counts.error });
-      }
-    }
-
-    const metrics: PrometheusMetric[] = [
-      {
-        name: 'openchrome_uptime_seconds',
-        help: 'Server uptime in seconds since process start.',
-        type: 'gauge',
-        value: dashboardState.getUptimeSecs(),
-      },
-      {
-        name: 'openchrome_ram_bytes',
-        help: 'Resident set size (RSS) of the openchrome server process.',
-        type: 'gauge',
-        value: mem.rss,
-      },
-      {
-        name: 'openchrome_tab_count',
-        help: 'Number of Chrome tabs currently tracked across visible sessions.',
-        type: 'gauge',
-        value: tabCount,
-      },
-      {
-        name: 'openchrome_session_count',
-        help: 'Number of active MCP sessions visible to the requesting principal.',
-        type: 'gauge',
-        value: sessionCount,
-      },
-      {
-        name: 'openchrome_tool_calls_total',
-        help: 'Cumulative tool call count, labelled by tool name and result.',
-        type: 'counter',
-        samples: toolCallSamples,
-      },
-      {
-        name: 'openchrome_tool_calls_active',
-        help: 'Tool calls currently in flight (status="running" in the dashboard ring).',
-        type: 'gauge',
-        value: activeCount,
-      },
-    ];
-
-    res.writeHead(200, {
-      'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-    });
-    res.end(renderPrometheusMetrics(metrics));
+    handleDashboardPrometheusMetrics(req, res, this.sessionManager);
   }
 
   /**

@@ -59,6 +59,7 @@ import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
 import { getActionRecorder } from './recording/action-recorder';
+import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
 import {
   substituteSecrets,
   redactSecrets,
@@ -82,6 +83,13 @@ import {
   recordingUri,
 } from './resources/live-state';
 import { ResourceSubscriptionManager } from './resources/subscriptions';
+import {
+  buildInvalidJsonRpcRequestResponse,
+  extractPrincipalAndScrub,
+  isInitializedNotification,
+  isJsonRpcNotification,
+  isServerToClientResponseMessage,
+} from './mcp/request-ingress';
 export { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { isRunHarnessEnabled } from './run-harness/flags';
@@ -172,8 +180,35 @@ export function isConnectionError(error: unknown): boolean {
 }
 
 /** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so recovery handlers can always run. */
-const SKIP_SESSION_INIT_TOOLS = new Set(['oc_stop', 'oc_reap_orphans', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume', 'oc_journal', 'oc_run_start', 'oc_run_status', 'oc_run_events', 'oc_run_finish', 'oc_progress_status']);
+ *  sleep/wake). Skip session initialization so recovery handlers can always run.
+ *
+ *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
+ *  ledger operations (or, for `oc_task_start`, just persist a meta row before
+ *  background work begins). They never touch the browser themselves, so they
+ *  must not trigger Chrome auto-launch on malformed input (#1034).
+ *
+ *  Run-harness tools (`oc_run_*`) and `oc_progress_status` are pure read /
+ *  bookkeeping calls landed on develop after this PR branched — also skip. */
+const SKIP_SESSION_INIT_TOOLS = new Set([
+  'oc_stop',
+  'oc_reap_orphans',
+  'oc_profile_status',
+  'oc_session_snapshot',
+  'oc_session_resume',
+  'oc_journal',
+  'oc_task_start',
+  'oc_task_list',
+  'oc_task_get',
+  'oc_task_cancel',
+  'oc_task_wait',
+  'oc_task_update',
+  'oc_task_finish',
+  'oc_run_start',
+  'oc_run_status',
+  'oc_run_events',
+  'oc_run_finish',
+  'oc_progress_status',
+]);
 
 const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
   'execute_plan',
@@ -331,6 +366,30 @@ export interface MCPServerOptions {
    * When undefined, all capabilities are exposed (default, P2-compliant).
    */
   capabilityFilter?: Set<ToolCapability>;
+}
+
+
+const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
+  'navigate',
+  'read_page',
+  'find',
+  'interact',
+  'act',
+  'fill_form',
+  'form_input',
+  'computer',
+  'page_screenshot',
+  'tabs_context',
+  'tabs_list',
+  'tabs_get',
+  'inspect',
+  'vision_find',
+  'oc_assert',
+]);
+
+function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>): string | undefined {
+  if (!TASK_ENVELOPE_BROWSER_TOOLS.has(toolName)) return undefined;
+  return extractTaskId(args);
 }
 
 export class MCPServer {
@@ -883,15 +942,7 @@ export class MCPServer {
     // sent earlier via `requestFromClient`. Route it to the pending resolver
     // and short-circuit BEFORE the regular client-request validation (which
     // would otherwise reject the response as "missing method field").
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      parsed.jsonrpc === '2.0' &&
-      parsed.id !== undefined &&
-      parsed.id !== null &&
-      typeof parsed.method !== 'string' &&
-      ('result' in parsed || 'error' in parsed)
-    ) {
+    if (isServerToClientResponseMessage(parsed)) {
       const idKey = String(parsed.id);
       const entry = this.pendingClientRequests.get(idKey);
       if (entry) {
@@ -913,41 +964,20 @@ export class MCPServer {
     }
 
     // Validate JSON-RPC 2.0 envelope
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      parsed.jsonrpc !== '2.0' ||
-      typeof parsed.method !== 'string'
-    ) {
-      return {
-        jsonrpc: '2.0' as const,
-        id: (parsed.id as string | number) ?? 0,
-        error: {
-          code: MCPErrorCodes.INVALID_REQUEST,
-          message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
-        },
-      };
-    }
+    const invalidRequest = buildInvalidJsonRpcRequestResponse(parsed);
+    if (invalidRequest) return invalidRequest;
 
     // Read the transport-injected principal via the non-forgeable Symbol key
     // (see PRINCIPAL_SYM in src/middleware/auth.ts). JSON.parse cannot produce
     // symbol-keyed properties, so anything under PRINCIPAL_SYM was placed here
     // by the transport after authenticating the request — clients cannot
     // spoof a principal by including `"__principal": {...}` in their JSON body.
-    const principal = (parsed as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] as
-      | Principal
-      | undefined;
-    // Scrub any string-named `__principal` that a malicious caller may have
-    // embedded in the JSON. We don't read it, but deleting here prevents it
-    // from echoing back out via JSON.stringify in later response paths.
-    if ('__principal' in parsed) {
-      delete (parsed as Record<string, unknown>).__principal;
-    }
+    const principal = extractPrincipalAndScrub(parsed as Record<PropertyKey, unknown>);
 
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
-    if (parsed.id === undefined || parsed.id === null) {
+    if (isJsonRpcNotification(parsed)) {
       const method = parsed.method as string;
-      if (method === 'notifications/initialized' || method === 'initialized') {
+      if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
       }
       // All notifications are silently ignored (no response sent)
@@ -1758,6 +1788,8 @@ export class MCPServer {
       // CDPClient may not be initialized — proceed with normal flow
     }
 
+    const taskEnvelopeId = taskEnvelopeIdForTool(toolName, toolArgs);
+
     // Start activity tracking
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
     getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
@@ -2165,6 +2197,17 @@ export class MCPServer {
         };
       }
 
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: result.isError !== true,
+      });
 
       if (runHarnessId && !toolName.startsWith('oc_run_')) {
         try {
@@ -2406,6 +2449,18 @@ export class MCPServer {
         }
 
       }
+
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeId, {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal?.tenantId,
+        keyId: principal?.keyId,
+        principalMode: principal?.mode,
+        args: toolArgs,
+        durationMs: Date.now() - toolStartTime,
+        ok: !errorIsError,
+      });
 
       // Secrets redaction (#834) — see success path. Error messages can
       // include the literal value (e.g. "type ... failed for value X").
