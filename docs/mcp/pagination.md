@@ -104,7 +104,7 @@ return {
 | `console_capture` `get` | `entries` / `logs` | 200 when cursoring; no-cursor output remains legacy-compatible | ✅ cursor support in PR #1234 |
 | `network_capture_lite/full` `getLogs` | `requests` / `entries` | 100 | ✅ cursor support in PR #1235 |
 | `read_page` markdown | `text` | 5,000 chars after the legacy first chunk | ✅ markdown cursor support in this PR |
-| `crawl` | pages | 25 pages | Follow-up slice |
+| `crawl` | `pages` | 25 pages | ✅ cursor support in this PR |
 
 Each adoption should stay a small per-tool PR: import `paginate`, preserve
 cursor-omitted compatibility for one minor version, and route cursor page
@@ -142,6 +142,15 @@ truncation marker, while adding `structuredContent.nextCursor` / `hasMore` /
 `cursor` to retrieve the next 5,000-character markdown chunk as JSON text plus
 matching `structuredContent`. Cursor hashes cover the full generated markdown so
 stale page content is rejected with `stale_cursor` instead of silently resetting.
+
+### `crawl`
+
+Pass a previous `nextCursor` as `cursor` to paginate the returned `pages` array
+after the crawl completes. Cursor pages use 25 crawl pages per response and
+return JSON text plus matching `structuredContent` with `offset`, `total`,
+`hasMore`, and optional `nextCursor`. Calls without `cursor` keep the legacy
+JSON text output while also exposing a first structured 25-page slice for
+clients that want to continue without changing the no-cursor text contract.
 
 ## Why opaque cursors (and not `start_index`)
 

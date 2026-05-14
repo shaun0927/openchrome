@@ -7,6 +7,7 @@
  * @see https://github.com/shaun0927/openchrome/issues/576
  */
 
+import crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
@@ -44,6 +45,9 @@ import {
   parseCrawlCacheMode,
   parseCrawlCacheScope,
 } from '../core/crawl/content-cache';
+import { decodeCursor, encodeCursor } from '../utils/paginate';
+
+const CRAWL_CURSOR_PAGE_SIZE = 25;
 
 const definition: MCPToolDefinition = {
   name: 'crawl',
@@ -63,6 +67,10 @@ const definition: MCPToolDefinition = {
       max_pages: {
         type: 'number',
         description: 'Maximum number of pages to crawl. Default: 20',
+      },
+      cursor: {
+        type: 'string',
+        description: 'Opaque pagination cursor returned as nextCursor from a prior crawl call. Cursoring paginates returned pages after the crawl completes.',
       },
       scope: {
         type: 'string',
@@ -243,6 +251,74 @@ interface CrawlSummary {
   strategy?: CrawlStrategy;
   scored_urls?: number;
   skipped_below_threshold?: number;
+}
+
+interface CrawlPageSlice {
+  pages: CrawledPage[];
+  offset: number;
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string;
+  staleCursor?: true;
+}
+
+function hashCrawlPages(pages: readonly CrawledPage[]): string {
+  return crypto.createHash('sha256')
+    .update(JSON.stringify(pages.map((page) => ({
+      url: page.url,
+      title: page.title,
+      content: page.content,
+      raw_markdown: page.raw_markdown,
+      fit_markdown: page.fit_markdown,
+      filter: page.filter,
+      depth: page.depth,
+      links_found: page.links_found,
+      error: page.error,
+      engine_used: page.engine_used,
+      static_reason: page.static_reason,
+      score: page.score,
+      score_reasons: page.score_reasons,
+      cache: page.cache,
+    }))), 'utf8')
+    .digest('hex');
+}
+
+function paginateCrawlPages(pages: readonly CrawledPage[], cursor: string | undefined): CrawlPageSlice {
+  const hash = hashCrawlPages(pages);
+  let offset = 0;
+  if (cursor !== undefined) {
+    const state = decodeCursor(cursor);
+    if (state.hash !== undefined && state.hash !== hash) {
+      return { pages: [], offset: state.offset, total: pages.length, hasMore: false, staleCursor: true };
+    }
+    offset = Math.min(state.offset, pages.length);
+  }
+  const end = Math.min(offset + CRAWL_CURSOR_PAGE_SIZE, pages.length);
+  const hasMore = end < pages.length;
+  return {
+    pages: pages.slice(offset, end),
+    offset,
+    total: pages.length,
+    hasMore,
+    ...(hasMore ? { nextCursor: encodeCursor({ offset: end, hash }) } : {}),
+  };
+}
+
+function invalidCursorResult(error: unknown): MCPResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_cursor', message } }) }],
+    structuredContent: { error: { code: 'invalid_cursor', message } },
+  };
+}
+
+function staleCursorResult(): MCPResult {
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }) }],
+    structuredContent: { error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1137,6 +1213,30 @@ const handler: ToolHandler = async (
         }
       : { summary, pages: outputPages };
 
+    const cursor = args.cursor as string | undefined;
+    if (cursor !== undefined) {
+      let pageSlice: CrawlPageSlice;
+      try {
+        pageSlice = paginateCrawlPages(pages, cursor);
+      } catch (error) {
+        return invalidCursorResult(error);
+      }
+      if (pageSlice.staleCursor) {
+        return staleCursorResult();
+      }
+      const payload = {
+        ...buildOutput(pageSlice.pages),
+        offset: pageSlice.offset,
+        total: pageSlice.total,
+        hasMore: pageSlice.hasMore,
+        ...(pageSlice.nextCursor ? { nextCursor: pageSlice.nextCursor } : {}),
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+        structuredContent: payload,
+      };
+    }
+
     // Ensure output fits within limits
     let outputJson = JSON.stringify(buildOutput(pages), null, 2);
     if (outputJson.length > MAX_OUTPUT_CHARS) {
@@ -1193,8 +1293,17 @@ const handler: ToolHandler = async (
       }
     }
 
+    const structuredPageSlice = paginateCrawlPages(pages, undefined);
+    const structuredPayload = {
+      ...buildOutput(structuredPageSlice.pages),
+      offset: structuredPageSlice.offset,
+      total: structuredPageSlice.total,
+      hasMore: structuredPageSlice.hasMore,
+      ...(structuredPageSlice.nextCursor ? { nextCursor: structuredPageSlice.nextCursor } : {}),
+    };
     return {
       content: [{ type: 'text', text: outputJson }],
+      structuredContent: structuredPayload,
     };
   } catch (error) {
     return {
