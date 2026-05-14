@@ -107,6 +107,23 @@ describe('element_pick tool (#899)', () => {
     expect(result.structuredContent).toEqual({ success: false, error: 'timeout' });
   });
 
+  test('start returns no_human_attached in headless mode', async () => {
+    const { handler } = await loadHandler(mockSessionManager);
+    const { setGlobalConfig } = await import('../../../src/config/global');
+    setGlobalConfig({ headless: true });
+    const page = mockSessionManager.pages.get(tabId)!;
+
+    const result = await handler(sessionId, { tabId, action: 'start', timeoutMs: 25 });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({
+      success: false,
+      error: 'no_human_attached',
+      remediation: expect.stringContaining('without --server-mode'),
+    });
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
   test('start returns navigated when the main frame navigates before a pick resolves', async () => {
     const { handler } = await loadHandler(mockSessionManager);
     const page = mockSessionManager.pages.get(tabId)!;
