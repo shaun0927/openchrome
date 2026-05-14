@@ -118,6 +118,7 @@ import { registerOcAssertTool } from './oc-assert';
 
 // Outcome Contracts (#792) — evidence bundle capture
 import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
+import { registerOcDiffTool } from './oc-diff';
 
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
@@ -129,6 +130,8 @@ import { registerOcTaskListTool } from './oc-task-list';
 import { registerOcTaskGetTool } from './oc-task-get';
 import { registerOcTaskCancelTool } from './oc-task-cancel';
 import { registerOcTaskWaitTool } from './oc-task-wait';
+import { registerOcTaskUpdateTool } from './oc-task-update';
+import { registerOcTaskFinishTool } from './oc-task-finish';
 // Doctor report tool (#898) — read cached `openchrome doctor` output
 import { registerOcDoctorReportTool } from './oc-doctor-report';
 // Performance insights two-step API (#846)
@@ -143,7 +146,13 @@ import { getPerfTraceStore } from '../core/performance/insights/trace-store';
 // are set. The pilot module is loaded via `require()` only when the gate is
 // open — this preserves P2 (no module from `src/pilot/**` is loaded into the
 // process when `--pilot` is unset) while keeping `registerAllTools()` sync.
-import { isContractRuntimeEnabled, isProxyHookEnabled, isSkillReplayEnabled, isTruthy } from '../harness/flags';
+import {
+  isContractRuntimeEnabled,
+  isProxyHookEnabled,
+  isReactPilotEnabled,
+  isSkillReplayEnabled,
+  isTruthy,
+} from '../harness/flags';
 // oc_observe (#866) — deterministic actionable-element enumeration
 import { registerOcObserveTool } from './oc-observe';
 // DevTools URL tool (#860) — expose Chrome DevTools inspector URLs
@@ -158,6 +167,8 @@ import { registerRunHarnessTools } from '../run-harness/tools';
 import { registerTaskRunTools } from './task-run';
 // Read-only progress diagnostics (#1060).
 import { registerOcProgressStatusTool } from './oc-progress-status';
+// Web Vitals snapshot (#840).
+import { registerOcVitalsTool } from './oc-vitals';
 // 2-stage large-output fetch (#887) — store + paging tool.
 import { registerOcOutputFetchTool } from './oc-output-fetch';
 import { registerOcPilotRunWithRecoveryTool } from './oc-pilot-run-with-recovery';
@@ -212,6 +223,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_policy: 'core',
   oc_copy_to_clipboard: 'core',
   oc_devtools_url: 'core',
+  oc_diff: 'core',
   oc_doctor_report: 'core',
   oc_evidence_bundle: 'core',
   oc_get_connection_info: 'core',
@@ -288,18 +300,21 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_pilot_run_with_recovery: 'pilot',
   oc_pilot_handoff_redeem: 'pilot',
   oc_proxy_hook: 'pilot',
+  oc_react: 'pilot',
 
   // core — develop-era additions (#1062 normalize, #1060 progress, #1019
   // reflect, #855 task ledger, run-harness ledger). All are diagnostics or
   // ledger ops with no special filter group.
   oc_normalize_action: 'core',
   oc_progress_status: 'core',
+  oc_vitals: 'core',
   oc_reflect: 'core',
   oc_run_events: 'core',
   oc_run_finish: 'core',
   oc_run_start: 'core',
   oc_run_status: 'core',
   oc_task_cancel: 'core',
+  oc_task_finish: 'core',
   oc_task_get: 'core',
   oc_task_list: 'core',
   oc_task_run_checkpoint: 'core',
@@ -310,6 +325,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_task_run_start: 'core',
   oc_task_run_update: 'core',
   oc_task_start: 'core',
+  oc_task_update: 'core',
   oc_task_wait: 'core',
 };
 
@@ -474,12 +490,14 @@ export function registerAllTools(server: MCPServer): void {
 
   // Read-only anti-wandering diagnostics (#1060).
   registerOcProgressStatusTool(server);
+  registerOcVitalsTool(proxy);
 
   // 2-stage large-output fetch (#887) — paging tool for handle payloads.
   registerOcOutputFetchTool(proxy);
 
   // Outcome Contracts (#792) — evidence bundle capture
   registerOcEvidenceBundleTool(proxy);
+  registerOcDiffTool(proxy);
 
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(proxy);
@@ -491,6 +509,13 @@ export function registerAllTools(server: MCPServer): void {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { registerOcSkillReplayTool: _reg } = require('./oc-skill-replay') as typeof import('./oc-skill-replay');
     _reg(proxy);
+  }
+
+  // Pilot-tier React DevTools hook inspection (#838). Loaded only when --pilot keeps the family on.
+  if (isReactPilotEnabled()) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { registerOcReactTool } = require('../pilot/tools/oc-react') as typeof import('../pilot/tools/oc-react');
+    registerOcReactTool(proxy);
   }
 
   // Pilot contract runtime (#1061) — off unless --pilot and OPENCHROME_CONTRACT_RUNTIME are active.
@@ -514,6 +539,8 @@ export function registerAllTools(server: MCPServer): void {
   registerOcTaskGetTool(server);
   registerOcTaskCancelTool(server);
   registerOcTaskWaitTool(server);
+  registerOcTaskUpdateTool(server);
+  registerOcTaskFinishTool(server);
 
   // Reap any RUNNING task whose owner pid is no longer alive. Runs
   // once at server start (issue #855 invariant #2) so a crash on a

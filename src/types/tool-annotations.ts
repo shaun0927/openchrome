@@ -95,6 +95,8 @@ export const TOOL_ANNOTATIONS = {
   oc_performance_analyze: READ_ONLY,
   oc_normalize_action: READ_ONLY,
   oc_progress_status: READ_ONLY,
+  oc_diff: READ_ONLY,
+  oc_vitals: READ_ONLY,
   oc_pilot_run_with_recovery: MUTATES,
 
   // ── Network egress (navigation, crawling) ───────────────────────────────
@@ -194,6 +196,7 @@ export const TOOL_ANNOTATIONS = {
   // ── Pilot tier (loaded only under --pilot) ──────────────────────────────
   oc_pilot_handoff_create: MUTATES,
   oc_pilot_handoff_redeem: MUTATES,
+  oc_react: READ_ONLY,
 
   // ── Crawl job control (develop-era additions merged after this PR) ─────
   // `crawl_start` issues network requests, so its worst-case input set

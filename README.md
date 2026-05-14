@@ -720,7 +720,7 @@ OpenChrome supports per-tenant API keys, JWT/OAuth, a legacy shared token, and a
 
 ## Research recipes
 
-Composable multi-source research workflows over the MCP surface — host-LLM driven, no server-side model calls. See **[docs/recipes/](docs/recipes/README.md)** for runnable patterns (news digest, docs changelog diff, competitive feature matrix).
+Composable multi-source research workflows over the MCP surface — host-LLM driven, no server-side model calls. See **[docs/recipes/](docs/recipes/README.md)** for runnable patterns, including the issue #858 topic survey, single-page deep extract, and changelog watch fixtures.
 
 ---
 

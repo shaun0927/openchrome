@@ -9,6 +9,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { withDomDelta } from '../utils/dom-delta';
 import { captureElementReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
+import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 const definition: MCPToolDefinition = {
   name: 'form_input',
@@ -38,13 +39,14 @@ const definition: MCPToolDefinition = {
         default: false,
         description: 'When true, stage a replay artifact step for oc_skill_record. Default false is a strict no-op.',
       },
+      returnAfterState: RETURN_AFTER_STATE_SCHEMA,
     },
     required: ['ref', 'value', 'tabId'],
   },
   annotations: TOOL_ANNOTATIONS.form_input,
 };
 
-const handler: ToolHandler = async (
+const coreHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext
@@ -118,7 +120,7 @@ const handler: ToolHandler = async (
     // #831: for `ref_N`-formatted refs (the canonical snapshot output), an
     // unresolvable or stale ref → STALE_REF. Raw integer / `node_N` formats
     // are legacy backend-node-id passthroughs and keep their original error.
-    const isRefIdFormat = /^ref_\d+$/.test(ref);
+    const isRefIdFormat = /^(?:ref_\d+|@e\d+)$/.test(ref);
     if (isRefIdFormat) {
       const entry = refIdManager.getRef(sessionId, tabId, ref);
       if (!entry || refIdManager.isRefStale(sessionId, tabId, ref)) {
@@ -469,6 +471,26 @@ const handler: ToolHandler = async (
       isError: true,
     };
   }
+};
+
+
+const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
+  const result = await coreHandler(sessionId, args, context);
+  const returnAfterState = parseReturnAfterState(args.returnAfterState);
+  if (returnAfterState === 'none' || result.isError) return result;
+
+  const tabId = args.tabId as string | undefined;
+  if (!tabId) return result;
+
+  try {
+    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'form_input');
+    if (page) {
+      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+    }
+  } catch {
+    // Snapshot chaining is best-effort; never mask the successful action result.
+  }
+  return result;
 };
 
 export function registerFormInputTool(server: MCPServer): void {
