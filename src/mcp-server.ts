@@ -71,6 +71,7 @@ import {
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
+import { redactPredicateSource } from './core/trace/redactor';
 import { getLifecycleBus, type LifecycleEvent, type Unsubscribe } from './core/lifecycle';
 import {
   LIVE_RESOURCE_TEMPLATES,
@@ -96,7 +97,10 @@ import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-
 import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 
-function redactActVariablesForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (toolName === 'wait_for' && args.type === 'function' && typeof args.value === 'string') {
+    return { ...args, value: redactPredicateSource(args.value) };
+  }
   if (toolName !== 'act' || !('variables' in args)) {
     return args;
   }
@@ -1565,7 +1569,7 @@ export class MCPServer {
 
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
-    const telemetryToolArgs = redactActVariablesForTelemetry(toolName, toolArgs);
+    const telemetryToolArgs = redactToolArgsForTelemetry(toolName, toolArgs);
     // Use 'default' session if no sessionId is provided
     const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
 

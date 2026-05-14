@@ -272,6 +272,9 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter('openchrome_zombie_targets_cleaned_total', 'Tracked targets evicted after listener or cleanup failures');
     instance.registerCounter('openchrome_unhandled_rejections_total', 'Process-level unhandled promise rejections (safety-net counter)');
     instance.registerCounter('openchrome_cookie_scan_total', 'Cookie source scans by outcome (complete/partial/no_candidates/no_cookies)');
+    instance.registerCounter('openchrome_wait_predicate_total', 'wait_for function-mode outcomes by result');
+    instance.registerHistogram('openchrome_wait_predicate_elapsed_ms', 'wait_for function-mode elapsed time in milliseconds',
+      [50, 100, 200, 500, 1000, 2500, 5000, 10000, 30000]);
     instance.registerHistogram('openchrome_cookie_scan_duration_seconds', 'Cookie source scan duration in seconds',
       [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]);
     instance.registerHistogram('openchrome_cookie_scan_targets_scanned', 'Number of targets actually probed in each cookie scan',
