@@ -17,6 +17,11 @@ interface BackendNodeCaptureInput {
   args?: Record<string, unknown>;
 }
 
+interface NavigationCaptureInput {
+  page: any;
+  url: string;
+}
+
 /**
  * Default-off gate for #988 replay-artifact capture hooks. Only literal true
  * enables side effects so omitted / false remains byte-identical to the old
@@ -24,6 +29,23 @@ interface BackendNodeCaptureInput {
  */
 export function shouldCaptureReplayArtifact(value: unknown): boolean {
   return value === true;
+}
+
+/**
+ * Capture a navigation replay step for the page's current target.
+ */
+export function captureNavigationReplayStep(input: NavigationCaptureInput): void {
+  try {
+    if (typeof input.url !== 'string' || input.url.length === 0) return;
+    const target = (input.page as { target?: () => unknown }).target?.();
+    captureReplayStep(target ? getTargetId(target as never) : '', {
+      kind: 'navigate',
+      selectors: [],
+      args: { url: input.url },
+    });
+  } catch {
+    // Best-effort recorder hook: never change action tool behaviour.
+  }
 }
 
 /**
