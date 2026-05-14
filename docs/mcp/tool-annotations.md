@@ -86,7 +86,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | Tool                | Notes                                                                                                                                                                          |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `network`           | `Network.emulateNetworkConditions({ offline: true, ... })` blocks every request — destructive against network                                                                  |
-| `request_intercept` | Installs request-blocking rules                                                                                                                                                |
+| `request_intercept` | Installs request-blocking rules; see [`request-intercept-presets.md`](request-intercept-presets.md) for #861 bandwidth presets                                                 |
 | `javascript_tool`   | Arbitrary JS via `Runtime.evaluate` — worst case includes `document.cookie = ''`, `window.close()`, `fetch()` to any origin, or invoking a sibling destructive tool            |
 | `batch_execute`     | Batch dispatcher that can invoke arbitrary tools and evaluate arbitrary JS expressions — worst case is its worst sub-call                                                      |
 | `act`               | NL action router — click can trigger irreversible browser-side mutations (Delete-account, payment confirmation, etc.)                                                          |
