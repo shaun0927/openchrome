@@ -152,6 +152,32 @@ describe('element_pick tool (#899)', () => {
     expect(page.off).toHaveBeenCalledWith('framenavigated', expect.any(Function));
   });
 
+  test('start returns target_destroyed when the page closes before a pick resolves', async () => {
+    const { handler } = await loadHandler(mockSessionManager);
+    const page = mockSessionManager.pages.get(tabId)!;
+    let closeListener: (() => void) | undefined;
+
+    (page.on as jest.Mock).mockImplementation((event: string, listener: () => void) => {
+      if (event === 'close') closeListener = listener;
+      return page;
+    });
+    (page.off as jest.Mock).mockImplementation((event: string, listener: () => void) => {
+      if (event === 'close' && closeListener === listener) closeListener = undefined;
+      return page;
+    });
+    (page.evaluate as jest.Mock)
+      .mockResolvedValueOnce({ success: true, installed: true })
+      .mockImplementationOnce(() => new Promise(() => {
+        setTimeout(() => closeListener?.(), 0);
+      }));
+
+    const result = await handler(sessionId, { tabId, action: 'start', timeoutMs: 25 });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ success: false, error: 'target_destroyed' });
+    expect(page.off).toHaveBeenCalledWith('close', expect.any(Function));
+  });
+
   test('start maps execution-context navigation failures to a structured navigated error', async () => {
     const { handler } = await loadHandler(mockSessionManager);
     const page = mockSessionManager.pages.get(tabId)!;
@@ -162,5 +188,17 @@ describe('element_pick tool (#899)', () => {
     const result = await handler(sessionId, { tabId, action: 'start', timeoutMs: 25 });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual({ success: false, error: 'navigated' });
+  });
+
+  test('start maps target closure failures to a structured target_destroyed error', async () => {
+    const { handler } = await loadHandler(mockSessionManager);
+    const page = mockSessionManager.pages.get(tabId)!;
+    (page.evaluate as jest.Mock)
+      .mockResolvedValueOnce({ success: true, installed: true })
+      .mockRejectedValueOnce(new Error('Target closed'));
+
+    const result = await handler(sessionId, { tabId, action: 'start', timeoutMs: 25 });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ success: false, error: 'target_destroyed' });
   });
 });
