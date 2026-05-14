@@ -56,3 +56,6 @@ export * as proxy from './proxy/index.js';
 // Pure `decide()` function — no I/O, no side effects. Gate call sites on
 // `isStateGraphEnabled()` from `src/harness/flags.ts` before invoking.
 export * as skill from './skill/index.js';
+
+// Issue #837: pilot credential vault.
+export * as credentials from './credentials/store.js';

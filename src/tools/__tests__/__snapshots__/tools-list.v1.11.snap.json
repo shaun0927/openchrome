@@ -37,6 +37,9 @@
       "name": "drag_drop"
     },
     {
+      "name": "element_pick"
+    },
+    {
       "name": "emulate_device"
     },
     {
@@ -113,6 +116,9 @@
     },
     {
       "name": "oc_devtools_url"
+    },
+    {
+      "name": "oc_diff"
     },
     {
       "name": "oc_doctor_report"
@@ -248,6 +254,9 @@
     },
     {
       "name": "oc_totp_generate"
+    },
+    {
+      "name": "oc_vitals"
     },
     {
       "name": "page_content"
