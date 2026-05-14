@@ -218,6 +218,10 @@ export const TOOL_ANNOTATIONS = {
   oc_task_get: READ_ONLY,
   oc_task_list: READ_ONLY,
   oc_task_wait: READ_ONLY,
+  oc_lane_create: MUTATES,
+  oc_lane_list: READ_ONLY,
+  oc_lane_get: READ_ONLY,
+  oc_lane_close: DESTRUCTIVE,
 
   // ── Skill replay (develop-era addition) ────────────────────────────────
   // `oc_skill_replay` performs the recorded CDP step sequence; the contract

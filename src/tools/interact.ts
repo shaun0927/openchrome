@@ -33,6 +33,7 @@ import {
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { isPilotEnabled } from '../harness/flags';
 import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
+import { applyLaneTarget, recordLaneToolCall } from '../core/browser-lanes';
 import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
 
 
@@ -76,6 +77,8 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Tab ID to execute on',
       },
+      taskId: { type: 'string', description: 'Task id when using a task-scoped browser lane.' },
+      laneId: { type: 'string', description: 'Task-scoped browser lane id; validates tabId or defaults to the lane current target.' },
       query: {
         type: 'string',
         description: 'Element to act on (natural language). Required when mode is "ref" (default).',
@@ -152,7 +155,7 @@ const definition: MCPToolDefinition = {
         },
       },
     },
-    required: ['tabId'],
+
   },
 };
 
@@ -232,7 +235,9 @@ const coreHandler: ToolHandler = async (
   context?: ToolContext
 ): Promise<MCPResult> => {
   throwIfAborted(context);
-  const tabId = args.tabId as string;
+  let scopedArgs: Record<string, unknown>;
+  try { scopedArgs = applyLaneTarget(args); } catch (error) { return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true }; }
+  const tabId = scopedArgs.tabId as string;
   const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
@@ -553,6 +558,7 @@ const coreHandler: ToolHandler = async (
 
   try {
     const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+    await recordLaneToolCall(args, !!page, tabId);
     if (!page) {
       const available = await sessionManager.getAvailableTargets(sessionId);
       const availableInfo = available.length > 0

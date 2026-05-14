@@ -133,6 +133,7 @@ import { registerOcTaskCancelTool } from './oc-task-cancel';
 import { registerOcTaskWaitTool } from './oc-task-wait';
 import { registerOcTaskUpdateTool } from './oc-task-update';
 import { registerOcTaskFinishTool } from './oc-task-finish';
+import { registerOcLaneTools } from './oc-lane';
 // Doctor report tool (#898) — read cached `openchrome doctor` output
 import { registerOcDoctorReportTool } from './oc-doctor-report';
 // Performance insights two-step API (#846)
@@ -320,6 +321,10 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_task_cancel: 'core',
   oc_task_finish: 'core',
   oc_task_get: 'core',
+  oc_lane_create: 'core',
+  oc_lane_list: 'core',
+  oc_lane_get: 'core',
+  oc_lane_close: 'core',
   oc_task_list: 'core',
   oc_task_run_checkpoint: 'core',
   oc_task_run_complete: 'core',
@@ -545,6 +550,7 @@ export function registerAllTools(server: MCPServer): void {
   registerOcTaskWaitTool(server);
   registerOcTaskUpdateTool(server);
   registerOcTaskFinishTool(server);
+  registerOcLaneTools(server);
 
   // Reap any RUNNING task whose owner pid is no longer alive. Runs
   // once at server start (issue #855 invariant #2) so a crash on a
