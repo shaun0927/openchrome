@@ -92,6 +92,7 @@ export const TOOL_ANNOTATIONS = {
   oc_devtools_url: READ_ONLY,
   oc_context_export: READ_ONLY,
   oc_observe: READ_ONLY,
+  element_pick: MUTATES,
   oc_performance_analyze: READ_ONLY,
   oc_normalize_action: READ_ONLY,
   oc_progress_status: READ_ONLY,

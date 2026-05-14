@@ -21,6 +21,7 @@ export const ELEMENT_PICK_OVERLAY_SOURCE = String.raw`
     capture: null,
     timeoutId: null,
     lastHover: null,
+    waiters: [],
   };
 
   const zIndex = '2147483647';
@@ -115,6 +116,10 @@ export const ELEMENT_PICK_OVERLAY_SOURCE = String.raw`
   function setResult(result) {
     state.result = result;
     cleanup(result && result.error ? result.error : 'done');
+    const waiters = state.waiters.splice(0);
+    for (const resolve of waiters) {
+      try { resolve(result); } catch {}
+    }
   }
 
   function cleanup(reason) {
@@ -219,6 +224,19 @@ export const ELEMENT_PICK_OVERLAY_SOURCE = String.raw`
       const timeoutMs = Math.max(1, Math.min(Number(options && options.timeoutMs) || 60000, 300000));
       state.timeoutId = setTimeout(() => setResult({ success: false, error: 'timeout' }), timeoutMs);
       return { success: true, started: true };
+    },
+    startAsync(options) {
+      const started = this.start(options);
+      if (!started || started.success !== true) return Promise.resolve(started);
+      return new Promise((resolve) => {
+        if (state.result) {
+          const result = state.result;
+          state.result = null;
+          resolve(result);
+          return;
+        }
+        state.waiters.push(resolve);
+      });
     },
     cancel(reason) {
       if (!state.active) return { success: true, canceled: false };
