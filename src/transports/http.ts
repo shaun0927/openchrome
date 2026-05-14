@@ -96,6 +96,7 @@ export class HTTPTransport implements MCPTransport {
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
   private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
+  private sessionCloseHandler: ((sessionId: string) => void) | null = null;
   private sessionManager: SessionManager | null = null;
   private readonly serverStartTime: number = Date.now();
   private sseKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -160,6 +161,10 @@ export class HTTPTransport implements MCPTransport {
    */
   onSessionDelete(handler: (sessionId: string) => void): void {
     this.sessionDeleteHandler = handler;
+  }
+
+  onSessionClose(handler: (sessionId: string) => void): void {
+    this.sessionCloseHandler = handler;
   }
 
   /**
@@ -685,9 +690,10 @@ export class HTTPTransport implements MCPTransport {
       // The per-socket idle timeout is meant to protect header/body receive and
       // truly idle keepalive sockets. Once the full request body has been read,
       // valid MCP tool calls may legitimately run longer than that idle window,
-      // so disable the request-level socket timer and let tool deadlines govern
+      // so disable both request and socket timers and let tool deadlines govern
       // execution. keepAliveTimeout still applies after the response finishes.
       req.setTimeout(0);
+      req.socket.setTimeout(0);
 
       // Session tracking via Mcp-Session-Id header
       let sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -851,6 +857,9 @@ export class HTTPTransport implements MCPTransport {
       if (idx !== -1) {
         this.sseConnections.splice(idx, 1);
       }
+      if (this.sessionCloseHandler) {
+        this.sessionCloseHandler(sessionId);
+      }
       console.error(`[HTTPTransport] SSE client disconnected (session: ${sessionId})`);
     });
   }
@@ -868,6 +877,9 @@ export class HTTPTransport implements MCPTransport {
       // Notify session-delete listeners (e.g. rate-limiter cleanup)
       if (this.sessionDeleteHandler) {
         this.sessionDeleteHandler(sessionId);
+      }
+      if (this.sessionCloseHandler) {
+        this.sessionCloseHandler(sessionId);
       }
 
       // Close any SSE connections for this session

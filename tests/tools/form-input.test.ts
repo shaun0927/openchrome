@@ -22,6 +22,7 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
 
 import { getSessionManager } from '../../src/session-manager';
 import { getRefIdManager } from '../../src/utils/ref-id-manager';
+import { resetRecorderBuffers } from '../../src/core/skill-memory';
 
 describe('FormInputTool', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
@@ -174,6 +175,7 @@ describe('FormInputTool', () => {
   });
 
   afterEach(() => {
+    resetRecorderBuffers();
     jest.clearAllMocks();
   });
 
@@ -615,6 +617,50 @@ describe('FormInputTool', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not found');
+    });
+  });
+
+
+  describe('Replay artifact capture (#988)', () => {
+    test('defaults capture_artifact to a strict recorder no-op', async () => {
+      const handler = await getFormInputHandler();
+      mockTextInputCDPSequence();
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: '123',
+        value: 'alice@example.com',
+      });
+
+      const { peekRecorderBuffer: peekCurrent } = await import('../../src/core/skill-memory');
+      expect(peekCurrent(testTargetId)).toEqual([]);
+    });
+
+    test('captures a replayable fill step when capture_artifact is true', async () => {
+      const handler = await getFormInputHandler();
+      mockTextInputCDPSequence();
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { value: ['input[name="email"]', 'form:nth-of-type(1) > input:nth-of-type(1)'] },
+      });
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: '123',
+        value: 'alice@example.com',
+        capture_artifact: true,
+      });
+
+      const { peekRecorderBuffer: peekCurrent } = await import('../../src/core/skill-memory');
+      expect(peekCurrent(testTargetId)).toEqual([
+        {
+          kind: 'fill',
+          selectors: [
+            { type: 'css', value: 'input[name="email"]' },
+            { type: 'css', value: 'form:nth-of-type(1) > input:nth-of-type(1)' },
+          ],
+          args: { value: 'alice@example.com' },
+        },
+      ]);
     });
   });
 

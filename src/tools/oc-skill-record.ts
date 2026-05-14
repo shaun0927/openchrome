@@ -17,9 +17,17 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { SkillMemoryStore, type ReplayArtifact } from '../core/skill-memory';
+import {
+  flushRecorderBuffer,
+  REPLAY_ARTIFACT_SCHEMA_VERSION,
+  SkillMemoryStore,
+  type ReplayArtifact,
+  type ReplayArtifactStep,
+} from '../core/skill-memory';
 import { redactSecrets } from '../core/secrets';
 import { isDynamicSkillsEnabled, isSkillReplayEnabled } from '../harness/flags';
+import { getSessionManager } from '../session-manager';
+import { getVersion } from '../version';
 
 interface OcSkillRecordOutput {
   skill_id: string;
@@ -89,7 +97,7 @@ const definition: MCPToolDefinition = {
 };
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const domainArg = args.domain as string | undefined;
@@ -179,9 +187,17 @@ const handler: ToolHandler = async (
   // This matches the test contract where absent env = feature available (#875).
   const replayEnv = process.env.OPENCHROME_SKILL_REPLAY;
   const replayArtifactsEnabled = replayEnv === undefined || isSkillReplayEnabled();
-  const replayArtifacts = replayArtifactsEnabled && Array.isArray(rawReplayArtifacts)
-    ? (rawReplayArtifacts as ReplayArtifact[])
+  const bufferedReplaySteps = flushBufferedReplaySteps(sessionId);
+  const capturedReplayArtifact = bufferedReplaySteps.length > 0
+    ? buildReplayArtifact(bufferedReplaySteps)
     : undefined;
+  const replayArtifacts = replayArtifactsEnabled
+    ? [
+      ...(Array.isArray(rawReplayArtifacts) ? (rawReplayArtifacts as ReplayArtifact[]) : []),
+      ...(capturedReplayArtifact ? [capturedReplayArtifact] : []),
+    ]
+    : undefined;
+  const replayArtifactsForStore = replayArtifacts && replayArtifacts.length > 0 ? replayArtifacts : undefined;
 
   let recordResult: { skill_id: string; stored_at: number };
   try {
@@ -193,7 +209,7 @@ const handler: ToolHandler = async (
       successCount: 0,
       lastUsedAt: 0,
       frozenSnapshotPath: snapshotPath ?? null,
-      ...(replayArtifacts !== undefined ? { replayArtifacts } : {}),
+      ...(replayArtifactsForStore !== undefined ? { replayArtifacts: replayArtifactsForStore } : {}),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -209,7 +225,7 @@ const handler: ToolHandler = async (
     stored_at: recordResult.stored_at,
     // Return replay_artifacts in response: the stored array when feature-on
     // (env absent or truthy), null when explicitly disabled (#875 contract).
-    replay_artifacts: replayArtifactsEnabled ? (replayArtifacts ?? null) : null,
+    replay_artifacts: replayArtifactsEnabled ? (replayArtifactsForStore ?? null) : null,
   };
   if (snapshotPath !== undefined) {
     output.snapshot_path = snapshotPath;
@@ -248,6 +264,30 @@ function computeSkillId(domain: string, name: string): string {
     .update(`${domain}\x00${name}`, 'utf8')
     .digest('hex')
     .slice(0, 16);
+}
+
+
+function flushBufferedReplaySteps(sessionId: string): ReplayArtifactStep[] {
+  try {
+    const sessionManager = getSessionManager() as { getSessionTargetIds?: (sessionId: string) => string[] };
+    const targetIds = sessionManager.getSessionTargetIds?.(sessionId) ?? [];
+    const steps: ReplayArtifactStep[] = [];
+    for (const targetId of targetIds) {
+      steps.push(...flushRecorderBuffer(targetId));
+    }
+    return steps;
+  } catch {
+    return [];
+  }
+}
+
+function buildReplayArtifact(steps: ReplayArtifactStep[]): ReplayArtifact {
+  return {
+    schema_version: REPLAY_ARTIFACT_SCHEMA_VERSION,
+    recorded_at: Date.now(),
+    recorder: { openchrome_version: getVersion() },
+    steps,
+  };
 }
 
 function jsonResult(payload: OcSkillRecordOutput | (OcSkillRecordOutput & { error: string })): MCPResult {
