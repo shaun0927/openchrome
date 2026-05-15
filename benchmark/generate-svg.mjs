@@ -347,6 +347,110 @@ function generateThroughputAndSuccessSVGs() {
   };
 }
 
+// ========= SVG 6: Token-efficiency scatter (#1256) =========
+//
+// Faceted scatter: X = log10(payloadTokens), Y = retention, color by library.
+// Reads benchmark/results/token-efficiency.json (the matrix envelope produced
+// by run-token-efficiency.ts) and renders one panel per archetype plus an
+// aggregate panel. Skipped cells (live-only in --skip-live mode) are listed
+// in a legend strip rather than plotted at 0 — silently omitting them would
+// hide the gap; plotting them at 0 would lie.
+//
+// The chart only renders if the matrix envelope exists; otherwise the file
+// is skipped so a fresh checkout that has not yet run `bench:tokens` does
+// not break the rest of the generator.
+function generateTokensScatterSVG() {
+  let envelope;
+  try {
+    envelope = JSON.parse(readFileSync(`${RESULTS_DIR}/token-efficiency.json`, 'utf8'));
+  } catch {
+    return null; // no matrix data yet — skip silently, regen after `bench:tokens`
+  }
+  const rows = Array.isArray(envelope.results) ? envelope.results : [];
+  if (rows.length === 0) return null;
+
+  const runRows = rows.filter((r) => !r.skipped && Number.isFinite(r.payloadTokens) && r.payloadTokens > 0);
+  const skipRows = rows.filter((r) => r.skipped);
+  const archetypes = Array.from(new Set(runRows.map((r) => r.archetype))).sort();
+  const facets = [...archetypes, '__aggregate__'];
+
+  // Color map per library — palette is deterministic so the same library has
+  // the same color across runs and across the scatter + the report.
+  const libraries = Array.from(new Set(runRows.map((r) => r.library))).sort();
+  const palette = ['#f97316', '#6366f1', '#10b981', '#ec4899', '#0ea5e9', '#8b5cf6', '#facc15', '#ef4444', '#14b8a6'];
+  const colorFor = (lib) => palette[libraries.indexOf(lib) % palette.length];
+
+  // X range over all run rows (log scale so dense small-token clusters spread).
+  const tokens = runRows.map((r) => r.payloadTokens);
+  const minLog = Math.log10(Math.max(1, Math.min(...tokens)));
+  const maxLog = Math.log10(Math.max(...tokens));
+  const xPad = (maxLog - minLog) * 0.05 || 0.5;
+  const xMin = minLog - xPad;
+  const xMax = maxLog + xPad;
+
+  const cols = 3;
+  const rowsCount = Math.ceil(facets.length / cols);
+  const panelW = 280;
+  const panelH = 200;
+  const gap = 24;
+  const headerH = 80;
+  const legendH = 50 + Math.ceil(libraries.length / 4) * 18 + (skipRows.length > 0 ? 28 : 0);
+  const W = cols * panelW + (cols + 1) * gap;
+  const H = headerH + rowsCount * (panelH + gap) + gap + legendH;
+
+  function plotPanel(facet, panelIdx) {
+    const col = panelIdx % cols;
+    const row = Math.floor(panelIdx / cols);
+    const x0 = gap + col * (panelW + gap);
+    const y0 = headerH + row * (panelH + gap);
+    const facetRows = facet === '__aggregate__' ? runRows : runRows.filter((r) => r.archetype === facet);
+    const innerPad = 28;
+    const innerX0 = x0 + innerPad;
+    const innerY0 = y0 + 28;
+    const innerW = panelW - innerPad * 2;
+    const innerH = panelH - 56;
+    const xScale = (t) => innerX0 + ((Math.log10(Math.max(1, t)) - xMin) / (xMax - xMin)) * innerW;
+    const yScale = (ret) => innerY0 + innerH - ret * innerH;
+
+    const dots = facetRows
+      .map((r) => `<circle cx="${xScale(r.payloadTokens).toFixed(1)}" cy="${yScale(r.retention).toFixed(1)}" r="4" fill="${colorFor(r.library)}" fill-opacity="0.75" stroke="#0f172a" stroke-width="0.5"/>`)
+      .join('');
+
+    return (
+      `<g><rect x="${x0}" y="${y0}" width="${panelW}" height="${panelH}" fill="#ffffff" stroke="#e2e8f0" rx="6"/>` +
+      `<text x="${x0 + panelW / 2}" y="${y0 + 18}" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">${facet === '__aggregate__' ? 'All archetypes' : facet}</text>` +
+      `<rect x="${innerX0}" y="${innerY0}" width="${innerW}" height="${innerH}" fill="#f8fafc" stroke="#cbd5e1" stroke-width="0.5" rx="2"/>` +
+      `<text x="${innerX0}" y="${innerY0 + innerH + 16}" font-size="9" fill="#64748b">log10 tokens</text>` +
+      `<text x="${innerX0 - 4}" y="${innerY0 + 8}" text-anchor="end" font-size="9" fill="#64748b">retention</text>` +
+      dots +
+      `</g>`
+    );
+  }
+
+  const legendItems = libraries
+    .map((lib, i) => {
+      const lx = gap + (i % 4) * 240;
+      const ly = headerH + rowsCount * (panelH + gap) + gap + 24 + Math.floor(i / 4) * 18;
+      return `<circle cx="${lx + 6}" cy="${ly}" r="5" fill="${colorFor(lib)}"/><text x="${lx + 18}" y="${ly + 4}" font-size="11" fill="#0f172a">${lib}</text>`;
+    })
+    .join('');
+
+  const skipNote = skipRows.length > 0
+    ? `<text x="${W / 2}" y="${H - 14}" text-anchor="middle" font-size="11" fill="#475569">${skipRows.length} cells skipped: live-only (set OPENCHROME_BENCH_LIVE=1 to run)</text>`
+    : '';
+
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">` +
+    `<rect width="${W}" height="${H}" fill="#f1f5f9" rx="10"/>` +
+    `<text x="${W / 2}" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">Token efficiency: tokens vs retention (#1256)</text>` +
+    `<text x="${W / 2}" y="52" text-anchor="middle" font-size="12" fill="#64748b">Upper-left wins: fewer tokens, higher retention. Color = library. Faceted by archetype.</text>` +
+    facets.map((f, i) => plotPanel(f, i)).join('') +
+    legendItems +
+    skipNote +
+    `</svg>`
+  );
+}
+
 // Write all SVGs
 writeFileSync(`${RESULTS_DIR}/chart-speed.svg`, generateSpeedSVG());
 writeFileSync(`${RESULTS_DIR}/chart-tokens.svg`, generateTokenSVG());
@@ -357,7 +461,17 @@ if (speedCharts) {
   writeFileSync(`${RESULTS_DIR}/chart-success-rate.svg`, speedCharts.successSvg);
 }
 
-console.log('SVG charts generated:');
-console.log('  chart-speed.svg     - Speed comparison bar chart');
-console.log('  chart-tokens.svg    - Token efficiency horizontal bars');
-console.log('  chart-dashboard.svg - Combined dashboard with key metrics');
+const tokensScatter = generateTokensScatterSVG();
+if (tokensScatter) {
+  writeFileSync(`${RESULTS_DIR}/chart-tokens-scatter.svg`, tokensScatter);
+}
+
+console.error('SVG charts generated:');
+console.error('  chart-speed.svg            - Speed comparison bar chart');
+console.error('  chart-tokens.svg           - Token efficiency horizontal bars (legacy)');
+console.error('  chart-dashboard.svg        - Combined dashboard with key metrics');
+if (tokensScatter) {
+  console.error('  chart-tokens-scatter.svg   - Token efficiency scatter (#1256 matrix)');
+} else {
+  console.error('  chart-tokens-scatter.svg   - SKIPPED (run `npm run bench:tokens` to produce token-efficiency.json)');
+}
