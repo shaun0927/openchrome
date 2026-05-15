@@ -79,4 +79,23 @@ describe('WebVoyager task corpus', () => {
       expect(task.pending).toBe(true);
     }
   });
+
+  test('Sprint-2 corpus expansion (task-19..) is also marked pending', async () => {
+    // The 43 tasks added in Sprint 2 (#1257 — PR-11) all ship pending until
+    // their transcripts are recorded in the next-session real-LLM run. This
+    // is the same honesty guard as the task-11..18 batch — without it, a
+    // task could silently default to `pending: false` and the mock runner
+    // would report a false pass/fail for a task that has no ground truth.
+    const sprint2Files = files.filter((f) => {
+      const match = /^task-(\d+)-/.exec(f);
+      if (!match) return false;
+      return parseInt(match[1], 10) >= 19;
+    });
+    expect(sprint2Files.length).toBeGreaterThanOrEqual(40);
+    for (const f of sprint2Files) {
+      const mod = await import(path.join(TASKS_DIR, f));
+      const task = (mod.default ?? mod.task) as WebVoyagerTask;
+      expect(task.pending).toBe(true);
+    }
+  });
 });
