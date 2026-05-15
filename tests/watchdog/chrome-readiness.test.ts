@@ -62,11 +62,29 @@ describe('chrome readiness wiring', () => {
     });
 
     readiness.initializeStartupConnection();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Drain the rejected connect() promise via the mock result so the assertion
+    // is robust to changes in the .catch() handler's microtask depth.
+    await client.connect.mock.results[0].value.catch(() => { /* expected reject */ });
 
     expect(states).toEqual(['failing']);
     expect(log.error).toHaveBeenCalledWith('[SelfHealing] Startup Chrome connect failed:', err);
+  });
+
+  test('startup initialization leaves chrome non-ready when connect resolves without a connection event', async () => {
+    // Readiness is driven by the connection listener, not connect()'s resolution.
+    // If connect() short-circuits (browser already attached, recently verified)
+    // without emitting a connected/reconnected event, the readiness component
+    // must not be touched here — some other path is responsible for it.
+    const { client } = createClient();
+    const states: ComponentState[] = [];
+    const readiness = wireChromeReadiness(client, {
+      setChrome: (state) => states.push(state),
+    });
+
+    readiness.initializeStartupConnection();
+    await client.connect.mock.results[0].value;
+
+    expect(states).toEqual([]);
   });
 
   test('watchdog relaunch keeps chrome non-ready until forceReconnect resolves', async () => {

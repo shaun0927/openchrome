@@ -194,6 +194,121 @@ describe('CDPClient – connection coalescing', () => {
     expect(client.isConnected()).toBe(true);
     stopHeartbeat(client);
   });
+
+  test('first call honors caller autoLaunch and tracks it on pendingConnectAutoLaunch', async () => {
+    // The startup-probe race fix relies on connectInternal receiving the
+    // caller's autoLaunch and on pendingConnectAutoLaunch tracking the
+    // effective value so a mismatched second caller can detect the conflict.
+    const client = new CDPClient({ port: 9222 });
+
+    let resolveFirst: (() => void) | null = null;
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockImplementation(() => new Promise<void>((resolve) => {
+        resolveFirst = () => {
+          (client as any).browser = createMockBrowser();
+          (client as any).connectionState = 'connected';
+          resolve();
+        };
+      }));
+
+    const probePromise = client.connect({ autoLaunch: false });
+    expect((client as any).pendingConnect).not.toBeNull();
+    expect((client as any).pendingConnectAutoLaunch).toBe(false);
+    expect(connectInternalSpy.mock.calls[0][0]).toMatchObject({ autoLaunch: false });
+
+    resolveFirst!();
+    await probePromise;
+
+    // Cleared after settlement.
+    expect((client as any).pendingConnect).toBeNull();
+    expect((client as any).pendingConnectAutoLaunch).toBeUndefined();
+    stopHeartbeat(client);
+  });
+
+  test('conflicting autoLaunch: second caller gets its own attempt when in-flight call fails', async () => {
+    // Regression guard for the startup-probe race: when the in-flight call
+    // (e.g. probe with autoLaunch:false) fails because Chrome is not running,
+    // a concurrent tool-call connect(autoLaunch:true) must not be coalesced
+    // into that same failed attempt — it gets its own connectInternal so the
+    // caller's autoLaunch preference is honored.
+    const client = new CDPClient({ port: 9222 });
+
+    let rejectFirst: ((err: Error) => void) | null = null;
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+        rejectFirst = (err) => reject(err);
+      }))
+      .mockImplementationOnce(async () => {
+        (client as any).browser = createMockBrowser();
+        (client as any).connectionState = 'connected';
+      });
+
+    const probePromise = client.connect({ autoLaunch: false }).catch(() => { /* expected */ });
+    expect((client as any).pendingConnectAutoLaunch).toBe(false);
+
+    // Tool-call analog with conflicting autoLaunch:true lands while the probe
+    // is in flight. Implementation must wait, then start its own attempt.
+    const toolPromise = client.connect({ autoLaunch: true });
+
+    rejectFirst!(new Error('chrome not running'));
+    await Promise.all([probePromise, toolPromise]);
+
+    // Two separate connectInternal invocations — coalescing would produce one.
+    expect(connectInternalSpy).toHaveBeenCalledTimes(2);
+    expect(connectInternalSpy.mock.calls[0][0]).toMatchObject({ autoLaunch: false });
+    expect(connectInternalSpy.mock.calls[1][0]).toMatchObject({ autoLaunch: true });
+    stopHeartbeat(client);
+  });
+
+  test('connect() with matching autoLaunch still coalesces', async () => {
+    const client = new CDPClient({ port: 9222 });
+
+    let resolveConnect: (() => void) | null = null;
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockImplementation(() => new Promise<void>((resolve) => {
+        resolveConnect = () => {
+          (client as any).browser = createMockBrowser();
+          (client as any).connectionState = 'connected';
+          resolve();
+        };
+      }));
+
+    const p1 = client.connect({ autoLaunch: false });
+    const p2 = client.connect({ autoLaunch: false });
+
+    resolveConnect!();
+    await Promise.all([p1, p2]);
+
+    // Same effective autoLaunch → still coalesces to a single attempt.
+    expect(connectInternalSpy).toHaveBeenCalledTimes(1);
+    stopHeartbeat(client);
+  });
+
+  test('connect() with unspecified autoLaunch coalesces with the instance default', async () => {
+    // Instance default is autoLaunch:false (per the mocked global config), so a
+    // caller that omits the option resolves to false and should coalesce with
+    // an in-flight explicit-false call.
+    const client = new CDPClient({ port: 9222 });
+
+    let resolveConnect: (() => void) | null = null;
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockImplementation(() => new Promise<void>((resolve) => {
+        resolveConnect = () => {
+          (client as any).browser = createMockBrowser();
+          (client as any).connectionState = 'connected';
+          resolve();
+        };
+      }));
+
+    const explicit = client.connect({ autoLaunch: false });
+    const implicit = client.connect(); // resolves to instance default = false
+
+    resolveConnect!();
+    await Promise.all([explicit, implicit]);
+
+    expect(connectInternalSpy).toHaveBeenCalledTimes(1);
+    stopHeartbeat(client);
+  });
 });
 
 describe('CDPClient – puppeteer.connect timeout', () => {

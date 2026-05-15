@@ -4,6 +4,12 @@ import { setComponent } from './readiness';
 
 export interface ChromeReadinessClient {
   addConnectionListener(listener: (event: ConnectionEvent) => void): void;
+  /**
+   * @param options.autoLaunch When `false`, do NOT spawn Chrome even if the
+   *   underlying client is configured to auto-launch. Used by the readiness
+   *   probe at server startup. Implementations that do not control Chrome
+   *   spawning may ignore this option.
+   */
   connect(options?: { autoLaunch?: boolean }): Promise<void>;
   forceReconnect(): Promise<void>;
 }
