@@ -51,4 +51,4 @@ Outputs are written under the selected output directory:
 
 ## Relation to WebVoyager benchmark work
 
-Issue #851 owns WebVoyager-style tasks and real/mock LLM adapters. This harness owns the reusable episode substrate: `EpisodeTaskSpec`, `EpisodeResult`, reporter, stop conditions, and mock-adapter contract. WebVoyager and future benchmark suites should reuse these shapes rather than adding duplicate runners.
+Issue #1257 owns the Agent Task Success comparison. WebVoyager-style tasks remain the stable public-web lookup layer; this episode harness now owns the controlled realistic workflow foundation for stateful task success. The controlled layer emits task taxonomy, repeated samples, first-tool accuracy, no-progress signals, and deterministic full-task token estimates before any live Claude or competitor-native adapter is allowed to produce headline numbers. See `docs/benchmarks/agent-task-success.md`.
