@@ -4,6 +4,21 @@ All notable changes to OpenChrome are documented here. For full release notes se
 
 ---
 
+## v1.12.1 — competitive benchmark suite (2026-05-15)
+
+Focused follow-up to v1.12.0: merges the Competitive Benchmark Suite
+(Epic #1254) under `tests/benchmark/` — harness foundation, six scoring
+axes, Playwright/Puppeteer competitor adapters, local fixtures, and a
+cross-platform benchmark CI workflow. Also adds task-scoped browser lanes
+(`oc_lane_*`) and opt-in codegen replay artifacts (`oc_skill_export`).
+Default `tools/list` now returns 115 entries (was 110). All changes are
+additive or test-only; no new mandatory runtime deps.
+
+See [`docs/releases/v1.12.1.md`](docs/releases/v1.12.1.md) for the full
+release notes.
+
+---
+
 ## v1.12.0 — task harness, recovery runtime, CLI MCP driver (2026-05-14)
 
 Largest feature release in the v1.x line: 105 PRs, ~30 new MCP tools, a

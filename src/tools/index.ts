@@ -123,6 +123,7 @@ import { registerOcDiffTool } from './oc-diff';
 // Skill memory tools (#785) — record + recall
 import { registerOcSkillRecordTool } from './oc-skill-record';
 import { registerOcSkillRecallTool } from './oc-skill-recall';
+import { registerOcSkillExportTool } from './oc-skill-export';
 import { isPilotEnabled } from '../harness/flags';
 
 // Async task ledger (#855) — start/list/get/cancel/wait for long-running tools
@@ -133,6 +134,7 @@ import { registerOcTaskCancelTool } from './oc-task-cancel';
 import { registerOcTaskWaitTool } from './oc-task-wait';
 import { registerOcTaskUpdateTool } from './oc-task-update';
 import { registerOcTaskFinishTool } from './oc-task-finish';
+import { registerOcLaneTools } from './oc-lane';
 // Doctor report tool (#898) — read cached `openchrome doctor` output
 import { registerOcDoctorReportTool } from './oc-doctor-report';
 // Performance insights two-step API (#846)
@@ -241,6 +243,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_session_snapshot: 'core',
   oc_skill_recall: 'core',
   oc_skill_record: 'core',
+  oc_skill_export: 'core',
   oc_skill_replay: 'pilot',
   oc_stop: 'core',
   page_content: 'core',
@@ -320,6 +323,10 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_task_cancel: 'core',
   oc_task_finish: 'core',
   oc_task_get: 'core',
+  oc_lane_create: 'core',
+  oc_lane_list: 'core',
+  oc_lane_get: 'core',
+  oc_lane_close: 'core',
   oc_task_list: 'core',
   oc_task_run_checkpoint: 'core',
   oc_task_run_complete: 'core',
@@ -506,6 +513,7 @@ export function registerAllTools(server: MCPServer): void {
   // Skill memory tools (#785) — record + recall
   registerOcSkillRecordTool(proxy);
   registerOcSkillRecallTool(proxy);
+  registerOcSkillExportTool(proxy);
   // Skill replay (#856) — pilot-tier. Dynamically imported so no
   // `src/pilot/**` dependency is loaded unless --pilot and
   // OPENCHROME_SKILL_REPLAY=1 are both active.
@@ -545,6 +553,7 @@ export function registerAllTools(server: MCPServer): void {
   registerOcTaskWaitTool(server);
   registerOcTaskUpdateTool(server);
   registerOcTaskFinishTool(server);
+  registerOcLaneTools(server);
 
   // Reap any RUNNING task whose owner pid is no longer alive. Runs
   // once at server start (issue #855 invariant #2) so a crash on a

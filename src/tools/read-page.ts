@@ -23,6 +23,7 @@ import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref
 import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 import { decodeCursor, encodeCursor } from '../utils/paginate';
+import { applyLaneTarget, recordLaneToolCall } from '../core/browser-lanes';
 
 const READ_PAGE_CURSOR_CHARS = 5000;
 
@@ -100,6 +101,8 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Tab ID to read from',
       },
+      taskId: { type: 'string', description: 'Task id when using a task-scoped browser lane.' },
+      laneId: { type: 'string', description: 'Task-scoped browser lane id; validates tabId or defaults to the lane current target.' },
       depth: {
         type: 'number',
         description: 'Max tree depth. Default: 8 (all), 5 (interactive)',
@@ -191,7 +194,7 @@ const definition: MCPToolDefinition = {
         description: 'Wrap page-origin plaintext in <oc:page>. Default true; false disables.',
       },
     },
-    required: ['tabId'],
+
   },
   annotations: TOOL_ANNOTATIONS.read_page,
 };
@@ -327,7 +330,9 @@ const handler: ToolHandler = async (
   context?: ToolContext
 ): Promise<MCPResult> => {
   throwIfAborted(context);
-  const tabId = args.tabId as string;
+  let scopedArgs: Record<string, unknown>;
+  try { scopedArgs = applyLaneTarget(args); } catch (error) { return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true }; }
+  const tabId = scopedArgs.tabId as string;
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;
   const requestedDepth = typeof args.depth === 'number' ? args.depth : undefined;
@@ -348,6 +353,7 @@ const handler: ToolHandler = async (
 
   try {
     const page = await sessionManager.getPage(sessionId, tabId);
+    await recordLaneToolCall(args, !!page, tabId);
     if (!page) {
       const available = await sessionManager.getAvailableTargets(sessionId);
       const availableInfo = available.length > 0

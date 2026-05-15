@@ -68,6 +68,7 @@ import {
   MissingSecretError,
   getSecretStore,
 } from './core/secrets';
+import { isCodegenEnabled, recordCodegenStep } from './core/codegen';
 import { currentRequestContext } from './observability/request-id';
 import type { TransportMessageContext } from './transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from './recovery';
@@ -2187,6 +2188,10 @@ export class MCPServer {
 
       // End activity tracking (success)
       this.activityTracker!.endCall(callId, 'success');
+      const replayEnvelope = isCodegenEnabled() ? recordCodegenStep(sessionId, toolName, toolArgs) : undefined;
+      if (replayEnvelope) {
+        (result as Record<string, unknown>).replay = replayEnvelope;
+      }
       result = redactSecrets(result);
       this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, result.isError ? 'no_progress' : 'success', result);
       getDashboardState().recordToolEnd(callId, 'success');

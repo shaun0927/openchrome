@@ -15,3 +15,19 @@ export {
   OpenChromeRealAdapter,
   RealAdapterOptions,
 } from './openchrome-real-adapter';
+
+// Competitor adapters — same callTool surface, different library underneath.
+export {
+  PuppeteerAdapter,
+  PuppeteerAdapterOptions,
+  PuppeteerBrowserLike,
+  PuppeteerPageLike,
+} from './puppeteer-adapter';
+
+export {
+  PlaywrightAdapter,
+  PlaywrightAdapterOptions,
+  PlaywrightBrowserLike,
+  PlaywrightContextLike,
+  PlaywrightPageLike,
+} from './playwright-adapter';

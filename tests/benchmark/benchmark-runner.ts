@@ -3,12 +3,33 @@
  * Self-contained - no project imports required.
  */
 
-export interface MCPAdapter {
+/**
+ * Base interface every benchmarked library implements — OpenChrome and every
+ * competitor (Playwright, Puppeteer, playwright-mcp, browser-use, Crawlee).
+ * Axis-specific capability interfaces (e.g. MCPAdapter) extend this. A common
+ * base is what lets task code stay identical across libraries, so the only
+ * variable is the library itself (Epic #1254, methodology principle #4).
+ */
+export interface LibraryAdapter {
+  /** Display name, e.g. "OpenChrome", "Playwright". */
   name: string;
+  /** Execution-mode label, e.g. "dom", "ax", "raw-html". */
   mode: string;
-  callTool(toolName: string, args: Record<string, unknown>): Promise<MCPToolResult>;
+  /** Adapter category, for fairness bookkeeping in reports. */
+  kind?: 'mcp' | 'library' | 'bridge';
+  /** Pinned version of the underlying library (see benchmark/COMPETITORS.md). */
+  version?: string;
   setup?(): Promise<void>;
   teardown?(): Promise<void>;
+}
+
+/**
+ * MCP-specific adapter — drives a library through MCP tool calls. Implemented
+ * by OpenChromeStubAdapter / OpenChromeRealAdapter and, later, the
+ * playwright-mcp adapter.
+ */
+export interface MCPAdapter extends LibraryAdapter {
+  callTool(toolName: string, args: Record<string, unknown>): Promise<MCPToolResult>;
 }
 
 export interface MCPToolResult {
@@ -203,7 +224,11 @@ export class BenchmarkRunner {
     const toolCallValues = runs.map((r) => r.toolCallCount);
     const wallTimeValues = runs.map((r) => r.wallTimeMs);
     const responseCharValues = runs.map((r) => r.responseChars ?? r.outputChars);
-    const estimatedTokenValues = runs.map((r) => r.estimatedOutputTokens ?? Math.ceil((r.responseChars ?? r.outputChars) / 4));
+    // Real token counts are owned by the task (via tests/benchmark/utils/tokenizer.ts),
+    // which is the only layer that still holds the response text. The runner sees
+    // only char counts, so a task that reports token metrics MUST set
+    // estimatedOutputTokens; absent that we report 0 rather than a chars/4 guess.
+    const estimatedTokenValues = runs.map((r) => r.estimatedOutputTokens ?? 0);
     const screenshotByteValues = runs.map((r) => r.screenshotBytes ?? 0);
     const nodeRssValues = runs.map((r) => r.nodeRssBytes ?? 0).filter((value) => value > 0);
 

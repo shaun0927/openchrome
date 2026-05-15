@@ -202,10 +202,25 @@
       "name": "oc_skill_recall"
     },
     {
+      "name": "oc_skill_export"
+    },
+    {
       "name": "oc_skill_record"
     },
     {
       "name": "oc_stop"
+    },
+    {
+      "name": "oc_lane_close"
+    },
+    {
+      "name": "oc_lane_create"
+    },
+    {
+      "name": "oc_lane_get"
+    },
+    {
+      "name": "oc_lane_list"
     },
     {
       "name": "oc_task_cancel"
