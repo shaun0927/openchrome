@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-10",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Webcam 4K"
+    },
+    {
+      "key": "price",
+      "expected": "$119.00"
+    },
+    {
+      "key": "brand",
+      "expected": "OpticLab"
+    },
+    {
+      "key": "sku",
+      "expected": "OL-WC-049"
+    },
+    {
+      "key": "rating",
+      "expected": "4.3"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "2033"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Peripherals"
+    },
+    {
+      "key": "color",
+      "expected": "Matte Black"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-02",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Bluetooth Speaker"
+    },
+    {
+      "key": "price",
+      "expected": "$89.50"
+    },
+    {
+      "key": "brand",
+      "expected": "Acme Audio"
+    },
+    {
+      "key": "sku",
+      "expected": "AA-BS-014"
+    },
+    {
+      "key": "rating",
+      "expected": "4.3"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "937"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Audio"
+    },
+    {
+      "key": "color",
+      "expected": "Slate Gray"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

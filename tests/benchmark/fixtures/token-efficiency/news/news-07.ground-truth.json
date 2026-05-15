@@ -1,0 +1,53 @@
+{
+  "fixture": "news-07",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "Hospital Network Expands Mental Health Care"
+    },
+    {
+      "key": "author",
+      "expected": "Sam Tanaka"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-01-19"
+    },
+    {
+      "key": "section",
+      "expected": "Health"
+    },
+    {
+      "key": "summary",
+      "expected": "Hospital Network Expands Mental Health Care — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "1088"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/mental-health-care"
+    },
+    {
+      "key": "category",
+      "expected": "Wellness"
+    },
+    {
+      "key": "readingTime",
+      "expected": "5 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Health / Wellness"
+    }
+  ]
+}

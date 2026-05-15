@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-10",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "CodeNotes"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@riley"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "New note"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Closed the lingering follow-up about the cache eviction policy"
+    },
+    {
+      "key": "postBody",
+      "expected": "Closed the lingering follow-up about the cache eviction policy. Posted via the CodeNotes mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "193"
+    },
+    {
+      "key": "replyCount",
+      "expected": "3"
+    },
+    {
+      "key": "shareCount",
+      "expected": "5"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-19 18:14 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Riley avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search notes"
+    }
+  ]
+}

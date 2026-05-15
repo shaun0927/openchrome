@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-05",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Permissions Model"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Security"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to permissions model for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-08-09"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/permissions"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Security / Permissions Model"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "json"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Audit Logging"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Auth Setup"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "fixture": "news-09",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "University Launches Open Data Portal"
+    },
+    {
+      "key": "author",
+      "expected": "Riley Chen"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-05-25"
+    },
+    {
+      "key": "section",
+      "expected": "Education"
+    },
+    {
+      "key": "summary",
+      "expected": "University Launches Open Data Portal — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "1244"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/open-data-portal"
+    },
+    {
+      "key": "category",
+      "expected": "Open Data"
+    },
+    {
+      "key": "readingTime",
+      "expected": "5 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Education / Open Data"
+    }
+  ]
+}

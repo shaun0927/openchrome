@@ -1,0 +1,53 @@
+{
+  "fixture": "news-05",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "Air Quality Index Improves Year Over Year"
+    },
+    {
+      "key": "author",
+      "expected": "Diego Alvarez"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-09-13"
+    },
+    {
+      "key": "section",
+      "expected": "Environment"
+    },
+    {
+      "key": "summary",
+      "expected": "Air Quality Index Improves Year Over Year — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "932"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/air-quality"
+    },
+    {
+      "key": "category",
+      "expected": "Air Quality"
+    },
+    {
+      "key": "readingTime",
+      "expected": "4 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Environment / Air Quality"
+    }
+  ]
+}

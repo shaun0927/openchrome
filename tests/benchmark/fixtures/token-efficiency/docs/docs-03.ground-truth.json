@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-03",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Hooks Reference"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Extending"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to hooks reference for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-06-05"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/hooks-reference"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Extending / Hooks Reference"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "json"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Custom Tools"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Plugins Overview"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-02",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Configuring SSE"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Transports"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to configuring sse for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-05-03"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/sse-transport"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Transports / Configuring SSE"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "bash"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "WebSocket Transport"
+    },
+    {
+      "key": "prevPage",
+      "expected": "HTTP Transport"
+    }
+  ]
+}

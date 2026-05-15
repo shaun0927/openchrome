@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-09",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "CodeNotes"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@luca"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "New note"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Pinned the migration checklist for the team"
+    },
+    {
+      "key": "postBody",
+      "expected": "Pinned the migration checklist for the team. Posted via the CodeNotes mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "176"
+    },
+    {
+      "key": "replyCount",
+      "expected": "11"
+    },
+    {
+      "key": "shareCount",
+      "expected": "4"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-17 17:07 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Luca avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search notes"
+    }
+  ]
+}
