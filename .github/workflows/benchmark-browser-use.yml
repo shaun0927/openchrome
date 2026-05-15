@@ -1,8 +1,9 @@
 name: benchmark — browser-use bridge smoke
 
-# Ubuntu-only smoke for the browser-use Python bridge (#1255 — 0.4).
-# Cross-platform expansion to macOS/Windows is queued for Sprint 3 (#1259
-# PR-15) where the reliability CI matrix is hardened.
+# Cross-platform smoke for the browser-use Python bridge.
+# Originally ubuntu-only (Sprint 0 #1255 — 0.4); Sprint 3 #1259 PR-15 expands
+# the matrix to macOS + Windows so the bridge gets the same cross-platform
+# coverage as the benchmark-suite workflow.
 #
 # This workflow exercises only the bridge *protocol* — `ping` + `shutdown` —
 # so it does not need the full browser-use install (no Chromium download,
@@ -26,7 +27,15 @@ on:
 
 jobs:
   bridge-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Cross-platform pass rate is itself a reliability metric (#1259), so
+      # every cell must run to completion — single-OS failure does not abort
+      # the rest of the matrix.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -48,12 +57,9 @@ jobs:
         run: npx jest tests/benchmark/adapters/browser-use-adapter.test.ts
 
       - name: Smoke-test the Python bridge protocol (no browser-use install)
-        # Exercises ping + shutdown via stdio. browser-use itself is lazy-
-        # imported inside open_tab/read_page only, so this smoke does not
-        # require Chromium or browser-use to be installed.
-        run: |
-          printf '%s\n%s\n' '{"id":1,"method":"ping","args":{}}' '{"id":2,"method":"shutdown","args":{}}' \
-            | python3 tests/benchmark/bridges/browser_use_bridge.py \
-            | tee bridge-smoke.out
-          grep -q '"pong": true' bridge-smoke.out
-          grep -q '"shutdown": true' bridge-smoke.out
+        # Cross-platform smoke: drive the bridge via Node's child_process so
+        # we don't depend on bash / printf / grep being identical across
+        # ubuntu / macOS / Windows. browser-use itself is lazy-imported
+        # inside open_tab/read_page only, so this smoke does not require
+        # Chromium or browser-use to be installed.
+        run: node scripts/bench/bridge-smoke.mjs
