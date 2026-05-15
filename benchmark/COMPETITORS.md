@@ -34,7 +34,7 @@ they are not reproducible here. See Epic #1254 "Non-goals".
 | Puppeteer | `puppeteer` | TBD | — | TBD | #C #D #E #F |
 | playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F |
 | browser-use | `browser-use` (PyPI) | TBD | — | TBD | #A #B #D #E |
-| Crawlee | `crawlee` | TBD | — | TBD | #A #C |
+| Crawlee | `crawlee` | `3.16.0` | `6c9cd2ff7e7d89ce7685e67f3f919f3cce0fa7a4` | 2026-05-15 | #A #C |
 
 ## Tokenizer
 

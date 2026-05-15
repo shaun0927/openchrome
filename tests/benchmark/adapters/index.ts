@@ -37,3 +37,10 @@ export {
   PlaywrightMcpAdapterOptions,
   PlaywrightMcpTransport,
 } from './playwright-mcp-adapter';
+
+export {
+  CrawleeAdapter,
+  CrawleeAdapterOptions,
+  CrawleeExtractor,
+  CrawleeExtractionResult,
+} from './crawlee-adapter';
