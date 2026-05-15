@@ -21,6 +21,13 @@ import type { EvalContext } from '../../../src/contracts/eval-context';
 import { runMockTask } from './llm/mock-adapter';
 import { renderMarkdown } from './report';
 import { WEBVOYAGER_BUDGET } from './llm/budget';
+import {
+  WEBVOYAGER_LIBRARIES,
+  WebVoyagerLibrary,
+  LIBRARY_ROUTING,
+  projectCost,
+  formatProjection,
+} from './llm/library-routing';
 import type {
   Baseline,
   BenchReport,
@@ -37,10 +44,34 @@ type AdapterName = 'mock' | 'claude';
 interface CliOptions {
   adapter: AdapterName;
   taskFilter?: string;
+  /**
+   * Library matrix selection (#1257). Today only openchrome's native loop is
+   * wired; selecting playwright-mcp or browser-use surfaces a clear skip
+   * notice when --dry-run is omitted. The flag exists today so PR-12 can
+   * land the routing + dry-run gate without touching the adapter dispatch.
+   */
+  library: WebVoyagerLibrary;
+  /**
+   * --dry-run: print the cost projection and exit 0 WITHOUT making any LLM
+   * API call. The runner refuses to run real tasks in this mode regardless
+   * of OPENCHROME_BENCH_REAL.
+   */
+  dryRun: boolean;
+  /** Repetitions per task; issue #1257 mandates N >= 10 for native-mode runs. */
+  repetitions: number;
+}
+
+function isLibrary(v: string): v is WebVoyagerLibrary {
+  return (WEBVOYAGER_LIBRARIES as readonly string[]).includes(v);
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const opts: CliOptions = { adapter: 'mock' };
+  const opts: CliOptions = {
+    adapter: 'mock',
+    library: 'openchrome',
+    dryRun: false,
+    repetitions: 1,
+  };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--adapter') {
@@ -51,6 +82,20 @@ function parseArgs(argv: string[]): CliOptions {
       opts.adapter = v;
     } else if (a === '--task') {
       opts.taskFilter = argv[++i];
+    } else if (a === '--library') {
+      const v = argv[++i];
+      if (!isLibrary(v)) {
+        throw new Error(`unknown --library: ${v}. Choose one of ${WEBVOYAGER_LIBRARIES.join(', ')}`);
+      }
+      opts.library = v;
+    } else if (a === '--repetitions' || a === '--reps') {
+      const n = parseInt(argv[++i], 10);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new Error(`--repetitions must be a positive integer; got ${argv[i]}`);
+      }
+      opts.repetitions = n;
+    } else if (a === '--dry-run') {
+      opts.dryRun = true;
     } else if (a.startsWith('--adapter=')) {
       const v = a.slice('--adapter='.length);
       if (v !== 'mock' && v !== 'claude') {
@@ -59,6 +104,12 @@ function parseArgs(argv: string[]): CliOptions {
       opts.adapter = v;
     } else if (a.startsWith('--task=')) {
       opts.taskFilter = a.slice('--task='.length);
+    } else if (a.startsWith('--library=')) {
+      const v = a.slice('--library='.length);
+      if (!isLibrary(v)) {
+        throw new Error(`unknown --library: ${v}. Choose one of ${WEBVOYAGER_LIBRARIES.join(', ')}`);
+      }
+      opts.library = v;
     }
   }
   // env override (e.g. OPENCHROME_BENCH_ADAPTER=claude)
@@ -68,6 +119,8 @@ function parseArgs(argv: string[]): CliOptions {
   }
   return opts;
 }
+
+export { parseArgs as parseRunnerArgs };
 
 async function loadTasks(): Promise<WebVoyagerTask[]> {
   const entries = await fs.readdir(TASKS_DIR);
@@ -245,6 +298,38 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   const tasks = opts.taskFilter ? allTasks.filter((t) => t.name === opts.taskFilter) : allTasks;
   if (tasks.length === 0) {
     console.error('[webvoyager] no tasks selected');
+    return 1;
+  }
+
+  // Dry-run gate (#1257): print the worst-case cost projection and exit 0
+  // WITHOUT making any LLM API call. The gate runs before adapter dispatch
+  // so even `--adapter claude` with OPENCHROME_BENCH_REAL=1 is honored as
+  // dry-run when --dry-run is set.
+  if (opts.dryRun) {
+    const projection = projectCost({
+      taskCount: tasks.length,
+      libraries: [opts.library],
+      repetitions: opts.repetitions,
+    });
+    console.error(formatProjection(projection));
+    console.error(
+      `\n[webvoyager] library=${opts.library} wired=${LIBRARY_ROUTING[opts.library].nativeLoopWired} ` +
+        `adapter-requested=${opts.adapter} (no run performed; --dry-run is set)`,
+    );
+    return 0;
+  }
+
+  // Live library gate (#1257): the runner today only wires OpenChrome's
+  // native loop. Selecting an unwired library without --dry-run is a config
+  // error — refuse to silently fall back to OpenChrome and surface the
+  // routing's note so the operator knows what needs to land.
+  const routing = LIBRARY_ROUTING[opts.library];
+  if (!routing.nativeLoopWired) {
+    console.error(
+      `[webvoyager] GATE FAILED: library "${opts.library}" native loop is not yet wired. ` +
+        `Use --dry-run for the cost projection, or run with --library openchrome. ` +
+        `Note: ${routing.note}`,
+    );
     return 1;
   }
 
