@@ -424,10 +424,13 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   await fs.writeFile(path.join(REPORTS_DIR, 'latest.md'), renderMarkdown(benchReport), 'utf8');
 
   // Gate against baseline: every task in `transcripts_required` MUST pass.
-  // Pending tasks (no transcript yet) are allowed; this prevents 0/10 from
-  // looking "green" but lets us bootstrap the suite honestly.
+  // Pending tasks (no transcript yet) are explicitly excluded from the gate
+  // — this prevents 0/10 from looking "green" but lets us bootstrap the
+  // suite honestly. The report renderer's "(or are pending and excluded
+  // from the gate)" copy assumes this exclusion holds; the previous filter
+  // counted pending as failure, contradicting that copy.
   const requiredFailures = taskReports.filter(
-    (r) => required.has(r.name) && r.result !== 'passed',
+    (r) => required.has(r.name) && r.result !== 'passed' && r.result !== 'pending',
   );
   if (requiredFailures.length > 0) {
     console.error(
