@@ -1,5 +1,13 @@
 # OpenChrome Benchmark Suite
 
+> **Note on history:** This directory is the legacy Twitter/X scraping benchmark. The competitive benchmark suite ([Epic #1254](https://github.com/shaun0927/openchrome/issues/1254)) replaces it with a per-axis structure under `tests/benchmark/`, exposed via the `bench:*` npm scripts at the repo root:
+>
+> - `npm run bench:tokens` — Token Efficiency axis (#1256)
+> - `npm run bench:throughput` — Speed & Throughput axis (#1258)
+> - `npm run bench:latency` — single-action latency (#1258)
+>
+> The scripts below remain functional for the legacy Twitter/X scenario (real Playwright measurements, no estimation). New axes should land in `tests/benchmark/` instead of here.
+
 Real-world benchmark comparing OpenChrome vs Playwright for Twitter/X profile scraping.
 
 ## Task
@@ -79,11 +87,11 @@ Results are saved to `results/`:
 | **OC 10-batch** | **23.2s** | **3.5x** | **95%** |
 | OC 20-batch | 25.7s | 3.2x | 95% |
 
-Token efficiency: **TBD — pending #1256 results** (real per-archetype compression replaces the retired hard-coded estimate)
+Token efficiency: see [`TOKEN-EFFICIENCY-REPORT.md`](./results/TOKEN-EFFICIENCY-REPORT.md) — produced by `npm run bench:tokens` and a per-archetype compression measurement over a 50-fixture corpus, replacing the retired hard-coded estimate.
 
 ## Methodology
 
 - Same Chrome v145 instance via CDP for both tools
 - Same logged-in session (real Chrome profile)
 - Each strategy run in a completely separate process
-- OC compression ratio calibrated from actual `read_page` measurements
+- Token compression: real per-archetype measurement (#1256); legacy hard-coded estimate retired
