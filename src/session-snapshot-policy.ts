@@ -198,6 +198,7 @@ export function markAutoSnapshotRecorded(
   state: SnapshotPolicyState = {},
   at: number = Date.now(),
 ): Required<Pick<SnapshotPolicyState, 'toolCallsSinceSnapshot' | 'lastSnapshotAt'>> {
+  void state;
   return {
     toolCallsSinceSnapshot: 0,
     lastSnapshotAt: at,
