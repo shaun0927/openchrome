@@ -1,0 +1,86 @@
+{
+  "axis": "auth-usability",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-15T09:15:28.564Z",
+    "gitSha": "a03b097c",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.98",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "openchrome",
+      "version": "1.11.0"
+    },
+    {
+      "name": "playwright",
+      "version": "idiomatic-script-only"
+    },
+    {
+      "name": "puppeteer",
+      "version": "idiomatic-script-only"
+    },
+    {
+      "name": "browser-use",
+      "version": "idiomatic-script-only"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "library": "openchrome",
+      "scriptPath": "tests/benchmark/auth-setup-scripts/openchrome.auth-setup.ts",
+      "loc": 12,
+      "blankLines": 5,
+      "commentLines": 0,
+      "totalLines": 17,
+      "profileAttach": true,
+      "wallClockMinutes": null,
+      "loggedInSmoked": false,
+      "note": "list_profiles + profile attach inherits a real Chrome profile's session with zero setup code."
+    },
+    {
+      "library": "playwright",
+      "scriptPath": "tests/benchmark/auth-setup-scripts/playwright.auth-setup.ts",
+      "loc": 15,
+      "blankLines": 5,
+      "commentLines": 0,
+      "totalLines": 20,
+      "profileAttach": false,
+      "wallClockMinutes": null,
+      "loggedInSmoked": false,
+      "note": "storageState({path}) is the documented best practice; requires interactive login once, file persists."
+    },
+    {
+      "library": "puppeteer",
+      "scriptPath": "tests/benchmark/auth-setup-scripts/puppeteer.auth-setup.ts",
+      "loc": 17,
+      "blankLines": 5,
+      "commentLines": 0,
+      "totalLines": 22,
+      "profileAttach": false,
+      "wallClockMinutes": null,
+      "loggedInSmoked": false,
+      "note": "userDataDir persists cookies via a profile dir; explicit cookie-jar API is the lower-level primitive."
+    },
+    {
+      "library": "browser-use",
+      "scriptPath": "tests/benchmark/auth-setup-scripts/browser-use.auth-setup.ts",
+      "loc": 13,
+      "blankLines": 5,
+      "commentLines": 0,
+      "totalLines": 18,
+      "profileAttach": false,
+      "wallClockMinutes": null,
+      "loggedInSmoked": false,
+      "note": "Issues a natural-language agent instruction; planning loop resolves the selectors. Requires the Python bridge."
+    }
+  ]
+}

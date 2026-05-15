@@ -180,7 +180,12 @@ function buildRow(
   liveDriver: boolean,
 ): ReliabilityRow {
   const samples = outcomes.length;
-  const flaky = computeFlakyRate(outcomes.map((o) => o === 1));
+  // minSamples: 1 — `computeFlakyRate` defaults to MIN_FLAKY_SAMPLE_SIZE (50)
+  // and throws below that, but the matrix runner intentionally accepts low
+  // sample counts (CI smoke can pass --samples 10). The `underpowered` flag
+  // on the row already communicates statistical weakness; the hard floor
+  // would crash valid CI invocations.
+  const flaky = computeFlakyRate(outcomes.map((o) => o === 1), { minSamples: 1 });
   const injected = recoveryRecords.length;
   const recovered = recoveryRecords.filter((r) => r.recovered).length;
   return {
@@ -281,17 +286,17 @@ export function main(argv = process.argv.slice(2)): void {
   });
   assertValidResultEnvelope(envelope);
 
-  // Side-car aggregate fields outside the rows array. The renderer reads
-  // either the rows directly or this top-level meta block; the schema
-  // validator only inspects the standard envelope keys.
-  const output = {
-    ...envelope,
-    recoveryAggregate,
-    mode: options.live ? 'live-scaffold' : 'mock',
-  };
+  // result.schema.json sets `additionalProperties: false` at the top level —
+  // spreading `recoveryAggregate` / `mode` into the envelope would write a
+  // file that a strict validator (CI ajv gate, future schema check) rejects.
+  // Both fields are derivable from the rows: `recoveryAggregate` from each
+  // row's `injected`+`recovered`, `mode` from `rows[].liveDriver`. We log
+  // the aggregate for human readers via `formatReport` below and keep the
+  // serialized envelope strictly schema-compliant.
+  void recoveryAggregate;
 
   fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
-  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(output, null, 2) + '\n');
+  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(envelope, null, 2) + '\n');
 
   // console.error: stdout carries MCP JSON-RPC; never log there.
   console.error(formatReport(rows));

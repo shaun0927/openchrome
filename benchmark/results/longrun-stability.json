@@ -1,0 +1,99 @@
+{
+  "axis": "reliability",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-15T09:13:00.226Z",
+    "gitSha": "a03b097c",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.98",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "openchrome",
+      "version": "1.11.0"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "tMs": 0,
+      "rssBytes": 119226368
+    },
+    {
+      "tMs": 1004,
+      "rssBytes": 37486592
+    },
+    {
+      "tMs": 2004,
+      "rssBytes": 37797888
+    },
+    {
+      "tMs": 3004,
+      "rssBytes": 32161792
+    },
+    {
+      "tMs": 4016,
+      "rssBytes": 29835264
+    },
+    {
+      "tMs": 5019,
+      "rssBytes": 30687232
+    }
+  ],
+  "stability": {
+    "sampleCount": 6,
+    "durationMs": 5019,
+    "firstRssBytes": 119226368,
+    "lastRssBytes": 30687232,
+    "rssSlopeBytesPerSec": -13408110.063977994,
+    "rssGrowthRatio": -0.7426137144427649,
+    "suspectedLeak": false
+  },
+  "overallPassRate": 1,
+  "successDrift": [
+    {
+      "binIndex": 0,
+      "attempts": 200,
+      "successes": 200,
+      "successRate": 1
+    },
+    {
+      "binIndex": 1,
+      "attempts": 200,
+      "successes": 200,
+      "successRate": 1
+    },
+    {
+      "binIndex": 2,
+      "attempts": 200,
+      "successes": 200,
+      "successRate": 1
+    },
+    {
+      "binIndex": 3,
+      "attempts": 200,
+      "successes": 200,
+      "successRate": 1
+    },
+    {
+      "binIndex": 4,
+      "attempts": 200,
+      "successes": 200,
+      "successRate": 1
+    }
+  ],
+  "zombieCount": -1,
+  "options": {
+    "durationMs": 5000,
+    "sampleIntervalMs": 1000,
+    "workloadPerInterval": 200,
+    "live": false
+  }
+}
