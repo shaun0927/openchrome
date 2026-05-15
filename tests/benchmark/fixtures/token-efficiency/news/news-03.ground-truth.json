@@ -1,0 +1,53 @@
+{
+  "fixture": "news-03",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "Power Grid Upgrades Roll Out This Summer"
+    },
+    {
+      "key": "author",
+      "expected": "Marcus Bell"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-05-07"
+    },
+    {
+      "key": "section",
+      "expected": "Local"
+    },
+    {
+      "key": "summary",
+      "expected": "Power Grid Upgrades Roll Out This Summer — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "776"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/grid-upgrade"
+    },
+    {
+      "key": "category",
+      "expected": "Infrastructure"
+    },
+    {
+      "key": "readingTime",
+      "expected": "3 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Local / Infrastructure"
+    }
+  ]
+}

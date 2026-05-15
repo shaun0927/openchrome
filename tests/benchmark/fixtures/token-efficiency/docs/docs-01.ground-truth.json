@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-01",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Configuring the HTTP Transport"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Transports"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to configuring the http transport for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-04-01"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/http-transport"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Transports / Configuring the HTTP Transport"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "bash"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Configuring SSE"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Transport Overview"
+    }
+  ]
+}

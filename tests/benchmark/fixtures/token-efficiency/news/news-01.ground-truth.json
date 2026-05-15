@@ -1,0 +1,53 @@
+{
+  "fixture": "news-01",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "City Council Approves Transit Expansion"
+    },
+    {
+      "key": "author",
+      "expected": "Jordan Reyes"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-01-01"
+    },
+    {
+      "key": "section",
+      "expected": "Local"
+    },
+    {
+      "key": "summary",
+      "expected": "City Council Approves Transit Expansion — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "620"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/transit-expansion"
+    },
+    {
+      "key": "category",
+      "expected": "Transportation"
+    },
+    {
+      "key": "readingTime",
+      "expected": "3 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Local / Transportation"
+    }
+  ]
+}

@@ -1,15 +1,24 @@
 /**
- * Isolated Parallel Benchmark — Playwright only.
+ * Isolated Parallel Benchmark — Playwright only. **LEGACY.**
  *
- * Runs ONE strategy at a time (passed via CLI arg).
- * Must be run separately for each strategy to avoid contamination.
+ * This file is the original Twitter/X scraping benchmark — Playwright
+ * measurements only, no estimation. It is **superseded** by the unified
+ * competitive benchmark harness (#1258 / Epic #1254):
  *
- * NOTE: This script measures Playwright only. It does NOT run OpenChrome.
- * It previously *estimated* OpenChrome token counts by dividing raw HTML by a
- * hard-coded `OC_COMPRESSION_RATIO = 15.3` — an unverified guess, now removed
- * (Epic #1254, sub-issue #1255). Real, measured OpenChrome vs competitor
- * throughput numbers come from the unified harness in #1258 (Speed &
- * Throughput); raw HTML is reported here only as a real Playwright measurement.
+ *   For OpenChrome vs competitor throughput, use:
+ *     npm run bench:throughput            (deterministic stub, CI)
+ *     OPENCHROME_BENCH_LIVE=1 \
+ *       npm run bench:throughput          (real Chrome on :9222)
+ *
+ * The unified harness covers the same throughput question and produces a
+ * schema-valid result envelope at `benchmark/results/speed-throughput.json`
+ * that the next-session report generator consumes.
+ *
+ * This script remains functional for the legacy Twitter/X scenario. It
+ * previously *estimated* OpenChrome token counts via a hard-coded
+ * compression ratio — that estimation was removed by Epic #1254 sub-issue
+ * #1255. Today it measures only real Playwright wall-clock + raw HTML
+ * sizes.
  *
  * Usage:
  *   node parallel-isolated.mjs 1    # sequential (1 tab)

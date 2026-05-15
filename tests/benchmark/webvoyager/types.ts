@@ -84,6 +84,18 @@ export interface TaskRunReport {
 export interface BenchReport {
   git_sha: string;
   adapter: string;
+  /** Execution mode the runner was invoked with. Identifies the methodology
+   *  that produced the results so downstream tools can split native vs
+   *  passive measurements without re-parsing the CLI. */
+  mode: 'native' | 'passive';
+  /** Library under test. Same shape constraint, but kept as the raw string
+   *  so the envelope does not have to import the `WebVoyagerLibrary` union
+   *  (and stays stable if the union grows). */
+  library: string;
+  /** Repetitions requested for this run. Records what was asked even if the
+   *  live loop has not been wired yet — readers can spot a `repetitions: 10`
+   *  report with N=10 task entries vs `repetitions: 10` with N=1 entries. */
+  repetitions: number;
   total_tasks: number;
   pass_count: number;
   fail_count: number;

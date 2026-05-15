@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-02",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "WaveFeed"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@priya"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "Compose"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Demo recording of the new layout engine"
+    },
+    {
+      "key": "postBody",
+      "expected": "Demo recording of the new layout engine. Posted via the WaveFeed mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "57"
+    },
+    {
+      "key": "replyCount",
+      "expected": "4"
+    },
+    {
+      "key": "shareCount",
+      "expected": "3"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-03 10:18 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Priya avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search posts"
+    }
+  ]
+}

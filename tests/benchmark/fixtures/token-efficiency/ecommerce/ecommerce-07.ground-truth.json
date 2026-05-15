@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-07",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "USB-C Hub"
+    },
+    {
+      "key": "price",
+      "expected": "$59.00"
+    },
+    {
+      "key": "brand",
+      "expected": "PortCorp"
+    },
+    {
+      "key": "sku",
+      "expected": "PC-UC-005"
+    },
+    {
+      "key": "rating",
+      "expected": "4.8"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "1622"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Accessories"
+    },
+    {
+      "key": "color",
+      "expected": "Space Gray"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

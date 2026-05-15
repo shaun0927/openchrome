@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-06",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "playwright vs puppeteer"
+    },
+    {
+      "key": "totalResults",
+      "expected": "18,200"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to playwright"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/playwright/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of playwright vs puppeteer with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "playwright community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/playwright/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on playwright vs puppeteer covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "playwright reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/playwright"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}
