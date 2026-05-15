@@ -366,13 +366,21 @@ export class PlaywrightMcpAdapter implements MCPAdapter {
 
   private async closeTab(args: Record<string, unknown>): Promise<MCPToolResult> {
     const tabId = typeof args.tabId === 'string' ? args.tabId : '';
-    const tabIndex = this.tabIndexById.get(tabId);
-    if (tabIndex === undefined) {
+    const closedIndex = this.tabIndexById.get(tabId);
+    if (closedIndex === undefined) {
       return errorResult(`PlaywrightMcpAdapter: unknown tabId "${tabId}"`);
     }
     const transport = this.transport as PlaywrightMcpTransport;
-    const res = await transport.callTool('browser_tab_close', { index: tabIndex });
+    const res = await transport.callTool('browser_tab_close', { index: closedIndex });
     this.tabIndexById.delete(tabId);
+    // playwright-mcp re-numbers tabs after a close: every tab whose index was
+    // greater than the closed one shifts down by one. Mirror that here so
+    // subsequent read_page / tabs_close calls target the correct tab.
+    for (const [id, idx] of this.tabIndexById) {
+      if (idx > closedIndex) {
+        this.tabIndexById.set(id, idx - 1);
+      }
+    }
     if (res.isError) return res;
     return textResult(JSON.stringify({ closed: tabId }));
   }
