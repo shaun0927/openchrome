@@ -32,7 +32,7 @@ they are not reproducible here. See Epic #1254 "Non-goals".
 | OpenChrome | `openchrome-mcp` (this repo) | _repo HEAD_ | _per-run git SHA_ | _per run_ | all |
 | Playwright | `playwright` | TBD | — | TBD | #A #C #D #E |
 | Puppeteer | `puppeteer` | TBD | — | TBD | #C #D #E #F |
-| playwright-mcp | `@playwright/mcp` | TBD | — | TBD | #A #B #F |
+| playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F |
 | browser-use | `browser-use` (PyPI) | TBD | — | TBD | #A #B #D #E |
 | Crawlee | `crawlee` | TBD | — | TBD | #A #C |
 

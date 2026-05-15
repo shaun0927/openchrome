@@ -75,6 +75,7 @@
   },
   "homepage": "https://github.com/shaun0927/openchrome#readme",
   "devDependencies": {
+    "@playwright/mcp": "^0.0.75",
     "@types/chrome": "^0.1.36",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",

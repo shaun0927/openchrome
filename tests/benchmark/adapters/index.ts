@@ -31,3 +31,9 @@ export {
   PlaywrightContextLike,
   PlaywrightPageLike,
 } from './playwright-adapter';
+
+export {
+  PlaywrightMcpAdapter,
+  PlaywrightMcpAdapterOptions,
+  PlaywrightMcpTransport,
+} from './playwright-mcp-adapter';
