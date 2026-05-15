@@ -20,7 +20,8 @@ export type BenchmarkAxis =
   | 'speed-throughput'
   | 'reliability'
   | 'auth-usability'
-  | 'developer-experience';
+  | 'developer-experience'
+  | 'realworld-task-completion';
 
 export interface CompetitorPin {
   name: string;
@@ -66,6 +67,7 @@ const VALID_AXES: ReadonlySet<string> = new Set<BenchmarkAxis>([
   'reliability',
   'auth-usability',
   'developer-experience',
+  'realworld-task-completion',
 ]);
 
 const REQUIRED_ENV_KEYS = [

@@ -24,6 +24,7 @@ This document tracks Epic #1254 against its committed success criteria. Update o
 | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | Reliability & Fault-Recovery | ✅ `run-reliability.ts` + `run-longrun.ts` | (queued — direct envelope) | mock matrix landed; live cells scaffolded |
 | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | Auth & Real-World Usability | ✅ `run-auth.ts` | (queued — direct envelope) | LOC measured; logged-in smoke pending live driver |
 | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | Developer Experience | ✅ `run-dx.ts` | ✅ `generate-dx-section.mjs` + dual SVGs | 2/10 tasks × 3/6 libraries landed; schema + actionability rubrics queued |
+| [#1305](https://github.com/shaun0927/openchrome/issues/1305) | Complex Real-World Task Completion | ✅ `run-realworld-task-completion.ts` scaffold | ✅ `generate-realworld-task-completion-section.mjs` | deterministic fixture scaffold only; live competitive rows pending |
 
 ## Retired claims (must never reappear)
 

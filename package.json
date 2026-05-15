@@ -56,7 +56,8 @@
     "bench:episode:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock",
     "bench:visual-grounding": "node scripts/bench/visual-grounding/run.mjs",
     "docs:capability-map": "ts-node scripts/gen-capability-map.ts",
-    "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check"
+    "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check",
+    "bench:realworld": "ts-node tests/benchmark/run-realworld-task-completion.ts && node benchmark/generate-realworld-task-completion-section.mjs"
   },
   "keywords": [
     "openchrome",

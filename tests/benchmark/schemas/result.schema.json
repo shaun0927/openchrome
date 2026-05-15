@@ -17,7 +17,8 @@
         "speed-throughput",
         "reliability",
         "auth-usability",
-        "developer-experience"
+        "developer-experience",
+        "realworld-task-completion"
       ]
     },
     "schemaVersion": {
