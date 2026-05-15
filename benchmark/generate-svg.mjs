@@ -248,10 +248,114 @@ function generateDashboardSVG() {
 </svg>`;
 }
 
+// ========= SVG 4+5: Throughput vs concurrency, success rate vs concurrency (#1258) =========
+//
+// Two complementary charts — issue #1258 mandates that raw throughput AND
+// success rate are reported as SEPARATE PRIMARIES (never collapsed). Each
+// chart gets its own SVG so a reader cannot mistake one for the other.
+// Both consume `benchmark/results/speed-throughput.json` produced by
+// `npm run bench:throughput`. If the file does not exist (fresh checkout),
+// the charts are skipped without breaking the legacy renderers above.
+function generateThroughputAndSuccessSVGs() {
+  let envelope;
+  try {
+    envelope = JSON.parse(readFileSync(`${RESULTS_DIR}/speed-throughput.json`, 'utf8'));
+  } catch {
+    return null;
+  }
+  const rows = Array.isArray(envelope.results) ? envelope.results : [];
+  if (rows.length === 0) return null;
+
+  const libraries = Array.from(new Set(rows.map((r) => r.library))).sort();
+  const concurrencies = Array.from(new Set(rows.map((r) => r.concurrency))).sort((a, b) => a - b);
+  const palette = ['#f97316', '#6366f1', '#10b981', '#ec4899', '#0ea5e9', '#8b5cf6'];
+  const colorFor = (lib) => palette[libraries.indexOf(lib) % palette.length];
+
+  function plot({ title, subtitle, metric, yLabel, yMax, yFmt }) {
+    const W = 720;
+    const H = 380;
+    const margin = { top: 70, right: 120, bottom: 60, left: 60 };
+    const chartW = W - margin.left - margin.right;
+    const chartH = H - margin.top - margin.bottom;
+    const xStep = concurrencies.length > 1 ? chartW / (concurrencies.length - 1) : chartW / 2;
+    const xFor = (c) => margin.left + concurrencies.indexOf(c) * xStep;
+    const yFor = (v) => margin.top + chartH - (v / yMax) * chartH;
+
+    let series = '';
+    for (const lib of libraries) {
+      const libRows = rows.filter((r) => r.library === lib);
+      const points = concurrencies
+        .map((c) => libRows.find((r) => r.concurrency === c))
+        .filter((r) => r);
+      if (points.length === 0) continue;
+      const pathD = points
+        .map((r, i) => `${i === 0 ? 'M' : 'L'} ${xFor(r.concurrency).toFixed(1)} ${yFor(metric(r)).toFixed(1)}`)
+        .join(' ');
+      series += `<path d="${pathD}" stroke="${colorFor(lib)}" stroke-width="2.5" fill="none"/>`;
+      for (const r of points) {
+        series += `<circle cx="${xFor(r.concurrency).toFixed(1)}" cy="${yFor(metric(r)).toFixed(1)}" r="4" fill="${colorFor(lib)}"/>`;
+      }
+    }
+
+    let xAxis = `<line x1="${margin.left}" y1="${margin.top + chartH}" x2="${margin.left + chartW}" y2="${margin.top + chartH}" stroke="#cbd5e1" stroke-width="1"/>`;
+    for (const c of concurrencies) {
+      xAxis += `<text x="${xFor(c).toFixed(1)}" y="${margin.top + chartH + 20}" text-anchor="middle" font-size="12" fill="#475569">${c}</text>`;
+    }
+    xAxis += `<text x="${margin.left + chartW / 2}" y="${margin.top + chartH + 44}" text-anchor="middle" font-size="11" fill="#64748b">concurrency</text>`;
+
+    let yAxis = '';
+    for (let i = 0; i <= 4; i++) {
+      const v = (yMax * i) / 4;
+      const y = yFor(v);
+      yAxis += `<line x1="${margin.left}" y1="${y.toFixed(1)}" x2="${margin.left + chartW}" y2="${y.toFixed(1)}" stroke="#e2e8f0" stroke-width="0.5"/>`;
+      yAxis += `<text x="${margin.left - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#94a3b8">${yFmt(v)}</text>`;
+    }
+    yAxis += `<text x="${margin.left}" y="${margin.top - 24}" font-size="11" fill="#64748b">${yLabel}</text>`;
+
+    const legend = libraries
+      .map((lib, i) => `<g><rect x="${margin.left + chartW + 16}" y="${margin.top + i * 22}" width="14" height="3" fill="${colorFor(lib)}"/><text x="${margin.left + chartW + 36}" y="${margin.top + i * 22 + 5}" font-size="11" fill="#0f172a">${lib}</text></g>`)
+      .join('');
+
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">` +
+      `<rect width="${W}" height="${H}" fill="#f8fafc" rx="8"/>` +
+      `<text x="${W / 2}" y="32" text-anchor="middle" font-size="18" font-weight="700" fill="#0f172a">${title}</text>` +
+      `<text x="${W / 2}" y="52" text-anchor="middle" font-size="11" fill="#64748b">${subtitle}</text>` +
+      yAxis + xAxis + series + legend +
+      `</svg>`
+    );
+  }
+
+  const maxRaw = Math.max(...rows.map((r) => r.rawPagesPerSecond || 0), 1);
+  return {
+    throughputSvg: plot({
+      title: 'Raw throughput vs concurrency (#1258, PRIMARY)',
+      subtitle: 'Raw pages/sec per library. Higher is better.',
+      metric: (r) => r.rawPagesPerSecond,
+      yLabel: 'pages / second',
+      yMax: maxRaw * 1.1,
+      yFmt: (v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toFixed(0)),
+    }),
+    successSvg: plot({
+      title: 'Success rate vs concurrency (#1258, PRIMARY)',
+      subtitle: 'Per-page success rate. Reported separately from throughput.',
+      metric: (r) => r.successRate,
+      yLabel: 'success rate',
+      yMax: 1.05,
+      yFmt: (v) => `${(v * 100).toFixed(0)}%`,
+    }),
+  };
+}
+
 // Write all SVGs
 writeFileSync(`${RESULTS_DIR}/chart-speed.svg`, generateSpeedSVG());
 writeFileSync(`${RESULTS_DIR}/chart-tokens.svg`, generateTokenSVG());
 writeFileSync(`${RESULTS_DIR}/chart-dashboard.svg`, generateDashboardSVG());
+const speedCharts = generateThroughputAndSuccessSVGs();
+if (speedCharts) {
+  writeFileSync(`${RESULTS_DIR}/chart-throughput.svg`, speedCharts.throughputSvg);
+  writeFileSync(`${RESULTS_DIR}/chart-success-rate.svg`, speedCharts.successSvg);
+}
 
 console.log('SVG charts generated:');
 console.log('  chart-speed.svg     - Speed comparison bar chart');
