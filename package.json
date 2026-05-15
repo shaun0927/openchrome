@@ -38,6 +38,7 @@
     "bench:longrun": "ts-node tests/benchmark/run-longrun.ts",
     "bench:reliability": "ts-node tests/benchmark/run-reliability.ts",
     "bench:auth": "ts-node tests/benchmark/run-auth.ts",
+    "bench:dx": "ts-node tests/benchmark/run-dx.ts",
     "test": "jest",
     "test:e2e": "node --expose-gc node_modules/.bin/jest --config tests/e2e/jest.e2e.config.js",
     "test:coverage": "jest --coverage",
