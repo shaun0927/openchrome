@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-07",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "ai agent web tools"
+    },
+    {
+      "key": "totalResults",
+      "expected": "7,440"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to ai-agents"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/ai-agents/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of ai agent web tools with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "ai-agents community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/ai-agents/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on ai agent web tools covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "ai-agents reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/ai-agents"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}

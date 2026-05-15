@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-07",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "PodCircle"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@ana"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "Record"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Episode 42 transcript drafted and ready"
+    },
+    {
+      "key": "postBody",
+      "expected": "Episode 42 transcript drafted and ready. Posted via the PodCircle mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "142"
+    },
+    {
+      "key": "replyCount",
+      "expected": "9"
+    },
+    {
+      "key": "shareCount",
+      "expected": "2"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-13 15:53 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Ana avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search shows"
+    }
+  ]
+}

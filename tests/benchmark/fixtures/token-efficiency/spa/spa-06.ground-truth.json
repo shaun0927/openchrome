@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-06",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "MapPad"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@diego"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "Create map"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Beach cleanup pin set published"
+    },
+    {
+      "key": "postBody",
+      "expected": "Beach cleanup pin set published. Posted via the MapPad mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "125"
+    },
+    {
+      "key": "replyCount",
+      "expected": "8"
+    },
+    {
+      "key": "shareCount",
+      "expected": "7"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-11 14:46 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Diego avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search maps"
+    }
+  ]
+}

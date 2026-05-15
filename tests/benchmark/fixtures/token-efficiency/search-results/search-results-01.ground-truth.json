@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-01",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "open source browser automation"
+    },
+    {
+      "key": "totalResults",
+      "expected": "12,400"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to browser-automation"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/browser-automation/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of open source browser automation with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "browser-automation community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/browser-automation/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on open source browser automation covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "browser-automation reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/browser-automation"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}

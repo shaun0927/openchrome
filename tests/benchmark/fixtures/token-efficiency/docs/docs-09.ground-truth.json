@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-09",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Custom Tools"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Extending"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to custom tools for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-12-17"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/custom-tools"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Extending / Custom Tools"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "typescript"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Tool Schemas"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Hooks Reference"
+    }
+  ]
+}

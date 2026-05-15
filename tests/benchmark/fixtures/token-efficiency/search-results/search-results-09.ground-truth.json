@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-09",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "token efficiency benchmark"
+    },
+    {
+      "key": "totalResults",
+      "expected": "1,910"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to token-efficiency"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/token-efficiency/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of token efficiency benchmark with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "token-efficiency community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/token-efficiency/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on token efficiency benchmark covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "token-efficiency reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/token-efficiency"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}

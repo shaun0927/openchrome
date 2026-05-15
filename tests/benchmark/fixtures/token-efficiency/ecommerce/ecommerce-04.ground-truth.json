@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-04",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Wireless Mouse"
+    },
+    {
+      "key": "price",
+      "expected": "$39.00"
+    },
+    {
+      "key": "brand",
+      "expected": "Keycraft"
+    },
+    {
+      "key": "sku",
+      "expected": "KC-WM-022"
+    },
+    {
+      "key": "rating",
+      "expected": "4.5"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "1211"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Peripherals"
+    },
+    {
+      "key": "color",
+      "expected": "Charcoal"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "fixture": "news-08",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "Bike Lane Network Adds Twelve Miles"
+    },
+    {
+      "key": "author",
+      "expected": "Luca Romano"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-03-22"
+    },
+    {
+      "key": "section",
+      "expected": "Local"
+    },
+    {
+      "key": "summary",
+      "expected": "Bike Lane Network Adds Twelve Miles — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "1166"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/bike-lane"
+    },
+    {
+      "key": "category",
+      "expected": "Transportation"
+    },
+    {
+      "key": "readingTime",
+      "expected": "5 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Local / Transportation"
+    }
+  ]
+}

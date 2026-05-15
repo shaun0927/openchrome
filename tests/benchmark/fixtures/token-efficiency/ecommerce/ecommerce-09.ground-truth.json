@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-09",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Laptop Stand"
+    },
+    {
+      "key": "price",
+      "expected": "$79.00"
+    },
+    {
+      "key": "brand",
+      "expected": "Workspace Co"
+    },
+    {
+      "key": "sku",
+      "expected": "WC-LS-301"
+    },
+    {
+      "key": "rating",
+      "expected": "4.2"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "1896"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Accessories"
+    },
+    {
+      "key": "color",
+      "expected": "Aluminum"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

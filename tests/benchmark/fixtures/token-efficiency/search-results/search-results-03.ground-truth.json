@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-03",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "chrome devtools protocol guide"
+    },
+    {
+      "key": "totalResults",
+      "expected": "9,150"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to cdp"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/cdp/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of chrome devtools protocol guide with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "cdp community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/cdp/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on chrome devtools protocol guide covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "cdp reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/cdp"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}

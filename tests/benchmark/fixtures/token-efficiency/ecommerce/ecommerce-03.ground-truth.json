@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-03",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Mechanical Keyboard"
+    },
+    {
+      "key": "price",
+      "expected": "$149.00"
+    },
+    {
+      "key": "brand",
+      "expected": "Keycraft"
+    },
+    {
+      "key": "sku",
+      "expected": "KC-MK-077"
+    },
+    {
+      "key": "rating",
+      "expected": "4.4"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "1074"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Peripherals"
+    },
+    {
+      "key": "color",
+      "expected": "Arctic White"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-03",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "TaskHub"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@jordan"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "New task"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Sprint 5 retrospective notes are up"
+    },
+    {
+      "key": "postBody",
+      "expected": "Sprint 5 retrospective notes are up. Posted via the TaskHub mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "74"
+    },
+    {
+      "key": "replyCount",
+      "expected": "5"
+    },
+    {
+      "key": "shareCount",
+      "expected": "4"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-05 11:25 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Jordan avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search tasks"
+    }
+  ]
+}

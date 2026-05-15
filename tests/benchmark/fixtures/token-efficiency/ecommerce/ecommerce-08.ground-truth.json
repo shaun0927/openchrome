@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-08",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "External SSD"
+    },
+    {
+      "key": "price",
+      "expected": "$129.00"
+    },
+    {
+      "key": "brand",
+      "expected": "PortCorp"
+    },
+    {
+      "key": "sku",
+      "expected": "PC-SS-018"
+    },
+    {
+      "key": "rating",
+      "expected": "4.9"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "1759"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Storage"
+    },
+    {
+      "key": "color",
+      "expected": "Slate"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

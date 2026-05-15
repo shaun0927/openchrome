@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-06",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Ergonomic Chair"
+    },
+    {
+      "key": "price",
+      "expected": "$449.00"
+    },
+    {
+      "key": "brand",
+      "expected": "Workspace Co"
+    },
+    {
+      "key": "sku",
+      "expected": "WC-EC-203"
+    },
+    {
+      "key": "rating",
+      "expected": "4.7"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "1485"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Furniture"
+    },
+    {
+      "key": "color",
+      "expected": "Graphite"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

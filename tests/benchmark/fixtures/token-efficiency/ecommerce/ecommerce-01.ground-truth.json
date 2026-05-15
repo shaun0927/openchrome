@@ -1,0 +1,53 @@
+{
+  "fixture": "ecommerce-01",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Wireless Headphones"
+    },
+    {
+      "key": "price",
+      "expected": "$199.00"
+    },
+    {
+      "key": "brand",
+      "expected": "Acme Audio"
+    },
+    {
+      "key": "sku",
+      "expected": "AA-WH-001"
+    },
+    {
+      "key": "rating",
+      "expected": "4.2"
+    },
+    {
+      "key": "reviewCount",
+      "expected": "800"
+    },
+    {
+      "key": "availability",
+      "expected": "In stock"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Add to cart"
+    },
+    {
+      "key": "shippingNote",
+      "expected": "Free shipping over $50"
+    },
+    {
+      "key": "category",
+      "expected": "Audio"
+    },
+    {
+      "key": "color",
+      "expected": "Midnight Black"
+    },
+    {
+      "key": "warranty",
+      "expected": "2 year limited"
+    }
+  ]
+}

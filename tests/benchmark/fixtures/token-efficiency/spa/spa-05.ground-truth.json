@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-05",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "MapPad"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@hannah"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "Create map"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Annotated city park boundaries for the weekend run"
+    },
+    {
+      "key": "postBody",
+      "expected": "Annotated city park boundaries for the weekend run. Posted via the MapPad mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "108"
+    },
+    {
+      "key": "replyCount",
+      "expected": "7"
+    },
+    {
+      "key": "shareCount",
+      "expected": "6"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-09 13:39 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Hannah avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search maps"
+    }
+  ]
+}

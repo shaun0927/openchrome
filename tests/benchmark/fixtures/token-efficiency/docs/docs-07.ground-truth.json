@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-07",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Logging and Telemetry"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Operations"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to logging and telemetry for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-10-13"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/logging-telemetry"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Operations / Logging and Telemetry"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "yaml"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Metrics Export"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Health Checks"
+    }
+  ]
+}

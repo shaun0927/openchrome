@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-06",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Profiles and Sessions"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Concepts"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to profiles and sessions for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-09-11"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/profiles-sessions"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Concepts / Profiles and Sessions"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "bash"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Tabs"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Workspaces"
+    }
+  ]
+}

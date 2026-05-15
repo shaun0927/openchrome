@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-04",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "TaskHub"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@marcus"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "New task"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Closing the last three review threads"
+    },
+    {
+      "key": "postBody",
+      "expected": "Closing the last three review threads. Posted via the TaskHub mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "91"
+    },
+    {
+      "key": "replyCount",
+      "expected": "6"
+    },
+    {
+      "key": "shareCount",
+      "expected": "5"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-07 12:32 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Marcus avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search tasks"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-04",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "web scraping best practices"
+    },
+    {
+      "key": "totalResults",
+      "expected": "23,600"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to scraping"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/scraping/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of web scraping best practices with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "scraping community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/scraping/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on web scraping best practices covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "scraping reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/scraping"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}

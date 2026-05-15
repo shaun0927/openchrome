@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-10",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "CLI Reference"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Reference"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to cli reference for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-01-19"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/cli-reference"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Reference / CLI Reference"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "bash"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Environment Variables"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Configuration"
+    }
+  ]
+}

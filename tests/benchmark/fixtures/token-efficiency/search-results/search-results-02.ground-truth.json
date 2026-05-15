@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-02",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "mcp server tutorial"
+    },
+    {
+      "key": "totalResults",
+      "expected": "4,820"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to mcp"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/mcp/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of mcp server tutorial with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "mcp community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/mcp/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on mcp server tutorial covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "mcp reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/mcp"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}
