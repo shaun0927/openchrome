@@ -36,6 +36,7 @@
     "bench:tokens": "ts-node tests/benchmark/run-token-efficiency.ts",
     "bench:throughput": "ts-node tests/benchmark/run-throughput.ts",
     "bench:longrun": "ts-node tests/benchmark/run-longrun.ts",
+    "bench:reliability": "ts-node tests/benchmark/run-reliability.ts",
     "test": "jest",
     "test:e2e": "node --expose-gc node_modules/.bin/jest --config tests/e2e/jest.e2e.config.js",
     "test:coverage": "jest --coverage",
