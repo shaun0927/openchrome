@@ -28,6 +28,10 @@ import {
   projectCost,
   formatProjection,
 } from './llm/library-routing';
+import {
+  EXECUTION_MODES,
+  ExecutionMode,
+} from './llm/execution-mode';
 import type {
   Baseline,
   BenchReport,
@@ -52,6 +56,13 @@ interface CliOptions {
    */
   library: WebVoyagerLibrary;
   /**
+   * Execution mode (#1257). `native` is the headline comparison; `passive`
+   * wraps every library as a passive tool surface — surfaces drift between
+   * the two but for browser-use is a SECONDARY data point (it strips the
+   * library's planning loop).
+   */
+  mode: ExecutionMode;
+  /**
    * --dry-run: print the cost projection and exit 0 WITHOUT making any LLM
    * API call. The runner refuses to run real tasks in this mode regardless
    * of OPENCHROME_BENCH_REAL.
@@ -65,10 +76,15 @@ function isLibrary(v: string): v is WebVoyagerLibrary {
   return (WEBVOYAGER_LIBRARIES as readonly string[]).includes(v);
 }
 
+function isMode(v: string): v is ExecutionMode {
+  return (EXECUTION_MODES as readonly string[]).includes(v);
+}
+
 function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
     adapter: 'mock',
     library: 'openchrome',
+    mode: 'native',
     dryRun: false,
     repetitions: 1,
   };
@@ -96,6 +112,18 @@ function parseArgs(argv: string[]): CliOptions {
       opts.repetitions = n;
     } else if (a === '--dry-run') {
       opts.dryRun = true;
+    } else if (a === '--mode') {
+      const v = argv[++i];
+      if (!isMode(v)) {
+        throw new Error(`unknown --mode: ${v}. Choose one of ${EXECUTION_MODES.join(', ')}`);
+      }
+      opts.mode = v;
+    } else if (a.startsWith('--mode=')) {
+      const v = a.slice('--mode='.length);
+      if (!isMode(v)) {
+        throw new Error(`unknown --mode: ${v}. Choose one of ${EXECUTION_MODES.join(', ')}`);
+      }
+      opts.mode = v;
     } else if (a.startsWith('--adapter=')) {
       const v = a.slice('--adapter='.length);
       if (v !== 'mock' && v !== 'claude') {
@@ -313,9 +341,17 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     });
     console.error(formatProjection(projection));
     console.error(
-      `\n[webvoyager] library=${opts.library} wired=${LIBRARY_ROUTING[opts.library].nativeLoopWired} ` +
+      `\n[webvoyager] library=${opts.library} mode=${opts.mode} ` +
+        `wired=${LIBRARY_ROUTING[opts.library].nativeLoopWired} ` +
         `adapter-requested=${opts.adapter} (no run performed; --dry-run is set)`,
     );
+    if (opts.mode === 'passive') {
+      console.error(
+        `[webvoyager] note: --mode passive is the SECONDARY data point per #1257. ` +
+          `Headline numbers come from --mode native; for browser-use, passive strips ` +
+          `the library's planning loop and is reported separately, never as the headline.`,
+      );
+    }
     return 0;
   }
 
@@ -366,6 +402,9 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   const benchReport: BenchReport = {
     git_sha: sha,
     adapter: opts.adapter,
+    mode: opts.mode,
+    library: opts.library,
+    repetitions: opts.repetitions,
     total_tasks: totalCount,
     pass_count: passCount,
     fail_count: failCount,
