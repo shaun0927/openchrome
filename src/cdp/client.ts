@@ -924,8 +924,9 @@ export class CDPClient {
    * retry loop stays within the caller's deadline (A-3). Coalesced callers
    * share whatever budget the first caller supplied.
    */
-  async connect(options?: { budget?: Budget }): Promise<void> {
+  async connect(options?: { budget?: Budget; autoLaunch?: boolean }): Promise<void> {
     const budget = options?.budget;
+    const autoLaunch = options?.autoLaunch;
     if (this.browser && this.browser.isConnected()) {
       // Skip active probe if recently verified by heartbeat (avoids per-call overhead)
       if (Date.now() - this.lastVerifiedAt < DEFAULT_CONNECT_VERIFY_STALENESS_MS) {
@@ -969,7 +970,7 @@ export class CDPClient {
     const generation = ++this.connectionGeneration;
     const pendingConnect = (async () => {
       try {
-        const connected = await this.connectInternal({ budget, generation });
+        const connected = await this.connectInternal({ budget, autoLaunch, generation });
         if (connected === false) {
           return;
         }

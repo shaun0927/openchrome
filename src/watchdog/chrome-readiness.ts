@@ -4,7 +4,7 @@ import { setComponent } from './readiness';
 
 export interface ChromeReadinessClient {
   addConnectionListener(listener: (event: ConnectionEvent) => void): void;
-  connect(): Promise<void>;
+  connect(options?: { autoLaunch?: boolean }): Promise<void>;
   forceReconnect(): Promise<void>;
 }
 
@@ -64,8 +64,14 @@ export function wireChromeReadiness(
   });
 
   return {
+    // Startup probe must NEVER auto-launch Chrome. Spawning belongs to actual
+    // tool calls; the readiness probe should only attach to an already-running
+    // Chrome so the daemon's /ready endpoint can flip to ok before the first
+    // MCP tool call. Without this, every server restart (e.g. each VSCode
+    // reload) would spawn an empty Chrome window even when autoLaunch is
+    // enabled for tool-call code paths.
     initializeStartupConnection: () => {
-      cdpClient.connect().catch((err: unknown) => {
+      cdpClient.connect({ autoLaunch: false }).catch((err: unknown) => {
         log.error('[SelfHealing] Startup Chrome connect failed:', err);
         setChromeState('failing');
       });

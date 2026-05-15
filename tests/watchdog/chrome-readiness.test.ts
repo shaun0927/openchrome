@@ -11,7 +11,7 @@ function createClient() {
       addConnectionListener: jest.fn((fn: (event: ConnectionEvent) => void) => {
         listener = fn;
       }),
-      connect: jest.fn<Promise<void>, []>().mockResolvedValue(undefined),
+      connect: jest.fn<Promise<void>, [options?: { autoLaunch?: boolean }]>().mockResolvedValue(undefined),
       forceReconnect: jest.fn<Promise<void>, []>().mockResolvedValue(undefined),
     },
     emit: (event: ConnectionEvent) => {
@@ -41,6 +41,8 @@ describe('chrome readiness wiring', () => {
 
     readiness.initializeStartupConnection();
     expect(client.connect).toHaveBeenCalledTimes(1);
+    // Startup probe must never auto-launch Chrome — spawning belongs to tool calls.
+    expect(client.connect).toHaveBeenCalledWith({ autoLaunch: false });
 
     emit({ type: 'connected', timestamp: Date.now() });
     await client.connect.mock.results[0].value;
