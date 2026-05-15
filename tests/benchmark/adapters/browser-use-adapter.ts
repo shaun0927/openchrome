@@ -239,6 +239,10 @@ export class BrowserUseAdapter implements MCPAdapter {
       this.transport = null;
     }
     this.requestSeq = 0;
+    // Reset overhead so a reused adapter (setup → teardown → setup again, as
+    // BenchmarkRunner does per run) does not double-count time from previous
+    // runs into the next run's bridgeOverheadMs.
+    this._bridgeOverheadMs = 0;
   }
 
   async callTool(toolName: string, args: Record<string, unknown>): Promise<MCPToolResult> {

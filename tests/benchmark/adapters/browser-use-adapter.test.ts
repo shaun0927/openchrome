@@ -3,15 +3,14 @@
 import {
   BrowserUseAdapter,
   BrowserUseBridgeTransport,
-  BridgeResponse,
 } from './browser-use-adapter';
 
 /** Mock bridge transport that records calls and returns canned responses. */
 function makeMockTransport(opts: {
   /** Forced sleep before each response — used to verify bridgeOverheadMs accounting. */
   perCallDelayMs?: number;
-  /** Force a specific method to fail. */
-  failOn?: BridgeResponse['error'] extends infer T ? string : never;
+  /** Force a specific bridge method to return ok=false. */
+  failOn?: string;
 } = {}): {
   transport: BrowserUseBridgeTransport;
   sent: Array<{ method: string; args: Record<string, unknown> }>;
@@ -161,6 +160,25 @@ describe('BrowserUseAdapter', () => {
     expect(readText).not.toMatch(/bridgeOverhead|overheadMs|elapsed|recvMonotonicNs/i);
     // And the adapter property is the *only* place overhead appears.
     expect(adapter.bridgeOverheadMs).toBeGreaterThan(0);
+  });
+
+  test('tabs_close on a tabId the bridge does not recognize surfaces as an error result', async () => {
+    const mock = makeMockTransport({ failOn: 'close_tab' });
+    const adapter = new BrowserUseAdapter({ transport: mock.transport });
+    await adapter.setup();
+    const res = await adapter.callTool('tabs_close', { tabId: 'never-opened' });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('mocked failure for close_tab');
+  });
+
+  test('teardown resets bridgeOverheadMs so a reused adapter does not double-count', async () => {
+    const mock = makeMockTransport({ perCallDelayMs: 15 });
+    const adapter = new BrowserUseAdapter({ transport: mock.transport });
+    await adapter.setup();
+    await adapter.callTool('tabs_create', { url: 'http://x/a' });
+    expect(adapter.bridgeOverheadMs).toBeGreaterThan(0);
+    await adapter.teardown();
+    expect(adapter.bridgeOverheadMs).toBe(0);
   });
 
   test('teardown sends shutdown and stops the transport', async () => {
