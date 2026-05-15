@@ -34,6 +34,7 @@
     "bench:webvoyager:real": "ts-node tests/benchmark/webvoyager/runner.ts --adapter claude",
     "bench:latency": "ts-node tests/benchmark/run-latency.ts",
     "bench:tokens": "ts-node tests/benchmark/run-token-efficiency.ts",
+    "bench:throughput": "ts-node tests/benchmark/run-throughput.ts",
     "test": "jest",
     "test:e2e": "node --expose-gc node_modules/.bin/jest --config tests/e2e/jest.e2e.config.js",
     "test:coverage": "jest --coverage",
