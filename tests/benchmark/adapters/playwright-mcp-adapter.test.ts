@@ -145,6 +145,43 @@ describe('PlaywrightMcpAdapter', () => {
     expect(res.content[0].text).toContain('unknown tabId');
   });
 
+  test('closing a non-last tab renumbers higher-indexed tabs (playwright-mcp shifts them down)', async () => {
+    const mock = makeMockTransport();
+    const adapter = new PlaywrightMcpAdapter({ transport: mock.transport });
+    await adapter.setup();
+    // Open three tabs: indices 0, 1, 2.
+    const t1 = await adapter.callTool('tabs_create', { url: 'http://x/a' });
+    const t2 = await adapter.callTool('tabs_create', { url: 'http://x/b' });
+    const t3 = await adapter.callTool('tabs_create', { url: 'http://x/c' });
+    const id1 = JSON.parse(t1.content[0].text as string).tabId;
+    const id2 = JSON.parse(t2.content[0].text as string).tabId;
+    const id3 = JSON.parse(t3.content[0].text as string).tabId;
+
+    // Close the middle tab (index 1). playwright-mcp now has two tabs at
+    // indices 0 and 1; id3 was at 2 and must shift down to 1.
+    await adapter.callTool('tabs_close', { tabId: id2 });
+    mock.log.length = 0; // reset call log
+
+    await adapter.callTool('read_page', { tabId: id3 });
+    const selectAfterShift = mock.log.find((c) => c.tool === 'browser_tab_select');
+    expect(selectAfterShift).toBeDefined();
+    expect(selectAfterShift!.args).toEqual({ index: 1 });
+
+    // id1 must still route to index 0.
+    mock.log.length = 0;
+    await adapter.callTool('read_page', { tabId: id1 });
+    const selectFirst = mock.log.find((c) => c.tool === 'browser_tab_select');
+    expect(selectFirst!.args).toEqual({ index: 0 });
+  });
+
+  test('teardown is idempotent — a second teardown does not throw', async () => {
+    const mock = makeMockTransport();
+    const adapter = new PlaywrightMcpAdapter({ transport: mock.transport });
+    await adapter.setup();
+    await adapter.teardown();
+    await expect(adapter.teardown()).resolves.toBeUndefined();
+  });
+
   test('tabs_close closes the tab and drops it from the tab map', async () => {
     const mock = makeMockTransport();
     const adapter = new PlaywrightMcpAdapter({ transport: mock.transport });
