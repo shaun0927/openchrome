@@ -119,6 +119,14 @@ export class CDPClient {
   private lastCookieScanResult: CookieScanResult | null = null;
   /** Coalesces concurrent connect() calls — only one connectInternal() runs at a time. */
   private pendingConnect: Promise<void> | null = null;
+  /**
+   * Effective `autoLaunch` of the currently in-flight `pendingConnect`. Used to
+   * reject coalescing when a new caller's effective `autoLaunch` differs — e.g.
+   * the startup readiness probe must not silently ride a tool-call's launch
+   * attempt and inadvertently spawn Chrome, nor must a tool call silently ride
+   * the probe's `false` and fail to launch.
+   */
+  private pendingConnectAutoLaunch: boolean | undefined = undefined;
   /** Invalidates stale async connection attempts that resolve after a reconnect. */
   private connectionGeneration = 0;
   /** Timestamp of last successful connection verification (heartbeat or active probe). */
@@ -924,8 +932,14 @@ export class CDPClient {
    * retry loop stays within the caller's deadline (A-3). Coalesced callers
    * share whatever budget the first caller supplied.
    */
-  async connect(options?: { budget?: Budget }): Promise<void> {
+  async connect(options?: { budget?: Budget; autoLaunch?: boolean }): Promise<void> {
     const budget = options?.budget;
+    const autoLaunch = options?.autoLaunch;
+    // Resolve the effective autoLaunch the same way connectInternal() does so
+    // coalescing comparisons (below) are apples-to-apples — callers who would
+    // both end up with the same behavior coalesce, callers who would diverge
+    // never silently inherit each other's choice.
+    const effectiveAutoLaunch = autoLaunch ?? this.autoLaunch;
     if (this.browser && this.browser.isConnected()) {
       // Skip active probe if recently verified by heartbeat (avoids per-call overhead)
       if (Date.now() - this.lastVerifiedAt < DEFAULT_CONNECT_VERIFY_STALENESS_MS) {
@@ -951,6 +965,12 @@ export class CDPClient {
         return;
       } catch {
         console.error('[CDPClient] Connection probe failed, reconnecting...');
+        // forceReconnect() internally pins connectInternal() to autoLaunch:false
+        // and does not accept an autoLaunch override; the caller's autoLaunch is
+        // intentionally NOT forwarded here. The probe-fail path therefore never
+        // auto-launches Chrome regardless of caller preference — Chrome must be
+        // re-attached by an explicit tool call, not by a heartbeat-triggered
+        // reconnect.
         await this.forceReconnect({ budget });
         return;
       }
@@ -960,16 +980,30 @@ export class CDPClient {
     // Without this, parallel tool calls (e.g., ultrapilot workflows) each trigger
     // connectInternal(), creating duplicate WebSocket connections where the second
     // overwrites this.browser and orphans the first's event listeners + heartbeat.
+    //
+    // BUT: only coalesce when the in-flight call's effective autoLaunch matches
+    // ours. The startup readiness probe (autoLaunch:false) must never ride a
+    // tool-call's autoLaunch:true attempt, and a tool call must never silently
+    // ride the probe's autoLaunch:false and fail to spawn Chrome. On mismatch,
+    // wait for the in-flight call to settle, then re-enter so the already-
+    // connected fast path can short-circuit if Chrome happens to be attached.
     if (this.pendingConnect) {
-      console.error('[CDPClient] Coalescing concurrent connect() call');
-      return this.pendingConnect;
+      if (effectiveAutoLaunch === this.pendingConnectAutoLaunch) {
+        console.error('[CDPClient] Coalescing concurrent connect() call');
+        return this.pendingConnect;
+      }
+      console.error(
+        '[CDPClient] Concurrent connect() with conflicting autoLaunch — waiting for in-flight call',
+      );
+      await this.pendingConnect.catch(() => { /* swallow — caller's own attempt below decides */ });
+      return this.connect(options);
     }
 
     this.connectionState = 'connecting';
     const generation = ++this.connectionGeneration;
     const pendingConnect = (async () => {
       try {
-        const connected = await this.connectInternal({ budget, generation });
+        const connected = await this.connectInternal({ budget, autoLaunch, generation });
         if (connected === false) {
           return;
         }
@@ -984,12 +1018,14 @@ export class CDPClient {
       }
     })();
     this.pendingConnect = pendingConnect;
+    this.pendingConnectAutoLaunch = effectiveAutoLaunch;
 
     try {
       await pendingConnect;
     } finally {
       if (this.pendingConnect === pendingConnect) {
         this.pendingConnect = null;
+        this.pendingConnectAutoLaunch = undefined;
       }
     }
   }
