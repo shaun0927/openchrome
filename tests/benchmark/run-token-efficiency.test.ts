@@ -64,10 +64,16 @@ describe('scoreFixture', () => {
 });
 
 describe('runTokenEfficiencyBenchmark', () => {
-  test('produces one row per fixture', () => {
+  test('produces one row per (library, fixture) cell of the matrix', () => {
     const rows = runTokenEfficiencyBenchmark();
-    expect(rows).toHaveLength(TOKEN_EFFICIENCY_CORPUS.length);
-    expect(rows.map((r) => r.fixture).sort()).toEqual(
+    const libraries = new Set(rows.map((r) => r.library));
+    // Every fixture must appear once per library — the matrix shape.
+    expect(rows).toHaveLength(TOKEN_EFFICIENCY_CORPUS.length * libraries.size);
+    // The deterministic-static library is the always-on baseline; every
+    // fixture must have one such row.
+    const deterministicRows = rows.filter((r) => r.library === 'deterministic-static');
+    expect(deterministicRows).toHaveLength(TOKEN_EFFICIENCY_CORPUS.length);
+    expect(deterministicRows.map((r) => r.fixture).sort()).toEqual(
       TOKEN_EFFICIENCY_CORPUS.map((f) => f.name).sort(),
     );
   });
