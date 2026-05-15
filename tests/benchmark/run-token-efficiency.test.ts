@@ -48,10 +48,18 @@ describe('scoreFixture', () => {
     }
   });
 
-  test('reports a real measured compression ratio, not the old 15.3 constant', () => {
-    const row = scoreFixture(TOKEN_EFFICIENCY_CORPUS[0]);
-    expect(Number.isFinite(row.compressionRatio)).toBe(true);
-    expect(row.compressionRatio).not.toBe(15.3);
+  test('reports a real measured compression ratio that varies across fixtures', () => {
+    // The retired hard-coded constant was a single value applied uniformly.
+    // A real measurement must (a) produce a finite, > 1 ratio per fixture and
+    // (b) differ across fixtures with different raw-HTML sizes — otherwise the
+    // pipeline has regressed back to a uniform estimate.
+    const ratios = TOKEN_EFFICIENCY_CORPUS.map((f) => scoreFixture(f).compressionRatio);
+    for (const r of ratios) {
+      expect(Number.isFinite(r)).toBe(true);
+      expect(r).toBeGreaterThan(1);
+    }
+    const uniqueRatios = new Set(ratios.map((r) => Number(r.toFixed(6))));
+    expect(uniqueRatios.size).toBeGreaterThan(1);
   });
 });
 

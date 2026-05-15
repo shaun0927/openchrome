@@ -6,8 +6,8 @@
  * fixture corpus: for every fixture it measures payload token cost,
  * information retention against the >= 12-field ground truth, and the
  * compression ratio vs raw HTML — the real, measured replacement for the old
- * unverified 15.3x constant. Results are wrapped in the standard benchmark
- * envelope (#1255).
+ * unverified hard-coded compression constant. Results are wrapped in the
+ * standard benchmark envelope (#1255).
  *
  *   npm run bench:tokens
  *

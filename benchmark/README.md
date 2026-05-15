@@ -79,7 +79,7 @@ Results are saved to `results/`:
 | **OC 10-batch** | **23.2s** | **3.5x** | **95%** |
 | OC 20-batch | 25.7s | 3.2x | 95% |
 
-Token efficiency: **15.3x compression** (OC compact DOM vs raw HTML)
+Token efficiency: **TBD — pending #1256 results** (real per-archetype compression replaces the retired hard-coded estimate)
 
 ## Methodology
 

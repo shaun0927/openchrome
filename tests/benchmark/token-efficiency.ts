@@ -111,8 +111,9 @@ export function scorePayload(payload: string): PayloadScore {
 
 /**
  * Compression ratio of a tool's payload vs the raw HTML it was derived from.
- * This is the real, measured replacement for the old unverified `15.3x`
- * constant. A ratio > 1 means the tool's payload is smaller than raw HTML.
+ * This is the real, measured replacement for the old unverified hard-coded
+ * compression constant. A ratio > 1 means the tool's payload is smaller than
+ * raw HTML.
  */
 export function compressionRatio(rawHtml: string, toolPayload: string): number {
   const rawTokens = countTokens(rawHtml);
