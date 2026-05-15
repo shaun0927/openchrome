@@ -27,10 +27,10 @@
   <!-- Card 2: Tokens -->
   <rect x="320" y="100" width="260" height="180" fill="#1e293b" stroke="#334155" stroke-width="1" rx="12"/>
   <text x="450" y="135" text-anchor="middle" font-size="13" fill="#94a3b8" font-weight="600">TOKEN EFFICIENCY</text>
-  <text x="450" y="185" text-anchor="middle" font-size="48" font-weight="800" fill="url(#accent)">15.3x</text>
+  <text x="450" y="185" text-anchor="middle" font-size="24" font-weight="700" fill="url(#accent)">TBD</text>
   <text x="450" y="215" text-anchor="middle" font-size="14" fill="#cbd5e1">fewer tokens per page</text>
   <text x="450" y="240" text-anchor="middle" font-size="12" fill="#64748b">OC ~12K tok vs PW ~178K tok</text>
-  <text x="450" y="262" text-anchor="middle" font-size="11" fill="#475569">(93.5% savings via compact DOM)</text>
+  <text x="450" y="262" text-anchor="middle" font-size="11" fill="#475569">(savings: TBD — pending #1256 results)</text>
 
   <!-- Card 3: Data Quality -->
   <rect x="600" y="100" width="260" height="180" fill="#1e293b" stroke="#334155" stroke-width="1" rx="12"/>
@@ -72,5 +72,5 @@
   <text x="40" y="510" font-size="11" fill="#64748b">All strategies: 95% success rate (19/20 — @TimCook has 0 tweets across all approaches)</text>
 
   <!-- Footer -->
-  <text x="450" y="545" text-anchor="middle" font-size="11" fill="#475569">Measured 2026-03-02 | Same Chrome v145 instance via CDP | Each strategy run in complete isolation</text>
+  <text x="450" y="545" text-anchor="middle" font-size="11" fill="#475569">Measured 2026-05-15 | Same Chrome v145 instance via CDP | Each strategy run in complete isolation</text>
 </svg>

@@ -1,72 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 520" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
   <defs>
     <linearGradient id="bg1" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#f8fafc"/>
       <stop offset="100%" stop-color="#f1f5f9"/>
     </linearGradient>
   </defs>
-  <rect width="880" height="520" fill="url(#bg1)" rx="16"/>
-
-  <!-- Title -->
-  <text x="440" y="38" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Simple Task Speed Comparison: 20 Twitter Profiles</text>
-  <text x="440" y="62" text-anchor="middle" font-size="13" fill="#94a3b8">Wall clock time in seconds (lower is better) — Each strategy measured in complete isolation</text>
-
-  <!-- Y-axis gridlines + labels -->
-  <line x1="90" y1="400" x2="830" y2="400" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="78" y="404" text-anchor="end" font-size="11" fill="#94a3b8">0s</text>
-  <line x1="90" y1="322" x2="830" y2="322" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="78" y="326" text-anchor="end" font-size="11" fill="#94a3b8">20s</text>
-  <line x1="90" y1="244" x2="830" y2="244" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="78" y="248" text-anchor="end" font-size="11" fill="#94a3b8">40s</text>
-  <line x1="90" y1="166" x2="830" y2="166" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="78" y="170" text-anchor="end" font-size="11" fill="#94a3b8">60s</text>
-  <line x1="90" y1="88" x2="830" y2="88" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="78" y="92" text-anchor="end" font-size="11" fill="#94a3b8">80s</text>
-
-  <!-- X-axis -->
-  <line x1="90" y1="400" x2="830" y2="400" stroke="#cbd5e1" stroke-width="2"/>
-
-  <!-- Bar 1: Playwright Sequential — 82.3s -->
-  <rect x="110" y="79.3" width="108" height="320.7" fill="#6366f1" opacity="0.85" rx="6"/>
-  <text x="164" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">Playwright</text>
-  <text x="164" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">Sequential</text>
-  <text x="164" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">82.3s</text>
-
-  <!-- Bar 2: OC Sequential — 82.4s -->
-  <rect x="248" y="79" width="108" height="321" fill="#fb923c" opacity="0.65" rx="6"/>
-  <text x="302" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">OC</text>
-  <text x="302" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">Sequential</text>
-  <text x="302" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#fff">82.4s</text>
-
-  <!-- Bar 3: OC 5-batch — 28.7s -->
-  <rect x="386" y="288.1" width="108" height="111.9" fill="#f97316" opacity="0.85" rx="6"/>
-  <text x="440" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">OC</text>
-  <text x="440" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">5-tab batch</text>
-  <text x="440" y="278" text-anchor="middle" font-size="15" font-weight="700" fill="#1e293b">28.7s</text>
-  <text x="440" y="261" text-anchor="middle" font-size="11" font-weight="600" fill="#059669">2.9x faster</text>
-
-  <!-- Bar 4: OC 10-batch — 23.2s (BEST) -->
-  <rect x="524" y="309.6" width="108" height="90.4" fill="#ea580c" rx="6"/>
-  <text x="578" y="436" text-anchor="middle" font-size="13" font-weight="700" fill="#ea580c">OC</text>
-  <text x="578" y="452" text-anchor="middle" font-size="12" font-weight="600" fill="#ea580c">10-tab batch</text>
-  <text x="578" y="300" text-anchor="middle" font-size="15" font-weight="700" fill="#1e293b">23.2s</text>
-  <text x="578" y="283" text-anchor="middle" font-size="11" font-weight="600" fill="#059669">3.5x faster</text>
-
-  <!-- Star badge for fastest -->
-  <rect x="546" y="468" width="64" height="22" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5" rx="6"/>
-  <text x="578" y="483" text-anchor="middle" font-size="11" font-weight="700" fill="#ea580c">FASTEST</text>
-
-  <!-- Bar 5: OC 20-batch — 25.7s -->
-  <rect x="662" y="299.7" width="108" height="100.3" fill="#f97316" opacity="0.75" rx="6"/>
-  <text x="716" y="436" text-anchor="middle" font-size="13" font-weight="600" fill="#475569">OC</text>
-  <text x="716" y="452" text-anchor="middle" font-size="12" fill="#94a3b8">20-tab batch</text>
-  <text x="716" y="290" text-anchor="middle" font-size="15" font-weight="700" fill="#1e293b">25.7s</text>
-  <text x="716" y="273" text-anchor="middle" font-size="11" font-weight="600" fill="#059669">3.2x faster</text>
-
-  <!-- Legend -->
-  <rect x="90" y="495" width="12" height="12" fill="#6366f1" rx="2"/>
-  <text x="108" y="506" font-size="11" fill="#64748b">Playwright</text>
-  <rect x="180" y="495" width="12" height="12" fill="#f97316" rx="2"/>
-  <text x="198" y="506" font-size="11" fill="#64748b">OpenChrome</text>
-  <text x="830" y="506" text-anchor="end" font-size="11" fill="#94a3b8">All strategies: 95% success rate</text>
+  <rect width="900" height="520" fill="url(#bg1)" rx="16"/>
+  <text x="450" y="35" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Speed Comparison: 20 Twitter Profiles</text>
+  <text x="450" y="58" text-anchor="middle" font-size="14" fill="#64748b">Wall clock time (lower is better) — Isolated measurements</text>
+  <line x1="70" y1="420" x2="860" y2="420" stroke="#e2e8f0" stroke-width="1"/><text x="60" y="424" text-anchor="end" font-size="12" fill="#94a3b8">0s</text><line x1="70" y1="337.4757281553398" x2="860" y2="337.4757281553398" stroke="#e2e8f0" stroke-width="1"/><text x="60" y="341.4757281553398" text-anchor="end" font-size="12" fill="#94a3b8">20s</text><line x1="70" y1="254.95145631067962" x2="860" y2="254.95145631067962" stroke="#e2e8f0" stroke-width="1"/><text x="60" y="258.95145631067965" text-anchor="end" font-size="12" fill="#94a3b8">40s</text><line x1="70" y1="172.42718446601944" x2="860" y2="172.42718446601944" stroke="#e2e8f0" stroke-width="1"/><text x="60" y="176.42718446601944" text-anchor="end" font-size="12" fill="#94a3b8">60s</text><line x1="70" y1="89.90291262135923" x2="860" y2="89.90291262135923" stroke="#e2e8f0" stroke-width="1"/><text x="60" y="93.90291262135923" text-anchor="end" font-size="12" fill="#94a3b8">80s</text>
+  <rect x="101.6" y="80.4126213592233" width="94.8" height="339.5873786407767" fill="#6366f1" opacity="0.85" rx="6"/><text x="149" y="68.4126213592233" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">82.3s</text><text x="149" y="445" text-anchor="middle" font-size="13" fill="#475569" font-weight="600">Playwright</text><text x="149" y="463" text-anchor="middle" font-size="13" fill="#475569" font-weight="400">Sequential</text><rect x="259.6" y="80" width="94.8" height="340" fill="#f97316" opacity="0.85" rx="6"/><text x="307" y="68" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">82.4s</text><text x="307" y="445" text-anchor="middle" font-size="13" fill="#475569" font-weight="600">OC</text><text x="307" y="463" text-anchor="middle" font-size="13" fill="#475569" font-weight="400">Sequential</text><rect x="417.6" y="301.57766990291265" width="94.8" height="118.42233009708737" fill="#f97316" opacity="0.85" rx="6"/><text x="465" y="289.57766990291265" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">28.7s</text><text x="465" y="269.57766990291265" text-anchor="middle" font-size="12" font-weight="600" fill="#059669">2.9x faster</text><text x="465" y="445" text-anchor="middle" font-size="13" fill="#475569" font-weight="600">OC</text><text x="465" y="463" text-anchor="middle" font-size="13" fill="#475569" font-weight="400">5-batch</text><rect x="575.6" y="324.2718446601942" width="94.8" height="95.72815533980582" fill="#ea580c" opacity="1" rx="6"/><text x="623" y="312.2718446601942" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">23.2s</text><text x="623" y="292.2718446601942" text-anchor="middle" font-size="12" font-weight="600" fill="#059669">3.5x faster</text><text x="623" y="274.2718446601942" text-anchor="middle" font-size="13" font-weight="700" fill="#ea580c">★ FASTEST</text><text x="623" y="445" text-anchor="middle" font-size="13" fill="#475569" font-weight="600">OC</text><text x="623" y="463" text-anchor="middle" font-size="13" fill="#475569" font-weight="400">10-batch</text><rect x="733.6" y="313.95631067961165" width="94.8" height="106.04368932038834" fill="#f97316" opacity="0.85" rx="6"/><text x="781" y="301.95631067961165" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">25.7s</text><text x="781" y="281.95631067961165" text-anchor="middle" font-size="12" font-weight="600" fill="#059669">3.2x faster</text><text x="781" y="445" text-anchor="middle" font-size="13" fill="#475569" font-weight="600">OC</text><text x="781" y="463" text-anchor="middle" font-size="13" fill="#475569" font-weight="400">20-batch</text>
+  <line x1="70" y1="420" x2="860" y2="420" stroke="#cbd5e1" stroke-width="2"/>
 </svg>

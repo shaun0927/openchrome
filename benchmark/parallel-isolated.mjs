@@ -6,7 +6,7 @@
  *
  * NOTE: This script measures Playwright only. It does NOT run OpenChrome.
  * It previously *estimated* OpenChrome token counts by dividing raw HTML by a
- * hard-coded `OC_COMPRESSION_RATIO = 15.3` — an unverified guess, now removed
+ * hard-coded compression ratio — an unverified guess, now removed
  * (Epic #1254, sub-issue #1255). Real, measured OpenChrome vs competitor
  * throughput numbers come from the unified harness in #1258 (Speed &
  * Throughput); raw HTML is reported here only as a real Playwright measurement.

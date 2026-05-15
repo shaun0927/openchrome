@@ -68,7 +68,7 @@ OC compact DOM (read_page)       ~${ocSeq.tokenEstimate.ocCompactAvg.toLocaleStr
 PW raw HTML (page.content())    ~${pw.tokenEstimate.htmlMode.avgPerProfile.toLocaleString()}   ████████████████████████████████████████████████████████████
 PW innerText (page.innerText())     ~${pw.tokenEstimate.textMode.avgPerProfile.toLocaleString()}     ░
 
-OC compresses 15.3x vs raw HTML
+OC compression vs raw HTML: TBD — pending #1256 results
 \`\`\`
 
 ### Total Workflow Token Cost
@@ -115,10 +115,10 @@ OC vs PW+LLM: ${((1 - ocTokens / pwLlmTokens) * 100).toFixed(1)}% fewer tokens (
 - **Same auth state**: Both used the logged-in session (real Chrome profile)
 - **Same targets**: 20 identical Twitter/X profiles
 - **Isolated measurements**: Each strategy run in completely separate process
-- **OC compression ratio**: Calibrated from 2 actual \`read_page\` measurements:
-  - @elonmusk: 50.8KB compact / 760KB raw = 14.96x
-  - @BillGates: 50.6KB compact / 792KB raw = 15.65x
-  - Average: **15.3x**
+- **OC compression ratio**: TBD — pending #1256 results. The prior hard-coded
+  ratio averaged only two real measurements and has been retired; the Token
+  Efficiency axis (#1256) replaces it with a per-archetype measured ratio
+  computed across a 50-fixture corpus.
 - **Token estimate**: 1 token ≈ 4 characters (standard approximation)
 
 ---

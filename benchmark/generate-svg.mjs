@@ -12,7 +12,13 @@ const oc5 = JSON.parse(readFileSync(`${RESULTS_DIR}/isolated-batch5.json`, 'utf8
 const oc10 = JSON.parse(readFileSync(`${RESULTS_DIR}/isolated-batch10.json`, 'utf8'));
 const oc20 = JSON.parse(readFileSync(`${RESULTS_DIR}/isolated-batch20.json`, 'utf8'));
 
-const OC_COMPRESSION = 15.3;
+// Per #1254 cleanup: the historical hard-coded compression constant was an
+// unverified guess (only two real measurements averaged). The Token Efficiency
+// axis (#1256) replaces it with a real measured ratio per archetype. Until
+// #1256 publishes its results, every place that previously consumed this
+// constant renders the TBD placeholder below; the OpenChrome bars/numbers in
+// the legacy speed+token charts are intentionally absent rather than fake.
+const OC_COMPRESSION_PLACEHOLDER = 'TBD — pending #1256 results';
 
 const strategies = [
   { label: 'Playwright\nSequential', time: parseFloat(pw.timing.totalSec), tokens: pw.tokenEstimate.htmlMode.avgPerProfile, color: '#6366f1', tweets: pw.totalTweetsExtracted },
@@ -97,7 +103,10 @@ function generateTokenSVG() {
 
   const data = [
     { label: 'Playwright + LLM\n(raw HTML)', tokens: pw.tokenEstimate.htmlMode.avgPerProfile, color: '#6366f1', total: pw.tokenEstimate.htmlMode.totalTokens },
-    { label: 'OpenChrome\n(compact DOM)', tokens: Math.round(pw.tokenEstimate.htmlMode.avgPerProfile / OC_COMPRESSION), color: '#f97316', total: Math.round(pw.tokenEstimate.htmlMode.totalTokens / OC_COMPRESSION) },
+    // OpenChrome row deliberately omitted: the prior value was derived from
+    // the retired unverified compression estimate. Restore once #1256
+    // measurements land.
+    // { label: 'OpenChrome\n(compact DOM)', tokens: TBD, total: TBD }
     { label: 'Playwright standalone\n(no LLM)', tokens: 290, color: '#10b981', total: 5800 },
   ];
 
@@ -130,9 +139,9 @@ function generateTokenSVG() {
   });
 
   // Savings annotation
-  const savings = ((1 - 1/OC_COMPRESSION) * 100).toFixed(1);
+  const savings = OC_COMPRESSION_PLACEHOLDER;
   bars += `<rect x="${W/2 - 140}" y="${margin.top + rowH + rowH * 0.85}" width="280" height="32" fill="#fff7ed" stroke="#f97316" stroke-width="1.5" rx="8"/>`;
-  bars += `<text x="${W/2}" y="${margin.top + rowH + rowH * 0.85 + 21}" text-anchor="middle" font-size="14" font-weight="700" fill="#ea580c">OC saves ${savings}% tokens vs PW+LLM (${OC_COMPRESSION}x compression)</text>`;
+  bars += `<text x="${W/2}" y="${margin.top + rowH + rowH * 0.85 + 21}" text-anchor="middle" font-size="14" font-weight="700" fill="#ea580c">OC compression vs PW+LLM: ${savings}</text>`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
   <defs>
@@ -156,7 +165,7 @@ function generateDashboardSVG() {
   const fastest = { label: 'OC 10-batch', time: parseFloat(oc10.timing.totalSec) };
   const pwTime = parseFloat(pw.timing.totalSec);
   const speedup = (pwTime / fastest.time).toFixed(1);
-  const tokenSavings = ((1 - 1/OC_COMPRESSION) * 100).toFixed(1);
+  const tokenSavings = OC_COMPRESSION_PLACEHOLDER;
   const ocTweets = ocSeq.totalTweetsExtracted;
   const pwTweets = pw.totalTweetsExtracted;
   const moreTweets = ((ocTweets / pwTweets - 1) * 100).toFixed(0);
@@ -190,10 +199,10 @@ function generateDashboardSVG() {
   <!-- Card 2: Tokens -->
   <rect x="320" y="100" width="260" height="180" fill="#1e293b" stroke="#334155" stroke-width="1" rx="12"/>
   <text x="450" y="135" text-anchor="middle" font-size="13" fill="#94a3b8" font-weight="600">TOKEN EFFICIENCY</text>
-  <text x="450" y="185" text-anchor="middle" font-size="48" font-weight="800" fill="url(#accent)">${OC_COMPRESSION}x</text>
+  <text x="450" y="185" text-anchor="middle" font-size="24" font-weight="700" fill="url(#accent)">TBD</text>
   <text x="450" y="215" text-anchor="middle" font-size="14" fill="#cbd5e1">fewer tokens per page</text>
   <text x="450" y="240" text-anchor="middle" font-size="12" fill="#64748b">OC ~12K tok vs PW ~178K tok</text>
-  <text x="450" y="262" text-anchor="middle" font-size="11" fill="#475569">(${tokenSavings}% savings via compact DOM)</text>
+  <text x="450" y="262" text-anchor="middle" font-size="11" fill="#475569">(savings: ${tokenSavings})</text>
 
   <!-- Card 3: Data Quality -->
   <rect x="600" y="100" width="260" height="180" fill="#1e293b" stroke="#334155" stroke-width="1" rx="12"/>
