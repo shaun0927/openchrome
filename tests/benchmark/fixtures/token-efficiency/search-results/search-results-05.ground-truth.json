@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-05",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "headless chrome alternatives"
+    },
+    {
+      "key": "totalResults",
+      "expected": "6,030"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to headless"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/headless/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of headless chrome alternatives with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "headless community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/headless/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on headless chrome alternatives covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "headless reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/headless"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}

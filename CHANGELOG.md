@@ -4,6 +4,19 @@ All notable changes to OpenChrome are documented here. For full release notes se
 
 ---
 
+## v1.12.2 — benchmark measurement readiness (2026-05-15)
+
+Focused benchmark-readiness patch for the Competitive Benchmark Suite. This
+release expands the suite from the v1.12.1 foundation into a fuller measurement
+envelope: Playwright MCP, Crawlee, and Browser Use adapters; a 5×10
+token-efficiency corpus; WebVoyager task expansion from 18 to 61 tasks; speed,
+throughput, reliability, auth, and DX runners; cross-platform bridge smoke
+coverage; unified benchmark report generation; and an Epic #1254 close gate
+that distinguishes measured evidence from mock-only or queued live cells.
+
+See [`docs/releases/v1.12.2.md`](docs/releases/v1.12.2.md) for the full
+release notes.
+
 ## v1.12.1 — competitive benchmark suite (2026-05-15)
 
 Focused follow-up to v1.12.0: merges the Competitive Benchmark Suite

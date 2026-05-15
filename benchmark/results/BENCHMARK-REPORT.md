@@ -1,187 +1,170 @@
-# OpenChrome vs Playwright Benchmark Report v2
-## Task: Crawl Latest Tweets from 20 Twitter/X Celebrities
-## NOW WITH PARALLEL EXECUTION
+# OpenChrome Competitive Benchmark Report
 
-**Date**: 2026-03-02
-**Chrome**: v145 (same instance, CDP port 9222)
-**Profiles**: 20 celebrities
+Generated: 2026-05-15T09:25:52.505Z
+Source: per-axis section files under `benchmark/results/`.
 
----
+Part of [Epic #1254](https://github.com/shaun0927/openchrome/issues/1254) — the competitive benchmark suite. Each section below is generated from its axis runner's envelope; this top-level file is the union.
 
-## Executive Summary
+## Headline status
 
-| Metric | OC Parallel (5-batch) | OC Sequential | Playwright (Sequential) |
-|--------|----------------------|---------------|------------------------|
-| **Total Time** | **30.5s** | 84.6s | 82.4s |
-| **Speedup vs PW** | **2.7x faster** | ~1x | baseline |
-| **Tokens/Profile** | ~12,037 | ~12,037 | ~179,760 (HTML) |
-| **Total Tokens** | ~252,733 | ~252,733 | ~3,595,203 (HTML) |
-| **Success Rate** | 95.0% | 95.0% | 95.0% |
-| **Tweets Found** | 86 | 86 | 77 |
-| **Script Required** | No | No | Yes (~100 lines) |
+| Section | Axis | Issue | State |
+| --- | --- | --- | --- |
+| #A | Token Efficiency | [#1256](https://github.com/shaun0927/openchrome/issues/1256) | measured |
+| #B | Agent Task Success | [#1257](https://github.com/shaun0927/openchrome/issues/1257) | pending |
+| #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | measured |
+| #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | pending |
+| #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | pending |
+| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | pending |
 
----
+## Methodology principles
+All sections honor Epic #1254's ten methodology principles:
+1. N ≥ 5 repetitions; p50/p95/stddev + bootstrap 95% CI
+2. Version pinning per `benchmark/COMPETITORS.md`
+3. Environment metadata embedded in every result envelope
+4. Adapter pattern — same task code across every library
+5. Identical conditions (same Chrome instance, same LLM)
+6. Fixed datasets (local fixtures over live sites where the metric allows)
+7. Losing scenarios published honestly
+8. LLM pin exactly frozen per run
+9. Reproducibility — fixtures, ground-truth, scripts, rubrics all committed
+10. Sample sizes justified per axis, not conventional
 
-## 1. Speed: Parallel Strategies Compared
+## Retired estimates
+Two legacy headline numbers were retired by Epic #1254: an unverified token-compression ratio and a similarly unverified speedup claim. Both came from estimates averaging only two real measurements. The Epic-close generator (`benchmark/generate-benchmark-report.mjs`) lints for those exact literals and fails the build if they reappear — see `RETIRED_CLAIMS` in that file for the precise list.
 
-```
-Strategy               Time      Speedup    Success   Note
-─────────────────────────────────────────────────────────────
-OC  20 tabs at once    18.9s     4.4x        10%       Browser overloaded
-OC  Batches of 10      22.8s     3.6x        70%       Some rate limiting
-OC  Batches of 5       30.5s     2.7x        95%  ★   Optimal balance
-OC  Sequential         84.6s      1.0x        95%       Baseline OC
-PW  Sequential         82.4s      1.0x        95%       Baseline PW
-```
+## #A Token Efficiency (#1256)
 
-### Optimal Strategy: Batches of 5
+Generated: 2026-05-15T06:08:01.226Z
+Source: `benchmark/results/token-efficiency.json` (axis: `token-efficiency`, schema 1.0.0).
+Tokenizer: `cl100k_base`.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Batch 1: ████████ 5.4s  (5 profiles → 5 success)          │
-│  Batch 2: ████████ 5.4s  (5 profiles → 5 success)          │
-│  Batch 3: █████████████████████ 14.4s  (5 profiles → 4*)   │
-│  Batch 4: ███████ 5.0s   (5 profiles → 5 success)          │
-│  ─────────────────────                                      │
-│  TOTAL:   30.5s   (19/20 success, 86 tweets)                │
-│                                                             │
-│  * TimCook has 0 tweets (same in all approaches)            │
-│  Without TimCook outlier: ~21s effective time                │
-└─────────────────────────────────────────────────────────────┘
+## Methodology
+- Each `(library × fixture)` cell records median payload tokens, retention rate, and compression ratio over N samples.
+- Retention is scored against the ≥ 12-field ground-truth per fixture per `RUBRIC.md`. A raw HTML dump does NOT score retention by substring match — only structured field-keyed extraction counts.
+- Live-only cells (real Chrome / Python) are explicitly annotated when skipped in `--skip-live` mode; they are never plotted as 0 or omitted silently.
 
-Playwright Sequential:
-│  Profile 1 → Profile 2 → ... → Profile 20                  │
-│  ████████████████████████████████████████████████████████    │
-│  TOTAL: 82.4s                                               │
-```
+## Per-library × per-archetype median tokens
+Lower is better. "(skip)" = library not measured in this run.
 
-**OC parallel is 2.7x faster than Playwright** with identical success rates.
+| Library | docs | ecommerce | news | search-results | spa |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `browser-use-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `crawlee-cheerio` | 2691 | 3571 | 4768 | 3314 | 4863 |
+| `deterministic-static` | 88 | 78 | 96 | 157 | 96 |
+| `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
----
+## Per-library × per-archetype median retention
+Higher is better. "(skip)" = library not measured in this run.
 
-## 2. Token Efficiency
+| Library | docs | ecommerce | news | search-results | spa |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `browser-use-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `crawlee-cheerio` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| `deterministic-static` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
-### Per-Profile LLM Context Size
+## Per-library × per-archetype median compression
+Higher is better (× vs raw HTML tokens).
 
-```
-                                 Tokens    Data Size
-────────────────────────────────────────────────────
-OC compact DOM (read_page)       ~12,037    ~47KB      ████
-PW raw HTML (page.content())    ~179,760   ~702KB      ████████████████████████████████████████████████████████████
-PW innerText (page.innerText())     ~506     ~2KB      ░
+| Library | docs | ecommerce | news | search-results | spa |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `browser-use-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `crawlee-cheerio` | 2.4× | 2.4× | 2.4× | 2.4× | 2.3× |
+| `deterministic-static` | 73.9× | 109.1× | 116.8× | 51.1× | 116.8× |
+| `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
-OC compresses 15.3x vs raw HTML
-```
+## Per-archetype upper-left winner
+Lowest tokens at the max retention measured in this run.
 
-### Total Workflow Token Cost
+| Archetype | Winner library | Retention |
+| --- | --- | ---: |
+| docs | `deterministic-static` | 100.0% |
+| ecommerce | `deterministic-static` | 100.0% |
+| news | `deterministic-static` | 100.0% |
+| search-results | `deterministic-static` | 100.0% |
+| spa | `deterministic-static` | 100.0% |
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Approach                  Total Tokens    Cost @$3/MTok    │
-│  ─────────────────────────────────────────────────────────  │
-│  OC (MCP, 20 profiles)     ~252,733        ~$0.76         │
-│  PW + LLM (per-page)      ~3,595,203   ~$10.79        │
-│  PW standalone (no LLM)    ~5,800           ~$0.0174      │
-│                                                             │
-│  OC vs PW+LLM: 93.0% fewer tokens (14.2x more efficient)   │
-└─────────────────────────────────────────────────────────────┘
-```
+## Cells skipped in this run
+350 cells did not run because they are live-only and `OPENCHROME_BENCH_LIVE=1` was not set.
 
-### Token Breakdown
+Skipped libraries:
+- `browser-use-dom`
+- `openchrome-readpage-ax`
+- `openchrome-readpage-dom`
+- `playwright-a11y`
+- `playwright-content`
+- `playwright-innertext`
+- `playwright-mcp-snapshot`
 
-| Component | OC (MCP) | PW + LLM | PW Standalone |
-|-----------|----------|----------|---------------|
-| Navigation overhead | 7,000 | 0 | 0 |
-| Wait/sync overhead | 5,000 | 0 | 0 |
-| Page data (20 profiles) | 24,291 | 3,595,203 | 0 |
-| Script generation | 0 | 800 | 800 |
-| Output parsing | 0 | 5,000 | 5,000 |
-| **TOTAL** | **252,733** | **3,601,003** | **5,800** |
+To run them, set `OPENCHROME_BENCH_LIVE=1` and re-run `npm run bench:tokens`. Today the live cells are scaffolded but not yet wired to their real Chrome / Python integrations — that is queued for the next session.
 
----
+## Headline
+Across 5 archetypes with measured cells, **`deterministic-static`** sits in the upper-left of the scatter on 5 / 5.
 
-## 3. Data Quality
+See `chart-tokens-scatter.svg` for the per-archetype scatter view.
 
-| Metric | OC | Playwright |
-|--------|-----|-----------|
-| Successful profiles | 19/20 | 19/20 |
-| Total tweets extracted | **86** | 77 |
-| Avg tweets/profile | **4.3** | 3.85 |
-| Failed profile | @TimCook (0 tweets) | @TimCook (0 tweets) |
 
-**OC extracted 12% more tweets** (86 vs 77) due to longer wait times allowing more dynamic content to load.
+## #B Agent Task Success (#1257)
 
----
+*No data yet for #1257. Run the axis runner + `agent-success` generator to populate.*
 
-## 4. Comprehensive Comparison
+## #C Speed & Throughput (#1258)
 
-### Speed × Token Efficiency Matrix
+Generated: 2026-05-15T06:11:26.078Z
+Source: `benchmark/results/speed-throughput.json` (axis: `speed-throughput`, schema 1.0.0).
+Environment: Node v20.19.6 on darwin 25.3.0 arm64 (Apple M5, 10 cores).
 
-```
-                    FAST ←──────────────────→ SLOW
-                    │                          │
-  TOKEN-          ┌─┼──────────────────────────┤
-  EFFICIENT       │ │  ★ OC Parallel           │
-  (fewer tokens)  │ │    30.5s / 253K tokens   │
-                  │ │                          │
-                  │ │         OC Sequential    │
-                  │ │         84.6s / 253K tok │
-                  │ │                          │
-                  │ │              PW Seq      │
-  TOKEN-          │ │              82.4s       │
-  EXPENSIVE       │ │              3.6M tokens │
-  (more tokens)   └─┼──────────────────────────┤
-                    │                          │
-```
+## Methodology
+- Pages served by the local static fixture server (50-page mirror, `/page/N` routes). Zero network variance, byte-identical input per request.
+- Warm-up iterations discarded before timing (default 3); the discard count is recorded per cell.
+- Per [issue #1258](https://github.com/shaun0927/openchrome/issues/1258): **raw throughput and success rate are reported as two PRIMARY columns**, with effective throughput shown only as a **SECONDARY composite** (raw × success). Collapsing those two primaries into one number is what made the old "20 tabs = 18.9s but 10% success" headline misleading.
 
-### Summary Scorecard
+## Throughput — primary columns (raw + success), secondary composite (effective)
 
-| Dimension | OC Parallel | Playwright | Winner |
-|-----------|------------|------------|--------|
-| **Speed (20 profiles)** | 30.5s | 82.4s | **OC (2.7x)** |
-| **Token efficiency** | 253K tokens | 3.6M tokens (w/ LLM) | **OC (14.2x)** |
-| **Data quality** | 86 tweets | 77 tweets | **OC (+12%)** |
-| **Developer effort** | Zero (natural language) | ~100 lines script | **OC** |
-| **Adaptability** | Handles popups, CAPTCHAs | Breaks on changes | **OC** |
-| **Batch automation** | Via MCP tool calls | Native script | **PW** |
-| **CI/CD ready** | Needs MCP server | Native | **PW** |
-| **Min token cost** | 253K (needs LLM) | 5.8K (standalone) | **PW** |
+| Library | Mode | Concurrency | Raw pg/s (PRIMARY) | Success (PRIMARY) | Effective pg/s (secondary) | p50 wall (ms) | p95 wall (ms) | Samples kept | Warm-up discarded |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `OpenChrome` | `dom-stub` | 1 | 50000.0 | 100.0% | 50000.0 | 1.0 | 1.0 | 1 | 3 |
+| `OpenChrome` | `dom-stub` | 5 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
+| `OpenChrome` | `dom-stub` | 10 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
+| `OpenChrome` | `dom-stub` | 20 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
 
----
+## Single-action latency (#1258)
+No latency results available. Run `npm run bench:latency -- --ci` to produce `benchmark/results/speed-latency.json`, then re-run this generator.
 
-## 5. Key Takeaways
+## Session reuse delta
+Issue #1258 calls for a 100-task fresh-vs-reused-session delta. That measurement requires a live Chrome instance to exercise the OpenChromeRealAdapter setup/teardown lifecycle, so it ships in the next-session follow-up alongside the live-mode throughput cells. The runner skeleton (`run-throughput.ts`) already plumbs `OPENCHROME_BENCH_LIVE=1` so the next commit only needs to add a `--session-reuse` mode without touching the result envelope shape.
 
-### OpenChrome's Advantages
-1. **2.7x faster** with parallel tab execution (30.5s vs 82.4s)
-2. **14.2x more token-efficient** than Playwright+LLM (compact DOM vs raw HTML)
-3. **12% more data** extracted (86 vs 77 tweets)
-4. **Zero code** required — natural language → results
-5. **Adaptive** — handles dynamic content, auth, popups
+## Headline
+Measured 4 cells across libraries: `OpenChrome`; concurrencies: 1 / 5 / 10 / 20.
 
-### When Each Tool Wins
-| Scenario | Best Choice | Why |
-|----------|-------------|-----|
-| One-off data extraction | **OpenChrome** | No script needed, faster with parallel |
-| LLM-powered web automation | **OpenChrome** | 14.2x fewer tokens per page |
-| Recurring batch jobs | **Playwright** | Script runs independently, CI/CD native |
-| Budget-constrained (min tokens) | **Playwright** | 5.8K tokens total (no per-page LLM) |
-| Complex multi-step flows | **OpenChrome** | LLM adapts to each step |
+Only one library produced numbers in this run (`OpenChrome`). Competitor cells (Playwright, Puppeteer, Crawlee) plug into the same runner via the existing adapter registry; the next-session follow-up wires them through `buildAdapter()`.
 
----
+See `chart-throughput.svg` and `chart-success-rate.svg` for the visual companions.
 
-## 6. Methodology
 
-- **Same Chrome instance**: Both tools connected via CDP to Chrome v145 on port 9222
-- **Same auth state**: Both used the logged-in session (real Chrome profile)
-- **Same targets**: 20 identical Twitter/X profiles
-- **OC compression ratio**: Calibrated from 2 actual `read_page` measurements:
-  - @elonmusk: 50.8KB compact / 760KB raw = 14.96x
-  - @BillGates: 50.6KB compact / 792KB raw = 15.65x
-  - Average: **15.3x**
-- **Token estimate**: 1 token ≈ 4 characters (standard approximation)
-- **Parallel strategy**: OC tested with 5/10/20 concurrent tabs; 5-batch optimal
+## #D Reliability & Fault-Recovery (#1259)
 
----
+*Section file pending — axis #1259 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
 
-*Generated by OpenChrome Benchmark Suite v2*
-*2026-03-02T13:36:55.149Z*
+## #E Auth & Real-World Usability (#1260)
+
+*Section file pending — axis #1260 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
+
+## #F Developer Experience (#1261)
+
+*No data yet for #1261. Run the axis runner + `developer-experience` generator to populate.*

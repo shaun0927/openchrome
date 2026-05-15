@@ -48,18 +48,32 @@ describe('scoreFixture', () => {
     }
   });
 
-  test('reports a real measured compression ratio, not the old 15.3 constant', () => {
-    const row = scoreFixture(TOKEN_EFFICIENCY_CORPUS[0]);
-    expect(Number.isFinite(row.compressionRatio)).toBe(true);
-    expect(row.compressionRatio).not.toBe(15.3);
+  test('reports a real measured compression ratio that varies across fixtures', () => {
+    // The retired hard-coded constant was a single value applied uniformly.
+    // A real measurement must (a) produce a finite, > 1 ratio per fixture and
+    // (b) differ across fixtures with different raw-HTML sizes — otherwise the
+    // pipeline has regressed back to a uniform estimate.
+    const ratios = TOKEN_EFFICIENCY_CORPUS.map((f) => scoreFixture(f).compressionRatio);
+    for (const r of ratios) {
+      expect(Number.isFinite(r)).toBe(true);
+      expect(r).toBeGreaterThan(1);
+    }
+    const uniqueRatios = new Set(ratios.map((r) => Number(r.toFixed(6))));
+    expect(uniqueRatios.size).toBeGreaterThan(1);
   });
 });
 
 describe('runTokenEfficiencyBenchmark', () => {
-  test('produces one row per fixture', () => {
+  test('produces one row per (library, fixture) cell of the matrix', () => {
     const rows = runTokenEfficiencyBenchmark();
-    expect(rows).toHaveLength(TOKEN_EFFICIENCY_CORPUS.length);
-    expect(rows.map((r) => r.fixture).sort()).toEqual(
+    const libraries = new Set(rows.map((r) => r.library));
+    // Every fixture must appear once per library — the matrix shape.
+    expect(rows).toHaveLength(TOKEN_EFFICIENCY_CORPUS.length * libraries.size);
+    // The deterministic-static library is the always-on baseline; every
+    // fixture must have one such row.
+    const deterministicRows = rows.filter((r) => r.library === 'deterministic-static');
+    expect(deterministicRows).toHaveLength(TOKEN_EFFICIENCY_CORPUS.length);
+    expect(deterministicRows.map((r) => r.fixture).sort()).toEqual(
       TOKEN_EFFICIENCY_CORPUS.map((f) => f.name).sort(),
     );
   });

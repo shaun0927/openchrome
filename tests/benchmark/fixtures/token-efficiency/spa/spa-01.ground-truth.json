@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-01",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "WaveFeed"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@alex"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "Compose"
+    },
+    {
+      "key": "postTitle",
+      "expected": "Shipping the new compaction pipeline this week"
+    },
+    {
+      "key": "postBody",
+      "expected": "Shipping the new compaction pipeline this week. Posted via the WaveFeed mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "40"
+    },
+    {
+      "key": "replyCount",
+      "expected": "3"
+    },
+    {
+      "key": "shareCount",
+      "expected": "2"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-01 09:11 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Alex avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search posts"
+    }
+  ]
+}

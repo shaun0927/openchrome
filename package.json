@@ -1,6 +1,6 @@
 {
   "name": "openchrome-mcp",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
   "exports": {
@@ -34,6 +34,11 @@
     "bench:webvoyager:real": "ts-node tests/benchmark/webvoyager/runner.ts --adapter claude",
     "bench:latency": "ts-node tests/benchmark/run-latency.ts",
     "bench:tokens": "ts-node tests/benchmark/run-token-efficiency.ts",
+    "bench:throughput": "ts-node tests/benchmark/run-throughput.ts",
+    "bench:longrun": "ts-node tests/benchmark/run-longrun.ts",
+    "bench:reliability": "ts-node tests/benchmark/run-reliability.ts",
+    "bench:auth": "ts-node tests/benchmark/run-auth.ts",
+    "bench:dx": "ts-node tests/benchmark/run-dx.ts",
     "test": "jest",
     "test:e2e": "node --expose-gc node_modules/.bin/jest --config tests/e2e/jest.e2e.config.js",
     "test:coverage": "jest --coverage",
@@ -76,6 +81,7 @@
   },
   "homepage": "https://github.com/shaun0927/openchrome#readme",
   "devDependencies": {
+    "@playwright/mcp": "^0.0.75",
     "@types/chrome": "^0.1.36",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
@@ -85,6 +91,7 @@
     "@types/write-file-atomic": "^4.0.3",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
+    "crawlee": "^3.16.0",
     "dependency-cruiser": "^16.0.0",
     "eslint": "^8.57.0",
     "jest": "^29.7.0",

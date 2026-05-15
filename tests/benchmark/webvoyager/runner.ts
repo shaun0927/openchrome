@@ -21,6 +21,17 @@ import type { EvalContext } from '../../../src/contracts/eval-context';
 import { runMockTask } from './llm/mock-adapter';
 import { renderMarkdown } from './report';
 import { WEBVOYAGER_BUDGET } from './llm/budget';
+import {
+  WEBVOYAGER_LIBRARIES,
+  WebVoyagerLibrary,
+  LIBRARY_ROUTING,
+  projectCost,
+  formatProjection,
+} from './llm/library-routing';
+import {
+  EXECUTION_MODES,
+  ExecutionMode,
+} from './llm/execution-mode';
 import type {
   Baseline,
   BenchReport,
@@ -37,10 +48,46 @@ type AdapterName = 'mock' | 'claude';
 interface CliOptions {
   adapter: AdapterName;
   taskFilter?: string;
+  /**
+   * Library matrix selection (#1257). Today only openchrome's native loop is
+   * wired; selecting playwright-mcp or browser-use surfaces a clear skip
+   * notice when --dry-run is omitted. The flag exists today so PR-12 can
+   * land the routing + dry-run gate without touching the adapter dispatch.
+   */
+  library: WebVoyagerLibrary;
+  /**
+   * Execution mode (#1257). `native` is the headline comparison; `passive`
+   * wraps every library as a passive tool surface — surfaces drift between
+   * the two but for browser-use is a SECONDARY data point (it strips the
+   * library's planning loop).
+   */
+  mode: ExecutionMode;
+  /**
+   * --dry-run: print the cost projection and exit 0 WITHOUT making any LLM
+   * API call. The runner refuses to run real tasks in this mode regardless
+   * of OPENCHROME_BENCH_REAL.
+   */
+  dryRun: boolean;
+  /** Repetitions per task; issue #1257 mandates N >= 10 for native-mode runs. */
+  repetitions: number;
+}
+
+function isLibrary(v: string): v is WebVoyagerLibrary {
+  return (WEBVOYAGER_LIBRARIES as readonly string[]).includes(v);
+}
+
+function isMode(v: string): v is ExecutionMode {
+  return (EXECUTION_MODES as readonly string[]).includes(v);
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const opts: CliOptions = { adapter: 'mock' };
+  const opts: CliOptions = {
+    adapter: 'mock',
+    library: 'openchrome',
+    mode: 'native',
+    dryRun: false,
+    repetitions: 1,
+  };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--adapter') {
@@ -51,6 +98,32 @@ function parseArgs(argv: string[]): CliOptions {
       opts.adapter = v;
     } else if (a === '--task') {
       opts.taskFilter = argv[++i];
+    } else if (a === '--library') {
+      const v = argv[++i];
+      if (!isLibrary(v)) {
+        throw new Error(`unknown --library: ${v}. Choose one of ${WEBVOYAGER_LIBRARIES.join(', ')}`);
+      }
+      opts.library = v;
+    } else if (a === '--repetitions' || a === '--reps') {
+      const n = parseInt(argv[++i], 10);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new Error(`--repetitions must be a positive integer; got ${argv[i]}`);
+      }
+      opts.repetitions = n;
+    } else if (a === '--dry-run') {
+      opts.dryRun = true;
+    } else if (a === '--mode') {
+      const v = argv[++i];
+      if (!isMode(v)) {
+        throw new Error(`unknown --mode: ${v}. Choose one of ${EXECUTION_MODES.join(', ')}`);
+      }
+      opts.mode = v;
+    } else if (a.startsWith('--mode=')) {
+      const v = a.slice('--mode='.length);
+      if (!isMode(v)) {
+        throw new Error(`unknown --mode: ${v}. Choose one of ${EXECUTION_MODES.join(', ')}`);
+      }
+      opts.mode = v;
     } else if (a.startsWith('--adapter=')) {
       const v = a.slice('--adapter='.length);
       if (v !== 'mock' && v !== 'claude') {
@@ -59,6 +132,12 @@ function parseArgs(argv: string[]): CliOptions {
       opts.adapter = v;
     } else if (a.startsWith('--task=')) {
       opts.taskFilter = a.slice('--task='.length);
+    } else if (a.startsWith('--library=')) {
+      const v = a.slice('--library='.length);
+      if (!isLibrary(v)) {
+        throw new Error(`unknown --library: ${v}. Choose one of ${WEBVOYAGER_LIBRARIES.join(', ')}`);
+      }
+      opts.library = v;
     }
   }
   // env override (e.g. OPENCHROME_BENCH_ADAPTER=claude)
@@ -68,6 +147,8 @@ function parseArgs(argv: string[]): CliOptions {
   }
   return opts;
 }
+
+export { parseArgs as parseRunnerArgs };
 
 async function loadTasks(): Promise<WebVoyagerTask[]> {
   const entries = await fs.readdir(TASKS_DIR);
@@ -248,6 +329,46 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     return 1;
   }
 
+  // Dry-run gate (#1257): print the worst-case cost projection and exit 0
+  // WITHOUT making any LLM API call. The gate runs before adapter dispatch
+  // so even `--adapter claude` with OPENCHROME_BENCH_REAL=1 is honored as
+  // dry-run when --dry-run is set.
+  if (opts.dryRun) {
+    const projection = projectCost({
+      taskCount: tasks.length,
+      libraries: [opts.library],
+      repetitions: opts.repetitions,
+    });
+    console.error(formatProjection(projection));
+    console.error(
+      `\n[webvoyager] library=${opts.library} mode=${opts.mode} ` +
+        `wired=${LIBRARY_ROUTING[opts.library].nativeLoopWired} ` +
+        `adapter-requested=${opts.adapter} (no run performed; --dry-run is set)`,
+    );
+    if (opts.mode === 'passive') {
+      console.error(
+        `[webvoyager] note: --mode passive is the SECONDARY data point per #1257. ` +
+          `Headline numbers come from --mode native; for browser-use, passive strips ` +
+          `the library's planning loop and is reported separately, never as the headline.`,
+      );
+    }
+    return 0;
+  }
+
+  // Live library gate (#1257): the runner today only wires OpenChrome's
+  // native loop. Selecting an unwired library without --dry-run is a config
+  // error — refuse to silently fall back to OpenChrome and surface the
+  // routing's note so the operator knows what needs to land.
+  const routing = LIBRARY_ROUTING[opts.library];
+  if (!routing.nativeLoopWired) {
+    console.error(
+      `[webvoyager] GATE FAILED: library "${opts.library}" native loop is not yet wired. ` +
+        `Use --dry-run for the cost projection, or run with --library openchrome. ` +
+        `Note: ${routing.note}`,
+    );
+    return 1;
+  }
+
   const baseline = await loadBaseline();
 
   const taskReports: TaskRunReport[] = [];
@@ -281,6 +402,9 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   const benchReport: BenchReport = {
     git_sha: sha,
     adapter: opts.adapter,
+    mode: opts.mode,
+    library: opts.library,
+    repetitions: opts.repetitions,
     total_tasks: totalCount,
     pass_count: passCount,
     fail_count: failCount,
@@ -300,10 +424,13 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   await fs.writeFile(path.join(REPORTS_DIR, 'latest.md'), renderMarkdown(benchReport), 'utf8');
 
   // Gate against baseline: every task in `transcripts_required` MUST pass.
-  // Pending tasks (no transcript yet) are allowed; this prevents 0/10 from
-  // looking "green" but lets us bootstrap the suite honestly.
+  // Pending tasks (no transcript yet) are explicitly excluded from the gate
+  // — this prevents 0/10 from looking "green" but lets us bootstrap the
+  // suite honestly. The report renderer's "(or are pending and excluded
+  // from the gate)" copy assumes this exclusion holds; the previous filter
+  // counted pending as failure, contradicting that copy.
   const requiredFailures = taskReports.filter(
-    (r) => required.has(r.name) && r.result !== 'passed',
+    (r) => required.has(r.name) && r.result !== 'passed' && r.result !== 'pending',
   );
   if (requiredFailures.length > 0) {
     console.error(

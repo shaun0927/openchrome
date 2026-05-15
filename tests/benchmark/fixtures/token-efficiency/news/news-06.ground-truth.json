@@ -1,0 +1,53 @@
+{
+  "fixture": "news-06",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "Library Board Funds Open Source Program"
+    },
+    {
+      "key": "author",
+      "expected": "Ana Costa"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-11-16"
+    },
+    {
+      "key": "section",
+      "expected": "Local"
+    },
+    {
+      "key": "summary",
+      "expected": "Library Board Funds Open Source Program — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "1010"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/oss-program"
+    },
+    {
+      "key": "category",
+      "expected": "Technology"
+    },
+    {
+      "key": "readingTime",
+      "expected": "4 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Local / Technology"
+    }
+  ]
+}

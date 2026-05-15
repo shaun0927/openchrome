@@ -1,0 +1,53 @@
+{
+  "fixture": "search-results-10",
+  "fields": [
+    {
+      "key": "query",
+      "expected": "crawl rate limiting strategies"
+    },
+    {
+      "key": "totalResults",
+      "expected": "5,260"
+    },
+    {
+      "key": "result1Title",
+      "expected": "Authoritative guide to rate-limit"
+    },
+    {
+      "key": "result1Url",
+      "expected": "https://example.com/rate-limit/guide"
+    },
+    {
+      "key": "result1Snippet",
+      "expected": "An overview of crawl rate limiting strategies with worked examples, configuration knobs, and reference benchmarks."
+    },
+    {
+      "key": "result2Title",
+      "expected": "rate-limit community write-up"
+    },
+    {
+      "key": "result2Url",
+      "expected": "https://blog.example.com/rate-limit/community"
+    },
+    {
+      "key": "result2Snippet",
+      "expected": "Community discussion thread on crawl rate limiting strategies covering edge cases and pitfalls."
+    },
+    {
+      "key": "result3Title",
+      "expected": "rate-limit reference documentation"
+    },
+    {
+      "key": "result3Url",
+      "expected": "https://docs.example.com/rate-limit"
+    },
+    {
+      "key": "paginationNext",
+      "expected": "Next page"
+    },
+    {
+      "key": "filterPrimary",
+      "expected": "Past year"
+    }
+  ]
+}

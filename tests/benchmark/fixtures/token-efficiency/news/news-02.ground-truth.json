@@ -1,0 +1,53 @@
+{
+  "fixture": "news-02",
+  "fields": [
+    {
+      "key": "headline",
+      "expected": "Researchers Identify New Coastal Species"
+    },
+    {
+      "key": "author",
+      "expected": "Priya Sharma"
+    },
+    {
+      "key": "publishedDate",
+      "expected": "2026-03-04"
+    },
+    {
+      "key": "section",
+      "expected": "Science"
+    },
+    {
+      "key": "summary",
+      "expected": "Researchers Identify New Coastal Species — overview piece covering the rollout and stakeholder reactions."
+    },
+    {
+      "key": "wordCount",
+      "expected": "698"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Subscribe"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://news.example/coastal-species"
+    },
+    {
+      "key": "category",
+      "expected": "Biology"
+    },
+    {
+      "key": "readingTime",
+      "expected": "3 min"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Home / Science / Biology"
+    }
+  ]
+}

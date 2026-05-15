@@ -31,3 +31,23 @@ export {
   PlaywrightContextLike,
   PlaywrightPageLike,
 } from './playwright-adapter';
+
+export {
+  PlaywrightMcpAdapter,
+  PlaywrightMcpAdapterOptions,
+  PlaywrightMcpTransport,
+} from './playwright-mcp-adapter';
+
+export {
+  CrawleeAdapter,
+  CrawleeAdapterOptions,
+  CrawleeExtractor,
+  CrawleeExtractionResult,
+} from './crawlee-adapter';
+
+export {
+  BrowserUseAdapter,
+  BrowserUseAdapterOptions,
+  BrowserUseBridgeTransport,
+  BridgeResponse,
+} from './browser-use-adapter';

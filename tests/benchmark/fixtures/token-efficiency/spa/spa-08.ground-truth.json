@@ -1,0 +1,53 @@
+{
+  "fixture": "spa-08",
+  "fields": [
+    {
+      "key": "appName",
+      "expected": "PodCircle"
+    },
+    {
+      "key": "userHandle",
+      "expected": "@sam"
+    },
+    {
+      "key": "primaryAction",
+      "expected": "Record"
+    },
+    {
+      "key": "postTitle",
+      "expected": "New show art uploaded for the season opener"
+    },
+    {
+      "key": "postBody",
+      "expected": "New show art uploaded for the season opener. Posted via the PodCircle mobile client."
+    },
+    {
+      "key": "likeCount",
+      "expected": "159"
+    },
+    {
+      "key": "replyCount",
+      "expected": "10"
+    },
+    {
+      "key": "shareCount",
+      "expected": "3"
+    },
+    {
+      "key": "timestamp",
+      "expected": "2026-05-15 16:00 UTC"
+    },
+    {
+      "key": "authorAvatarAlt",
+      "expected": "Sam avatar"
+    },
+    {
+      "key": "navigationPrimary",
+      "expected": "Feed"
+    },
+    {
+      "key": "searchPlaceholder",
+      "expected": "Search shows"
+    }
+  ]
+}

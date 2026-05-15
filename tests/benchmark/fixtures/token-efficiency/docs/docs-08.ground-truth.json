@@ -1,0 +1,53 @@
+{
+  "fixture": "docs-08",
+  "fields": [
+    {
+      "key": "title",
+      "expected": "Metrics Export"
+    },
+    {
+      "key": "apiVersion",
+      "expected": "v2"
+    },
+    {
+      "key": "category",
+      "expected": "Operations"
+    },
+    {
+      "key": "summary",
+      "expected": "Guide to metrics export for openchrome v2."
+    },
+    {
+      "key": "lastUpdated",
+      "expected": "2026-11-15"
+    },
+    {
+      "key": "primaryCta",
+      "expected": "Copy snippet"
+    },
+    {
+      "key": "canonicalUrl",
+      "expected": "https://docs.example/metrics-export"
+    },
+    {
+      "key": "breadcrumb",
+      "expected": "Docs / Operations / Metrics Export"
+    },
+    {
+      "key": "codeLanguage",
+      "expected": "yaml"
+    },
+    {
+      "key": "language",
+      "expected": "en"
+    },
+    {
+      "key": "nextPage",
+      "expected": "Alerting"
+    },
+    {
+      "key": "prevPage",
+      "expected": "Logging"
+    }
+  ]
+}

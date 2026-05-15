@@ -1,42 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 480" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
   <defs>
     <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#f8fafc"/>
       <stop offset="100%" stop-color="#f1f5f9"/>
     </linearGradient>
   </defs>
-  <rect width="880" height="480" fill="url(#bg2)" rx="16"/>
-
-  <!-- Title -->
-  <text x="440" y="38" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Simple Task Token Efficiency</text>
-  <text x="440" y="62" text-anchor="middle" font-size="13" fill="#94a3b8">Tokens the LLM must process per Twitter profile (lower is better)</text>
-
-  <!-- Row 1: Playwright + LLM — 178,102 tok/profile -->
-  <text x="48" y="108" font-size="13" font-weight="600" fill="#475569">Playwright + LLM</text>
-  <text x="48" y="124" font-size="11" fill="#94a3b8">(raw HTML to LLM)</text>
-  <rect x="200" y="96" width="580" height="36" fill="#6366f1" opacity="0.85" rx="6"/>
-  <text x="770" y="120" text-anchor="end" font-size="14" font-weight="700" fill="#fff">178,102 tok/profile</text>
-  <text x="200" y="152" font-size="11" fill="#94a3b8">Total for 20 profiles: 3,562,038 tokens</text>
-
-  <!-- Row 2: OpenChrome — 11,641 tok/profile -->
-  <text x="48" y="198" font-size="13" font-weight="600" fill="#ea580c">OpenChrome</text>
-  <text x="48" y="214" font-size="11" fill="#94a3b8">(compact DOM)</text>
-  <rect x="200" y="186" width="38" height="36" fill="#f97316" opacity="0.9" rx="6"/>
-  <text x="248" y="210" font-size="14" font-weight="700" fill="#1e293b">11,641 tok/profile</text>
-  <text x="200" y="242" font-size="11" fill="#94a3b8">Total for 20 profiles: 232,813 tokens</text>
-
-  <!-- Row 3: Playwright standalone — 290 tok/profile -->
-  <text x="48" y="288" font-size="13" font-weight="600" fill="#475569">Playwright standalone</text>
-  <text x="48" y="304" font-size="11" fill="#94a3b8">(no per-page LLM)</text>
-  <rect x="200" y="276" width="3" height="36" fill="#10b981" opacity="0.9" rx="1"/>
-  <text x="214" y="300" font-size="14" font-weight="700" fill="#1e293b">290 tok/profile</text>
-  <text x="200" y="332" font-size="11" fill="#94a3b8">Total for 20 profiles: 5,800 tokens</text>
-
-  <!-- Savings callout box -->
-  <rect x="160" y="368" width="560" height="50" fill="#fff7ed" stroke="#f97316" stroke-width="1.5" rx="10"/>
-  <text x="440" y="390" text-anchor="middle" font-size="15" font-weight="700" fill="#ea580c">OpenChrome saves 93.5% tokens vs Playwright + LLM</text>
-  <text x="440" y="409" text-anchor="middle" font-size="12" fill="#b45309">15.3x compression — compact DOM strips CSS, scripts, and hidden elements</text>
-
-  <!-- Footer -->
-  <text x="440" y="455" text-anchor="middle" font-size="11" fill="#94a3b8">Token estimate: 1 token ≈ 4 characters | Compression ratio calibrated from actual read_page measurements</text>
+  <rect width="900" height="480" fill="url(#bg2)" rx="16"/>
+  <text x="450" y="35" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Token Efficiency: LLM Context Per Profile</text>
+  <text x="450" y="58" text-anchor="middle" font-size="14" fill="#64748b">Tokens the LLM must process per Twitter profile (lower is better)</text>
+  <rect x="90" y="116" width="770" height="88" fill="#6366f1" opacity="0.9" rx="6"/><text x="850" y="166" text-anchor="end" font-size="16" font-weight="700" fill="#fff">178,102 tok/profile</text><text x="860" y="166" text-anchor="end" font-size="12" fill="#94a3b8">total: 3,562,038</text><text x="80" y="156" text-anchor="end" font-size="12" fill="#475569" font-weight="600">Playwright + LLM</text><text x="80" y="172" text-anchor="end" font-size="12" fill="#475569" font-weight="400">(raw HTML)</text><rect x="90" y="276" width="1.2537759261546755" height="88" fill="#10b981" opacity="0.9" rx="6"/><text x="101.25377592615467" y="326" text-anchor="start" font-size="16" font-weight="700" fill="#1e293b">290 tok/profile</text><text x="860" y="326" text-anchor="end" font-size="12" fill="#94a3b8">total: 5,800</text><text x="80" y="316" text-anchor="end" font-size="12" fill="#475569" font-weight="600">Playwright standalone</text><text x="80" y="332" text-anchor="end" font-size="12" fill="#475569" font-weight="400">(no LLM)</text><rect x="310" y="376" width="280" height="32" fill="#fff7ed" stroke="#f97316" stroke-width="1.5" rx="8"/><text x="450" y="397" text-anchor="middle" font-size="14" font-weight="700" fill="#ea580c">OC compression vs PW+LLM: TBD — pending #1256 results</text>
 </svg>
