@@ -402,6 +402,9 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   const benchReport: BenchReport = {
     git_sha: sha,
     adapter: opts.adapter,
+    mode: opts.mode,
+    library: opts.library,
+    repetitions: opts.repetitions,
     total_tasks: totalCount,
     pass_count: passCount,
     fail_count: failCount,
