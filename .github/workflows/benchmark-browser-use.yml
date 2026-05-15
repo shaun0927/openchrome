@@ -1,0 +1,59 @@
+name: benchmark — browser-use bridge smoke
+
+# Ubuntu-only smoke for the browser-use Python bridge (#1255 — 0.4).
+# Cross-platform expansion to macOS/Windows is queued for Sprint 3 (#1259
+# PR-15) where the reliability CI matrix is hardened.
+#
+# This workflow exercises only the bridge *protocol* — `ping` + `shutdown` —
+# so it does not need the full browser-use install (no Chromium download,
+# no LLM credentials). The real browser-use integration is exercised by
+# the axis runners (#1256/#1257/#1259/#1260) that depend on this adapter.
+
+on:
+  pull_request:
+    paths:
+      - 'tests/benchmark/bridges/browser_use_bridge.py'
+      - 'tests/benchmark/adapters/browser-use-adapter.ts'
+      - 'tests/benchmark/adapters/browser-use-adapter.test.ts'
+      - 'scripts/bench/setup-browser-use.sh'
+      - '.github/workflows/benchmark-browser-use.yml'
+  push:
+    branches: [develop, main]
+    paths:
+      - 'tests/benchmark/bridges/browser_use_bridge.py'
+      - 'tests/benchmark/adapters/browser-use-adapter.ts'
+      - 'tests/benchmark/adapters/browser-use-adapter.test.ts'
+
+jobs:
+  bridge-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run adapter unit tests (mock bridge transport)
+        run: npx jest tests/benchmark/adapters/browser-use-adapter.test.ts
+
+      - name: Smoke-test the Python bridge protocol (no browser-use install)
+        # Exercises ping + shutdown via stdio. browser-use itself is lazy-
+        # imported inside open_tab/read_page only, so this smoke does not
+        # require Chromium or browser-use to be installed.
+        run: |
+          printf '%s\n%s\n' '{"id":1,"method":"ping","args":{}}' '{"id":2,"method":"shutdown","args":{}}' \
+            | python3 tests/benchmark/bridges/browser_use_bridge.py \
+            | tee bridge-smoke.out
+          grep -q '"pong": true' bridge-smoke.out
+          grep -q '"shutdown": true' bridge-smoke.out
