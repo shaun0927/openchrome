@@ -6,6 +6,7 @@ import { MockOpenChromeClient } from './mock-client';
 import { fixtureTasks } from './fixtures/tasks';
 import { normalizeTaskSpec } from './spec';
 import { countNoProgressEpisodes, runEpisode } from './runner';
+import { estimateToolRequestTokens, summarizeEpisodeTokens } from './token-accounting';
 
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'episode-harness-'));
@@ -62,6 +63,9 @@ describe('runEpisode', () => {
     expect(result.success).toBe(true);
     expect(result.toolCalls).toBeGreaterThanOrEqual(1);
     expect(result.openchromeErrors).toBe(0);
+    expect(result.tokenUsage.totalTokens).toBeGreaterThan(0);
+    expect(result.tokenUsage.toolRequestTokens).toBeGreaterThan(0);
+    expect(result.tokenUsage.toolResultTokens).toBeGreaterThan(0);
     expect(events.some(event => event.type === 'contract_eval')).toBe(true);
     expect(fs.existsSync(result.artifacts.eventsJsonl)).toBe(true);
     expect(fs.existsSync(result.artifacts.reportJson)).toBe(true);
@@ -83,6 +87,19 @@ describe('runEpisode', () => {
     expect(result.steps).toBe(3);
     expect(result.noProgressEpisodes).toBeGreaterThanOrEqual(1);
     expect(result.failedContract).toEqual(expect.objectContaining({ assertion_kind: 'dom_text' }));
+  });
+
+  it('summarizes stable token accounting for episode events', () => {
+    const task = normalizeTaskSpec(fixtureTasks[0]);
+    const usage = summarizeEpisodeTokens(task, [
+      { ts: 1, type: 'tool_call', tool: 'read_page', args: {} },
+      { ts: 2, type: 'tool_result', tool: 'read_page', ok: true, text: 'Example Domain' },
+    ]);
+
+    expect(usage.promptTokens).toBeGreaterThan(0);
+    expect(usage.toolRequestTokens).toBe(estimateToolRequestTokens({ tool: 'read_page', args: {} }));
+    expect(usage.toolResultTokens).toBeGreaterThan(0);
+    expect(usage.totalTokens).toBe(usage.promptTokens + usage.toolRequestTokens + usage.toolResultTokens + usage.contractTokens + usage.responseTokens);
   });
 
   it('counts repeated successful calls as one no-progress episode', () => {

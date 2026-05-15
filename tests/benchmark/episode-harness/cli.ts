@@ -80,11 +80,11 @@ function renderSuiteMarkdown(aggregate: { adapter: string; total: number; passed
     `- Passed: ${aggregate.passed}/${aggregate.total}`,
     `- Failed: ${aggregate.failed}`,
     '',
-    '| Task | Status | Steps | Tool calls | No-progress | Final URL |',
-    '| --- | --- | ---: | ---: | ---: | --- |',
+    '| Task | Status | Steps | Tool calls | No-progress | Total tokens | Final URL |',
+    '| --- | --- | ---: | ---: | ---: | ---: | --- |',
   ];
   for (const result of aggregate.results) {
-    lines.push(`| ${result.taskId} | ${result.status} | ${result.steps} | ${result.toolCalls} | ${result.noProgressEpisodes} | ${result.finalUrl} |`);
+    lines.push(`| ${result.taskId} | ${result.status} | ${result.steps} | ${result.toolCalls} | ${result.noProgressEpisodes} | ${result.tokenUsage.totalTokens} | ${result.finalUrl} |`);
   }
   lines.push('');
   return lines.join('\n');

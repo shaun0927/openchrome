@@ -62,9 +62,19 @@ export interface EpisodeEvent {
   ok?: boolean;
   status?: EpisodeStatus;
   text?: string;
+  data?: Record<string, unknown>;
   error?: string;
   url?: string;
   evaluation?: EvaluationResult;
+}
+
+export interface EpisodeTokenBreakdown {
+  promptTokens: number;
+  toolRequestTokens: number;
+  toolResultTokens: number;
+  contractTokens: number;
+  responseTokens: number;
+  totalTokens: number;
 }
 
 export interface EpisodeResult {
@@ -77,6 +87,7 @@ export interface EpisodeResult {
   toolCalls: number;
   openchromeErrors: number;
   noProgressEpisodes: number;
+  tokenUsage: EpisodeTokenBreakdown;
   finalUrl: string;
   failedContract?: unknown;
   artifacts: {

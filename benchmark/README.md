@@ -87,11 +87,15 @@ Results are saved to `results/`:
 | **OC 10-batch** | **23.2s** | **3.5x** | **95%** |
 | OC 20-batch | 25.7s | 3.2x | 95% |
 
-Token efficiency: see [`TOKEN-EFFICIENCY-REPORT.md`](./results/TOKEN-EFFICIENCY-REPORT.md) — produced by `npm run bench:tokens` and a per-archetype compression measurement over a 50-fixture corpus, replacing the retired hard-coded estimate.
+Token efficiency has two layers:
+
+- Diagnostic per-page payload efficiency: see [`TOKEN-EFFICIENCY-REPORT.md`](./results/TOKEN-EFFICIENCY-REPORT.md), produced by `npm run bench:tokens` for #1256. This replaces the retired hard-coded compression estimate, but it is not a full task-cost claim.
+- Primary task-level token cost: see [`EPISODE-TOKEN-COST-REPORT.md`](./results/EPISODE-TOKEN-COST-REPORT.md), produced by `npm run bench:episode:tokens` for #1299. This measures total episode tokens to success/failure, including tool requests, tool results, contract checks, prompt context, tool calls, no-progress episodes, and duration.
 
 ## Methodology
 
 - Same Chrome v145 instance via CDP for both tools
 - Same logged-in session (real Chrome profile)
 - Each strategy run in a completely separate process
-- Token compression: real per-archetype measurement (#1256); legacy hard-coded estimate retired
+- Token compression: real per-archetype page-payload measurement (#1256); legacy hard-coded estimate retired
+- Task token cost: full episode-level token accounting (#1299) is the headline metric for claims about real agent workload cost
