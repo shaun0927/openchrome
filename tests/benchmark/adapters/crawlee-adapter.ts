@@ -87,9 +87,8 @@ class CheerioCrawleeExtractor implements CrawleeExtractor {
   constructor(private readonly requestTimeoutMs: number) {}
 
   async extract(url: string): Promise<CrawleeExtractionResult> {
-    // Lazy require so the module loads on a fresh checkout. The error only
-    // surfaces here, at the first real extraction, if the dep is missing.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // Lazy dynamic import so the module loads on a fresh checkout. The error
+    // only surfaces here, at the first real extraction, if the dep is missing.
     const crawlee = await import('crawlee');
     const CheerioCrawler =
       (crawlee as unknown as { CheerioCrawler: new (cfg: unknown) => unknown })
