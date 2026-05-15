@@ -44,3 +44,10 @@ export {
   CrawleeExtractor,
   CrawleeExtractionResult,
 } from './crawlee-adapter';
+
+export {
+  BrowserUseAdapter,
+  BrowserUseAdapterOptions,
+  BrowserUseBridgeTransport,
+  BridgeResponse,
+} from './browser-use-adapter';
