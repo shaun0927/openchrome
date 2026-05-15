@@ -1,0 +1,58 @@
+name: benchmark — agent task success (mock)
+
+# WebVoyager agent-success regression gate (#1257 PR-14).
+#
+# Runs the mock adapter on every PR that touches the WebVoyager runner /
+# tasks / baseline. The mock adapter is deterministic and zero-cost (no
+# LLM API call), so this workflow gates regression without burning budget.
+# The real-LLM run is OPT-IN via the OPENCHROME_BENCH_REAL=1 env flag and
+# is exercised manually (or by a separate workflow that lands when an
+# operator authorizes the dollar spend).
+
+on:
+  pull_request:
+    paths:
+      - 'tests/benchmark/webvoyager/**'
+      - 'src/contracts/**'
+      - '.github/workflows/benchmark-agent.yml'
+  push:
+    branches: [develop, main]
+    paths:
+      - 'tests/benchmark/webvoyager/**'
+      - 'src/contracts/**'
+
+jobs:
+  agent-success-mock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run WebVoyager mock adapter
+        run: npx ts-node tests/benchmark/webvoyager/runner.ts --adapter mock
+
+      - name: Generate agent-success report section
+        # No-op if no JSON envelope was produced (e.g. every task pending).
+        run: node benchmark/generate-agent-success-section.mjs || true
+
+      - name: Upload report as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: webvoyager-mock-report
+          path: |
+            tests/benchmark/webvoyager/reports/latest.json
+            tests/benchmark/webvoyager/reports/latest.md
+            benchmark/results/AGENT-SUCCESS-REPORT.md
+          retention-days: 7
