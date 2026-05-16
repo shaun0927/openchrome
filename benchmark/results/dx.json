@@ -1,0 +1,106 @@
+{
+  "axis": "developer-experience",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-16T17:12:42.309Z",
+    "gitSha": "facc9371",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.168",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "openchrome",
+      "version": "1.12.2"
+    },
+    {
+      "name": "playwright",
+      "version": "idiomatic-script-only"
+    },
+    {
+      "name": "puppeteer",
+      "version": "idiomatic-script-only"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "library": "openchrome",
+      "task": "form-fill",
+      "scriptPath": "tests/benchmark/dx-scripts/openchrome/form-fill.ts",
+      "loc": 10,
+      "blankLines": 4,
+      "commentLines": 0,
+      "totalLines": 14,
+      "schemaCompleteness": 0.8666666666666667,
+      "errorActionability": 3,
+      "isMcp": true
+    },
+    {
+      "library": "openchrome",
+      "task": "navigate-and-read",
+      "scriptPath": "tests/benchmark/dx-scripts/openchrome/navigate-and-read.ts",
+      "loc": 7,
+      "blankLines": 4,
+      "commentLines": 0,
+      "totalLines": 11,
+      "schemaCompleteness": 0.8666666666666667,
+      "errorActionability": 3,
+      "isMcp": true
+    },
+    {
+      "library": "playwright",
+      "task": "form-fill",
+      "scriptPath": "tests/benchmark/dx-scripts/playwright/form-fill.ts",
+      "loc": 12,
+      "blankLines": 4,
+      "commentLines": 0,
+      "totalLines": 16,
+      "schemaCompleteness": null,
+      "errorActionability": 3,
+      "isMcp": false
+    },
+    {
+      "library": "playwright",
+      "task": "navigate-and-read",
+      "scriptPath": "tests/benchmark/dx-scripts/playwright/navigate-and-read.ts",
+      "loc": 10,
+      "blankLines": 4,
+      "commentLines": 0,
+      "totalLines": 14,
+      "schemaCompleteness": null,
+      "errorActionability": 3,
+      "isMcp": false
+    },
+    {
+      "library": "puppeteer",
+      "task": "form-fill",
+      "scriptPath": "tests/benchmark/dx-scripts/puppeteer/form-fill.ts",
+      "loc": 16,
+      "blankLines": 4,
+      "commentLines": 0,
+      "totalLines": 20,
+      "schemaCompleteness": null,
+      "errorActionability": 3,
+      "isMcp": false
+    },
+    {
+      "library": "puppeteer",
+      "task": "navigate-and-read",
+      "scriptPath": "tests/benchmark/dx-scripts/puppeteer/navigate-and-read.ts",
+      "loc": 10,
+      "blankLines": 4,
+      "commentLines": 0,
+      "totalLines": 14,
+      "schemaCompleteness": null,
+      "errorActionability": 3,
+      "isMcp": false
+    }
+  ]
+}
