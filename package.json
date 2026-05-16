@@ -60,7 +60,8 @@
     "bench:episode:tokens": "ts-node tests/benchmark/run-episode-token-cost.ts",
     "bench:realworld": "ts-node tests/benchmark/run-realworld-task-completion.ts && node benchmark/generate-realworld-task-completion-section.mjs",
     "bench:agent-success": "ts-node tests/benchmark/episode-harness/cli.ts",
-    "bench:agent-success:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock"
+    "bench:agent-success:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock",
+    "bench:readiness": "ts-node tests/benchmark/benchmark-readiness.ts"
   },
   "keywords": [
     "openchrome",
