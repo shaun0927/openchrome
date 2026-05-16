@@ -2,6 +2,7 @@ import * as path from 'path';
 import type { EpisodeAdapter, EpisodeClient, EpisodeEvent, EpisodeResult, EpisodeStatus, EpisodeToolCall, EpisodeToolResult, NormalizedEpisodeTaskSpec } from './types';
 import { normalizeTaskSpec } from './spec';
 import { writeEpisodeArtifacts } from './reporter';
+import { summarizeEpisodeTokens } from './token-accounting';
 
 export interface RunEpisodeOptions {
   runId?: string;
@@ -31,7 +32,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
   const nav = await client.callTool({ tool: 'navigate', args: { url: task.startUrl } });
   toolCalls++;
   events.push({ ts: now(), type: 'tool_call', step: 0, tool: 'navigate', args: { url: task.startUrl } });
-  events.push({ ts: now(), type: 'tool_result', step: 0, tool: 'navigate', ok: nav.ok, text: nav.text, error: nav.error });
+  events.push({ ts: now(), type: 'tool_result', step: 0, tool: 'navigate', ok: nav.ok, text: nav.text, data: nav.data, error: nav.error });
   if (!nav.ok) openchromeErrors++;
 
   while (true) {
@@ -71,7 +72,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
     lastToolCall = next;
     events.push({ ts: now(), type: 'tool_call', step: steps, tool: next.tool, args: next.args });
     lastResult = await client.callTool(next);
-    events.push({ ts: now(), type: 'tool_result', step: steps, tool: next.tool, ok: lastResult.ok, text: lastResult.text, error: lastResult.error });
+    events.push({ ts: now(), type: 'tool_result', step: steps, tool: next.tool, ok: lastResult.ok, text: lastResult.text, data: lastResult.data, error: lastResult.error });
     if (!lastResult.ok) {
       openchromeErrors++;
       status = 'tool_error';
@@ -84,6 +85,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
   events.push({ ts: now(), type: 'stop', status, url: finalUrl, ...(lastToolCall && { tool: lastToolCall.tool }) });
 
   const durationMs = now() - startedAt;
+  const tokenUsage = summarizeEpisodeTokens(task, events);
   const placeholderArtifacts = {
     eventsJsonl: path.join(outDir, 'events', `${runId}.jsonl`),
     reportJson: path.join(outDir, 'reports', `${runId}.json`),
@@ -98,6 +100,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
     toolCalls,
     openchromeErrors,
     noProgressEpisodes: countNoProgressEpisodes(events),
+    tokenUsage,
     finalUrl,
     ...(success ? {} : { failedContract }),
     artifacts: placeholderArtifacts,

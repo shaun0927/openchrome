@@ -21,6 +21,7 @@ export type BenchmarkAxis =
   | 'reliability'
   | 'auth-usability'
   | 'developer-experience'
+  | 'episode-token-cost'
   | 'realworld-task-completion';
 
 export interface CompetitorPin {
@@ -67,6 +68,7 @@ const VALID_AXES: ReadonlySet<string> = new Set<BenchmarkAxis>([
   'reliability',
   'auth-usability',
   'developer-experience',
+  'episode-token-cost',
   'realworld-task-completion',
 ]);
 
