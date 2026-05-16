@@ -2,8 +2,8 @@
   "axis": "realworld-task-completion",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-15T23:53:20.624Z",
-    "gitSha": "83d85b07",
+    "capturedAt": "2026-05-16T17:01:41.662Z",
+    "gitSha": "26c4ce33",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -222,7 +222,17 @@
           "meanTokens": null,
           "costPerSuccessUsd": null
         }
-      ]
+      ],
+      "claimEligibility": {
+        "eligible": false,
+        "tier": "diagnostic-only",
+        "reasons": [
+          "measurement mode scaffold is not headline-eligible; use live or recorded-real",
+          "sample count 5 is below aggregate threshold N >= 10",
+          "LLM model/settings/budgets are not pinned"
+        ],
+        "requiredSamples": 10
+      }
     }
   ]
 }

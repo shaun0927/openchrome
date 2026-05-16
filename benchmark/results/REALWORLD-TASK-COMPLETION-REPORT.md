@@ -1,6 +1,6 @@
 # Complex Real-World Task Completion (#1305)
 
-Generated: 2026-05-15T23:53:20.745Z
+Generated: 2026-05-16T17:01:45.500Z
 Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-task-completion`).
 
 ## Claim scope
@@ -8,6 +8,11 @@ Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-tas
 - Measurement mode: `deterministic-fixture`
 - Claim scope: **scaffold-only; not a live competitive measurement**
 - This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.
+- Claim eligibility tier: **diagnostic-only**; eligible: **no**.
+  - Blocker: measurement mode scaffold is not headline-eligible; use live or recorded-real
+  - Blocker: sample count 5 is below aggregate threshold N >= 10
+  - Blocker: LLM model/settings/budgets are not pinned
+- Headline gate: **blocked**. Use `node benchmark/generate-realworld-task-completion-section.mjs --require-headline` in release workflows to enforce this.
 - #1261 remains the DX/supporting axis; this section is the primary task-completion axis.
 
 ## Metrics by library

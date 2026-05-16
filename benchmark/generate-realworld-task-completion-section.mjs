@@ -2,6 +2,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { findClaimEligibilityFailures, requireHeadlineEligibility } from './claim-eligibility.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,7 +18,8 @@ function n(value) {
   return value === null || value === undefined ? 'n/a' : Number(value).toFixed(1).replace(/\.0$/, '');
 }
 
-function main() {
+function main(argv = process.argv.slice(2)) {
+  const requireHeadline = argv.includes('--require-headline');
   if (!existsSync(INPUT_PATH)) {
     process.stderr.write(`Missing ${path.relative(REPO_ROOT, INPUT_PATH)}. Run \`npm run bench:realworld\` first.\n`);
     process.exit(1);
@@ -30,6 +32,11 @@ function main() {
     process.exit(1);
   }
 
+  if (requireHeadline) {
+    requireHeadlineEligibility(envelope, 'realworld-task-completion');
+  }
+  const eligibilityFailures = findClaimEligibilityFailures(envelope);
+
   const lines = [];
   lines.push('# Complex Real-World Task Completion (#1305)');
   lines.push('');
@@ -41,6 +48,13 @@ function main() {
   lines.push(`- Measurement mode: \`${result.measurementMode}\``);
   lines.push(`- Claim scope: **${result.claimScope}**`);
   lines.push('- This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.');
+  if (result.claimEligibility) {
+    lines.push(`- Claim eligibility tier: **${result.claimEligibility.tier}**; eligible: **${result.claimEligibility.eligible ? 'yes' : 'no'}**.`);
+    for (const reason of result.claimEligibility.reasons ?? []) lines.push(`  - Blocker: ${reason}`);
+  } else {
+    lines.push('- Claim eligibility: **missing** (headline generation must fail when `--require-headline` is used).');
+  }
+  if (eligibilityFailures.length > 0) lines.push('- Headline gate: **blocked**. Use `node benchmark/generate-realworld-task-completion-section.mjs --require-headline` in release workflows to enforce this.');
   lines.push('- #1261 remains the DX/supporting axis; this section is the primary task-completion axis.');
   lines.push('');
 

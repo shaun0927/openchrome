@@ -6,6 +6,7 @@ import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-e
 import { captureEnvironment } from './utils/environment';
 import { deterministicOpenChromeFixtureRuns, realWorldTaskSpecs } from './realworld-task-completion/fixtures';
 import { aggregateRealWorldMetrics, assertHonestMeasurement } from './realworld-task-completion/scoring';
+import { evaluateEpisodeClaimEligibility } from './episode-harness/claim-eligibility';
 
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'realworld-task-completion.json');
 
@@ -22,6 +23,15 @@ export function buildRealWorldTaskCompletionResult() {
   const runs = deterministicOpenChromeFixtureRuns();
   assertHonestMeasurement(runs);
   const metrics = aggregateRealWorldMetrics(runs);
+  const claimEligibility = evaluateEpisodeClaimEligibility({
+    mode: 'scaffold',
+    scope: 'aggregate',
+    sampleCount: runs.length,
+    finalPostconditionEvaluated: true,
+    competitorVersionsPinned: true,
+    sameTaskContracts: true,
+    llmSettingsPinned: false,
+  });
   const envelope = buildResultEnvelope({
     axis: 'realworld-task-completion',
     environment: captureEnvironment(),
@@ -40,6 +50,7 @@ export function buildRealWorldTaskCompletionResult() {
         tasks: realWorldTaskSpecs,
         runs,
         metrics,
+        claimEligibility,
       },
     ],
   });
