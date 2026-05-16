@@ -90,8 +90,8 @@ function renderSuiteMarkdown(report: AgentSuccessSuiteReport): string {
     `- Success rate: ${(report.successRate * 100).toFixed(1)}%`,
     `- Tokenizer: ${report.tokenizer}`,
     '',
-    '| Task | Category | Samples | Passed | Success | p50 ms | p95 ms | p50 calls | Avg tokens | First-tool accuracy | No-progress |',
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| Task | Category | Samples | Passed | Success | p50 ms | p95 ms | p50 calls | Avg tokens | Avg tool-result tokens | First-tool accuracy | No-progress |',
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
   ];
   for (const row of report.aggregates) {
     lines.push([
@@ -104,6 +104,7 @@ function renderSuiteMarkdown(report: AgentSuccessSuiteReport): string {
       row.p95DurationMs,
       row.p50ToolCalls,
       row.averageTotalTokens.toFixed(1),
+      row.averageToolResultTokens.toFixed(1),
       row.firstToolAccuracy === undefined ? 'n/a' : `${(row.firstToolAccuracy * 100).toFixed(1)}%`,
       row.noProgressEpisodes,
     ].join(' | ').replace(/^/, '| ').replace(/$/, ' |'));

@@ -3,6 +3,7 @@ import type { EpisodeAdapter, EpisodeClient, EpisodeEvent, EpisodeResult, Episod
 import { TOKENIZER_ENCODING, countTokens, countTokensOfValue } from '../utils/tokenizer';
 import { normalizeTaskSpec } from './spec';
 import { writeEpisodeArtifacts } from './reporter';
+import { summarizeEpisodeTokens } from './token-accounting';
 
 export interface RunEpisodeOptions {
   runId?: string;
@@ -46,7 +47,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
   tokenMetrics.toolArgumentTokens += navArgTokens;
   tokenMetrics.toolResultTokens += navResultTokens;
   events.push({ ts: now(), type: 'tool_call', step: 0, tool: 'navigate', args: navArgs, tokenCount: navArgTokens });
-  events.push({ ts: now(), type: 'tool_result', step: 0, tool: 'navigate', ok: nav.ok, text: nav.text, error: nav.error, tokenCount: navResultTokens });
+  events.push({ ts: now(), type: 'tool_result', step: 0, tool: 'navigate', ok: nav.ok, text: nav.text, data: nav.data, error: nav.error, tokenCount: navResultTokens });
   if (!nav.ok) openchromeErrors++;
 
   while (true) {
@@ -94,7 +95,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
     lastResult = await client.callTool(next);
     const resultTokens = countTokensOfValue(lastResult.text ?? lastResult.error ?? lastResult.data);
     tokenMetrics.toolResultTokens += resultTokens;
-    events.push({ ts: now(), type: 'tool_result', step: steps, tool: next.tool, ok: lastResult.ok, text: lastResult.text, error: lastResult.error, tokenCount: resultTokens });
+    events.push({ ts: now(), type: 'tool_result', step: steps, tool: next.tool, ok: lastResult.ok, text: lastResult.text, data: lastResult.data, error: lastResult.error, tokenCount: resultTokens });
     if (!lastResult.ok) {
       openchromeErrors++;
       status = 'tool_error';
@@ -107,6 +108,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
   events.push({ ts: now(), type: 'stop', status, url: finalUrl, ...(lastToolCall && { tool: lastToolCall.tool }) });
 
   const durationMs = now() - startedAt;
+  const tokenUsage = summarizeEpisodeTokens(task, events);
   const placeholderArtifacts = {
     eventsJsonl: path.join(outDir, 'events', `${runId}.jsonl`),
     reportJson: path.join(outDir, 'reports', `${runId}.json`),
@@ -134,6 +136,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
       ...(task.expectedFirstTool ? { correct: firstAgentTool === task.expectedFirstTool } : {}),
     },
     tokenMetrics,
+    tokenUsage,
     finalUrl,
     ...(success ? {} : { failedContract }),
     artifacts: placeholderArtifacts,

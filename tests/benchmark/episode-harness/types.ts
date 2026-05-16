@@ -76,6 +76,7 @@ export interface EpisodeEvent {
   ok?: boolean;
   status?: EpisodeStatus;
   text?: string;
+  data?: Record<string, unknown>;
   error?: string;
   url?: string;
   evaluation?: EvaluationResult;
@@ -103,6 +104,15 @@ export interface FirstToolSelection {
   correct?: boolean;
 }
 
+export interface EpisodeTokenBreakdown {
+  promptTokens: number;
+  toolRequestTokens: number;
+  toolResultTokens: number;
+  contractTokens: number;
+  responseTokens: number;
+  totalTokens: number;
+}
+
 export interface EpisodeResult {
   runId: string;
   taskId: string;
@@ -115,7 +125,10 @@ export interface EpisodeResult {
   openchromeErrors: number;
   noProgressEpisodes: number;
   firstToolSelection: FirstToolSelection;
+  /** Agent-success aggregate token metrics retained for controlled workflow reporting. */
   tokenMetrics: EpisodeTokenMetrics;
+  /** Episode-level token breakdown used by the token-cost benchmark axis. */
+  tokenUsage: EpisodeTokenBreakdown;
   finalUrl: string;
   failedContract?: unknown;
   artifacts: {
