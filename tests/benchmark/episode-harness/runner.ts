@@ -1,5 +1,6 @@
 import * as path from 'path';
-import type { EpisodeAdapter, EpisodeClient, EpisodeEvent, EpisodeResult, EpisodeStatus, EpisodeToolCall, EpisodeToolResult, NormalizedEpisodeTaskSpec } from './types';
+import type { EpisodeAdapter, EpisodeClient, EpisodeEvent, EpisodeResult, EpisodeStatus, EpisodeTokenMetrics, EpisodeToolCall, EpisodeToolResult, NormalizedEpisodeTaskSpec } from './types';
+import { TOKENIZER_ENCODING, countTokens, countTokensOfValue } from '../utils/tokenizer';
 import { normalizeTaskSpec } from './spec';
 import { writeEpisodeArtifacts } from './reporter';
 import { summarizeEpisodeTokens } from './token-accounting';
@@ -24,6 +25,15 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
   let success = false;
   let failedContract: unknown;
   let finalUrl = '';
+  const tokenMetrics: EpisodeTokenMetrics = {
+    agentPromptTokens: 0,
+    assistantOutputTokens: 0,
+    toolArgumentTokens: 0,
+    toolResultTokens: 0,
+    totalTokens: 0,
+    tokenizer: TOKENIZER_ENCODING,
+  };
+  let firstAgentTool: string | undefined;
   let lastResult: EpisodeToolResult | undefined;
   let lastToolCall: EpisodeToolCall | undefined;
 
@@ -31,8 +41,13 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
   events.push({ ts: now(), type: 'reset', url: task.startUrl });
   const nav = await client.callTool({ tool: 'navigate', args: { url: task.startUrl } });
   toolCalls++;
-  events.push({ ts: now(), type: 'tool_call', step: 0, tool: 'navigate', args: { url: task.startUrl } });
-  events.push({ ts: now(), type: 'tool_result', step: 0, tool: 'navigate', ok: nav.ok, text: nav.text, data: nav.data, error: nav.error });
+  const navArgs = { url: task.startUrl };
+  const navArgTokens = countTokensOfValue(navArgs);
+  const navResultTokens = countTokensOfValue(nav.text ?? nav.error ?? nav.data);
+  tokenMetrics.toolArgumentTokens += navArgTokens;
+  tokenMetrics.toolResultTokens += navResultTokens;
+  events.push({ ts: now(), type: 'tool_call', step: 0, tool: 'navigate', args: navArgs, tokenCount: navArgTokens });
+  events.push({ ts: now(), type: 'tool_result', step: 0, tool: 'navigate', ok: nav.ok, text: nav.text, data: nav.data, error: nav.error, tokenCount: navResultTokens });
   if (!nav.ok) openchromeErrors++;
 
   while (true) {
@@ -56,6 +71,7 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
 
     let next: EpisodeToolCall | { done: true };
     try {
+      tokenMetrics.agentPromptTokens += estimateAgentPromptTokens(task, steps, lastResult);
       next = await adapter.next({ task, step: steps, lastResult, events });
     } catch (err) {
       status = 'adapter_error';
@@ -69,10 +85,17 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
 
     steps++;
     toolCalls++;
+    if (firstAgentTool === undefined) firstAgentTool = next.tool;
     lastToolCall = next;
-    events.push({ ts: now(), type: 'tool_call', step: steps, tool: next.tool, args: next.args });
+    const outputTokens = countTokensOfValue(next);
+    const argTokens = countTokensOfValue(next.args);
+    tokenMetrics.assistantOutputTokens += outputTokens;
+    tokenMetrics.toolArgumentTokens += argTokens;
+    events.push({ ts: now(), type: 'tool_call', step: steps, tool: next.tool, args: next.args, tokenCount: outputTokens + argTokens });
     lastResult = await client.callTool(next);
-    events.push({ ts: now(), type: 'tool_result', step: steps, tool: next.tool, ok: lastResult.ok, text: lastResult.text, data: lastResult.data, error: lastResult.error });
+    const resultTokens = countTokensOfValue(lastResult.text ?? lastResult.error ?? lastResult.data);
+    tokenMetrics.toolResultTokens += resultTokens;
+    events.push({ ts: now(), type: 'tool_result', step: steps, tool: next.tool, ok: lastResult.ok, text: lastResult.text, data: lastResult.data, error: lastResult.error, tokenCount: resultTokens });
     if (!lastResult.ok) {
       openchromeErrors++;
       status = 'tool_error';
@@ -90,9 +113,16 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
     eventsJsonl: path.join(outDir, 'events', `${runId}.jsonl`),
     reportJson: path.join(outDir, 'reports', `${runId}.json`),
   };
+  tokenMetrics.totalTokens =
+    tokenMetrics.agentPromptTokens +
+    tokenMetrics.assistantOutputTokens +
+    tokenMetrics.toolArgumentTokens +
+    tokenMetrics.toolResultTokens;
+
   const result: EpisodeResult = {
     runId,
     taskId: task.id,
+    category: task.category,
     status,
     success,
     steps,
@@ -100,6 +130,12 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
     toolCalls,
     openchromeErrors,
     noProgressEpisodes: countNoProgressEpisodes(events),
+    firstToolSelection: {
+      expected: task.expectedFirstTool,
+      actual: firstAgentTool,
+      ...(task.expectedFirstTool ? { correct: firstAgentTool === task.expectedFirstTool } : {}),
+    },
+    tokenMetrics,
     tokenUsage,
     finalUrl,
     ...(success ? {} : { failedContract }),
@@ -108,7 +144,6 @@ export async function runEpisode(taskInput: unknown, adapter: EpisodeAdapter, cl
   const paths = writeEpisodeArtifacts(outDir, runId, events, result);
   result.artifacts.eventsJsonl = paths.eventsJsonl;
   result.artifacts.reportJson = paths.reportJson;
-  writeEpisodeArtifacts(outDir, runId, events, result);
   return { result, events };
 }
 
@@ -158,4 +193,15 @@ export function countNoProgressEpisodes(events: EpisodeEvent[]): number {
 
 function makeRunId(taskId: string, now: number): string {
   return `${taskId}-${now.toString(36)}`.replace(/[^a-z0-9_-]/gi, '-');
+}
+
+function estimateAgentPromptTokens(task: NormalizedEpisodeTaskSpec, step: number, lastResult: EpisodeToolResult | undefined): number {
+  return countTokens([
+    `task:${task.title}`,
+    `goal:${task.goal}`,
+    `category:${task.category}`,
+    `step:${step}`,
+    lastResult?.text ? `last_result:${lastResult.text}` : '',
+    lastResult?.error ? `last_error:${lastResult.error}` : '',
+  ].filter(Boolean).join('\n'));
 }
