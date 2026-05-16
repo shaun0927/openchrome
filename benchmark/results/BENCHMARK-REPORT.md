@@ -1,20 +1,27 @@
 # OpenChrome Competitive Benchmark Report
 
-Generated: 2026-05-15T09:25:52.505Z
+Generated: 2026-05-16T00:29:23.993Z
 Source: per-axis section files under `benchmark/results/`.
 
 Part of [Epic #1254](https://github.com/shaun0927/openchrome/issues/1254) — the competitive benchmark suite. Each section below is generated from its axis runner's envelope; this top-level file is the union.
 
 ## Headline status
 
-| Section | Axis | Issue | State |
-| --- | --- | --- | --- |
-| #A | Token Efficiency | [#1256](https://github.com/shaun0927/openchrome/issues/1256) | measured |
-| #B | Agent Task Success | [#1257](https://github.com/shaun0927/openchrome/issues/1257) | pending |
-| #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | measured |
-| #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | pending |
-| #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | pending |
-| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | pending |
+| Section | Axis | Issue | Evidence role | State |
+| --- | --- | --- | --- | --- |
+| #G | Complex Real-World Task Completion | [#1305](https://github.com/shaun0927/openchrome/issues/1305) | primary | pending |
+| #B | Agent Task Success | [#1257](https://github.com/shaun0927/openchrome/issues/1257) | primary | pending |
+| #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | primary-when-episode-stress | pending |
+| #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | primary-when-episode | pending |
+| #A | Token Efficiency | [#1256](https://github.com/shaun0927/openchrome/issues/1256) | diagnostic | measured |
+| #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | diagnostic | measured |
+| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | diagnostic | measured |
+
+## Primary evidence policy
+
+Complex real-world episode completion is the primary benchmark evidence. Token, speed, auth setup, reliability micro-cells, and DX axes are supporting diagnostics unless they are attached to a final task-completion episode with headline-eligible live or recorded-real rows. See `docs/benchmarks/benchmark-direction.md`.
+
+Mock, scaffold, dry-run, and skip rows are never reported as competitive wins; they are harness regression evidence only. A row must evaluate the final task postcondition, pin versions/environment, and meet the sample threshold before it can be headline-eligible.
 
 ## Methodology principles
 All sections honor Epic #1254's ten methodology principles:
@@ -31,6 +38,22 @@ All sections honor Epic #1254's ten methodology principles:
 
 ## Retired estimates
 Two legacy headline numbers were retired by Epic #1254: an unverified token-compression ratio and a similarly unverified speedup claim. Both came from estimates averaging only two real measurements. The Epic-close generator (`benchmark/generate-benchmark-report.mjs`) lints for those exact literals and fails the build if they reappear — see `RETIRED_CLAIMS` in that file for the precise list.
+
+## #G Complex Real-World Task Completion (#1305)
+
+*Section file pending — axis #1305 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
+
+## #B Agent Task Success (#1257)
+
+*No data yet for #1257. Run the axis runner + `agent-success` generator to populate.*
+
+## #D Reliability & Fault-Recovery (#1259)
+
+*Section file pending — axis #1259 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
+
+## #E Auth & Real-World Usability (#1260)
+
+*Section file pending — axis #1260 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
 
 ## #A Token Efficiency (#1256)
 
@@ -119,10 +142,6 @@ Across 5 archetypes with measured cells, **`deterministic-static`** sits in the 
 See `chart-tokens-scatter.svg` for the per-archetype scatter view.
 
 
-## #B Agent Task Success (#1257)
-
-*No data yet for #1257. Run the axis runner + `agent-success` generator to populate.*
-
 ## #C Speed & Throughput (#1258)
 
 Generated: 2026-05-15T06:11:26.078Z
@@ -157,14 +176,37 @@ Only one library produced numbers in this run (`OpenChrome`). Competitor cells (
 See `chart-throughput.svg` and `chart-success-rate.svg` for the visual companions.
 
 
-## #D Reliability & Fault-Recovery (#1259)
-
-*Section file pending — axis #1259 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
-
-## #E Auth & Real-World Usability (#1260)
-
-*Section file pending — axis #1260 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
-
 ## #F Developer Experience (#1261)
 
-*No data yet for #1261. Run the axis runner + `developer-experience` generator to populate.*
+Generated: 2026-05-15T09:23:53.402Z
+Source: `benchmark/results/dx.json` (axis: `developer-experience`).
+
+## Rule of two charts
+Issue #1261 forbids a single composite radar — LOC trivially favors MCP servers, schema metrics are N/A for non-MCP libraries. The DX section therefore splits into:
+- **MCP DX** (this chart): libraries that ship an MCP server, scored across all rubrics
+- **Framework DX** (next chart): all libraries including raw frameworks, **LOC only** (the only metric every library participates in)
+
+## MCP DX
+| Library | form-fill | navigate-and-read | Schema completeness | Error actionability |
+| --- | ---: | ---: | ---: | ---: |
+| `openchrome` | 10 | 7 | *pending* | *pending* |
+
+See `chart-dx-mcp.svg` for the visual companion.
+
+## Framework DX
+LOC per task. Composites computed only over axes where every library participates — here that's LOC alone.
+
+| Library | form-fill | navigate-and-read | median LOC |
+| --- | ---: | ---: | ---: |
+| `openchrome` | 10 | 7 | 8.5 |
+| `playwright` | 12 | 10 | 11 |
+| `puppeteer` | 16 | 10 | 13 |
+
+See `chart-dx-framework.svg` for the visual companion.
+
+## Pending rubrics
+- Schema completeness: requires MCP `tools/list` introspection per library (issue #1261 mentions `lint:tool-schemas` as the OpenChrome side). Lands in the next-session follow-up.
+- Error actionability: requires running induced failures through each library and scoring the returned errors against the rubric in `dx-rubrics.ts`. Same follow-up.
+
+## Headline
+Framework DX LOC winner (lower is better): **`openchrome`** at median 8.5 LOC.

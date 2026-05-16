@@ -5,6 +5,9 @@
 > - `npm run bench:tokens` — Token Efficiency axis (#1256)
 > - `npm run bench:throughput` — Speed & Throughput axis (#1258)
 > - `npm run bench:latency` — single-action latency (#1258)
+> - `npm run bench:episode:mock` — CI-safe episode harness smoke; diagnostic only, not a competitive headline
+>
+> Primary benchmark claims now start from complex real-world episode/task completion. See [`docs/benchmarks/benchmark-direction.md`](../docs/benchmarks/benchmark-direction.md) for the evidence hierarchy and headline eligibility rules.
 >
 > The scripts below remain functional for the legacy Twitter/X scenario (real Playwright measurements, no estimation). New axes should land in `tests/benchmark/` instead of here.
 
@@ -87,7 +90,7 @@ Results are saved to `results/`:
 | **OC 10-batch** | **23.2s** | **3.5x** | **95%** |
 | OC 20-batch | 25.7s | 3.2x | 95% |
 
-Token efficiency: see [`TOKEN-EFFICIENCY-REPORT.md`](./results/TOKEN-EFFICIENCY-REPORT.md) — produced by `npm run bench:tokens` and a per-archetype compression measurement over a 50-fixture corpus, replacing the retired hard-coded estimate.
+Token efficiency: see [`TOKEN-EFFICIENCY-REPORT.md`](./results/TOKEN-EFFICIENCY-REPORT.md) — produced by `npm run bench:tokens` and a per-archetype compression measurement over a 50-fixture corpus, replacing the retired hard-coded estimate. Treat token, speed, DX, and isolated reliability outputs as diagnostic axes unless the unified report marks them as headline-eligible real-world episode evidence.
 
 ## Methodology
 

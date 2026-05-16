@@ -5,6 +5,7 @@ import { fixtureTasks } from './fixtures/tasks';
 import { MockEpisodeAdapter } from './mock-adapter';
 import { MockOpenChromeClient } from './mock-client';
 import { normalizeTaskSpec } from './spec';
+import { evaluateEpisodeClaimEligibility } from './claim-eligibility';
 import { runEpisode } from './runner';
 import type { EpisodeResult, EpisodeTaskSpec } from './types';
 
@@ -35,6 +36,16 @@ async function main(): Promise<void> {
     total: results.length,
     passed: results.filter(r => r.status === 'passed').length,
     failed: results.filter(r => r.status !== 'passed').length,
+    claimEligibility: evaluateEpisodeClaimEligibility({
+      mode: args.adapter === 'mock' ? 'mock' : 'live',
+      scope: 'aggregate',
+      sampleCount: results.length,
+      finalPostconditionEvaluated: results.every(result => typeof result.success === 'boolean'),
+      competitorVersionsPinned: args.adapter !== 'mock',
+      sameTaskContracts: true,
+      llmSettingsPinned: args.adapter === 'mock' ? undefined : false,
+      results,
+    }),
     results,
   };
   fs.mkdirSync(args.out, { recursive: true });
@@ -72,13 +83,18 @@ function loadTasks(args: CliArgs): EpisodeTaskSpec[] {
   return args.task ? tasks.filter(task => task.id === args.task) : tasks;
 }
 
-function renderSuiteMarkdown(aggregate: { adapter: string; total: number; passed: number; failed: number; results: EpisodeResult[] }): string {
+function renderSuiteMarkdown(aggregate: { adapter: string; total: number; passed: number; failed: number; claimEligibility: ReturnType<typeof evaluateEpisodeClaimEligibility>; results: EpisodeResult[] }): string {
   const lines = [
     '# Episode harness report',
     '',
     `- Adapter: ${aggregate.adapter}`,
     `- Passed: ${aggregate.passed}/${aggregate.total}`,
     `- Failed: ${aggregate.failed}`,
+    `- Claim tier: ${aggregate.claimEligibility.tier}`,
+    `- Headline eligible: ${aggregate.claimEligibility.eligible ? 'yes' : 'no'}`,
+    aggregate.claimEligibility.reasons.length > 0
+      ? `- Non-headline reasons: ${aggregate.claimEligibility.reasons.join('; ')}`
+      : `- Non-headline reasons: none`,
     '',
     '| Task | Status | Steps | Tool calls | No-progress | Final URL |',
     '| --- | --- | ---: | ---: | ---: | --- |',
