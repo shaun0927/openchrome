@@ -18,7 +18,8 @@
         "reliability",
         "auth-usability",
         "developer-experience",
-        "episode-token-cost"
+        "episode-token-cost",
+        "realworld-task-completion"
       ]
     },
     "schemaVersion": {

@@ -1,6 +1,6 @@
 # OpenChrome Competitive Benchmark Report
 
-Generated: 2026-05-15T09:25:52.505Z
+Generated: 2026-05-15T23:53:20.784Z
 Source: per-axis section files under `benchmark/results/`.
 
 Part of [Epic #1254](https://github.com/shaun0927/openchrome/issues/1254) — the competitive benchmark suite. Each section below is generated from its axis runner's envelope; this top-level file is the union.
@@ -14,7 +14,8 @@ Part of [Epic #1254](https://github.com/shaun0927/openchrome/issues/1254) — th
 | #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | measured |
 | #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | pending |
 | #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | pending |
-| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | pending |
+| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | measured |
+| #G | Complex Real-World Task Completion | [#1305](https://github.com/shaun0927/openchrome/issues/1305) | measured |
 
 ## Methodology principles
 All sections honor Epic #1254's ten methodology principles:
@@ -167,4 +168,71 @@ See `chart-throughput.svg` and `chart-success-rate.svg` for the visual companion
 
 ## #F Developer Experience (#1261)
 
-*No data yet for #1261. Run the axis runner + `developer-experience` generator to populate.*
+Generated: 2026-05-15T09:23:53.402Z
+Source: `benchmark/results/dx.json` (axis: `developer-experience`).
+
+## Rule of two charts
+Issue #1261 forbids a single composite radar — LOC trivially favors MCP servers, schema metrics are N/A for non-MCP libraries. The DX section therefore splits into:
+- **MCP DX** (this chart): libraries that ship an MCP server, scored across all rubrics
+- **Framework DX** (next chart): all libraries including raw frameworks, **LOC only** (the only metric every library participates in)
+
+## MCP DX
+| Library | form-fill | navigate-and-read | Schema completeness | Error actionability |
+| --- | ---: | ---: | ---: | ---: |
+| `openchrome` | 10 | 7 | *pending* | *pending* |
+
+See `chart-dx-mcp.svg` for the visual companion.
+
+## Framework DX
+LOC per task. Composites computed only over axes where every library participates — here that's LOC alone.
+
+| Library | form-fill | navigate-and-read | median LOC |
+| --- | ---: | ---: | ---: |
+| `openchrome` | 10 | 7 | 8.5 |
+| `playwright` | 12 | 10 | 11 |
+| `puppeteer` | 16 | 10 | 13 |
+
+See `chart-dx-framework.svg` for the visual companion.
+
+## Pending rubrics
+- Schema completeness: requires MCP `tools/list` introspection per library (issue #1261 mentions `lint:tool-schemas` as the OpenChrome side). Lands in the next-session follow-up.
+- Error actionability: requires running induced failures through each library and scoring the returned errors against the rubric in `dx-rubrics.ts`. Same follow-up.
+
+## Headline
+Framework DX LOC winner (lower is better): **`openchrome`** at median 8.5 LOC.
+
+
+## #G Complex Real-World Task Completion (#1305)
+
+Generated: 2026-05-15T23:53:20.745Z
+Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-task-completion`).
+
+## Claim scope
+
+- Measurement mode: `deterministic-fixture`
+- Claim scope: **scaffold-only; not a live competitive measurement**
+- This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.
+- #1261 remains the DX/supporting axis; this section is the primary task-completion axis.
+
+## Metrics by library
+
+| Library | Mode | Runs | Success | First-attempt success | Recovery success | Mean tool calls | Mean wall time ms | p95 wall time ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `openchrome` | `deterministic-fixture` | 5 | 100.0% | 80.0% | 100.0% | 9.6 | 1640 | 2175 |
+
+## Task corpus
+
+| Task | Tier | Max steps | Recovery? | Complexity tags |
+| --- | --- | ---: | --- | --- |
+| `rw-001-checkout-update-address` Update a checkout shipping address and verify recalculated summary | local-fixture | 14 | no | form-fill, stateful-ui, verification |
+| `rw-002-search-filter-compare` Search, filter, compare two products, and extract the cheaper eligible item | local-fixture | 16 | no | search, filtering, extraction, decision |
+| `rw-003-tab-research-synthesis` Use multiple tabs to synthesize two reference pages into one answer | stable-public-reference | 18 | no | tabs, reading, synthesis |
+| `rw-004-selector-drift-recovery` Recover from selector drift while submitting a feedback form | recovery | 20 | yes | fault-recovery, form-fill, grounding |
+| `rw-005-long-horizon-itinerary` Build and verify a multi-step itinerary from constrained options | long-horizon | 28 | no | long-horizon, filtering, decision, stateful-ui |
+
+## Next measurement work
+
+- Add live OpenChrome / playwright-mcp / Puppeteer MCP / browsermcp adapter rows only after real execution.
+- Pin competitor and LLM versions before publishing live comparisons.
+- Keep local deterministic fixture rows separate from live-web rows.
+
