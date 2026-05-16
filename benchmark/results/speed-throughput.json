@@ -2,8 +2,8 @@
   "axis": "speed-throughput",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-16T03:34:35.182Z",
-    "gitSha": "217fe98d",
+    "capturedAt": "2026-05-16T17:41:01.275Z",
+    "gitSha": "88ea93eb",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -29,6 +29,7 @@
     {
       "library": "OpenChrome",
       "mode": "dom-stub",
+      "sessionMode": "cold",
       "concurrency": 1,
       "pagesPerPass": 50,
       "sampleCount": 1,
@@ -43,16 +44,17 @@
     {
       "library": "Crawlee",
       "mode": "cheerio-text",
+      "sessionMode": "cold",
       "concurrency": 1,
       "pagesPerPass": 50,
       "sampleCount": 1,
       "warmupDiscarded": 3,
-      "rawPagesPerSecond": 135.13513513513513,
+      "rawPagesPerSecond": 2631.5789473684213,
       "successRate": 1,
-      "effectivePagesPerSecond": 135.13513513513513,
-      "meanWallMs": 370,
-      "p50WallMs": 370,
-      "p95WallMs": 370
+      "effectivePagesPerSecond": 2631.5789473684213,
+      "meanWallMs": 19,
+      "p50WallMs": 19,
+      "p95WallMs": 19
     }
   ]
 }
