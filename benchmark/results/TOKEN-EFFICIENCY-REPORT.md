@@ -1,6 +1,6 @@
 # Token Efficiency (#1256) — competitive matrix report
 
-Generated: 2026-05-15T06:08:01.226Z
+Generated: 2026-05-16T03:34:40.106Z
 Source: `benchmark/results/token-efficiency.json` (axis: `token-efficiency`, schema 1.0.0).
 Tokenizer: `cl100k_base`.
 
@@ -20,8 +20,8 @@ Lower is better. "(skip)" = library not measured in this run.
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 6470 | 8512 | 11214 | 7999 | 11216 |
+| `playwright-innertext` | 2691 | 3571 | 4768 | 3314 | 4863 |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-library × per-archetype median retention
@@ -35,8 +35,8 @@ Higher is better. "(skip)" = library not measured in this run.
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| `playwright-innertext` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-library × per-archetype median compression
@@ -50,8 +50,8 @@ Higher is better (× vs raw HTML tokens).
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 1.0× | 1.0× | 1.0× | 1.0× | 1.0× |
+| `playwright-innertext` | 2.4× | 2.4× | 2.4× | 2.4× | 2.3× |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-archetype upper-left winner
@@ -66,15 +66,13 @@ Lowest tokens at the max retention measured in this run.
 | spa | `deterministic-static` | 100.0% |
 
 ## Cells skipped in this run
-350 cells did not run because they are live-only and `OPENCHROME_BENCH_LIVE=1` was not set.
+250 cells did not run because they are live-only and `OPENCHROME_BENCH_LIVE=1` was not set.
 
 Skipped libraries:
 - `browser-use-dom`
 - `openchrome-readpage-ax`
 - `openchrome-readpage-dom`
 - `playwright-a11y`
-- `playwright-content`
-- `playwright-innertext`
 - `playwright-mcp-snapshot`
 
 To run them, set `OPENCHROME_BENCH_LIVE=1` and re-run `npm run bench:tokens`. Today the live cells are scaffolded but not yet wired to their real Chrome / Python integrations — that is queued for the next session.

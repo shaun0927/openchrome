@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-16T02:31:10.561Z
+Generated: 2026-05-16T03:34:40.041Z
 
 ## Verdict
 
@@ -22,9 +22,9 @@ Generated: 2026-05-16T02:31:10.561Z
 | --- | --- | --- | --- |
 | [#1254](https://github.com/shaun0927/openchrome/issues/1254) Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source | not_ready | not_measurable | Multiple child axes remain partial or scaffolded; unified report still marks several sections pending. |
 | [#1255](https://github.com/shaun0927/openchrome/issues/1255) Benchmark #0: Harness Foundation — competitor adapters, exact tokenizer, env metadata | partial | diagnostic_or_smoke_only | The suite is not yet proven with every live competitor adapter passing the same smoke task and pinned versions. |
-| [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | OpenChrome, Playwright, playwright-mcp, and browser-use extractors are live-only scaffolds that throw when live mode is enabled. |
+| [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims. |
 | [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | partial | diagnostic_or_smoke_only | Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only. |
-| [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput | partial | diagnostic_or_smoke_only | Throughput competitor adapters are not wired through the runner; session-reuse delta is missing; headline competitor matrix is not complete. |
+| [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput | partial | diagnostic_or_smoke_only | Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence. |
 | [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie | partial | diagnostic_or_smoke_only | Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired. |
 | [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost | partial | diagnostic_or_smoke_only | Wall-clock setup time and logged-in smoke success are null/pending in the current runner. |
 | [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability | partial | diagnostic_or_smoke_only | Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction. |
@@ -66,11 +66,11 @@ Generated: 2026-05-16T02:31:10.561Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - `npm run bench:tokens` can emit deterministic-static and crawlee-cheerio rows.
+  - `npm run bench:tokens` emits deterministic-static, crawlee-cheerio, playwright-content, and playwright-innerText rows with explicit skips for remaining live-only cells.
 - Blockers:
-  - OpenChrome, Playwright, playwright-mcp, and browser-use extractors are live-only scaffolds that throw when live mode is enabled.
+  - OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims.
 - Next actions:
-  - Wire live extractor calls and version pins before publishing competitive token-efficiency claims.
+  - Wire remaining live extractor calls and version pins before publishing competitive token-efficiency claims.
 
 ### [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget
 
@@ -88,11 +88,11 @@ Generated: 2026-05-16T02:31:10.561Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Latency and throughput runners exist; CI throughput uses deterministic OpenChrome stub; latency can use OpenChrome real adapter when Chrome is available.
+  - Latency and throughput runners exist; CI throughput uses deterministic OpenChrome stub; throughput can run Crawlee without Chrome and Playwright/Puppeteer/OpenChrome live through the shared adapter gate.
 - Blockers:
-  - Throughput competitor adapters are not wired through the runner; session-reuse delta is missing; headline competitor matrix is not complete.
+  - Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence.
 - Next actions:
-  - Wire Playwright/Puppeteer/Crawlee throughput cells and add session-reuse mode.
+  - Run live Chrome throughput cells for OpenChrome/Playwright/Puppeteer and add session-reuse mode.
 
 ### [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie
 

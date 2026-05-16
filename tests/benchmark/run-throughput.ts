@@ -3,48 +3,68 @@
  * Throughput runner for the Speed & Throughput axis (#1258).
  *
  * Drives the static fixture server's 50-page mirror at concurrency 1 / 5 /
- * 10 / 20 against the OpenChrome adapter and records both the raw
+ * 10 / 20 against OpenChrome and selected competitor adapters and records both the raw
  * throughput + success-rate PRIMARIES and the effective-throughput
  * SECONDARY composite into the standard result envelope.
  *
  * Modes:
  *
  *   npm run bench:throughput
- *     deterministic stub adapter (no Chrome). Always available — this is
- *     what CI runs. Sprint 1 ships this mode; the live competitor cells
- *     are gated behind OPENCHROME_BENCH_LIVE=1 and land in a follow-up
- *     when the live Chrome + Playwright / Puppeteer / Crawlee
- *     integrations are wired through `tests/benchmark/adapters/`.
+ *     deterministic OpenChrome stub adapter (no Chrome). Always available —
+ *     this is what CI runs by default. Pass `--library crawlee` or
+ *     `--library all --include-live-competitors=false` to include the
+ *     no-Chrome Crawlee competitor cell locally.
  *
  *   OPENCHROME_BENCH_LIVE=1 npm run bench:throughput
- *     real OpenChrome adapter against a Chrome on port 9222. Surfaces a
- *     clear error if Chrome is not reachable rather than silently
- *     falling back to stub.
+ *     real OpenChrome, Playwright, and Puppeteer adapters against Chrome on
+ *     port 9222, plus Crawlee. Surfaces a clear error if Chrome is not
+ *     reachable rather than silently falling back to stub.
  *
  *   npm run bench:throughput -- --ci
  *     CI mode = stub, with the minimum iteration count that still
  *     respects the warm-up discard.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from "fs";
+import * as path from "path";
 
-import { MCPAdapter } from './benchmark-runner';
-import { OpenChromeStubAdapter, OpenChromeRealAdapter } from './adapters';
-import { startStaticFixtureServer } from './fixtures/static-server';
+import { MCPAdapter } from "./benchmark-runner";
+import {
+  OpenChromeStubAdapter,
+  OpenChromeRealAdapter,
+  PlaywrightAdapter,
+  PuppeteerAdapter,
+  CrawleeAdapter,
+} from "./adapters";
+import { startStaticFixtureServer } from "./fixtures/static-server";
 import {
   measureThroughput,
   ThroughputSummary,
   DEFAULT_THROUGHPUT_CONCURRENCIES,
   DEFAULT_THROUGHPUT_WARMUP_DISCARD,
-} from './throughput';
-import { captureEnvironment } from './utils/environment';
-import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
+} from "./throughput";
+import { captureEnvironment } from "./utils/environment";
+import {
+  buildResultEnvelope,
+  assertValidResultEnvelope,
+} from "./utils/result-envelope";
 
-const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'speed-throughput.json');
+const OUTPUT_PATH = path.join(
+  process.cwd(),
+  "benchmark",
+  "results",
+  "speed-throughput.json",
+);
+
+export type ThroughputLibrary =
+  | "openchrome"
+  | "playwright"
+  | "puppeteer"
+  | "crawlee"
+  | "all";
 
 export interface ThroughputRunOptions {
-  /** When true, use the deterministic stub adapter (no Chrome). */
+  /** When true, use the deterministic stub adapter for OpenChrome unless live is set. */
   ciMode: boolean;
   /** Total passes per concurrency cell, including warm-up. */
   iterations: number;
@@ -54,6 +74,10 @@ export interface ThroughputRunOptions {
   concurrencies: readonly number[];
   /** When true, force the live (real) adapter regardless of `ciMode`. */
   live: boolean;
+  /** Library matrix to run. `all` expands to every supported competitor. */
+  library: ThroughputLibrary;
+  /** Include Chrome/CDP competitors when `library=all` and live mode is disabled. */
+  includeLiveCompetitors: boolean;
 }
 
 export interface ThroughputRow {
@@ -71,18 +95,58 @@ export interface ThroughputRow {
   p95WallMs: number;
 }
 
+const THROUGHPUT_LIBRARIES: readonly Exclude<ThroughputLibrary, "all">[] = [
+  "openchrome",
+  "playwright",
+  "puppeteer",
+  "crawlee",
+];
+
+function parseLibrary(value: string): ThroughputLibrary {
+  if (
+    value === "all" ||
+    (THROUGHPUT_LIBRARIES as readonly string[]).includes(value)
+  ) {
+    return value as ThroughputLibrary;
+  }
+  throw new Error(
+    `--library must be one of all, ${THROUGHPUT_LIBRARIES.join(", ")}; got: ${value}`,
+  );
+}
+
+function flagValue(argv: string[], name: string): string | undefined {
+  const idx = argv.indexOf(name);
+  if (idx !== -1) return argv[idx + 1];
+  const prefix = `${name}=`;
+  const match = argv.find((arg) => arg.startsWith(prefix));
+  return match ? match.slice(prefix.length) : undefined;
+}
+
+function parseBooleanFlag(
+  value: string | undefined,
+  defaultValue: boolean,
+): boolean {
+  if (value === undefined) return defaultValue;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  throw new Error(`boolean flag value must be true/false, got: ${value}`);
+}
+
 export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
-  const ciMode = argv.includes('--ci');
-  const liveFlag = argv.includes('--live') || process.env.OPENCHROME_BENCH_LIVE === '1';
+  const ciMode = argv.includes("--ci");
+  const liveFlag =
+    argv.includes("--live") || process.env.OPENCHROME_BENCH_LIVE === "1";
   let iterations = ciMode
     ? DEFAULT_THROUGHPUT_WARMUP_DISCARD + 1
     : DEFAULT_THROUGHPUT_WARMUP_DISCARD + 3;
-  const idx = argv.indexOf('--iterations');
-  if (idx !== -1 && idx + 1 < argv.length) {
-    const raw = argv[idx + 1].trim();
+  const iterationsFlag = flagValue(argv, "--iterations");
+  if (iterationsFlag !== undefined) {
+    const raw = iterationsFlag.trim();
     const n = parseInt(raw, 10);
     if (!Number.isInteger(n) || n <= 0 || String(n) !== raw) {
-      throw new Error(`--iterations must be a positive integer; got: ${argv[idx + 1]}`);
+      throw new Error(
+        `--iterations must be a positive integer; got: ${iterationsFlag}`,
+      );
     }
     iterations = n;
   }
@@ -92,26 +156,44 @@ export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
     );
   }
   let concurrencies: readonly number[] = DEFAULT_THROUGHPUT_CONCURRENCIES;
-  const cIdx = argv.indexOf('--concurrency');
-  if (cIdx !== -1 && cIdx + 1 < argv.length) {
-    const parsed = argv[cIdx + 1]
-      .split(',')
+  const concurrencyFlag = flagValue(argv, "--concurrency");
+  if (concurrencyFlag !== undefined) {
+    const parsed = concurrencyFlag
+      .split(",")
       .map((s) => parseInt(s.trim(), 10));
     if (parsed.some((n) => !Number.isInteger(n) || n <= 0)) {
-      throw new Error(`--concurrency must be a comma-separated list of positive integers`);
+      throw new Error(
+        `--concurrency must be a comma-separated list of positive integers`,
+      );
     }
     concurrencies = parsed;
   }
+  const library = parseLibrary(
+    flagValue(argv, "--library") ??
+      process.env.OPENCHROME_BENCH_LIBRARY ??
+      "openchrome",
+  );
+  const includeLiveCompetitors = parseBooleanFlag(
+    flagValue(argv, "--include-live-competitors") ??
+      process.env.OPENCHROME_BENCH_INCLUDE_LIVE_COMPETITORS,
+    liveFlag,
+  );
   return {
     ciMode,
     iterations,
     warmupDiscard: DEFAULT_THROUGHPUT_WARMUP_DISCARD,
     concurrencies,
     live: liveFlag,
+    library,
+    includeLiveCompetitors,
   };
 }
 
-function toRow(library: string, mode: string, summary: ThroughputSummary): ThroughputRow {
+function toRow(
+  library: string,
+  mode: string,
+  summary: ThroughputSummary,
+): ThroughputRow {
   return {
     library,
     mode,
@@ -130,45 +212,127 @@ function toRow(library: string, mode: string, summary: ThroughputSummary): Throu
 
 function readRepoVersion(): string {
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
-    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+    );
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
   } catch {
-    return 'unknown';
+    return "unknown";
   }
+}
+
+function packageVersion(pkgName: string): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require(`${pkgName}/package.json`).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function competitorVersion(name: string): string {
+  if (name === "OpenChrome") return readRepoVersion();
+  if (name === "Playwright") return packageVersion("playwright");
+  if (name === "Puppeteer") return packageVersion("puppeteer-core");
+  if (name === "Crawlee") return packageVersion("crawlee");
+  return "unknown";
+}
+
+interface AdapterEntry {
+  library: string;
+  mode: string;
+  adapter: MCPAdapter;
+  requiresLiveChrome: boolean;
 }
 
 /**
- * Build the OpenChrome adapter the runner should use. Stub by default
- * (CI / no Chrome); live adapter when `--live` or `OPENCHROME_BENCH_LIVE=1`.
- * Competitor adapters (Playwright / Puppeteer / Crawlee) plug into this
- * function in a follow-up PR; today the runner deliberately measures only
- * OpenChrome so the headline number is honest about what landed in Sprint 1.
+ * Build the adapter matrix requested by the operator. OpenChrome remains stubbed
+ * by default so CI has a no-Chrome path. Crawlee is a real competitor that can
+ * run without Chrome against the local fixture server. Playwright/Puppeteer and
+ * live OpenChrome are included only when live mode or explicit inclusion is set,
+ * avoiding silent Chrome fallbacks.
  */
-function buildAdapter(options: ThroughputRunOptions): { adapter: MCPAdapter; mode: string } {
-  if (options.live && !options.ciMode) {
-    return { adapter: new OpenChromeRealAdapter({ mode: 'dom' }), mode: 'dom-live' };
+function buildAdapters(options: ThroughputRunOptions): AdapterEntry[] {
+  const requested =
+    options.library === "all" ? THROUGHPUT_LIBRARIES : [options.library];
+  const entries: AdapterEntry[] = [];
+  for (const library of requested) {
+    if (library === "openchrome") {
+      if (options.live && !options.ciMode) {
+        entries.push({
+          library: "OpenChrome",
+          mode: "dom-live",
+          adapter: new OpenChromeRealAdapter({ mode: "dom" }),
+          requiresLiveChrome: true,
+        });
+      } else {
+        entries.push({
+          library: "OpenChrome",
+          mode: "dom-stub",
+          adapter: new OpenChromeStubAdapter({ mode: "dom" }),
+          requiresLiveChrome: false,
+        });
+      }
+    } else if (library === "crawlee") {
+      entries.push({
+        library: "Crawlee",
+        mode: "cheerio-text",
+        adapter: new CrawleeAdapter(),
+        requiresLiveChrome: false,
+      });
+    } else if (library === "playwright") {
+      entries.push({
+        library: "Playwright",
+        mode: "raw-html-cdp",
+        adapter: new PlaywrightAdapter(),
+        requiresLiveChrome: true,
+      });
+    } else if (library === "puppeteer") {
+      entries.push({
+        library: "Puppeteer",
+        mode: "raw-html-cdp",
+        adapter: new PuppeteerAdapter(),
+        requiresLiveChrome: true,
+      });
+    }
   }
-  return { adapter: new OpenChromeStubAdapter({ mode: 'dom' }), mode: 'dom-stub' };
+  return entries.filter((entry) => {
+    if (!entry.requiresLiveChrome) return true;
+    if (options.live && !options.ciMode) return true;
+    return options.includeLiveCompetitors;
+  });
 }
 
-export async function runThroughputBenchmark(options: ThroughputRunOptions): Promise<ThroughputRow[]> {
+export async function runThroughputBenchmark(
+  options: ThroughputRunOptions,
+): Promise<ThroughputRow[]> {
   const server = await startStaticFixtureServer();
   const urls = server.pageUrls();
-  const { adapter, mode } = buildAdapter(options);
+  const entries = buildAdapters(options);
+  if (entries.length === 0) {
+    throw new Error(
+      "no throughput adapters selected after applying live-competitor gates",
+    );
+  }
   const rows: ThroughputRow[] = [];
   try {
-    if (adapter.setup) await adapter.setup();
-    for (const concurrency of options.concurrencies) {
-      const summary = await measureThroughput(adapter, {
-        urls,
-        concurrency,
-        iterations: options.iterations,
-        warmupDiscard: options.warmupDiscard,
-      });
-      rows.push(toRow('OpenChrome', mode, summary));
+    for (const entry of entries) {
+      try {
+        if (entry.adapter.setup) await entry.adapter.setup();
+        for (const concurrency of options.concurrencies) {
+          const summary = await measureThroughput(entry.adapter, {
+            urls,
+            concurrency,
+            iterations: options.iterations,
+            warmupDiscard: options.warmupDiscard,
+          });
+          rows.push(toRow(entry.library, entry.mode, summary));
+        }
+      } finally {
+        if (entry.adapter.teardown) await entry.adapter.teardown();
+      }
     }
   } finally {
-    if (adapter.teardown) await adapter.teardown();
     await server.close();
   }
   return rows;
@@ -176,8 +340,8 @@ export async function runThroughputBenchmark(options: ThroughputRunOptions): Pro
 
 function formatReport(rows: ThroughputRow[]): string {
   const lines = [
-    'Throughput benchmark (#1258) — raw + success + effective (labeled secondary)',
-    'library      mode       conc   raw pg/s   success   effective   p50(ms)   p95(ms)   samples',
+    "Throughput benchmark (#1258) — raw + success + effective (labeled secondary)",
+    "library      mode       conc   raw pg/s   success   effective   p50(ms)   p95(ms)   samples",
   ];
   for (const r of rows) {
     lines.push(
@@ -186,15 +350,15 @@ function formatReport(rows: ThroughputRow[]): string {
         r.mode.padEnd(10),
         String(r.concurrency).padStart(4),
         r.rawPagesPerSecond.toFixed(1).padStart(10),
-        (r.successRate * 100).toFixed(1).padStart(7) + '%',
+        (r.successRate * 100).toFixed(1).padStart(7) + "%",
         r.effectivePagesPerSecond.toFixed(1).padStart(11),
         r.p50WallMs.toFixed(1).padStart(9),
         r.p95WallMs.toFixed(1).padStart(9),
         String(r.sampleCount).padStart(8),
-      ].join(' '),
+      ].join(" "),
     );
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -202,15 +366,20 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const rows = await runThroughputBenchmark(options);
 
   const envelope = buildResultEnvelope({
-    axis: 'speed-throughput',
+    axis: "speed-throughput",
     environment: captureEnvironment(),
-    competitors: [{ name: 'OpenChrome', version: readRepoVersion() }],
+    competitors: Array.from(new Set(rows.map((row) => row.library))).map(
+      (name) => ({
+        name,
+        version: competitorVersion(name),
+      }),
+    ),
     results: rows,
   });
   assertValidResultEnvelope(envelope);
 
   fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
-  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(envelope, null, 2) + '\n');
+  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(envelope, null, 2) + "\n");
 
   // console.error: stdout carries MCP JSON-RPC in this codebase; never log there.
   console.error(formatReport(rows));
@@ -219,7 +388,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error('Throughput benchmark failed:', err);
+    console.error("Throughput benchmark failed:", err);
     process.exit(1);
   });
 }

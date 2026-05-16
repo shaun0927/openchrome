@@ -9,6 +9,7 @@
 import type { Extractor } from './types';
 import { deterministicStaticExtractor } from './deterministic-static';
 import { crawleeCheerioExtractor } from './crawlee-cheerio';
+import { playwrightContentExtractor, playwrightInnerTextExtractor } from './playwright-static';
 import { liveOnlyExtractors } from './live-only';
 
 export type { Extractor, ExtractorContext, ExtractorResult, CellOutcome, SkippedCell, RunCell } from './types';
@@ -16,5 +17,7 @@ export type { Extractor, ExtractorContext, ExtractorResult, CellOutcome, Skipped
 export const ALL_EXTRACTORS: readonly Extractor[] = [
   deterministicStaticExtractor,
   crawleeCheerioExtractor,
+  playwrightContentExtractor,
+  playwrightInnerTextExtractor,
   ...liveOnlyExtractors,
 ];
