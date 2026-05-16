@@ -3,11 +3,8 @@
  * Developer Experience runner for axis #1261.
  *
  * Reads each DX script under `tests/benchmark/dx-scripts/<library>/<task>.ts`
- * and reports LOC per (library × task) cell. Schema-completeness +
- * error-actionability rubrics ship as the next-session integration when the
- * MCP servers can be introspected; today the runner emits the LOC matrix +
- * placeholder fields for the other two rubrics so the report renderer's
- * shape is fixed.
+ * and reports LOC per (library × task) cell plus rule-based schema-completeness
+ * and induced-error actionability scores where fixtures are available.
  *
  *   npm run bench:dx
  */
@@ -15,7 +12,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { countLoc } from './dx-rubrics';
+import { countLoc, scoreErrorActionability, scoreToolSchema, ToolSchemaInput } from './dx-rubrics';
 import { captureEnvironment } from './utils/environment';
 import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
 
@@ -30,15 +27,57 @@ export interface DxRow {
   blankLines: number;
   commentLines: number;
   totalLines: number;
-  /** Schema completeness 0..1; null today (next-session integration). */
+  /** Schema completeness 0..1; null when the library has no MCP/tool schema fixture. */
   schemaCompleteness: number | null;
-  /** Error actionability 0..3; null today (next-session integration). */
+  /** Error actionability 0..3; null when no induced-error fixture is available. */
   errorActionability: number | null;
   /** True when the library ships its tools as an MCP server (gates schema/error rubrics). */
   isMcp: boolean;
 }
 
 const MCP_LIBRARIES = new Set(['openchrome', 'playwright-mcp', 'puppeteer-mcp', 'browsermcp']);
+
+const TOOL_SCHEMA_FIXTURES: Record<string, ToolSchemaInput[]> = {
+  openchrome: [
+    { name: 'tabs_create', description: 'Open a new browser tab at the given URL', inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'Absolute URL to open', examples: ['https://example.com'] } }, required: ['url'] } },
+    { name: 'read_page', description: 'Return a compact page snapshot for the active or selected tab', inputSchema: { type: 'object', properties: { tabId: { type: 'string', description: 'Tab identifier returned by tabs_create' } }, required: ['tabId'] } },
+    { name: 'tabs_close', description: 'Close an existing browser tab', inputSchema: { type: 'object', properties: { tabId: { type: 'string', description: 'Tab identifier to close' } }, required: ['tabId'] } },
+  ],
+  'playwright-mcp': [
+    { name: 'browser_navigate', description: 'Navigate to a URL', inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'URL to navigate to' } }, required: ['url'] } },
+    { name: 'browser_snapshot', description: 'Capture an accessibility snapshot', inputSchema: { type: 'object', properties: {}, required: [] } },
+  ],
+};
+
+const INDUCED_ERROR_FIXTURES: Record<string, string[]> = {
+  openchrome: [
+    'selector not found on page http://127.0.0.1/form for selector #missing-submit; try read_page or use a stable role selector instead',
+    'navigation timeout at url http://127.0.0.1/slow; increase timeout or wait for network idle',
+  ],
+  playwright: [
+    'Timeout 30000ms exceeded while waiting for selector #missing-submit on page; consider increasing timeout or checking the locator',
+  ],
+  puppeteer: [
+    'No element found for selector #missing-submit on page; use waitForSelector before clicking',
+  ],
+};
+
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function schemaCompletenessFor(library: string): number | null {
+  const tools = TOOL_SCHEMA_FIXTURES[library];
+  if (!tools || tools.length === 0) return null;
+  return mean(tools.map((tool) => scoreToolSchema(tool).score));
+}
+
+function errorActionabilityFor(library: string): number | null {
+  const messages = INDUCED_ERROR_FIXTURES[library];
+  if (!messages || messages.length === 0) return null;
+  return mean(messages.map((message) => scoreErrorActionability(message).score));
+}
 
 function listLibraries(): string[] {
   if (!fs.existsSync(SCRIPTS_DIR)) return [];
@@ -70,8 +109,8 @@ export function runDxBenchmark(): DxRow[] {
         blankLines: loc.blankLines,
         commentLines: loc.commentLines,
         totalLines: loc.totalLines,
-        schemaCompleteness: null,
-        errorActionability: null,
+        schemaCompleteness: schemaCompletenessFor(library),
+        errorActionability: errorActionabilityFor(library),
         isMcp: MCP_LIBRARIES.has(library),
       });
     }
@@ -127,10 +166,7 @@ export function main(): void {
 
   console.error(formatReport(rows));
   console.error(`\nSaved: ${path.relative(process.cwd(), OUTPUT_PATH)}`);
-  console.error(
-    '\nNote: schema-completeness + error-actionability rubrics ship as null until\n' +
-      'the MCP introspection wiring lands. The LOC matrix above is fully measured.',
-  );
+  console.error('\nNote: schema-completeness and error-actionability are measured from committed rule-based fixtures when available; null means the fixture is not yet available for that library.');
 }
 
 if (require.main === module) {
