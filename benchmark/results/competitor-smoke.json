@@ -1,0 +1,124 @@
+{
+  "axis": "foundation",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-16T16:53:35.104Z",
+    "gitSha": "e21609c4",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.168",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "OpenChrome",
+      "version": "1.12.2"
+    },
+    {
+      "name": "Playwright",
+      "version": "operator-pinned-runtime"
+    },
+    {
+      "name": "Puppeteer",
+      "version": "operator-pinned-runtime"
+    },
+    {
+      "name": "Crawlee",
+      "version": "operator-pinned-runtime"
+    },
+    {
+      "name": "playwright-mcp",
+      "version": "operator-pinned-runtime"
+    },
+    {
+      "name": "browser-use",
+      "version": "operator-pinned-runtime"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "library": "OpenChrome",
+      "mode": "dom-stub",
+      "status": "passed",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": false,
+      "versionPinned": true,
+      "sameTaskContract": true,
+      "durationMs": 0,
+      "payloadChars": 13,
+      "skipReason": "",
+      "failure": ""
+    },
+    {
+      "library": "Playwright",
+      "mode": "raw-html-cdp",
+      "status": "skipped",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "versionPinned": true,
+      "sameTaskContract": true,
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    },
+    {
+      "library": "Puppeteer",
+      "mode": "raw-html-cdp",
+      "status": "skipped",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "versionPinned": true,
+      "sameTaskContract": true,
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    },
+    {
+      "library": "Crawlee",
+      "mode": "cheerio-text",
+      "status": "passed",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": false,
+      "versionPinned": true,
+      "sameTaskContract": true,
+      "durationMs": 38,
+      "payloadChars": 3154,
+      "skipReason": "",
+      "failure": ""
+    },
+    {
+      "library": "playwright-mcp",
+      "mode": "native-mcp",
+      "status": "skipped",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "versionPinned": true,
+      "sameTaskContract": true,
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    },
+    {
+      "library": "browser-use",
+      "mode": "python-bridge",
+      "status": "skipped",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "versionPinned": true,
+      "sameTaskContract": true,
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    }
+  ]
+}
