@@ -53,6 +53,10 @@ export type CellOutcome = SkippedCell | RunCell;
 export interface ExtractorContext {
   /** Full fixture HTML — every extractor's input. */
   html: string;
+  /** Stable fixture name, used by recorded live-payload ingestion. */
+  fixtureName?: string;
+  /** Fixture archetype, used by recorded live-payload ingestion/reporting. */
+  archetype?: string;
   /** Ground truth — extractors may use it to know which keys to populate. */
   groundTruth: GroundTruthSpec;
   /** Set when `OPENCHROME_BENCH_LIVE=1` — gate for live-only extractors. */

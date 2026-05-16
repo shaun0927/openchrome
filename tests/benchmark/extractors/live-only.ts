@@ -6,7 +6,7 @@
  * browser_snapshot, browser-use DOM serialization). Playwright content and
  * innerText run deterministically from frozen fixture HTML because those APIs
  * map directly to raw HTML/body text for this corpus. Today the
- * runner ships their `Extractor` entries as live-only scaffolds — they
+ * runner ships the remaining `Extractor` entries as live-only scaffolds — they
  * advertise `liveOnly: true` and the matrix runner emits a clean skip
  * annotation in `--skip-live` mode instead of fabricating numbers.
  *
@@ -14,9 +14,12 @@
  * `extract()` stub with the real library call without touching the matrix
  * runner. CI stays green via `--skip-live`; an operator with a Chrome on
  * :9222 runs `OPENCHROME_BENCH_LIVE=1 npm run bench:tokens` to exercise the
- * real cells.
+ * real cells. Operators can also provide recorded payload files through
+ * `OPENCHROME_BENCH_RECORDED_TOKENS_DIR` to measure captured live payloads
+ * without launching those runtimes during CI.
  */
 
+import { loadRecordedPayload } from './recorded-payload';
 import type { Extractor, ExtractorContext, ExtractorResult } from './types';
 
 function liveOnlyStub(library: string, mode: string): Extractor {
@@ -25,6 +28,8 @@ function liveOnlyStub(library: string, mode: string): Extractor {
     mode,
     liveOnly: true,
     extract(ctx: ExtractorContext): ExtractorResult | null {
+      const recorded = loadRecordedPayload(library, ctx);
+      if (recorded) return recorded;
       if (!ctx.liveAllowed) return null;
       // When the operator sets OPENCHROME_BENCH_LIVE=1, the runner expects a
       // real measurement — but the integration code lands in the next PR.

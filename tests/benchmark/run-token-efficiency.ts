@@ -142,6 +142,8 @@ export function scoreCell(
   for (let i = 0; i < options.samplesPerCell; i++) {
     result = extractor.extract({
       html: fixture.html,
+      fixtureName: fixture.name,
+      archetype: fixture.archetype,
       groundTruth: fixture.groundTruth,
       liveAllowed: options.liveAllowed,
     });
