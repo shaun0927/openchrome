@@ -1,6 +1,6 @@
 export type RealWorldTaskTier = 'local-fixture' | 'stable-public-reference' | 'recovery' | 'long-horizon';
 
-export type MeasurementMode = 'deterministic-fixture' | 'live-llm';
+export type MeasurementMode = 'deterministic-fixture' | 'recorded-real' | 'live-llm';
 
 export type FailureCategory =
   | 'planning'
