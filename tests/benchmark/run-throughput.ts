@@ -63,6 +63,8 @@ export type ThroughputLibrary =
   | "crawlee"
   | "all";
 
+export type ThroughputSessionMode = 'reuse' | 'cold';
+
 export interface ThroughputRunOptions {
   /** When true, use the deterministic stub adapter for OpenChrome unless live is set. */
   ciMode: boolean;
@@ -78,11 +80,14 @@ export interface ThroughputRunOptions {
   library: ThroughputLibrary;
   /** Include Chrome/CDP competitors when `library=all` and live mode is disabled. */
   includeLiveCompetitors: boolean;
+  /** Reuse one adapter setup per library, or cold-start setup/teardown for every concurrency cell. */
+  sessionMode: ThroughputSessionMode;
 }
 
 export interface ThroughputRow {
   library: string;
   mode: string;
+  sessionMode: ThroughputSessionMode;
   concurrency: number;
   pagesPerPass: number;
   sampleCount: number;
@@ -120,6 +125,12 @@ function flagValue(argv: string[], name: string): string | undefined {
   const prefix = `${name}=`;
   const match = argv.find((arg) => arg.startsWith(prefix));
   return match ? match.slice(prefix.length) : undefined;
+}
+
+function parseSessionMode(value: string | undefined): ThroughputSessionMode {
+  if (value === undefined) return 'reuse';
+  if (value === 'reuse' || value === 'cold') return value;
+  throw new Error(`--session-mode must be reuse or cold; got: ${value}`);
 }
 
 function parseBooleanFlag(
@@ -178,6 +189,9 @@ export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
       process.env.OPENCHROME_BENCH_INCLUDE_LIVE_COMPETITORS,
     liveFlag,
   );
+  const sessionMode = parseSessionMode(
+    flagValue(argv, "--session-mode") ?? process.env.OPENCHROME_BENCH_SESSION_MODE,
+  );
   return {
     ciMode,
     iterations,
@@ -186,17 +200,20 @@ export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
     live: liveFlag,
     library,
     includeLiveCompetitors,
+    sessionMode,
   };
 }
 
 function toRow(
   library: string,
   mode: string,
+  sessionMode: ThroughputSessionMode,
   summary: ThroughputSummary,
 ): ThroughputRow {
   return {
     library,
     mode,
+    sessionMode,
     concurrency: summary.concurrency,
     pagesPerPass: summary.pagesPerPass,
     sampleCount: summary.sampleCount,
@@ -317,19 +334,36 @@ export async function runThroughputBenchmark(
   const rows: ThroughputRow[] = [];
   try {
     for (const entry of entries) {
-      try {
-        if (entry.adapter.setup) await entry.adapter.setup();
-        for (const concurrency of options.concurrencies) {
-          const summary = await measureThroughput(entry.adapter, {
-            urls,
-            concurrency,
-            iterations: options.iterations,
-            warmupDiscard: options.warmupDiscard,
-          });
-          rows.push(toRow(entry.library, entry.mode, summary));
+      if (options.sessionMode === 'reuse') {
+        try {
+          if (entry.adapter.setup) await entry.adapter.setup();
+          for (const concurrency of options.concurrencies) {
+            const summary = await measureThroughput(entry.adapter, {
+              urls,
+              concurrency,
+              iterations: options.iterations,
+              warmupDiscard: options.warmupDiscard,
+            });
+            rows.push(toRow(entry.library, entry.mode, options.sessionMode, summary));
+          }
+        } finally {
+          if (entry.adapter.teardown) await entry.adapter.teardown();
         }
-      } finally {
-        if (entry.adapter.teardown) await entry.adapter.teardown();
+      } else {
+        for (const concurrency of options.concurrencies) {
+          try {
+            if (entry.adapter.setup) await entry.adapter.setup();
+            const summary = await measureThroughput(entry.adapter, {
+              urls,
+              concurrency,
+              iterations: options.iterations,
+              warmupDiscard: options.warmupDiscard,
+            });
+            rows.push(toRow(entry.library, entry.mode, options.sessionMode, summary));
+          } finally {
+            if (entry.adapter.teardown) await entry.adapter.teardown();
+          }
+        }
       }
     }
   } finally {
@@ -341,13 +375,14 @@ export async function runThroughputBenchmark(
 function formatReport(rows: ThroughputRow[]): string {
   const lines = [
     "Throughput benchmark (#1258) — raw + success + effective (labeled secondary)",
-    "library      mode       conc   raw pg/s   success   effective   p50(ms)   p95(ms)   samples",
+    "library      mode       session conc   raw pg/s   success   effective   p50(ms)   p95(ms)   samples",
   ];
   for (const r of rows) {
     lines.push(
       [
         r.library.padEnd(12),
         r.mode.padEnd(10),
+        r.sessionMode.padEnd(7),
         String(r.concurrency).padStart(4),
         r.rawPagesPerSecond.toFixed(1).padStart(10),
         (r.successRate * 100).toFixed(1).padStart(7) + "%",
