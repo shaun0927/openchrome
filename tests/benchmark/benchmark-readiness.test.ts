@@ -27,17 +27,21 @@ describe('benchmark readiness audit', () => {
     const report = buildBenchmarkReadinessReport(new Date('2026-05-16T00:00:00.000Z'));
     expect(report.summary.totalOpenBenchmarkIssues).toBe(16);
     expect(report.summary.ready).toBe(0);
+    expect(report.summary.partial).toBe(11);
+    expect(report.summary.notReady).toBe(5);
     expect(report.summary.headlineReady).toBe(0);
+    expect(report.summary.diagnosticOrSmokeOnly).toBe(11);
+    expect(report.summary.notMeasurable).toBe(5);
     expect(report.summary.canMeasureEveryOpenBenchmarkIssue).toBe(false);
-    expect(report.summary.notReady).toBeGreaterThan(report.summary.partial);
   });
 
-  it('calls out the real-world task completion runner as missing', () => {
+  it('calls out the real-world task completion runner as scaffold-only', () => {
     const report = buildBenchmarkReadinessReport(new Date('2026-05-16T00:00:00.000Z'));
     const realworld = report.issues.find((issue) => issue.issue === 1305);
-    expect(realworld?.status).toBe('not_ready');
-    expect(realworld?.blockers.join('\n')).toMatch(/run-realworld-task-completion/);
-    expect(realworld?.nextActions.join('\n')).toMatch(/bench:realworld/);
+    expect(realworld?.status).toBe('partial');
+    expect(realworld?.measurementReadiness).toBe('diagnostic_or_smoke_only');
+    expect(realworld?.evidence.join('\n')).toMatch(/bench:realworld/);
+    expect(realworld?.blockers.join('\n')).toMatch(/deterministic scaffold/);
   });
 
   it('renders a human-readable not-ready verdict', () => {

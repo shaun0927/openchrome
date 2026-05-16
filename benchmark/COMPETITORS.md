@@ -29,10 +29,10 @@ they are not reproducible here. See Epic #1254 "Non-goals".
 
 | Library | npm package | Pinned version | Commit | Measured at | Used by axes |
 |---|---|---|---|---|---|
-| OpenChrome | `openchrome-mcp` (this repo) | _repo HEAD_ | _per-run git SHA_ | _per run_ | all |
+| OpenChrome | `openchrome-mcp` (this repo) | _repo HEAD_ | _per-run git SHA_ | _per run_ | all, #1299 |
 | Playwright | `playwright` | TBD | — | TBD | #A #C #D #E |
 | Puppeteer | `puppeteer` | TBD | — | TBD | #C #D #E #F |
-| playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F |
+| playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F #1299-future-live |
 | browser-use | `browser-use` (PyPI) | `0.12.6` | `329c67f069427e928ff81ad52415efdca7692007` | 2026-05-15 | #A #B #D #E |
 | Crawlee | `crawlee` | `3.16.0` | `6c9cd2ff7e7d89ce7685e67f3f919f3cce0fa7a4` | 2026-05-15 | #A #C |
 
@@ -52,7 +52,7 @@ every CI OS), and stable. Reports must describe "tokens" as
 
 ## LLM pin (LLM-driven axes only)
 
-Axis #B (Agent Task Success) runs against a real Claude model. The exact model
+Axis #B (Agent Task Success) and future live #1299 episode-token runs may run against a real Claude model. The exact model
 id + temperature are pinned per run and embedded in the result JSON's
 `environment.llm` block. A mid-benchmark model update invalidates the axis and
 forces a re-run.

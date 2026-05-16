@@ -1,14 +1,23 @@
 import type { Assertion } from '../../../src/contracts/types';
-import type { EpisodeTaskSpec, NormalizedEpisodeTaskSpec } from './types';
+import type { EpisodeTaskCategory, EpisodeTaskSpec, NormalizedEpisodeTaskSpec } from './types';
 
 const DEFAULT_MAX_STEPS = 30;
 const DEFAULT_MAX_DURATION_MS = 120_000;
 const MAX_STEPS = 100;
 const MAX_DURATION_MS = 600_000;
 
-const TASK_KEYS = new Set(['id', 'title', 'startUrl', 'goal', 'maxSteps', 'maxDurationMs', 'success', 'setup', 'tags']);
+const TASK_KEYS = new Set(['id', 'title', 'startUrl', 'goal', 'maxSteps', 'maxDurationMs', 'success', 'setup', 'tags', 'category', 'expectedFirstTool']);
 const SETUP_KEYS = new Set(['clearCookies', 'viewport']);
 const VIEWPORT_KEYS = new Set(['width', 'height']);
+const TASK_CATEGORIES = new Set<EpisodeTaskCategory>([
+  'info_retrieval',
+  'multi_step_navigation',
+  'form_fill',
+  'transactional_mock',
+  'recovery',
+  'dynamic_ui',
+  'long_horizon',
+]);
 
 export function normalizeTaskSpec(input: unknown): NormalizedEpisodeTaskSpec {
   if (!isRecord(input)) throw new Error('Episode task must be an object');
@@ -27,6 +36,7 @@ export function normalizeTaskSpec(input: unknown): NormalizedEpisodeTaskSpec {
     maxSteps,
     maxDurationMs,
     success: validateAssertion(input.success),
+    category: validateCategory(input.category),
   };
 
   if (input.setup !== undefined) task.setup = validateSetup(input.setup);
@@ -34,7 +44,16 @@ export function normalizeTaskSpec(input: unknown): NormalizedEpisodeTaskSpec {
     if (!Array.isArray(input.tags) || input.tags.some(t => typeof t !== 'string')) throw new Error('tags must be string[]');
     task.tags = input.tags;
   }
+  if (input.expectedFirstTool !== undefined) task.expectedFirstTool = requiredString(input.expectedFirstTool, 'expectedFirstTool');
   return task;
+}
+
+function validateCategory(input: unknown): EpisodeTaskCategory {
+  if (input === undefined) return 'info_retrieval';
+  if (typeof input !== 'string' || !TASK_CATEGORIES.has(input as EpisodeTaskCategory)) {
+    throw new Error(`category must be one of: ${Array.from(TASK_CATEGORIES).join(', ')}`);
+  }
+  return input as EpisodeTaskCategory;
 }
 
 export function normalizeTaskSpecs(inputs: EpisodeTaskSpec[]): NormalizedEpisodeTaskSpec[] {

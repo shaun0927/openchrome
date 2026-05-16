@@ -18,6 +18,15 @@ ANTHROPIC_API_KEY=sk-... OPENCHROME_BENCH_REAL=1 \
 Reports land in `tests/benchmark/webvoyager/reports/<git-sha>.{json,md}`
 plus stable `latest.{json,md}` pointers.
 
+
+## Scope note for Agent Task Success
+
+WebVoyager-style public-web lookup is only one layer of #1257. It is valuable for
+stable navigation and information retrieval, but it is not sufficient by itself
+for a headline Agent Task Success claim. Stateful controlled workflows live in
+`tests/benchmark/episode-harness` and are documented in
+`docs/benchmarks/agent-task-success.md`.
+
 ## Adapters
 
 | Adapter | Env | Notes |

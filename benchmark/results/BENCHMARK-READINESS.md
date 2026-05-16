@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-16T01:39:15.114Z
+Generated: 2026-05-16T02:31:10.561Z
 
 ## Verdict
 
@@ -10,11 +10,11 @@ Generated: 2026-05-16T01:39:15.114Z
 | --- | ---: |
 | Open benchmark issues audited | 16 |
 | Ready | 0 |
-| Partial | 5 |
-| Not ready | 11 |
+| Partial | 11 |
+| Not ready | 5 |
 | Headline-measurement-ready | 0 |
-| Diagnostic/smoke only | 8 |
-| Not measurable yet | 8 |
+| Diagnostic/smoke only | 11 |
+| Not measurable yet | 5 |
 
 ## Issue matrix
 
@@ -23,19 +23,19 @@ Generated: 2026-05-16T01:39:15.114Z
 | [#1254](https://github.com/shaun0927/openchrome/issues/1254) Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source | not_ready | not_measurable | Multiple child axes remain partial or scaffolded; unified report still marks several sections pending. |
 | [#1255](https://github.com/shaun0927/openchrome/issues/1255) Benchmark #0: Harness Foundation — competitor adapters, exact tokenizer, env metadata | partial | diagnostic_or_smoke_only | The suite is not yet proven with every live competitor adapter passing the same smoke task and pinned versions. |
 | [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | OpenChrome, Playwright, playwright-mcp, and browser-use extractors are live-only scaffolds that throw when live mode is enabled. |
-| [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | not_ready | diagnostic_or_smoke_only | Real Claude tool-use loop is a deliberate scaffold; 7 WebVoyager tasks remain pending; repetitions are parsed but not executed; competitor native loops are unwired. |
+| [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | partial | diagnostic_or_smoke_only | Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only. |
 | [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput | partial | diagnostic_or_smoke_only | Throughput competitor adapters are not wired through the runner; session-reuse delta is missing; headline competitor matrix is not complete. |
-| [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie | not_ready | diagnostic_or_smoke_only | Live fault-injection proxy/CDP cells are scaffolded; Chrome RSS and zombie-process sampling are not wired; cross-platform live table is missing. |
+| [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie | partial | diagnostic_or_smoke_only | Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired. |
 | [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost | partial | diagnostic_or_smoke_only | Wall-clock setup time and logged-in smoke success are null/pending in the current runner. |
 | [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability | partial | diagnostic_or_smoke_only | Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction. |
-| [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | not_ready | not_measurable | Episode result types do not yet include token category breakdowns or `bench:episode:tokens` script. |
-| [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | not_ready | diagnostic_or_smoke_only | The required taxonomy suite (`info_retrieval`, `form_fill`, `transactional_mock`, `recovery`, `dynamic_ui`, `long_horizon`) is not implemented as a benchmark matrix. |
+| [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | partial | diagnostic_or_smoke_only | Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired. |
+| [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | partial | diagnostic_or_smoke_only | The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy. |
 | [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate | not_ready | not_measurable | Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing. |
 | [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix | not_ready | not_measurable | playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`. |
 | [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks | not_ready | not_measurable | Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions. |
 | [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal | not_ready | not_measurable | No library × task × repetition matrix uses real-world task completion as the primary reliability metric. |
-| [#1305](https://github.com/shaun0927/openchrome/issues/1305) Benchmark #G: Complex Real-World Task Completion | not_ready | not_measurable | `tests/benchmark/run-realworld-task-completion.ts`, result envelope, report generator, and docs are missing. |
-| [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims | not_ready | not_measurable | The enforcement PR is separate and not yet merged into this base branch. |
+| [#1305](https://github.com/shaun0927/openchrome/issues/1305) Benchmark #G: Complex Real-World Task Completion | partial | diagnostic_or_smoke_only | Current rows are deterministic scaffold/local-fixture evidence, not live competitive task-completion measurements. |
+| [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims | partial | diagnostic_or_smoke_only | Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence. |
 
 ## Details
 
@@ -74,14 +74,14 @@ Generated: 2026-05-16T01:39:15.114Z
 
 ### [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget
 
-- Status: `not_ready`
+- Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Mock WebVoyager runner exists and records 3 required frozen transcripts.
+  - Controlled agent-success harness, mock workflow repetitions, task taxonomy, first-tool accuracy, and no-progress metrics exist.
 - Blockers:
-  - Real Claude tool-use loop is a deliberate scaffold; 7 WebVoyager tasks remain pending; repetitions are parsed but not executed; competitor native loops are unwired.
+  - Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only.
 - Next actions:
-  - Implement real LLM loop, real repetitions, remaining transcripts, and native competitor adapters.
+  - Implement live/recorded-real adapter rows with pinned LLM settings and competitor versions before headline claims.
 
 ### [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput
 
@@ -96,14 +96,14 @@ Generated: 2026-05-16T01:39:15.114Z
 
 ### [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie
 
-- Status: `not_ready`
+- Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Mock reliability matrix and Node-only long-run sampler exist.
+  - Mock reliability matrix, Node-only long-run sampler, and real-world reliability methodology guardrails exist.
 - Blockers:
-  - Live fault-injection proxy/CDP cells are scaffolded; Chrome RSS and zombie-process sampling are not wired; cross-platform live table is missing.
+  - Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired.
 - Next actions:
-  - Implement library-agnostic live fault injection plus Chrome/process sampling.
+  - Implement library-agnostic live fault injection inside real-world task episodes plus process sampling.
 
 ### [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost
 
@@ -129,25 +129,25 @@ Generated: 2026-05-16T01:39:15.114Z
 
 ### [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Episode harness records steps, tool calls, duration, errors, and no-progress episodes.
+  - `bench:episode:tokens` exists and reports deterministic mock episode token breakdowns through `tokenUsage`.
 - Blockers:
-  - Episode result types do not yet include token category breakdowns or `bench:episode:tokens` script.
+  - Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired.
 - Next actions:
-  - Add episode token accounting helpers, reporter aggregation, and npm script.
+  - Add live/recorded-real token accounting with pinned LLM settings, budgets, and competitor versions.
 
 ### [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite
 
-- Status: `not_ready`
+- Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Episode harness has three local mock fixtures.
+  - Controlled mock workflow matrix includes categorized fixtures, repeated samples, first-tool accuracy, and no-progress metrics.
 - Blockers:
-  - The required taxonomy suite (`info_retrieval`, `form_fill`, `transactional_mock`, `recovery`, `dynamic_ui`, `long_horizon`) is not implemented as a benchmark matrix.
+  - The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy.
 - Next actions:
-  - Add CI-safe controlled workflow tasks with explicit categories and outcome contracts.
+  - Expand taxonomy coverage and wire live/recorded-real adapter rows before headline use.
 
 ### [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate
 
@@ -195,23 +195,23 @@ Generated: 2026-05-16T01:39:15.114Z
 
 ### [#1305](https://github.com/shaun0927/openchrome/issues/1305) Benchmark #G: Complex Real-World Task Completion
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - No `bench:realworld` script exists in package.json on this branch.
+  - `bench:realworld`, deterministic real-world fixtures, scoring, result envelope, report generator, and docs exist.
 - Blockers:
-  - `tests/benchmark/run-realworld-task-completion.ts`, result envelope, report generator, and docs are missing.
+  - Current rows are deterministic scaffold/local-fixture evidence, not live competitive task-completion measurements.
 - Next actions:
-  - Implement `bench:realworld` around the episode envelope and headline eligibility rules.
+  - Add live/recorded-real OpenChrome and competitor rows with pinned versions and claim eligibility before headline claims.
 
 ### [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Issue exists to coordinate report-layer headline eligibility across #1300-#1305.
+  - Episode harness reports include `claimEligibility`, and the unified report documents primary evidence policy.
 - Blockers:
-  - The enforcement PR is separate and not yet merged into this base branch.
+  - Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence.
 - Next actions:
-  - Merge the headline eligibility work, then extend it to the real-world runner.
+  - Extend claim eligibility checks to every live/recorded-real runner and fail report generation on missing eligibility metadata.
 
