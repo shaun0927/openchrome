@@ -61,7 +61,8 @@
     "bench:realworld": "ts-node tests/benchmark/run-realworld-task-completion.ts && node benchmark/generate-realworld-task-completion-section.mjs",
     "bench:agent-success": "ts-node tests/benchmark/episode-harness/cli.ts",
     "bench:agent-success:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock",
-    "bench:readiness": "ts-node tests/benchmark/benchmark-readiness.ts"
+    "bench:readiness": "ts-node tests/benchmark/benchmark-readiness.ts",
+    "bench:competitor-smoke": "ts-node tests/benchmark/run-competitor-smoke.ts"
   },
   "keywords": [
     "openchrome",
