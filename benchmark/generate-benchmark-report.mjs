@@ -40,6 +40,7 @@ const SECTIONS = [
   { id: '#D', axis: 'Reliability & Fault-Recovery', issue: '#1259', file: null },
   { id: '#E', axis: 'Auth & Real-World Usability', issue: '#1260', file: null },
   { id: '#F', axis: 'Developer Experience', issue: '#1261', file: 'DEVELOPER-EXPERIENCE-REPORT.md' },
+  { id: '#G', axis: 'Complex Real-World Task Completion', issue: '#1305', file: 'REALWORLD-TASK-COMPLETION-REPORT.md' },
 ];
 
 // Retired estimates that must never reappear in the unified report.
