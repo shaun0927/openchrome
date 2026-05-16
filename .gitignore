@@ -64,3 +64,6 @@ TQS_*.md
 IMPROVEMENT_PLAN.md
 MISSING_FEATURES.md
 PERFORMANCE_IMPROVEMENT_PLAN.md
+
+# Crawlee local benchmark storage
+storage/

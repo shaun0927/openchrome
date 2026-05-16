@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-16T02:31:10.561Z",
+  "generatedAt": "2026-05-16T03:34:40.041Z",
   "summary": {
     "totalOpenBenchmarkIssues": 16,
     "ready": 0,
@@ -50,13 +50,13 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "`npm run bench:tokens` can emit deterministic-static and crawlee-cheerio rows."
+        "`npm run bench:tokens` emits deterministic-static, crawlee-cheerio, playwright-content, and playwright-innerText rows with explicit skips for remaining live-only cells."
       ],
       "blockers": [
-        "OpenChrome, Playwright, playwright-mcp, and browser-use extractors are live-only scaffolds that throw when live mode is enabled."
+        "OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims."
       ],
       "nextActions": [
-        "Wire live extractor calls and version pins before publishing competitive token-efficiency claims."
+        "Wire remaining live extractor calls and version pins before publishing competitive token-efficiency claims."
       ]
     },
     {
@@ -82,13 +82,13 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Latency and throughput runners exist; CI throughput uses deterministic OpenChrome stub; latency can use OpenChrome real adapter when Chrome is available."
+        "Latency and throughput runners exist; CI throughput uses deterministic OpenChrome stub; throughput can run Crawlee without Chrome and Playwright/Puppeteer/OpenChrome live through the shared adapter gate."
       ],
       "blockers": [
-        "Throughput competitor adapters are not wired through the runner; session-reuse delta is missing; headline competitor matrix is not complete."
+        "Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence."
       ],
       "nextActions": [
-        "Wire Playwright/Puppeteer/Crawlee throughput cells and add session-reuse mode."
+        "Run live Chrome throughput cells for OpenChrome/Playwright/Puppeteer and add session-reuse mode."
       ]
     },
     {

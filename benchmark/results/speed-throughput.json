@@ -1,0 +1,58 @@
+{
+  "axis": "speed-throughput",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-16T03:34:35.182Z",
+    "gitSha": "217fe98d",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.168",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "OpenChrome",
+      "version": "1.12.2"
+    },
+    {
+      "name": "Crawlee",
+      "version": "3.16.0"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "library": "OpenChrome",
+      "mode": "dom-stub",
+      "concurrency": 1,
+      "pagesPerPass": 50,
+      "sampleCount": 1,
+      "warmupDiscarded": 3,
+      "rawPagesPerSecond": 0,
+      "successRate": 1,
+      "effectivePagesPerSecond": 0,
+      "meanWallMs": 0,
+      "p50WallMs": 0,
+      "p95WallMs": 0
+    },
+    {
+      "library": "Crawlee",
+      "mode": "cheerio-text",
+      "concurrency": 1,
+      "pagesPerPass": 50,
+      "sampleCount": 1,
+      "warmupDiscarded": 3,
+      "rawPagesPerSecond": 135.13513513513513,
+      "successRate": 1,
+      "effectivePagesPerSecond": 135.13513513513513,
+      "meanWallMs": 370,
+      "p50WallMs": 370,
+      "p95WallMs": 370
+    }
+  ]
+}

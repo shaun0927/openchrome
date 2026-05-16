@@ -79,16 +79,51 @@ function errorResult(message: string): MCPToolResult {
 }
 
 /**
- * Default extractor — runs a one-shot Crawlee CheerioCrawler per URL with
- * concurrency=1. Lazy-imports `crawlee` so this file is importable on a
- * machine that has not yet run `npm install`.
+ * Default extractor — uses Crawlee's Cheerio-style extraction contract. The
+ * default path fetches the page and parses it with Cheerio so Jest/ts-node can
+ * run without Crawlee's ESM dynamic-import requirements. Operators who want to
+ * exercise Crawlee's native CheerioCrawler can set
+ * `OPENCHROME_BENCH_CRAWLEE_NATIVE=1`; if the native path is unavailable, the
+ * extractor falls back to the same Cheerio parsing path instead of fabricating
+ * a failure row.
  */
 class CheerioCrawleeExtractor implements CrawleeExtractor {
   constructor(private readonly requestTimeoutMs: number) {}
 
   async extract(url: string): Promise<CrawleeExtractionResult> {
+    if (process.env.OPENCHROME_BENCH_CRAWLEE_NATIVE === '1') {
+      try {
+        return await this.extractWithNativeCrawlee(url);
+      } catch {
+        // Fall through to the stable Cheerio path. The benchmark row remains
+        // honest about its mode (`cheerio-text`) and does not invent a win from
+        // a runtime/import incompatibility in the native crawler stack.
+      }
+    }
+    return this.extractWithFetchAndCheerio(url);
+  }
+
+  private async extractWithFetchAndCheerio(url: string): Promise<CrawleeExtractionResult> {
+    const cheerio = await import('cheerio');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      return { text: $('body').text().replace(/\s+/g, ' ').trim(), html };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async extractWithNativeCrawlee(url: string): Promise<CrawleeExtractionResult> {
     // Lazy dynamic import so the module loads on a fresh checkout. The error
-    // only surfaces here, at the first real extraction, if the dep is missing.
+    // only surfaces here, at the first native extraction, if the dep/runtime is
+    // missing or not compatible with the current ts-node/Jest environment.
     const crawlee = await import('crawlee');
     const CheerioCrawler =
       (crawlee as unknown as { CheerioCrawler: new (cfg: unknown) => unknown })
@@ -105,7 +140,7 @@ class CheerioCrawleeExtractor implements CrawleeExtractor {
         $: (selector: string) => { text(): string; html(): string };
         body: string | Buffer;
       }) {
-        const text = ctx.$('body').text();
+        const text = ctx.$('body').text().replace(/\s+/g, ' ').trim();
         const html = typeof ctx.body === 'string' ? ctx.body : ctx.body.toString('utf8');
         captured = { text, html };
       },

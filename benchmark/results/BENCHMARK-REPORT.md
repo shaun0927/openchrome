@@ -1,6 +1,6 @@
 # OpenChrome Competitive Benchmark Report
 
-Generated: 2026-05-16T02:17:47.951Z
+Generated: 2026-05-16T03:34:40.202Z
 Source: per-axis section files under `benchmark/results/`.
 
 Part of [Epic #1254](https://github.com/shaun0927/openchrome/issues/1254) — the competitive benchmark suite. Each section below is generated from its axis runner's envelope; this top-level file is the union.
@@ -88,7 +88,7 @@ Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-tas
 
 ## #A Token Efficiency (#1256)
 
-Generated: 2026-05-15T06:08:01.226Z
+Generated: 2026-05-16T03:34:40.106Z
 Source: `benchmark/results/token-efficiency.json` (axis: `token-efficiency`, schema 1.0.0).
 Tokenizer: `cl100k_base`.
 
@@ -108,8 +108,8 @@ Lower is better. "(skip)" = library not measured in this run.
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 6470 | 8512 | 11214 | 7999 | 11216 |
+| `playwright-innertext` | 2691 | 3571 | 4768 | 3314 | 4863 |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-library × per-archetype median retention
@@ -123,8 +123,8 @@ Higher is better. "(skip)" = library not measured in this run.
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| `playwright-innertext` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-library × per-archetype median compression
@@ -138,8 +138,8 @@ Higher is better (× vs raw HTML tokens).
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 1.0× | 1.0× | 1.0× | 1.0× | 1.0× |
+| `playwright-innertext` | 2.4× | 2.4× | 2.4× | 2.4× | 2.3× |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-archetype upper-left winner
@@ -154,15 +154,13 @@ Lowest tokens at the max retention measured in this run.
 | spa | `deterministic-static` | 100.0% |
 
 ## Cells skipped in this run
-350 cells did not run because they are live-only and `OPENCHROME_BENCH_LIVE=1` was not set.
+250 cells did not run because they are live-only and `OPENCHROME_BENCH_LIVE=1` was not set.
 
 Skipped libraries:
 - `browser-use-dom`
 - `openchrome-readpage-ax`
 - `openchrome-readpage-dom`
 - `playwright-a11y`
-- `playwright-content`
-- `playwright-innertext`
 - `playwright-mcp-snapshot`
 
 To run them, set `OPENCHROME_BENCH_LIVE=1` and re-run `npm run bench:tokens`. Today the live cells are scaffolded but not yet wired to their real Chrome / Python integrations — that is queued for the next session.
@@ -175,7 +173,7 @@ See `chart-tokens-scatter.svg` for the per-archetype scatter view.
 
 ## #C Speed & Throughput (#1258)
 
-Generated: 2026-05-15T06:11:26.078Z
+Generated: 2026-05-16T03:34:40.153Z
 Source: `benchmark/results/speed-throughput.json` (axis: `speed-throughput`, schema 1.0.0).
 Environment: Node v20.19.6 on darwin 25.3.0 arm64 (Apple M5, 10 cores).
 
@@ -188,10 +186,8 @@ Environment: Node v20.19.6 on darwin 25.3.0 arm64 (Apple M5, 10 cores).
 
 | Library | Mode | Concurrency | Raw pg/s (PRIMARY) | Success (PRIMARY) | Effective pg/s (secondary) | p50 wall (ms) | p95 wall (ms) | Samples kept | Warm-up discarded |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `OpenChrome` | `dom-stub` | 1 | 50000.0 | 100.0% | 50000.0 | 1.0 | 1.0 | 1 | 3 |
-| `OpenChrome` | `dom-stub` | 5 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
-| `OpenChrome` | `dom-stub` | 10 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
-| `OpenChrome` | `dom-stub` | 20 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
+| `OpenChrome` | `dom-stub` | 1 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
+| `Crawlee` | `cheerio-text` | 1 | 135.1 | 100.0% | 135.1 | 370.0 | 370.0 | 1 | 3 |
 
 ## Single-action latency (#1258)
 No latency results available. Run `npm run bench:latency -- --ci` to produce `benchmark/results/speed-latency.json`, then re-run this generator.
@@ -200,9 +196,7 @@ No latency results available. Run `npm run bench:latency -- --ci` to produce `be
 Issue #1258 calls for a 100-task fresh-vs-reused-session delta. That measurement requires a live Chrome instance to exercise the OpenChromeRealAdapter setup/teardown lifecycle, so it ships in the next-session follow-up alongside the live-mode throughput cells. The runner skeleton (`run-throughput.ts`) already plumbs `OPENCHROME_BENCH_LIVE=1` so the next commit only needs to add a `--session-reuse` mode without touching the result envelope shape.
 
 ## Headline
-Measured 4 cells across libraries: `OpenChrome`; concurrencies: 1 / 5 / 10 / 20.
-
-Only one library produced numbers in this run (`OpenChrome`). Competitor cells (Playwright, Puppeteer, Crawlee) plug into the same runner via the existing adapter registry; the next-session follow-up wires them through `buildAdapter()`.
+Measured 2 cells across libraries: `Crawlee`, `OpenChrome`; concurrencies: 1.
 
 See `chart-throughput.svg` and `chart-success-rate.svg` for the visual companions.
 
