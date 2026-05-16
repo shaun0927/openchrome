@@ -1,0 +1,76 @@
+#!/usr/bin/env node
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, '..');
+const INPUT_PATH = path.join(REPO_ROOT, 'benchmark', 'results', 'realworld-task-completion.json');
+const OUTPUT_PATH = path.join(REPO_ROOT, 'benchmark', 'results', 'REALWORLD-TASK-COMPLETION-REPORT.md');
+
+function pct(value) {
+  return value === null || value === undefined ? 'n/a' : `${(value * 100).toFixed(1)}%`;
+}
+
+function n(value) {
+  return value === null || value === undefined ? 'n/a' : Number(value).toFixed(1).replace(/\.0$/, '');
+}
+
+function main() {
+  if (!existsSync(INPUT_PATH)) {
+    process.stderr.write(`Missing ${path.relative(REPO_ROOT, INPUT_PATH)}. Run \`npm run bench:realworld\` first.\n`);
+    process.exit(1);
+  }
+
+  const envelope = JSON.parse(readFileSync(INPUT_PATH, 'utf8'));
+  const result = envelope.results?.[0];
+  if (!result) {
+    process.stderr.write('realworld-task-completion.json has no result payload.\n');
+    process.exit(1);
+  }
+
+  const lines = [];
+  lines.push('# Complex Real-World Task Completion (#1305)');
+  lines.push('');
+  lines.push(`Generated: ${new Date().toISOString()}`);
+  lines.push(`Source: \`benchmark/results/realworld-task-completion.json\` (axis: \`${envelope.axis}\`).`);
+  lines.push('');
+  lines.push('## Claim scope');
+  lines.push('');
+  lines.push(`- Measurement mode: \`${result.measurementMode}\``);
+  lines.push(`- Claim scope: **${result.claimScope}**`);
+  lines.push('- This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.');
+  lines.push('- #1261 remains the DX/supporting axis; this section is the primary task-completion axis.');
+  lines.push('');
+
+  lines.push('## Metrics by library');
+  lines.push('');
+  lines.push('| Library | Mode | Runs | Success | First-attempt success | Recovery success | Mean tool calls | Mean wall time ms | p95 wall time ms |');
+  lines.push('| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  for (const metric of result.metrics ?? []) {
+    lines.push(`| \`${metric.library}\` | \`${metric.mode}\` | ${metric.totalRuns} | ${pct(metric.successRate)} | ${pct(metric.firstAttemptSuccessRate)} | ${pct(metric.recoverySuccessRate)} | ${n(metric.meanToolCalls)} | ${n(metric.meanWallTimeMs)} | ${n(metric.p95WallTimeMs)} |`);
+  }
+  lines.push('');
+
+  lines.push('## Task corpus');
+  lines.push('');
+  lines.push('| Task | Tier | Max steps | Recovery? | Complexity tags |');
+  lines.push('| --- | --- | ---: | --- | --- |');
+  for (const task of result.tasks ?? []) {
+    lines.push(`| \`${task.id}\` ${task.title} | ${task.tier} | ${task.maxSteps} | ${task.requiresRecovery ? 'yes' : 'no'} | ${task.complexityTags.join(', ')} |`);
+  }
+  lines.push('');
+
+  lines.push('## Next measurement work');
+  lines.push('');
+  lines.push('- Add live OpenChrome / playwright-mcp / Puppeteer MCP / browsermcp adapter rows only after real execution.');
+  lines.push('- Pin competitor and LLM versions before publishing live comparisons.');
+  lines.push('- Keep local deterministic fixture rows separate from live-web rows.');
+  lines.push('');
+
+  writeFileSync(OUTPUT_PATH, lines.join('\n'));
+  process.stderr.write(`Wrote ${path.relative(REPO_ROOT, OUTPUT_PATH)}\n`);
+}
+
+main();

@@ -34,8 +34,8 @@ const RESULTS_DIR = path.join(REPO_ROOT, 'benchmark', 'results');
 const OUTPUT_PATH = path.join(RESULTS_DIR, 'BENCHMARK-REPORT.md');
 
 const SECTIONS = [
-  { id: '#G', axis: 'Complex Real-World Task Completion', issue: '#1305', file: null, role: 'primary' },
-  { id: '#B', axis: 'Agent Task Success', issue: '#1257', file: 'AGENT-SUCCESS-REPORT.md', role: 'primary' },
+  { id: '#G', axis: 'Complex Real-World Task Completion', issue: '#1305', file: 'REALWORLD-TASK-COMPLETION-REPORT.md', role: 'primary' },
+  { id: '#B', axis: 'Agent Task Success', issue: '#1257', file: 'AGENT-SUCCESS-REPORT.md', role: 'primary-when-live-or-recorded-real' },
   { id: '#D', axis: 'Reliability & Fault-Recovery', issue: '#1259', file: null, role: 'primary-when-episode-stress' },
   { id: '#E', axis: 'Auth & Real-World Usability', issue: '#1260', file: null, role: 'primary-when-episode' },
   { id: '#A', axis: 'Token Efficiency', issue: '#1256', file: 'TOKEN-EFFICIENCY-REPORT.md', role: 'diagnostic' },
@@ -131,7 +131,7 @@ function main() {
     process.exit(1);
   }
 
-  writeFileSync(OUTPUT_PATH, body);
+  writeFileSync(OUTPUT_PATH, body.trimEnd() + '\n');
   process.stderr.write(`Wrote ${path.relative(REPO_ROOT, OUTPUT_PATH)}\n`);
 }
 

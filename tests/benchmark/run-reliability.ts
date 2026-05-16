@@ -35,6 +35,11 @@ import {
   aggregateRecoveryRate,
   computeFlakyRate,
 } from './reliability';
+import { assertNoMockRowsPublishable } from './reliability-methodology';
+import type { ReliabilityMeasurementKind } from './reliability-methodology';
+
+import { captureEnvironment } from './utils/environment';
+import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
 
 function stddev01(values: number[]): number {
   if (values.length === 0) return 0;
@@ -42,8 +47,6 @@ function stddev01(values: number[]): number {
   const sq = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
   return Math.sqrt(sq);
 }
-import { captureEnvironment } from './utils/environment';
-import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
 
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'reliability.json');
 
@@ -63,14 +66,20 @@ export interface ReliabilityRow {
   samples: number;
   /** True when the cell ran via the live driver; false for mock cells. */
   liveDriver: boolean;
+  /** Methodology bucket; prevents scaffold/mock rows being read as measured claims. */
+  measurementKind: ReliabilityMeasurementKind;
+  /** True only for real measured rows that are eligible for public competitive claims. */
+  publishable: boolean;
+  /** Explicit reason when no measurement was performed. */
+  skipReason?: string;
   /** Per-attempt success outcomes (0/1). Kept for transparency. */
   outcomes: number[];
   /** flaky rate = 1 - mode/N. Lower is better. */
-  flakyRate: number;
+  flakyRate: number | null;
   /** Stddev of per-attempt success. */
   successStddev: number;
   /** recovered / injected for this cell. */
-  recoveryRate: number;
+  recoveryRate: number | null;
   /** Total attempts where a fault was injected. */
   injected: number;
   /** Of those injected, attempts that recovered before postcondition eval. */
@@ -178,6 +187,7 @@ function buildRow(
   outcomes: number[],
   recoveryRecords: RecoveryRecord[],
   liveDriver: boolean,
+  measurementKind: ReliabilityMeasurementKind,
 ): ReliabilityRow {
   const samples = outcomes.length;
   // minSamples: 1 — `computeFlakyRate` defaults to MIN_FLAKY_SAMPLE_SIZE (50)
@@ -193,10 +203,12 @@ function buildRow(
     scenario,
     samples,
     liveDriver,
+    measurementKind,
+    publishable: false,
     outcomes,
     flakyRate: flaky.flakyRate,
     successStddev: stddev01(outcomes),
-    recoveryRate: injected === 0 ? Number.NaN : recovered / injected,
+    recoveryRate: injected === 0 ? null : recovered / injected,
     injected,
     recovered,
     underpowered: samples < MIN_FLAKY_SAMPLE_SIZE,
@@ -215,10 +227,13 @@ export function runReliabilityMatrix(options: ReliabilityRunOptions): Reliabilit
           scenario,
           samples: 0,
           liveDriver: true,
+          measurementKind: 'live_unwired_skip',
+          publishable: false,
+          skipReason: 'live reliability cells are scaffolded; per-library real task drivers are not wired yet',
           outcomes: [],
-          flakyRate: 0,
+          flakyRate: null,
           successStddev: 0,
-          recoveryRate: Number.NaN,
+          recoveryRate: null,
           injected: 0,
           recovered: 0,
           underpowered: true,
@@ -226,7 +241,7 @@ export function runReliabilityMatrix(options: ReliabilityRunOptions): Reliabilit
         continue;
       }
       const { outcomes, recoveryRecords } = runMockCell(library, scenario, options.samplesPerCell);
-      rows.push(buildRow(library, scenario, outcomes, recoveryRecords, false));
+      rows.push(buildRow(library, scenario, outcomes, recoveryRecords, false, 'mock_scaffold'));
     }
   }
   return rows;
@@ -241,10 +256,17 @@ function readRepoVersion(): string {
   }
 }
 
+function formatPercent(value: number | null, width: number): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${(value * 100).toFixed(1).padStart(width)}%`
+    : 'skip'.padStart(width + 1);
+}
+
 function formatReport(rows: ReliabilityRow[]): string {
   const lines = [
     'Reliability benchmark (#1259) — library × scenario matrix',
-    'library         scenario           N     flaky    recovery   mode',
+    'NOTE: mock_scaffold and live_unwired_skip rows are not publishable measured competitive results.',
+    'library         scenario           N     flaky    recovery   measurement',
   ];
   for (const r of rows) {
     lines.push(
@@ -252,9 +274,9 @@ function formatReport(rows: ReliabilityRow[]): string {
         r.library.padEnd(14),
         r.scenario.padEnd(17),
         String(r.samples).padStart(5),
-        Number.isFinite(r.flakyRate) ? (r.flakyRate * 100).toFixed(1).padStart(7) + '%' : '   skip',
-        Number.isFinite(r.recoveryRate) ? (r.recoveryRate * 100).toFixed(1).padStart(8) + '%' : '    skip',
-        r.liveDriver ? 'live' : 'mock',
+        formatPercent(r.flakyRate, 7),
+        formatPercent(r.recoveryRate, 8),
+        r.measurementKind,
       ].join(' '),
     );
   }
@@ -274,6 +296,8 @@ export function main(argv = process.argv.slice(2)): void {
     }
   }
   const recoveryAggregate = aggregateRecoveryRate(recoveryRecords);
+
+  assertNoMockRowsPublishable(rows);
 
   const envelope = buildResultEnvelope({
     axis: 'reliability',
@@ -304,9 +328,8 @@ export function main(argv = process.argv.slice(2)): void {
   const liveCells = rows.filter((r) => r.liveDriver).length;
   if (liveCells > 0) {
     console.error(
-      `\nNote: ${liveCells} live cells are scaffolded today. Drop --live (or unset ` +
-        `OPENCHROME_BENCH_LIVE) to run the mock matrix, or wait for the per-library ` +
-        `live driver to land in a follow-up commit.`,
+      `\nNote: ${liveCells} live cells are scaffolded today. They carry measurementKind=live_unwired_skip, ` +
+        `publishable=false, and null numeric metrics so they cannot be mistaken for real measurements.`,
     );
   }
 }
