@@ -1,5 +1,6 @@
 import type { AgentSuccessAggregateRow, AgentSuccessSuiteReport, EpisodeResult } from './types';
 import { TOKENIZER_ENCODING } from '../utils/tokenizer';
+import { evaluateEpisodeClaimEligibility } from './claim-eligibility';
 
 export function buildAgentSuccessSuiteReport(
   adapter: string,
@@ -18,6 +19,16 @@ export function buildAgentSuccessSuiteReport(
     passedSamples,
     successRate: rate(passedSamples, results.length),
     tokenizer: TOKENIZER_ENCODING,
+    claimEligibility: evaluateEpisodeClaimEligibility({
+      mode: adapter === 'mock' ? 'mock' : 'live',
+      scope: 'aggregate',
+      sampleCount: results.length,
+      finalPostconditionEvaluated: results.every(result => typeof result.success === 'boolean'),
+      competitorVersionsPinned: adapter !== 'mock',
+      sameTaskContracts: true,
+      llmSettingsPinned: adapter === 'mock' ? undefined : false,
+      results,
+    }),
     results,
     aggregates: aggregateByTask(adapter, repetitions, results),
   };

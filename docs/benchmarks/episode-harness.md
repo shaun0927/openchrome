@@ -51,4 +51,10 @@ Outputs are written under the selected output directory:
 
 ## Relation to WebVoyager benchmark work
 
-Issue #1257 owns the Agent Task Success comparison. WebVoyager-style tasks remain the stable public-web lookup layer; this episode harness now owns the controlled realistic workflow foundation for stateful task success. The controlled layer emits task taxonomy, repeated samples, first-tool accuracy, no-progress signals, and deterministic full-task token estimates before any live Claude or competitor-native adapter is allowed to produce headline numbers. See `docs/benchmarks/agent-task-success.md`.
+Issue #1257 owns the Agent Task Success comparison. WebVoyager-style tasks remain the stable public-web lookup layer; this episode harness now owns the controlled realistic workflow foundation for stateful task success. The controlled layer emits task taxonomy, repeated samples, first-tool accuracy, no-progress signals, and deterministic full-task token estimates. This harness also owns the reusable episode substrate (`EpisodeTaskSpec`, `EpisodeResult`, reporter, stop conditions, and mock-adapter contract) that WebVoyager-style and future benchmark suites should reuse instead of duplicating runners. See `docs/benchmarks/agent-task-success.md`.
+
+## Headline eligibility
+
+The mock adapter is a CI smoke surface, not competitive evidence. Aggregate reports include a `claimEligibility` block with a tier and reason list. A suite is `primary-realworld` only when it is a live or recorded-real run, evaluates the final postcondition, pins competitor/library metadata, uses the same task contracts across compared libraries, and meets the sample threshold from [`benchmark-direction.md`](./benchmark-direction.md).
+
+Current `--adapter mock` output is therefore expected to report `diagnostic-only`. That is correct: it proves harness behavior and prevents mock rows from being accidentally promoted into benchmark headline claims.

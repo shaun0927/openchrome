@@ -1,4 +1,5 @@
 import type { Assertion, EvaluationResult } from '../../../src/contracts/types';
+import type { EpisodeClaimEligibility } from './claim-eligibility';
 
 export type EpisodeTaskCategory =
   | 'info_retrieval'
@@ -167,6 +168,7 @@ export interface AgentSuccessSuiteReport {
   passedSamples: number;
   successRate: number;
   tokenizer: 'cl100k_base';
+  claimEligibility: EpisodeClaimEligibility;
   results: EpisodeResult[];
   aggregates: AgentSuccessAggregateRow[];
 }

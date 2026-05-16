@@ -6,6 +6,7 @@ import { fixtureTasks } from './fixtures/tasks';
 import { MockEpisodeAdapter } from './mock-adapter';
 import { MockOpenChromeClient } from './mock-client';
 import { normalizeTaskSpec } from './spec';
+import { evaluateEpisodeClaimEligibility } from './claim-eligibility';
 import { runEpisode } from './runner';
 import type { AgentSuccessSuiteReport, EpisodeResult, EpisodeTaskSpec } from './types';
 
@@ -35,6 +36,16 @@ async function main(): Promise<void> {
     }
   }
   const aggregate = buildAgentSuccessSuiteReport(args.adapter, args.repetitions, results);
+  aggregate.claimEligibility = evaluateEpisodeClaimEligibility({
+    mode: args.adapter === 'mock' ? 'mock' : 'live',
+    scope: 'aggregate',
+    sampleCount: results.length,
+    finalPostconditionEvaluated: results.every(result => typeof result.success === 'boolean'),
+    competitorVersionsPinned: args.adapter !== 'mock',
+    sameTaskContracts: true,
+    llmSettingsPinned: args.adapter === 'mock' ? undefined : false,
+    results,
+  });
   fs.mkdirSync(args.out, { recursive: true });
   fs.writeFileSync(path.join(args.out, 'report.json'), JSON.stringify(aggregate, null, 2) + '\n');
   fs.writeFileSync(path.join(args.out, 'report.md'), renderSuiteMarkdown(aggregate));
@@ -89,6 +100,11 @@ function renderSuiteMarkdown(report: AgentSuccessSuiteReport): string {
     `- Samples passed: ${report.passedSamples}/${report.totalSamples}`,
     `- Success rate: ${(report.successRate * 100).toFixed(1)}%`,
     `- Tokenizer: ${report.tokenizer}`,
+    `- Claim tier: ${report.claimEligibility.tier}`,
+    `- Headline eligible: ${report.claimEligibility.eligible ? 'yes' : 'no'}`,
+    report.claimEligibility.reasons.length > 0
+      ? `- Non-headline reasons: ${report.claimEligibility.reasons.join('; ')}`
+      : `- Non-headline reasons: none`,
     '',
     '| Task | Category | Samples | Passed | Success | p50 ms | p95 ms | p50 calls | Avg tokens | Avg tool-result tokens | First-tool accuracy | No-progress |',
     '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',

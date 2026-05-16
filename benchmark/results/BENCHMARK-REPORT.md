@@ -1,21 +1,27 @@
 # OpenChrome Competitive Benchmark Report
 
-Generated: 2026-05-15T23:53:20.784Z
+Generated: 2026-05-16T02:17:47.951Z
 Source: per-axis section files under `benchmark/results/`.
 
 Part of [Epic #1254](https://github.com/shaun0927/openchrome/issues/1254) — the competitive benchmark suite. Each section below is generated from its axis runner's envelope; this top-level file is the union.
 
 ## Headline status
 
-| Section | Axis | Issue | State |
-| --- | --- | --- | --- |
-| #A | Token Efficiency | [#1256](https://github.com/shaun0927/openchrome/issues/1256) | measured |
-| #B | Agent Task Success | [#1257](https://github.com/shaun0927/openchrome/issues/1257) | pending |
-| #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | measured |
-| #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | pending |
-| #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | pending |
-| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | measured |
-| #G | Complex Real-World Task Completion | [#1305](https://github.com/shaun0927/openchrome/issues/1305) | measured |
+| Section | Axis | Issue | Evidence role | State |
+| --- | --- | --- | --- | --- |
+| #G | Complex Real-World Task Completion | [#1305](https://github.com/shaun0927/openchrome/issues/1305) | primary | measured |
+| #B | Agent Task Success | [#1257](https://github.com/shaun0927/openchrome/issues/1257) | primary-when-live-or-recorded-real | pending |
+| #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | primary-when-episode-stress | pending |
+| #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | primary-when-episode | pending |
+| #A | Token Efficiency | [#1256](https://github.com/shaun0927/openchrome/issues/1256) | diagnostic | measured |
+| #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | diagnostic | measured |
+| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | diagnostic | measured |
+
+## Primary evidence policy
+
+Complex real-world episode completion is the primary benchmark evidence. Token, speed, auth setup, reliability micro-cells, and DX axes are supporting diagnostics unless they are attached to a final task-completion episode with headline-eligible live or recorded-real rows. See `docs/benchmarks/benchmark-direction.md`.
+
+Mock, scaffold, dry-run, and skip rows are never reported as competitive wins; they are harness regression evidence only. A row must evaluate the final task postcondition, pin versions/environment, and meet the sample threshold before it can be headline-eligible.
 
 ## Methodology principles
 All sections honor Epic #1254's ten methodology principles:
@@ -32,6 +38,53 @@ All sections honor Epic #1254's ten methodology principles:
 
 ## Retired estimates
 Two legacy headline numbers were retired by Epic #1254: an unverified token-compression ratio and a similarly unverified speedup claim. Both came from estimates averaging only two real measurements. The Epic-close generator (`benchmark/generate-benchmark-report.mjs`) lints for those exact literals and fails the build if they reappear — see `RETIRED_CLAIMS` in that file for the precise list.
+
+## #G Complex Real-World Task Completion (#1305)
+
+Generated: 2026-05-15T23:53:20.745Z
+Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-task-completion`).
+
+## Claim scope
+
+- Measurement mode: `deterministic-fixture`
+- Claim scope: **scaffold-only; not a live competitive measurement**
+- This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.
+- #1261 remains the DX/supporting axis; this section is the primary task-completion axis.
+
+## Metrics by library
+
+| Library | Mode | Runs | Success | First-attempt success | Recovery success | Mean tool calls | Mean wall time ms | p95 wall time ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `openchrome` | `deterministic-fixture` | 5 | 100.0% | 80.0% | 100.0% | 9.6 | 1640 | 2175 |
+
+## Task corpus
+
+| Task | Tier | Max steps | Recovery? | Complexity tags |
+| --- | --- | ---: | --- | --- |
+| `rw-001-checkout-update-address` Update a checkout shipping address and verify recalculated summary | local-fixture | 14 | no | form-fill, stateful-ui, verification |
+| `rw-002-search-filter-compare` Search, filter, compare two products, and extract the cheaper eligible item | local-fixture | 16 | no | search, filtering, extraction, decision |
+| `rw-003-tab-research-synthesis` Use multiple tabs to synthesize two reference pages into one answer | stable-public-reference | 18 | no | tabs, reading, synthesis |
+| `rw-004-selector-drift-recovery` Recover from selector drift while submitting a feedback form | recovery | 20 | yes | fault-recovery, form-fill, grounding |
+| `rw-005-long-horizon-itinerary` Build and verify a multi-step itinerary from constrained options | long-horizon | 28 | no | long-horizon, filtering, decision, stateful-ui |
+
+## Next measurement work
+
+- Add live OpenChrome / playwright-mcp / Puppeteer MCP / browsermcp adapter rows only after real execution.
+- Pin competitor and LLM versions before publishing live comparisons.
+- Keep local deterministic fixture rows separate from live-web rows.
+
+
+## #B Agent Task Success (#1257)
+
+*No data yet for #1257. Run the axis runner + `agent-success` generator to populate.*
+
+## #D Reliability & Fault-Recovery (#1259)
+
+*Section file pending — axis #1259 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
+
+## #E Auth & Real-World Usability (#1260)
+
+*Section file pending — axis #1260 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
 
 ## #A Token Efficiency (#1256)
 
@@ -120,10 +173,6 @@ Across 5 archetypes with measured cells, **`deterministic-static`** sits in the 
 See `chart-tokens-scatter.svg` for the per-archetype scatter view.
 
 
-## #B Agent Task Success (#1257)
-
-*No data yet for #1257. Run the axis runner + `agent-success` generator to populate.*
-
 ## #C Speed & Throughput (#1258)
 
 Generated: 2026-05-15T06:11:26.078Z
@@ -157,14 +206,6 @@ Only one library produced numbers in this run (`OpenChrome`). Competitor cells (
 
 See `chart-throughput.svg` and `chart-success-rate.svg` for the visual companions.
 
-
-## #D Reliability & Fault-Recovery (#1259)
-
-*Section file pending — axis #1259 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
-
-## #E Auth & Real-World Usability (#1260)
-
-*Section file pending — axis #1260 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
 
 ## #F Developer Experience (#1261)
 
@@ -200,39 +241,3 @@ See `chart-dx-framework.svg` for the visual companion.
 
 ## Headline
 Framework DX LOC winner (lower is better): **`openchrome`** at median 8.5 LOC.
-
-
-## #G Complex Real-World Task Completion (#1305)
-
-Generated: 2026-05-15T23:53:20.745Z
-Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-task-completion`).
-
-## Claim scope
-
-- Measurement mode: `deterministic-fixture`
-- Claim scope: **scaffold-only; not a live competitive measurement**
-- This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.
-- #1261 remains the DX/supporting axis; this section is the primary task-completion axis.
-
-## Metrics by library
-
-| Library | Mode | Runs | Success | First-attempt success | Recovery success | Mean tool calls | Mean wall time ms | p95 wall time ms |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `openchrome` | `deterministic-fixture` | 5 | 100.0% | 80.0% | 100.0% | 9.6 | 1640 | 2175 |
-
-## Task corpus
-
-| Task | Tier | Max steps | Recovery? | Complexity tags |
-| --- | --- | ---: | --- | --- |
-| `rw-001-checkout-update-address` Update a checkout shipping address and verify recalculated summary | local-fixture | 14 | no | form-fill, stateful-ui, verification |
-| `rw-002-search-filter-compare` Search, filter, compare two products, and extract the cheaper eligible item | local-fixture | 16 | no | search, filtering, extraction, decision |
-| `rw-003-tab-research-synthesis` Use multiple tabs to synthesize two reference pages into one answer | stable-public-reference | 18 | no | tabs, reading, synthesis |
-| `rw-004-selector-drift-recovery` Recover from selector drift while submitting a feedback form | recovery | 20 | yes | fault-recovery, form-fill, grounding |
-| `rw-005-long-horizon-itinerary` Build and verify a multi-step itinerary from constrained options | long-horizon | 28 | no | long-horizon, filtering, decision, stateful-ui |
-
-## Next measurement work
-
-- Add live OpenChrome / playwright-mcp / Puppeteer MCP / browsermcp adapter rows only after real execution.
-- Pin competitor and LLM versions before publishing live comparisons.
-- Keep local deterministic fixture rows separate from live-web rows.
-
