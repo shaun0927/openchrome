@@ -62,7 +62,8 @@
     "bench:agent-success": "ts-node tests/benchmark/episode-harness/cli.ts",
     "bench:agent-success:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock",
     "bench:readiness": "ts-node tests/benchmark/benchmark-readiness.ts",
-    "bench:competitor-smoke": "ts-node tests/benchmark/run-competitor-smoke.ts"
+    "bench:competitor-smoke": "ts-node tests/benchmark/run-competitor-smoke.ts",
+    "bench:runtime-preflight": "ts-node tests/benchmark/runtime-preflight.ts"
   },
   "keywords": [
     "openchrome",
