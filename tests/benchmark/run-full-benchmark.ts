@@ -16,6 +16,7 @@ import { runRuntimePreflight, parseRuntimePreflightArgs } from './runtime-prefli
 import { projectCost, WEBVOYAGER_LIBRARIES } from './webvoyager/llm/library-routing';
 
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'full-benchmark-preflight.json');
+const WEBVOYAGER_TASKS_PATH = path.join(__dirname, 'webvoyager', 'tasks');
 
 type FullMode = 'live' | 'recorded';
 
@@ -32,6 +33,10 @@ function flagValue(argv: string[], name: string): string | undefined {
   const prefix = `${name}=`;
   const found = argv.find((arg) => arg.startsWith(prefix));
   return found ? found.slice(prefix.length) : undefined;
+}
+
+function countWebVoyagerTasks(): number {
+  return fs.readdirSync(WEBVOYAGER_TASKS_PATH).filter((entry) => entry.endsWith('.ts')).length;
 }
 
 export function parseFullBenchmarkArgs(argv: string[]): FullBenchmarkOptions {
@@ -58,7 +63,7 @@ export async function buildFullBenchmarkPreflight(argv: string[] = []): Promise<
   const runtimeRows = await runRuntimePreflight(parseRuntimePreflightArgs(argv));
   const missing = runtimeRows.filter((row) => row.status !== 'ready').map((row) => `${row.runtime}: ${row.evidence}`);
   const costEstimate = projectCost({
-    taskCount: 61,
+    taskCount: countWebVoyagerTasks(),
     libraries: WEBVOYAGER_LIBRARIES,
     repetitions: options.repetitions,
   });
