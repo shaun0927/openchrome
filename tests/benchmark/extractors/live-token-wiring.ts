@@ -18,6 +18,17 @@ function serializedSnapshotFieldText(payload: string, fieldKey: string): string 
   return value ? value : null;
 }
 
+function serializedSnapshotFields(payload: string, ctx: ExtractorContext): Record<string, string | null> | null {
+  const extracted: Record<string, string | null> = Object.fromEntries(ctx.groundTruth.fields.map((field) => [field.key, null]));
+  let found = false;
+  for (const field of ctx.groundTruth.fields) {
+    const value = serializedSnapshotFieldText(payload, field.key);
+    if (value !== null) found = true;
+    extracted[field.key] = value;
+  }
+  return found ? extracted : null;
+}
+
 function fieldExtractionFromPayload(payload: string, ctx: ExtractorContext): Record<string, string | null> {
   const extracted: Record<string, string | null> = Object.fromEntries(ctx.groundTruth.fields.map((field) => [field.key, null]));
   const trimmed = payload.trim();
@@ -33,13 +44,14 @@ function fieldExtractionFromPayload(payload: string, ctx: ExtractorContext): Rec
       // Fall through to HTML parsing. Malformed JSON is not structured evidence.
     }
   }
+  const snapshotExtracted = serializedSnapshotFields(payload, ctx);
+  if (snapshotExtracted) return snapshotExtracted;
   if (/<[a-z][\s\S]*>/i.test(payload)) {
     const $ = cheerio.load(payload);
     for (const field of ctx.groundTruth.fields) {
       const node = $(`[data-field="${field.key}"]`).first();
-      const snapshotText = serializedSnapshotFieldText(payload, field.key);
       const htmlText = node.length > 0 ? node.text().trim() : '';
-      extracted[field.key] = snapshotText || htmlText || null;
+      extracted[field.key] = htmlText || null;
     }
   }
   return extracted;
