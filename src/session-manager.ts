@@ -992,6 +992,10 @@ export class SessionManager {
         .filter(t => t.type() === 'page')
         .map(t => getTargetId(t))
     );
+    const shouldPruneStartupBlankTargets =
+      Array.from(this.targetToWorker.keys()).length === 0 &&
+      existingTargetIds.size === 1 &&
+      cdpClient.getChromeLifecycleMode() === 'isolated';
 
     if (namedContext) {
       // Named-context path: bypass the pool (which serves the default
@@ -1056,28 +1060,39 @@ export class SessionManager {
 
     const targetId = getTargetId(page.target());
 
-    // Clean up orphan about:blank targets created by Chrome during navigation.
-    // Chrome's Site Isolation creates temporary renderer targets during cross-origin
-    // navigation (about:blank → real URL) that can persist as ghost tabs.
+    // Clean up blank targets that Chrome can leave visible around first navigation.
+    // - New, untracked about:blank targets can be Site Isolation renderer ghosts.
+    // - A freshly launched managed Chrome also creates an initial chrome://newtab/
+    //   page before OpenChrome creates the requested page. Prune that startup tab
+    //   only for isolated/managed Chrome so attach mode never closes user tabs.
     // Runs after a brief delay to catch async target creation by Chrome.
     const cleanupExistingIds = existingTargetIds;
     const cleanupTargetId = targetId;
     const cleanupBrowser = cdpClient.getBrowser();
+    const cleanupStartupBlankTargets = shouldPruneStartupBlankTargets;
     setTimeout(async () => {
       try {
-        const orphans = cleanupBrowser.targets().filter(t =>
-          t.type() === 'page' &&
-          t.url() === 'about:blank' &&
-          !cleanupExistingIds.has(getTargetId(t)) &&
-          getTargetId(t) !== cleanupTargetId &&
-          !this.targetToWorker.has(getTargetId(t))
-        );
+        const orphans = cleanupBrowser.targets().filter(t => {
+          if (t.type() !== 'page') return false;
+          const candidateTargetId = getTargetId(t);
+          if (candidateTargetId === cleanupTargetId) return false;
+          if (this.targetToWorker.has(candidateTargetId)) return false;
+
+          const candidateUrl = t.url();
+          const isBlankLike =
+            candidateUrl === 'about:blank' ||
+            candidateUrl === 'chrome://newtab/' ||
+            candidateUrl.startsWith('chrome://new-tab-page');
+          if (!isBlankLike) return false;
+
+          return cleanupStartupBlankTargets || !cleanupExistingIds.has(candidateTargetId);
+        });
         for (const t of orphans) {
           try {
             const orphanPage = await t.page();
             if (orphanPage && !orphanPage.isClosed()) {
               await orphanPage.close();
-              console.error(`[SessionManager] Closed orphan about:blank ghost tab: ${getTargetId(t)}`);
+              console.error(`[SessionManager] Closed orphan blank ghost tab: ${getTargetId(t)} (${t.url()})`);
             }
           } catch { /* target may already be destroyed */ }
         }
