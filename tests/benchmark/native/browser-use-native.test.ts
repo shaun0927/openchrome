@@ -18,6 +18,15 @@ describe('browser-use native loop', () => {
     expect(result.failureCategory).toBe('timeout');
   });
 
+  test('classifies bridge error timeout responses as timeout outcomes', async () => {
+    const transport = { start: jest.fn(async () => undefined), stop: jest.fn(async () => undefined), send: jest.fn(async () => ({ id: 1, ok: false, error: 'browser-use bridge \"run_task\" timed out after 60000ms' })) };
+
+    const result = await runBrowserUseNativeTask(transport, { id: 'rw', startUrl: 'http://x', goal: 'do it' });
+
+    expect(result.status).toBe('timeout');
+    expect(result.failureCategory).toBe('timeout');
+  });
+
   test('classifies thrown bridge timeouts as timeout outcomes', async () => {
     const transport = { start: jest.fn(async () => undefined), stop: jest.fn(async () => undefined), send: jest.fn(async () => { throw new Error('request timeout after 60000ms'); }) };
 
