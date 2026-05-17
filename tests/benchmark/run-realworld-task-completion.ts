@@ -34,6 +34,10 @@ export function buildRealWorldTaskCompletionResult(argv: string[] = []) {
   const runs = recordingDir ? recordedSamplesToRuns(recordedSamples) : deterministicOpenChromeFixtureRuns();
   assertHonestMeasurement(runs);
   const metrics = aggregateRealWorldMetrics(runs);
+  const finalPostconditionEvidence = runs
+    .map((run) => run.finalPostconditionEvidence)
+    .filter((evidence): evidence is string => typeof evidence === 'string' && evidence.trim().length > 0)
+    .join('; ');
   const claimEligibility = evaluateEpisodeClaimEligibility({
     mode: recordingDir ? 'recorded-real' : 'scaffold',
     scope: 'aggregate',
@@ -61,6 +65,8 @@ export function buildRealWorldTaskCompletionResult(argv: string[] = []) {
         tasks: realWorldTaskSpecs,
         runs,
         metrics,
+        finalPostconditionEvidence,
+        finalPostconditionEvaluated: runs.length > 0 && runs.every((run) => run.finalPostconditionEvaluated === true || (typeof run.finalPostconditionEvidence === 'string' && run.finalPostconditionEvidence.trim().length > 0)),
         claimEligibility,
       },
     ],

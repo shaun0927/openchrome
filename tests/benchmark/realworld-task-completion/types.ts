@@ -39,6 +39,8 @@ export interface RealWorldTaskRun {
   usd: number | null;
   failureCategory: FailureCategory;
   notes: string;
+  finalPostconditionEvidence?: string;
+  finalPostconditionEvaluated?: boolean;
 }
 
 export interface RealWorldLibraryMetrics {

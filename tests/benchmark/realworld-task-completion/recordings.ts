@@ -107,6 +107,8 @@ export function recordedSamplesToRuns(samples: readonly RecordedRealWorldSample[
     tokens: sample.tokens,
     usd: sample.usd,
     failureCategory: sample.failureCategory,
+    finalPostconditionEvidence: sample.finalPostconditionEvidence,
+    finalPostconditionEvaluated: true,
     notes: `recorded final-postcondition evidence: ${sample.finalPostconditionEvidence}${sample.notes ? `; ${sample.notes}` : ''}`,
   }));
 }

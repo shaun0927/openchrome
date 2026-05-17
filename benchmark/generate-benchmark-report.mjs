@@ -24,6 +24,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { requireHeadlineReport } from './headline-gate.mjs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -32,6 +33,7 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 const RESULTS_DIR = path.join(REPO_ROOT, 'benchmark', 'results');
 const OUTPUT_PATH = path.join(RESULTS_DIR, 'BENCHMARK-REPORT.md');
+const REALWORLD_ENVELOPE_PATH = path.join(RESULTS_DIR, 'realworld-task-completion.json');
 
 const SECTIONS = [
   { id: '#G', axis: 'Complex Real-World Task Completion', issue: '#1305', file: 'REALWORLD-TASK-COMPLETION-REPORT.md', role: 'primary' },
@@ -75,7 +77,21 @@ function buildSection(section) {
   return lines.join('\n');
 }
 
-function main() {
+function enforceHeadlineInputs(argv = process.argv.slice(2)) {
+  if (!argv.includes('--require-headline')) return;
+  if (!existsSync(REALWORLD_ENVELOPE_PATH)) {
+    throw new Error('Missing benchmark/results/realworld-task-completion.json for --require-headline');
+  }
+  const realworldSection = readSection('REALWORLD-TASK-COMPLETION-REPORT.md');
+  if (!realworldSection || /Headline gate:\s*\*\*blocked\*\*/i.test(realworldSection)) {
+    throw new Error('REALWORLD-TASK-COMPLETION-REPORT.md is missing or still marks the headline gate as blocked');
+  }
+  const envelope = JSON.parse(readFileSync(REALWORLD_ENVELOPE_PATH, 'utf8'));
+  requireHeadlineReport(envelope, 'unified benchmark report real-world section');
+}
+
+function main(argv = process.argv.slice(2)) {
+  enforceHeadlineInputs(argv);
   const lines = [];
   lines.push('# OpenChrome Competitive Benchmark Report');
   lines.push('');
