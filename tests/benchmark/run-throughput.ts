@@ -283,7 +283,7 @@ function buildAdapters(options: ThroughputRunOptions): AdapterEntry[] {
         entries.push({
           library: "OpenChrome",
           mode: "dom-live",
-          adapter: new OpenChromeRealAdapter({ mode: "dom" }),
+          adapter: new OpenChromeRealAdapter({ mode: "dom", cdpEndpoint: options.cdpEndpoint }),
           requiresLiveChrome: true,
         });
       } else {

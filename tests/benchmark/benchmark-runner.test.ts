@@ -8,7 +8,7 @@ import {
   BenchmarkRunnerOptions,
   BenchmarkReport,
 } from './benchmark-runner';
-import { OpenChromeRealAdapter } from './adapters/openchrome-real-adapter';
+import { chromePortFromCdpEndpoint, OpenChromeRealAdapter } from './adapters/openchrome-real-adapter';
 import { main, writeCiOutput } from './run';
 
 // ---------------------------------------------------------------------------
@@ -329,6 +329,14 @@ describe('BenchmarkRunner', () => {
     expect(report.summary.totalInputChars).toBe(0);
     expect(report.summary.totalOutputChars).toBe(0);
     expect(report.summary.totalToolCalls).toBe(0);
+  });
+
+
+
+  test('extracts Chrome port from configured CDP endpoint', () => {
+    expect(chromePortFromCdpEndpoint('http://127.0.0.1:9444')).toBe('9444');
+    expect(chromePortFromCdpEndpoint('http://127.0.0.1')).toBe('9222');
+    expect(chromePortFromCdpEndpoint('not a url')).toBeUndefined();
   });
 
   test('real adapter rejects tool results marked isError', async () => {
