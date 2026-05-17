@@ -2,8 +2,8 @@
   "axis": "episode-token-cost",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-15T23:52:24.408Z",
-    "gitSha": "f18e4710",
+    "capturedAt": "2026-05-17T16:22:02.172Z",
+    "gitSha": "befc568a",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -17,7 +17,7 @@
   "competitors": [
     {
       "name": "OpenChrome episode harness",
-      "version": "1.12.2"
+      "version": "1.12.4"
     }
   ],
   "tokenizer": "cl100k_base",
@@ -42,21 +42,31 @@
           "p95Successful": 4.8
         },
         "durationMs": {
-          "p50Successful": 0,
-          "p95Successful": 0
+          "p50Successful": 58.5,
+          "p95Successful": 111.14999999999999
         }
       },
       "episodes": [
         {
-          "runId": "example-h1-mp7knzso",
+          "runId": "example-h1-mp9zgj5k",
           "taskId": "example-h1",
+          "category": "info_retrieval",
           "status": "passed",
           "success": true,
           "steps": 0,
-          "durationMs": 0,
+          "durationMs": 117,
           "toolCalls": 1,
           "openchromeErrors": 0,
           "noProgressEpisodes": 0,
+          "firstToolSelection": {},
+          "tokenMetrics": {
+            "agentPromptTokens": 0,
+            "assistantOutputTokens": 0,
+            "toolArgumentTokens": 7,
+            "toolResultTokens": 6,
+            "totalTokens": 13,
+            "tokenizer": "cl100k_base"
+          },
           "tokenUsage": {
             "promptTokens": 62,
             "toolRequestTokens": 13,
@@ -67,13 +77,14 @@
           },
           "finalUrl": "mock://example",
           "artifacts": {
-            "eventsJsonl": "/Users/jh0927/openchrome-episode-token-benchmark/benchmark/results/episode-token-cost-artifacts/events/example-h1-mp7knzso.jsonl",
-            "reportJson": "/Users/jh0927/openchrome-episode-token-benchmark/benchmark/results/episode-token-cost-artifacts/reports/example-h1-mp7knzso.json"
+            "eventsJsonl": "/Users/jh0927/openchrome/benchmark/results/episode-token-cost-artifacts/events/example-h1-mp9zgj5k.jsonl",
+            "reportJson": "/Users/jh0927/openchrome/benchmark/results/episode-token-cost-artifacts/reports/example-h1-mp9zgj5k.json"
           }
         },
         {
-          "runId": "local-form-submit-mp7ko0cw",
+          "runId": "local-form-submit-mp9zgj8v",
           "taskId": "local-form-submit",
+          "category": "form_fill",
           "status": "passed",
           "success": true,
           "steps": 4,
@@ -81,6 +92,19 @@
           "toolCalls": 5,
           "openchromeErrors": 0,
           "noProgressEpisodes": 0,
+          "firstToolSelection": {
+            "expected": "read_page",
+            "actual": "read_page",
+            "correct": true
+          },
+          "tokenMetrics": {
+            "agentPromptTokens": 124,
+            "assistantOutputTokens": 62,
+            "toolArgumentTokens": 40,
+            "toolResultTokens": 20,
+            "totalTokens": 246,
+            "tokenizer": "cl100k_base"
+          },
           "tokenUsage": {
             "promptTokens": 61,
             "toolRequestTokens": 75,
@@ -91,13 +115,14 @@
           },
           "finalUrl": "mock://form",
           "artifacts": {
-            "eventsJsonl": "/Users/jh0927/openchrome-episode-token-benchmark/benchmark/results/episode-token-cost-artifacts/events/local-form-submit-mp7ko0cw.jsonl",
-            "reportJson": "/Users/jh0927/openchrome-episode-token-benchmark/benchmark/results/episode-token-cost-artifacts/reports/local-form-submit-mp7ko0cw.json"
+            "eventsJsonl": "/Users/jh0927/openchrome/benchmark/results/episode-token-cost-artifacts/events/local-form-submit-mp9zgj8v.jsonl",
+            "reportJson": "/Users/jh0927/openchrome/benchmark/results/episode-token-cost-artifacts/reports/local-form-submit-mp9zgj8v.json"
           }
         },
         {
-          "runId": "local-recovery-stall-mp7ko0d5",
+          "runId": "local-recovery-stall-mp9zgj8w",
           "taskId": "local-recovery-stall",
+          "category": "recovery",
           "status": "max_steps",
           "success": false,
           "steps": 3,
@@ -105,6 +130,19 @@
           "toolCalls": 4,
           "openchromeErrors": 0,
           "noProgressEpisodes": 1,
+          "firstToolSelection": {
+            "expected": "read_page",
+            "actual": "read_page",
+            "correct": true
+          },
+          "tokenMetrics": {
+            "agentPromptTokens": 125,
+            "assistantOutputTokens": 30,
+            "toolArgumentTokens": 11,
+            "toolResultTokens": 43,
+            "totalTokens": 209,
+            "tokenizer": "cl100k_base"
+          },
           "tokenUsage": {
             "promptTokens": 68,
             "toolRequestTokens": 44,
@@ -124,8 +162,8 @@
             }
           },
           "artifacts": {
-            "eventsJsonl": "/Users/jh0927/openchrome-episode-token-benchmark/benchmark/results/episode-token-cost-artifacts/events/local-recovery-stall-mp7ko0d5.jsonl",
-            "reportJson": "/Users/jh0927/openchrome-episode-token-benchmark/benchmark/results/episode-token-cost-artifacts/reports/local-recovery-stall-mp7ko0d5.json"
+            "eventsJsonl": "/Users/jh0927/openchrome/benchmark/results/episode-token-cost-artifacts/events/local-recovery-stall-mp9zgj8w.jsonl",
+            "reportJson": "/Users/jh0927/openchrome/benchmark/results/episode-token-cost-artifacts/reports/local-recovery-stall-mp9zgj8w.json"
           }
         }
       ]

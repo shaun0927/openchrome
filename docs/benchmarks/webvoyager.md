@@ -13,6 +13,13 @@ npm run bench:webvoyager:mock
 # Real Claude API run (opt-in; spends money).
 ANTHROPIC_API_KEY=sk-... OPENCHROME_BENCH_REAL=1 \
   npm run bench:webvoyager:real -- --task task-01-example-com-title
+
+# Fail-closed live preflight; exits non-zero if env/model prerequisites are missing
+# and does not make an API call.
+npm run bench:webvoyager:real -- --preflight
+
+# OpenAI seam uses the same preflight/repetition/report metadata contract.
+npx ts-node tests/benchmark/webvoyager/runner.ts --adapter openai --preflight
 ```
 
 Reports land in `tests/benchmark/webvoyager/reports/<git-sha>.{json,md}`
@@ -32,7 +39,23 @@ for a headline Agent Task Success claim. Stateful controlled workflows live in
 | Adapter | Env | Notes |
 | --- | --- | --- |
 | `mock` | (default) | Replays JSONL transcripts under `transcripts/`. Deterministic, no network, no API key. CI uses this. |
-| `claude` | `OPENCHROME_BENCH_ADAPTER=claude`, `ANTHROPIC_API_KEY`, `OPENCHROME_BENCH_REAL=1` | Anthropic Messages API. Requires `@anthropic-ai/sdk` installed locally (`npm i -D @anthropic-ai/sdk`). The v1 scaffold throws a deliberate error explaining the recording workflow; the full tool-use loop lands in the follow-up PR that records the remaining 7 transcripts. |
+| `claude` | `OPENCHROME_BENCH_ADAPTER=claude`, `ANTHROPIC_API_KEY`, `OPENCHROME_BENCH_REAL=1` | Anthropic Messages API seam. Requires `@anthropic-ai/sdk` installed locally (`npm i -D @anthropic-ai/sdk`) before live execution. Preflight reports missing prerequisites before any API call. |
+| `openai` | `OPENAI_API_KEY`, `OPENCHROME_BENCH_REAL=1` | OpenAI tool-use seam using the same metadata, budget, and preflight contract. It is opt-in only and is not run by CI. |
+
+## Repetitions and live-run metadata
+
+`--repetitions N` expands into N independent task samples per selected task and
+records the sample index in each row. Live/recorded-real reports must also pin:
+
+- provider and model
+- temperature
+- max tokens per turn
+- max tool iterations
+- max USD per task
+- per-row input/output/total tokens, USD, and budget-abort reason when available
+
+Rows without live or recorded-real evidence remain diagnostic, even when they
+use the same report schema.
 
 ## Transcript determinism contract
 
@@ -53,7 +76,7 @@ arguments.
 
 ## Budget caps
 
-Defined in `llm/budget.ts`, applied by the claude adapter:
+Defined in `llm/budget.ts`, applied by real provider adapters:
 
 | Cap | Value | Effect |
 | --- | --- | --- |
