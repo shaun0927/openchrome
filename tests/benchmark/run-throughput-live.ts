@@ -17,7 +17,11 @@ export async function runLiveThroughputExecutor(options: LiveThroughputExecutorO
     process.env.OPENCHROME_BENCH_CDP_ENDPOINT = cdpEndpoint;
     process.env.CHROME_PORT = chromePort;
     try {
-      const args = parseThroughputArgs([...options.argv, '--live', `--cdp-endpoint=${cdpEndpoint}`, `--openchrome-port=${chromePort}`]);
+      const args = {
+        ...parseThroughputArgs([...options.argv, '--live', `--cdp-endpoint=${cdpEndpoint}`, `--openchrome-port=${chromePort}`]),
+        cdpEndpoint,
+        openChromePort: chromePort,
+      };
       const rows = await (options.runBenchmark ?? runThroughputBenchmark)(args);
       return { rows, cdpEndpoint, launchedChrome: Boolean(chrome) };
     } finally {
