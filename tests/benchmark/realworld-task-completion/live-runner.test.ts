@@ -10,6 +10,14 @@ describe('live real-world episode runner', () => {
     expect(result.claimEligibility.eligible).toBe(false);
     expect(result.claimEligibility.reasons.join('\n')).toMatch(/dry-run/);
   });
+  test('canonical run identity cannot be overridden by executor output', async () => {
+    const executor = { run: jest.fn(async () => ({ library: 'wrong', taskId: 'wrong', mode: 'wrong', success: true, firstAttempt: true, recovered: null, wallTimeMs: 10, toolCalls: 1, retries: 0, noProgressLoops: 0, tokens: 5, usd: 0.001, failureCategory: 'none' as const, notes: 'dry-run final postcondition evaluated' })) };
+
+    const result = await runLiveRealWorldEpisodes({ provider: 'openai', library: 'openchrome', repetitions: 1, taskIds: ['rw-001-checkout-update-address'], mode: 'dry-run' }, executor);
+
+    expect(result.runs[0]).toEqual(expect.objectContaining({ library: 'openchrome', taskId: 'rw-001-checkout-update-address', mode: 'deterministic-fixture' }));
+  });
+
   test('rejects empty task selections instead of returning zero-coverage results', async () => {
     const executor = { run: jest.fn() };
 

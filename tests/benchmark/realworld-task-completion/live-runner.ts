@@ -38,7 +38,7 @@ export async function runLiveRealWorldEpisodes(options: LiveRealWorldRunOptions,
       const row = await executor.run({ taskId: task.id, library: options.library, provider: options.provider, repetition });
       const { finalPostconditionEvaluated, ...runRow } = row;
       postconditionEvidence.push(finalPostconditionEvaluated === true);
-      runs.push({ library: options.library, taskId: task.id, mode: options.mode === 'recorded-real' ? 'recorded-real' : options.mode === 'live' ? 'live-llm' : 'deterministic-fixture', ...runRow });
+      runs.push({ ...runRow, library: options.library, taskId: task.id, mode: options.mode === 'recorded-real' ? 'recorded-real' : options.mode === 'live' ? 'live-llm' : 'deterministic-fixture' });
     }
   }
   const claimEligibility = evaluateEpisodeClaimEligibility({
