@@ -3,7 +3,7 @@ import { beforeEpisodeStep, finalizeFaultRecovery } from './episode-fault-hooks'
 
 describe('episode fault hooks', () => {
   test('injects a planned fault at the configured step and marks recovery by final postcondition', async () => {
-    const state = { events: [], recovered: null };
+    const state: import('./episode-fault-hooks').FaultHookState = { events: [], recovered: null };
     const plan = { taskId: 'rw', injectAtStep: 2, fault: 'selector-drift' as const, expectedRecoverySignal: 'semantic retry' };
     const executor = { inject: jest.fn(async () => 'selector changed') };
     await beforeEpisodeStep(1, plan, executor, state);
