@@ -6,6 +6,18 @@ import type { MCPAdapter } from '../benchmark-runner';
 export type LivePayloadSource = 'live' | 'recorded-live';
 export interface LiveExtractorFactoryOptions { adapterFactory: () => MCPAdapter; library: string; mode: string; source?: LivePayloadSource; }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function serializedSnapshotFieldText(payload: string, fieldKey: string): string | null {
+  const escapedKey = escapeRegExp(fieldKey);
+  const snapshotLine = new RegExp(String.raw`<[^>]*\bdata-field=(?:"${escapedKey}"|'${escapedKey}')[^>]*\/?>\s*([^<\n]*)`, 'i');
+  const match = payload.match(snapshotLine);
+  const value = match?.[1]?.trim();
+  return value ? value : null;
+}
+
 function fieldExtractionFromPayload(payload: string, ctx: ExtractorContext): Record<string, string | null> {
   const extracted: Record<string, string | null> = Object.fromEntries(ctx.groundTruth.fields.map((field) => [field.key, null]));
   const trimmed = payload.trim();
@@ -25,7 +37,9 @@ function fieldExtractionFromPayload(payload: string, ctx: ExtractorContext): Rec
     const $ = cheerio.load(payload);
     for (const field of ctx.groundTruth.fields) {
       const node = $(`[data-field="${field.key}"]`).first();
-      extracted[field.key] = node.length > 0 ? node.text() : null;
+      const snapshotText = serializedSnapshotFieldText(payload, field.key);
+      const htmlText = node.length > 0 ? node.text().trim() : '';
+      extracted[field.key] = snapshotText || htmlText || null;
     }
   }
   return extracted;

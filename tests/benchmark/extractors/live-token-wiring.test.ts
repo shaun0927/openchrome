@@ -27,6 +27,14 @@ describe('live token extractor wiring', () => {
     expect(result.extracted.title).toBeNull();
   });
 
+  test('extracts OpenChrome serialized DOM snapshot field text', async () => {
+    const adapter: MCPAdapter = { name: 'mock', mode: 'live', kind: 'library', callTool: jest.fn(async (tool: string) => tool === 'tabs_create' ? { content: [{ type: 'text', text: '{\"tabId\":\"t\"}' }] } : { content: [{ type: 'text', text: '<main data-field=\"title\"/>Hello\n<p/>Hello elsewhere' }] }) };
+
+    const result = await extractLiveMcpPayload({ library: 'openchrome', mode: 'dom', adapterFactory: () => adapter }, 'http://x', ctx);
+
+    expect(result.extracted.title).toBe('Hello');
+  });
+
   test('extracts structured JSON fields when a live adapter returns JSON', async () => {
     const adapter: MCPAdapter = { name: 'mock', mode: 'live', kind: 'library', callTool: jest.fn(async (tool: string) => tool === 'tabs_create' ? { content: [{ type: 'text', text: '{\"tabId\":\"t\"}' }] } : { content: [{ type: 'text', text: '{\"title\":\"Hello\"}' }] }) };
 
