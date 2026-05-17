@@ -64,6 +64,16 @@ describe('recording corpus validator', () => {
     expect(result.valid).toBe(true);
   });
 
+  it('rejects generic sk-prefixed API keys before corpus publication', () => {
+    const result = validateRecordingCorpus(
+      { ...manifest(), operator: 'sk-abcdefghijklmnopqrstuvwxyz012345' },
+      [run()],
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('recording corpus contains secret-like text');
+  });
+
   it('does not reject benign task ids that contain sk- substrings', () => {
     const benign = run();
     benign.taskId = 'risk-9-task-1';

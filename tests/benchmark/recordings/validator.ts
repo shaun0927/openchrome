@@ -1,6 +1,6 @@
 import type { RecordingCorpusValidation, RecordingManifest, RecordingRun } from './schema';
 
-const SECRET_PATTERN = /(sk-ant-[A-Za-z0-9_-]{10,}|sk-proj-[A-Za-z0-9_-]{10,}|AKIA[0-9A-Z]{16}|(?:api[_-]?key|secret)\s*[:=]\s*[A-Za-z0-9._-]{10,}|bearer\s+[A-Za-z0-9._-]{10,})/i;
+const SECRET_PATTERN = /(sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|(?:api[_-]?key|secret)\s*[:=]\s*[A-Za-z0-9._-]{10,}|bearer\s+[A-Za-z0-9._-]{10,})/i;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
