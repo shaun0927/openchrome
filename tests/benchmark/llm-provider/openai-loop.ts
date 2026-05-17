@@ -38,7 +38,7 @@ export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesCli
   const tools = toResponsesTools(options.tools);
   let previousResponseId: string | undefined;
   for (let i = 0; i < maxTurns; i++) {
-    const request: Record<string, unknown> = { model: options.model, instructions: options.instructions, input: nextInput, tools };
+    const request: Record<string, unknown> = { model: options.model, instructions: options.instructions, input: nextInput, tools, include: ['reasoning.encrypted_content'] };
     if (previousResponseId) request.previous_response_id = previousResponseId;
     const raw = await options.client.create(request);
     const responseId = raw && typeof raw === 'object' ? (raw as { id?: unknown }).id : undefined;
