@@ -1,0 +1,74 @@
+{
+  "axis": "foundation",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-17T01:09:28.105Z",
+    "gitSha": "4ecbfb47",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.168",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "OpenChrome runtime preflight",
+      "version": "1.12.2"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "runtime": "chrome-cdp",
+      "status": "missing",
+      "requiredFor": [
+        "live token extractors",
+        "live throughput",
+        "reliability CDP faults",
+        "real-world browser episodes"
+      ],
+      "endpoint": "http://127.0.0.1:9",
+      "evidence": "CDP endpoint is not reachable",
+      "remediation": "Start Chrome with --remote-debugging-port=9222 and set OPENCHROME_BENCH_CDP_ENDPOINT if using a different endpoint."
+    },
+    {
+      "runtime": "playwright-mcp",
+      "status": "missing",
+      "requiredFor": [
+        "native competitor adapter matrix",
+        "playwright-mcp token payloads",
+        "real-world competitor episodes"
+      ],
+      "endpoint": "@playwright/mcp/cli.js",
+      "evidence": "playwright-mcp CLI path could not be resolved",
+      "remediation": "Install @playwright/mcp or set PLAYWRIGHT_MCP_SERVER_PATH to its cli.js path."
+    },
+    {
+      "runtime": "browser-use",
+      "status": "ready",
+      "requiredFor": [
+        "browser-use native competitor rows",
+        "browser-use real-world episodes"
+      ],
+      "endpoint": "python3 /Users/jh0927/openchrome/tests/benchmark/bridges/browser_use_bridge.py",
+      "evidence": "Python available (Python 3.12.12); bridge script exists",
+      "remediation": ""
+    },
+    {
+      "runtime": "llm-api-key",
+      "status": "missing",
+      "requiredFor": [
+        "real LLM tool-use loop",
+        "episode token/USD accounting",
+        "WebVoyager repetitions"
+      ],
+      "endpoint": "ANTHROPIC_API_KEY or OPENAI_API_KEY",
+      "evidence": "No supported LLM API key found in environment",
+      "remediation": "Export ANTHROPIC_API_KEY or OPENAI_API_KEY before running live LLM benchmark loops."
+    }
+  ]
+}
