@@ -55,6 +55,15 @@ describe('recording corpus validator', () => {
     expect(result.errors).toContain('recording corpus contains secret-like text');
   });
 
+  it('does not reject benign prose that mentions secret-like words without credential values', () => {
+    const benign = run();
+    benign.finalPostconditionEvidence = 'secret menu item was visible to the secretary user';
+
+    const result = validateRecordingCorpus(manifest(), [benign]);
+
+    expect(result.valid).toBe(true);
+  });
+
   it('does not reject benign task ids that contain sk- substrings', () => {
     const benign = run();
     benign.taskId = 'risk-9-task-1';
