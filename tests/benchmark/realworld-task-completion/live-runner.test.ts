@@ -18,13 +18,33 @@ describe('live real-world episode runner', () => {
   });
 
   test('non-dry runs require explicit pinning evidence for headline eligibility', async () => {
-    const executor = { run: jest.fn(async () => ({ success: true, firstAttempt: true, recovered: null, wallTimeMs: 10, toolCalls: 1, retries: 0, noProgressLoops: 0, tokens: 5, usd: 0.001, failureCategory: 'none' as const, notes: 'recorded postcondition' })) };
-
+    const executor = { run: jest.fn(async () => ({ success: true, firstAttempt: true, recovered: null, wallTimeMs: 10, toolCalls: 1, retries: 0, noProgressLoops: 0, tokens: 5, usd: 0.001, failureCategory: 'none' as const, notes: 'recorded postcondition', finalPostconditionEvaluated: true })) };
+    const previous = process.env.OPENCHROME_BENCH_REAL;
+    process.env.OPENCHROME_BENCH_REAL = '1';
     const result = await runLiveRealWorldEpisodes({ provider: 'openai', library: 'openchrome', repetitions: 10, taskIds: ['rw-001-checkout-update-address'], mode: 'recorded-real' }, executor);
+    if (previous === undefined) delete process.env.OPENCHROME_BENCH_REAL;
+    else process.env.OPENCHROME_BENCH_REAL = previous;
 
     expect(result.claimEligibility.eligible).toBe(false);
     expect(result.claimEligibility.reasons.join('\n')).toMatch(/versions are not pinned/);
     expect(result.claimEligibility.reasons.join('\n')).toMatch(/LLM model/);
+  });
+
+  test('postcondition eligibility is derived from executor evidence', async () => {
+    const executor = { run: jest.fn(async () => ({ success: true, firstAttempt: true, recovered: null, wallTimeMs: 10, toolCalls: 1, retries: 0, noProgressLoops: 0, tokens: 5, usd: 0.001, failureCategory: 'none' as const, notes: 'recorded without postcondition evidence' })) };
+    const previous = process.env.OPENCHROME_BENCH_REAL;
+    process.env.OPENCHROME_BENCH_REAL = '1';
+    const result = await runLiveRealWorldEpisodes({ provider: 'openai', library: 'openchrome', repetitions: 10, taskIds: ['rw-001-checkout-update-address'], mode: 'recorded-real', competitorVersionsPinned: true, llmSettingsPinned: true }, executor);
+    if (previous === undefined) delete process.env.OPENCHROME_BENCH_REAL;
+    else process.env.OPENCHROME_BENCH_REAL = previous;
+
+    expect(result.claimEligibility.eligible).toBe(false);
+    expect(result.claimEligibility.reasons.join('\n')).toMatch(/postcondition/);
+  });
+
+  test('recorded-real mode fails closed without explicit env', async () => {
+    const executor = { run: jest.fn() };
+    await expect(runLiveRealWorldEpisodes({ provider: 'openai', library: 'openchrome', repetitions: 1, taskIds: ['rw-001-checkout-update-address'], mode: 'recorded-real' }, executor)).rejects.toThrow(/OPENCHROME_BENCH_REAL/);
   });
 
   test('live mode fails closed without explicit env', () => {
