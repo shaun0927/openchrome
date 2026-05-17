@@ -10,12 +10,29 @@ describe('live token extractor wiring', () => {
     expect(() => extractor.extract(ctx)).toThrow(/async live extraction/);
   });
   test('async live extraction drives adapter create/read/close', async () => {
-    const adapter: MCPAdapter = { name: 'mock', mode: 'live', kind: 'library', setup: jest.fn(), teardown: jest.fn(), callTool: jest.fn(async (tool: string) => tool === 'tabs_create' ? { content: [{ type: 'text', text: '{"tabId":"t"}' }] } : { content: [{ type: 'text', text: 'Hello payload' }] }) };
+    const adapter: MCPAdapter = { name: 'mock', mode: 'live', kind: 'library', setup: jest.fn(), teardown: jest.fn(), callTool: jest.fn(async (tool: string) => tool === 'tabs_create' ? { content: [{ type: 'text', text: '{"tabId":"t"}' }] } : { content: [{ type: 'text', text: '<main><h1 data-field="title">Hello</h1><p>Hello elsewhere</p></main>' }] }) };
     const result = await extractLiveMcpPayload({ library: 'openchrome', mode: 'dom', adapterFactory: () => adapter }, 'http://x', ctx);
     expect(result.payload).toContain('Hello');
     expect(result.extracted.title).toBe('Hello');
     expect(adapter.callTool).toHaveBeenCalledWith('read_page', { tabId: 't', mode: 'dom' });
     expect(adapter.callTool).toHaveBeenCalledWith('tabs_close', { tabId: 't' });
+  });
+
+  test('does not treat raw substring matches as structured extraction', async () => {
+    const adapter: MCPAdapter = { name: 'mock', mode: 'live', kind: 'library', callTool: jest.fn(async (tool: string) => tool === 'tabs_create' ? { content: [{ type: 'text', text: '{\"tabId\":\"t\"}' }] } : { content: [{ type: 'text', text: 'Hello appears in an unstructured blob' }] }) };
+
+    const result = await extractLiveMcpPayload({ library: 'openchrome', mode: 'ax', adapterFactory: () => adapter }, 'http://x', ctx);
+
+    expect(result.payload).toContain('Hello');
+    expect(result.extracted.title).toBeNull();
+  });
+
+  test('extracts structured JSON fields when a live adapter returns JSON', async () => {
+    const adapter: MCPAdapter = { name: 'mock', mode: 'live', kind: 'library', callTool: jest.fn(async (tool: string) => tool === 'tabs_create' ? { content: [{ type: 'text', text: '{\"tabId\":\"t\"}' }] } : { content: [{ type: 'text', text: '{\"title\":\"Hello\"}' }] }) };
+
+    const result = await extractLiveMcpPayload({ library: 'openchrome', mode: 'dom', adapterFactory: () => adapter }, 'http://x', ctx);
+
+    expect(result.extracted.title).toBe('Hello');
   });
 
   test('closes created tabs when read_page fails', async () => {

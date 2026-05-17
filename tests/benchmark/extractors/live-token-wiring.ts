@@ -1,3 +1,5 @@
+import * as cheerio from 'cheerio';
+
 import type { Extractor, ExtractorContext, ExtractorResult } from './types';
 import type { MCPAdapter } from '../benchmark-runner';
 
@@ -5,8 +7,27 @@ export type LivePayloadSource = 'live' | 'recorded-live';
 export interface LiveExtractorFactoryOptions { adapterFactory: () => MCPAdapter; library: string; mode: string; source?: LivePayloadSource; }
 
 function fieldExtractionFromPayload(payload: string, ctx: ExtractorContext): Record<string, string | null> {
-  const extracted: Record<string, string | null> = {};
-  for (const field of ctx.groundTruth.fields) extracted[field.key] = payload.includes(field.expected) ? field.expected : null;
+  const extracted: Record<string, string | null> = Object.fromEntries(ctx.groundTruth.fields.map((field) => [field.key, null]));
+  const trimmed = payload.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      for (const field of ctx.groundTruth.fields) {
+        const value = parsed[field.key];
+        extracted[field.key] = typeof value === 'string' ? value : null;
+      }
+      return extracted;
+    } catch {
+      // Fall through to HTML parsing. Malformed JSON is not structured evidence.
+    }
+  }
+  if (/<[a-z][\s\S]*>/i.test(payload)) {
+    const $ = cheerio.load(payload);
+    for (const field of ctx.groundTruth.fields) {
+      const node = $(`[data-field="${field.key}"]`).first();
+      extracted[field.key] = node.length > 0 ? node.text() : null;
+    }
+  }
   return extracted;
 }
 
