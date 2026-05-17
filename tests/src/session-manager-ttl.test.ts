@@ -189,6 +189,27 @@ describe('SessionManager TTL and Stats', () => {
       expect(closeStartupTab).toHaveBeenCalledTimes(1);
     });
 
+    test('does not close concurrently-created chrome://newtab pages when attached to user Chrome', async () => {
+      mockLifecycleMode = 'attach';
+      const closeUserTab = jest.fn().mockResolvedValue(undefined);
+      const userNewTab = makeTarget('user-newtab', 'chrome://newtab/', closeUserTab);
+      const createdTarget = makeTarget('mock-target-id-1', 'https://example.com/');
+
+      const targets = jest.fn()
+        .mockReturnValueOnce([])
+        .mockReturnValue([userNewTab, createdTarget]);
+      mockCdpClientInstance.getBrowser.mockReturnValue({
+        targets,
+        on: jest.fn(),
+        removeAllListeners: jest.fn(),
+      });
+
+      await sessionManager.createTarget('attach-concurrent-cleanup-session', 'https://example.com');
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(closeUserTab).not.toHaveBeenCalled();
+    });
+
     test('does not close pre-existing chrome://newtab pages when attached to user Chrome', async () => {
       mockLifecycleMode = 'attach';
       const closeUserTab = jest.fn().mockResolvedValue(undefined);

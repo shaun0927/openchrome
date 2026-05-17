@@ -1079,13 +1079,14 @@ export class SessionManager {
           if (this.targetToWorker.has(candidateTargetId)) return false;
 
           const candidateUrl = t.url();
-          const isBlankLike =
-            candidateUrl === 'about:blank' ||
+          const isStartupNewTab =
             candidateUrl === 'chrome://newtab/' ||
             candidateUrl.startsWith('chrome://new-tab-page');
+          const isBlankLike = candidateUrl === 'about:blank' || isStartupNewTab;
           if (!isBlankLike) return false;
 
-          return cleanupStartupBlankTargets || !cleanupExistingIds.has(candidateTargetId);
+          if (isStartupNewTab) return cleanupStartupBlankTargets && cleanupExistingIds.has(candidateTargetId);
+          return !cleanupExistingIds.has(candidateTargetId);
         });
         for (const t of orphans) {
           try {
