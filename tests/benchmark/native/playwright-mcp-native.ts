@@ -7,11 +7,11 @@ export interface PlaywrightMcpNativeTransport { listTools(): Promise<string[]>; 
 const REQUIRED = ['browser_navigate', 'browser_snapshot'];
 
 export async function runPlaywrightMcpNativeTask(transport: PlaywrightMcpNativeTransport, task: { id: string; startUrl: string; goal: string }): Promise<NativeEpisodeResult> {
-  const tools = await transport.listTools();
-  const missing = REQUIRED.filter((tool) => !tools.includes(tool));
-  if (missing.length > 0) return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: 'unsupported', trace: [], finalText: '', failureCategory: `missing tools: ${missing.join(', ')}` };
   const trace: NativeToolEvent[] = [];
   try {
+    const tools = await transport.listTools();
+    const missing = REQUIRED.filter((tool) => !tools.includes(tool));
+    if (missing.length > 0) return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: 'unsupported', trace, finalText: '', failureCategory: `missing tools: ${missing.join(', ')}` };
     const nav = await transport.callTool('browser_navigate', { url: task.startUrl });
     trace.push({ tool: 'browser_navigate', ok: !nav.isError, text: nav.content?.[0]?.text });
     if (nav.isError) return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: 'failed', trace, finalText: '', failureCategory: 'navigation' };
