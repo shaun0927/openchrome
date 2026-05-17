@@ -15,6 +15,15 @@ describe('episode fault hooks', () => {
     expect(finalizeFaultRecovery(state, false).recovered).toBe(false);
   });
 
+  test('rejects malformed plans even before the injection step matches', async () => {
+    const state: import('./episode-fault-hooks').FaultHookState = { events: [], recovered: null };
+    const plan = { taskId: 'rw', injectAtStep: -1, fault: 'selector-drift' as const, expectedRecoverySignal: 'retry' };
+    const executor = { inject: jest.fn(async () => 'nope') };
+
+    await expect(beforeEpisodeStep(0, plan, executor, state)).rejects.toThrow(/injectAtStep/);
+    expect(executor.inject).not.toHaveBeenCalled();
+  });
+
   test('rejects unsupported runtime fault kinds', async () => {
     const state: import('./episode-fault-hooks').FaultHookState = { events: [], recovered: null };
     const plan = { taskId: 'rw', injectAtStep: 0, fault: 'bad-fault' as never, expectedRecoverySignal: 'retry' };
