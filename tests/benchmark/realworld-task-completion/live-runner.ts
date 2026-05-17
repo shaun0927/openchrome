@@ -6,7 +6,15 @@ export type LiveProviderName = 'anthropic' | 'openai';
 export type LiveLibraryName = 'openchrome' | 'playwright' | 'puppeteer' | 'playwright-mcp' | 'browser-use';
 export type LiveRunnerMode = 'dry-run' | 'live' | 'recorded-real';
 
-export interface LiveRealWorldRunOptions { provider: LiveProviderName; library: LiveLibraryName; repetitions: number; taskIds?: string[]; mode: LiveRunnerMode; }
+export interface LiveRealWorldRunOptions {
+  provider: LiveProviderName;
+  library: LiveLibraryName;
+  repetitions: number;
+  taskIds?: string[];
+  mode: LiveRunnerMode;
+  competitorVersionsPinned?: boolean;
+  llmSettingsPinned?: boolean;
+}
 export interface LiveTaskExecutor { run(input: { taskId: string; library: LiveLibraryName; provider: LiveProviderName; repetition: number }): Promise<Omit<RealWorldTaskRun, 'library' | 'taskId' | 'mode'>>; }
 
 export function assertLiveRealWorldEnabled(env = process.env): void {
@@ -16,7 +24,11 @@ export function assertLiveRealWorldEnabled(env = process.env): void {
 export async function runLiveRealWorldEpisodes(options: LiveRealWorldRunOptions, executor: LiveTaskExecutor): Promise<{ runs: RealWorldTaskRun[]; claimEligibility: ReturnType<typeof evaluateEpisodeClaimEligibility> }> {
   if (options.mode === 'live') assertLiveRealWorldEnabled();
   if (!Number.isInteger(options.repetitions) || options.repetitions <= 0) throw new Error('repetitions must be a positive integer');
-  const selected = realWorldTaskSpecs.filter((task) => !options.taskIds || options.taskIds.includes(task.id));
+  const requestedTaskIds = new Set(options.taskIds ?? realWorldTaskSpecs.map((task) => task.id));
+  const selected = realWorldTaskSpecs.filter((task) => requestedTaskIds.has(task.id));
+  const selectedIds = new Set(selected.map((task) => task.id));
+  const unknownTaskIds = [...requestedTaskIds].filter((id) => !selectedIds.has(id));
+  if (unknownTaskIds.length > 0) throw new Error(`Unknown real-world taskIds: ${unknownTaskIds.join(', ')}`);
   const runs: RealWorldTaskRun[] = [];
   for (const task of selected) {
     for (let repetition = 0; repetition < options.repetitions; repetition++) {
@@ -29,9 +41,9 @@ export async function runLiveRealWorldEpisodes(options: LiveRealWorldRunOptions,
     scope: 'aggregate',
     sampleCount: runs.length,
     finalPostconditionEvaluated: true,
-    competitorVersionsPinned: options.mode !== 'dry-run',
+    competitorVersionsPinned: options.competitorVersionsPinned === true,
     sameTaskContracts: true,
-    llmSettingsPinned: options.mode !== 'dry-run',
+    llmSettingsPinned: options.llmSettingsPinned === true,
   });
   return { runs, claimEligibility };
 }
