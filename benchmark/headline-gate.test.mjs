@@ -36,6 +36,12 @@ assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, fi
 assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, runs: [{ finalPostconditionEvidence: 'postcondition checked' }] }] }, 'aggregate with run evidence report'));
 assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, runs: [{ notes: 'recorded final-postcondition evidence: postcondition checked' }] }] }, 'aggregate with recorded note evidence report'));
 assert.throws(() => requireHeadlineReport({ results: [diagnosticRow] }, 'diagnostic-only report'), /contains no headline-eligible rows/);
+const skippedPartition = partitionHeadlineResults({ results: [{ ...headlineRow, status: 'skipped' }] });
+assert.match(skippedPartition.failures[0], /status skipped is diagnostic-only/);
+assert.throws(
+  () => requireHeadlineReport({ results: [{ ...headlineRow, status: 'skipped' }] }, 'skipped live report'),
+  /contains no headline-eligible rows/,
+);
 assert.throws(() => requireHeadlineReport({ results: [headlineRow, diagnosticRow] }, 'mixed report'), /diagnostic rows/);
 assert.throws(
   () => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: 'aggregate summary', runs: [{ finalPostconditionEvidence: 'ok' }, { notes: 'missing structured evidence' }] }] }, 'partial aggregate report'),

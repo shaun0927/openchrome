@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T10:04:50.876Z
+Generated: 2026-05-17T15:56:16.091Z
 
 ## Verdict
 
@@ -17,6 +17,7 @@ Generated: 2026-05-17T10:04:50.876Z
 | Not measurable yet | 5 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
+| Stale OpenChrome result artifacts | 10 |
 
 ## Issue matrix
 
@@ -259,61 +260,275 @@ Generated: 2026-05-17T10:04:50.876Z
   - Extend claim eligibility checks to every live/recorded-real runner and fail report generation on missing eligibility metadata.
 
 
+## Result artifact freshness
+
+Current OpenChrome package version: `1.12.4`.
+These committed result artifacts contain OpenChrome version pins older than the current package version. They remain diagnostic until regenerated or explicitly superseded:
+
+| Artifact | Expected OpenChrome version | Found OpenChrome versions |
+| --- | --- | --- |
+| `benchmark/results/auth-usability.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/competitor-smoke.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/dx.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/episode-token-cost.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/longrun-stability.json` | `1.12.4` | `1.11.0` |
+| `benchmark/results/realworld-task-completion.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/reliability.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/runtime-preflight.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/speed-throughput.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/token-efficiency.json` | `1.12.4` | `1.12.2` |
+
 ## Additional PR scopes to reach API-key-only readiness
 
 These are the remaining non-key PRs needed before supplying API keys should be enough to run the full comparison.
 
-### PR-A: Wire real LLM episode loops and repetition accounting
+### PR1: Benchmark contract hardening and headline safety gates
+
+- Issues: #1255, #1310
+- Objective: Centralize row status and claimEligibility semantics, enforce no mock/scaffold/dry-run headline claims, add stale artifact/version detection, and update readiness/report validation.
+- Rationale: This is the first dependency because every later axis needs the same measured/skip/diagnostic/headline vocabulary before it can safely publish rows.
+- In scope:
+  - common benchmark row status vocabulary
+  - claimEligibility validation for rows and aggregates
+  - headline-gate tests for mock/scaffold/dry-run/undersampled rows
+  - stale result artifact detection
+  - measurement-tier documentation
+- Out of scope:
+  - real LLM execution
+  - competitor native loop implementation
+  - new live measurements
+  - OpenChrome product/core changes
+- Likely files:
+  - tests/benchmark/utils/*
+  - tests/benchmark/benchmark-readiness.ts
+  - benchmark/claim-eligibility.mjs
+  - benchmark/headline-gate.mjs
+  - docs/benchmarks/*
+  - benchmark/results/* generated artifacts
+- Acceptance criteria:
+  - Readiness report exposes stale OpenChrome result artifacts separately from implementation readiness.
+  - Headline gates fail closed for missing/ineligible claimEligibility and diagnostic modes.
+  - Scope remains benchmark-harness only.
+- Verification:
+  - npm test -- --runTestsByPath tests/benchmark/benchmark-readiness.test.ts tests/benchmark/utils/artifact-freshness.test.ts tests/benchmark/episode-harness/claim-eligibility.test.ts --runInBand
+  - node benchmark/claim-eligibility.test.mjs
+  - node benchmark/headline-gate.test.mjs
+  - npm run bench:readiness
+  - npm run build
+
+### PR2: Competitor smoke matrix and version pin enforcement
+
+- Issues: #1255, #1302
+- Objective: Make benchmark/COMPETITORS.md authoritative, strengthen bench:competitor-smoke, detect dependency/runtime availability, capture actual versions, and emit explicit skip rows without faking competitors.
+- Rationale: Live axes need trustworthy competitor availability and version provenance before measurements are meaningful.
+- In scope:
+  - authoritative competitor manifest
+  - version capture
+  - dependency_missing/not_wired/runtime_failed skip rows
+  - shared smoke task contract
+  - readiness integration
+- Out of scope:
+  - full native browser-use/playwright-mcp LLM loops
+  - headline comparisons
+  - automatic heavyweight dependency installs
+  - OpenChrome core changes
+- Likely files:
+  - benchmark/COMPETITORS.md
+  - tests/benchmark/run-competitor-smoke.ts
+  - tests/benchmark/adapters/*
+  - benchmark/results/competitor-smoke.json
+- Acceptance criteria:
+  - Every competitor has measured or explicit skip status.
+  - Version pins are recorded before comparable rows are eligible.
+  - Skip rows are visible and excluded from headline aggregates.
+- Verification:
+  - npm run bench:competitor-smoke
+  - npm test -- --runTestsByPath tests/benchmark/adapters/browser-use-adapter.test.ts tests/benchmark/adapters/playwright-mcp-adapter.test.ts tests/benchmark/benchmark-readiness.test.ts --runInBand
+  - npm run build
+
+### PR3: Finish non-LLM benchmark measurement gaps
+
+- Issues: #1256, #1258, #1260, #1261
+- Objective: Finish token payload live/recorded extractors, speed throughput cold/warm/session-reuse evidence, auth local fixture setup/pass timing, and DX schema/error-actionability rows.
+- Rationale: These axes can be advanced without paid LLM API keys and validate the contract from PR1.
+- In scope:
+  - token payload live/recorded rows
+  - throughput cold/warm/session reuse rows
+  - auth setup timing and login smoke rows
+  - DX schema completeness and induced error actionability scoring
+- Out of scope:
+  - LLM task success
+  - browser-use native agent loop
+  - real-world fault injection
+  - full orchestration
+- Likely files:
+  - tests/benchmark/run-token-efficiency.ts
+  - tests/benchmark/run-throughput.ts
+  - tests/benchmark/run-auth.ts
+  - tests/benchmark/run-dx.ts
+  - benchmark/generate-*-section.mjs
+- Acceptance criteria:
+  - Non-LLM rows are measured or explicitly skipped without null headline metrics.
+  - Reports distinguish live/recorded-real from diagnostic rows.
+  - No paid/API-key path is required.
+- Verification:
+  - npm run bench:tokens
+  - npm run bench:throughput
+  - npm run bench:auth
+  - npm run bench:dx
+  - npm run build
+
+### PR4: Controlled real-world task corpus and postcondition contracts
+
+- Issues: #1300, #1304
+- Objective: Cover info_retrieval, form_fill, transactional_mock, recovery, dynamic_ui, and long_horizon with local fixtures, reset state, success contracts, final postcondition evidence, and diagnostic reporting.
+- Rationale: Task contracts must be stable before expensive live LLM runs or reliability stress rows.
+- In scope:
+  - full controlled taxonomy
+  - local/resettable fixtures
+  - outcome-contract assertions
+  - final postcondition evidence
+  - diagnostic report separation
+- Out of scope:
+  - real LLM loop
+  - competitor native execution
+  - fault stress implementation
+  - headline competitive claims
+- Likely files:
+  - tests/benchmark/realworld-task-completion/*
+  - tests/benchmark/run-realworld-task-completion.ts
+  - benchmark/generate-realworld-task-completion-section.mjs
+  - docs/benchmarks/benchmark-direction.md
+- Acceptance criteria:
+  - Every required category has at least one deterministic task.
+  - Each task has reset and postcondition evidence.
+  - Local rows remain diagnostic-only.
+- Verification:
+  - npm run bench:realworld
+  - node benchmark/generate-realworld-task-completion-section.mjs
+  - npm run build
+
+### PR5: Real LLM runner, repetitions, budget, and token-cost accounting
 
 - Issues: #1257, #1299, #1301
-- Objective: Connect the Anthropic/OpenAI tool-use loop seams to the WebVoyager and episode-token runners, expand task × library × mode × repetition cells, and persist full token/USD/budget-abort metrics.
+- Objective: Add provider abstraction, real Anthropic/OpenAI tool-use loop seams, budget caps, token/USD accounting, task x library x mode x repetition sample persistence, and N gates.
+- Rationale: After task corpus is stable, the high-cost live path can be implemented as opt-in and preflighted.
+- In scope:
+  - provider/model/temperature/budget metadata
+  - repetition matrix expansion
+  - token/USD/tool-call/wall-time/budget-abort fields
+  - recorded-real sample schema
+  - fail-closed preflight
+- Out of scope:
+  - browser-use/playwright-mcp native loops beyond seams
+  - fault injection
+  - full orchestration
+  - default CI API calls
+- Likely files:
+  - tests/benchmark/webvoyager/llm/*
+  - tests/benchmark/webvoyager/runner.ts
+  - tests/benchmark/run-episode-token-cost.ts
+  - docs/benchmarks/webvoyager.md
 - Acceptance criteria:
-  - `--repetitions 10` writes ten samples per selected task/library/mode cell.
-  - Live runs refuse to start without pinned provider/model/temperature/budget metadata.
-  - Token, USD, tool-call, wall-time, and budget-abort fields are present in every live/recorded-real row.
+  - --repetitions writes independent samples.
+  - Live runs refuse without pinned model/settings/budget.
+  - Token/USD fields exist for live/recorded-real rows.
+- Verification:
+  - npm run bench:webvoyager:mock
+  - npm run bench:episode:tokens
+  - dry-run/preflight proves no API call without explicit env
+  - npm run build
 
-### PR-B: Enable native/passive competitor matrix execution
+### PR6: Native competitor execution for playwright-mcp and browser-use
 
-- Issues: #1255, #1257, #1302
-- Objective: Promote playwright-mcp and browser-use from native-loop scaffolds to runnable competitors and keep passive browser-use rows secondary/non-headline.
+- Issues: #1302, #1257
+- Objective: Run playwright-mcp and browser-use as real external competitors, preserve passive rows as secondary, pin exact versions, and prevent fallback to OpenChrome.
+- Rationale: Competitor loops should use the same LLM/repetition contract rather than creating schema churn earlier.
+- In scope:
+  - playwright-mcp external MCP invocation
+  - browser-use bridge/native invocation
+  - native vs passive row separation
+  - dependency-only setup errors
+  - exact version capture
+- Out of scope:
+  - reimplementing competitor behavior
+  - OpenChrome product changes
+  - fault injection
+  - full orchestration
+- Likely files:
+  - tests/benchmark/adapters/playwright-mcp-adapter.ts
+  - tests/benchmark/adapters/browser-use-adapter.ts
+  - tests/benchmark/webvoyager/llm/library-routing.ts
+  - scripts/bench/setup-browser-use.sh
 - Acceptance criteria:
-  - `bench:webvoyager:real --library playwright-mcp --mode native` and `--library browser-use --mode native` run or emit explicit dependency-only setup errors.
-  - Cross-library JSON separates native headline rows from passive secondary rows.
-  - Competitor versions are pinned in result envelopes before comparison rows are publishable.
+  - Native competitor rows run or explicit dependency-only skips are emitted.
+  - Passive rows are never headline substitutes.
+  - No OpenChrome fallback is possible.
+- Verification:
+  - npm run bench:competitor-smoke
+  - npm run bench:webvoyager:real -- --library playwright-mcp --mode native --dry-run
+  - npm run bench:webvoyager:real -- --library browser-use --mode native --dry-run
+  - npm run build
 
-### PR-C: Wire live token-efficiency extractors and recorded payload ingestion
+### PR7: Fault injection inside real-world task episodes
 
-- Issues: #1256
-- Objective: Replace token live-only stubs for OpenChrome read_page/AX, Playwright accessibility, playwright-mcp snapshot, and browser-use DOM serialization with real or recorded-live extractors.
+- Issues: #1259, #1303, #1304
+- Objective: Inject deterministic faults inside real-world task episodes, mark fault rows, judge recovered only by final postcondition, and add recovery timing plus Chrome RSS/zombie sampling.
+- Rationale: This converts reliability into task-completion stress evidence instead of isolated fault cells.
+- In scope:
+  - fault checkpoint schema
+  - fault rows
+  - final-postcondition recovery judging
+  - recovery time/steps
+  - Chrome RSS/zombie sampling
+- Out of scope:
+  - new task taxonomy beyond PR4
+  - real LLM provider implementation
+  - competitor native wiring
+  - headline promotion without gates
+- Likely files:
+  - tests/benchmark/realworld-task-completion/*
+  - tests/benchmark/run-reliability.ts
+  - tests/benchmark/run-longrun.ts
+  - benchmark/RELIABILITY-REALWORLD-PLAN.md
 - Acceptance criteria:
-  - `OPENCHROME_BENCH_LIVE=1 npm run bench:tokens` measures all live extractor cells instead of throwing scaffold errors.
-  - Recorded payloads include source/version/timestamp evidence and are validated before inclusion.
-  - Reports distinguish live/recorded-real rows from deterministic diagnostic rows.
+  - fault_injected rows are explicit.
+  - Recovered means final postcondition passes.
+  - Stress rows stay diagnostic unless eligibility gates pass.
+- Verification:
+  - npm run bench:reliability
+  - npm run bench:realworld -- --stress or equivalent
+  - npm run build
 
-### PR-D: Make real-world completion and fault stress headline-eligible
+### PR8: Full live/recorded benchmark orchestration and release gate
 
-- Issues: #1300, #1303, #1304, #1310, #1259
-- Objective: Unify live/recorded-real real-world task completion with deterministic fault checkpoints, final postcondition recovery judging, and per-row claimEligibility.
+- Issues: #1254, #1310
+- Objective: Add bench:full:live --preflight, bench:full:recorded, dependency ordering, cost estimate, unified headline gate, strict readiness pass, and release workflow integration.
+- Rationale: The final PR should integrate completed axes rather than inventing missing axis semantics.
+- In scope:
+  - full preflight reporting missing secrets/runtime services
+  - ordered live/recorded wrapper
+  - cost estimate
+  - unified no-diagnostic-headline report gate
+  - strict/api-key readiness gates
+- Out of scope:
+  - axis-specific implementations not completed earlier
+  - automatic paid API calls in CI
+  - bypassing claimEligibility
+- Likely files:
+  - package.json
+  - tests/benchmark/benchmark-readiness.ts
+  - tests/benchmark/runtime-preflight.ts
+  - benchmark/generate-benchmark-report.mjs
+  - benchmark/headline-gate.mjs
+  - .github/workflows/benchmark-*.yml
 - Acceptance criteria:
-  - `bench:realworld` can run live/recorded-real OpenChrome and competitor rows with N>=10 aggregate samples.
-  - Fault-injected rows set `fault_injected=true` and count recovered only when the final task postcondition passes.
-  - `benchmark/generate-realworld-task-completion-section.mjs --require-headline` passes only with eligible live/recorded-real rows.
-
-### PR-E: Finish speed/auth/DX live measurement gaps
-
-- Issues: #1258, #1260, #1261
-- Objective: Close remaining non-LLM measurement gaps: live throughput/session-reuse evidence, auth fixture wall-clock/pass evidence, MCP schema introspection, and induced error-actionability scoring.
-- Acceptance criteria:
-  - Throughput reports include live OpenChrome/Playwright/Puppeteer/Crawlee rows plus reuse-vs-cold deltas.
-  - Auth reports include local login-wall pass/fail and setup minutes for every library.
-  - DX reports include schema completeness and error actionability scores with null-free measured rows for MCP competitors.
-
-### PR-F: Add full live benchmark orchestration and release gate
-
-- Issues: #1254, #1255, #1310
-- Objective: Provide one preflighted command that, after API keys and local runtime credentials are present, runs every axis, validates result envelopes, and blocks headline report publication on any diagnostic-only row.
-- Acceptance criteria:
-  - `npm run bench:full:live -- --preflight` reports only missing secrets/runtime services before execution.
-  - The full command runs axes in dependency order and writes a unified report with no mock/scaffold headline rows.
-  - `npm run bench:readiness -- --api-key-only` passes only when non-key blockers are gone.
+  - bench:full:live --preflight reports only missing prerequisites.
+  - Unified report contains no mock/scaffold headline rows.
+  - strict readiness passes only when justified by artifacts.
+- Verification:
+  - npm run bench:full:live -- --preflight or equivalent
+  - npm run bench:readiness -- --strict
+  - npm run bench:api-key-readiness
+  - npm run build
 
