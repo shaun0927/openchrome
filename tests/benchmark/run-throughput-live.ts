@@ -7,9 +7,10 @@ export interface LiveThroughputExecutorResult { rows: ThroughputRow[]; cdpEndpoi
 export async function runLiveThroughputExecutor(options: LiveThroughputExecutorOptions): Promise<LiveThroughputExecutorResult> {
   const port = options.port ?? 9222;
   let chrome: ManagedChrome | undefined;
+  let cdpEndpoint = process.env.OPENCHROME_BENCH_CDP_ENDPOINT ?? `http://127.0.0.1:${port}`;
   try {
     if (options.launchChrome) chrome = await (options.launcher ?? ((p) => launchManagedChrome({ port: p })))(port);
-    const cdpEndpoint = chrome?.endpoint ?? process.env.OPENCHROME_BENCH_CDP_ENDPOINT ?? `http://127.0.0.1:${port}`;
+    cdpEndpoint = chrome?.endpoint ?? cdpEndpoint;
     const previousEndpoint = process.env.OPENCHROME_BENCH_CDP_ENDPOINT;
     process.env.OPENCHROME_BENCH_CDP_ENDPOINT = cdpEndpoint;
     try {
@@ -21,7 +22,7 @@ export async function runLiveThroughputExecutor(options: LiveThroughputExecutorO
       else process.env.OPENCHROME_BENCH_CDP_ENDPOINT = previousEndpoint;
     }
   } catch (err) {
-    return { rows: [], cdpEndpoint: chrome?.endpoint ?? `http://127.0.0.1:${port}`, launchedChrome: Boolean(chrome), failureCategory: err instanceof Error ? err.message : String(err) };
+    return { rows: [], cdpEndpoint: chrome?.endpoint ?? cdpEndpoint, launchedChrome: Boolean(chrome), failureCategory: err instanceof Error ? err.message : String(err) };
   } finally {
     await chrome?.close();
   }

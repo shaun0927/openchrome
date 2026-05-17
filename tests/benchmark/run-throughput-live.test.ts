@@ -12,4 +12,20 @@ describe('live throughput executor', () => {
     // No live OpenChrome server is expected in CI, so the failure is explicit.
     expect(result.rows).toHaveLength(1);
   }, 30000);
+
+  test('preserves selected CDP endpoint on benchmark failure', async () => {
+    const close = jest.fn(async () => undefined);
+    const result = await runLiveThroughputExecutor({
+      argv: ['--library=openchrome'],
+      launchChrome: true,
+      port: 9555,
+      launcher: async () => ({ endpoint: 'http://127.0.0.1:9555', userDataDir: '/tmp/p', close }),
+      runBenchmark: async () => { throw new Error('benchmark failed'); },
+    });
+
+    expect(result.rows).toEqual([]);
+    expect(result.cdpEndpoint).toBe('http://127.0.0.1:9555');
+    expect(result.failureCategory).toMatch(/benchmark failed/);
+    expect(close).toHaveBeenCalled();
+  });
 });
