@@ -18,6 +18,13 @@ function toResponsesTools(tools: OpenAiBenchmarkTool[]): Array<Record<string, un
   }));
 }
 
+function reasoningOutputItems(raw: unknown): Array<Record<string, unknown>> {
+  if (!raw || typeof raw !== 'object') return [];
+  const output = (raw as { output?: unknown }).output;
+  if (!Array.isArray(output)) return [];
+  return output.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && (item as { type?: unknown }).type === 'reasoning');
+}
+
 export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesClient; adapter: MCPAdapter; model: string; instructions: string; user: string; tools: OpenAiBenchmarkTool[]; maxTurns?: number; budget?: BudgetCaps; }): Promise<OpenAiLoopResult> {
   const budget = options.budget ?? WEBVOYAGER_BUDGET;
   const maxTurns = options.maxTurns ?? budget.max_tool_iterations;
@@ -37,10 +44,9 @@ export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesCli
     const accounted = accountLlmBudget(turns.map((t) => ({ inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, toolCalls: t.toolCalls.length })), budget, DEFAULT_PRICING);
     if (accounted.aborted) return { turns, toolResults, finalText: turn.text, aborted: accounted.aborted, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
     if (turn.toolCalls.length === 0) return { turns, toolResults, finalText: turn.text, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
-    const preservedReasoning = raw && typeof raw === 'object' && Array.isArray((raw as { output?: unknown }).output)
-      ? ((raw as { output: unknown[] }).output.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && (item as { type?: unknown }).type === 'reasoning') as Array<Record<string, unknown>>)
-      : [];
-    const toolOutputs: Array<Record<string, unknown>> = [...preservedReasoning];
+    const toolOutputs: Array<Record<string, unknown>> = [
+      ...reasoningOutputItems(raw),
+    ];
     for (const call of turn.toolCalls) {
       const result = await options.adapter.callTool(call.name, call.arguments);
       toolResults.push(result);
