@@ -1,4 +1,9 @@
-import { buildBenchmarkReadinessReport, OPEN_BENCHMARK_ISSUES, renderBenchmarkReadinessMarkdown } from './benchmark-readiness';
+import {
+  ADDITIONAL_BENCHMARK_PR_SCOPES,
+  buildBenchmarkReadinessReport,
+  OPEN_BENCHMARK_ISSUES,
+  renderBenchmarkReadinessMarkdown,
+} from './benchmark-readiness';
 
 describe('benchmark readiness audit', () => {
   it('covers every currently open benchmark issue tracked by the audit', () => {
@@ -18,37 +23,54 @@ describe('benchmark readiness audit', () => {
       1302,
       1303,
       1304,
-      1305,
       1310,
     ]);
   });
 
-  it('states that the open benchmark suite is not fully measurable yet', () => {
-    const report = buildBenchmarkReadinessReport(new Date('2026-05-16T00:00:00.000Z'));
-    expect(report.summary.totalOpenBenchmarkIssues).toBe(16);
+  it('states that the open benchmark suite is not fully measurable or api-key-only ready yet', () => {
+    const report = buildBenchmarkReadinessReport(new Date('2026-05-17T00:00:00.000Z'));
+    expect(report.summary.totalOpenBenchmarkIssues).toBe(15);
     expect(report.summary.ready).toBe(0);
-    expect(report.summary.partial).toBe(11);
+    expect(report.summary.partial).toBe(10);
     expect(report.summary.notReady).toBe(5);
     expect(report.summary.headlineReady).toBe(0);
-    expect(report.summary.diagnosticOrSmokeOnly).toBe(11);
+    expect(report.summary.diagnosticOrSmokeOnly).toBe(10);
     expect(report.summary.notMeasurable).toBe(5);
     expect(report.summary.canMeasureEveryOpenBenchmarkIssue).toBe(false);
+    expect(report.summary.apiKeyOnlyReady).toBe(0);
+    expect(report.summary.nonKeyBlocked).toBe(15);
+    expect(report.summary.apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue).toBe(false);
   });
 
-  it('calls out the real-world task completion runner as scaffold-only', () => {
-    const report = buildBenchmarkReadinessReport(new Date('2026-05-16T00:00:00.000Z'));
-    const realworld = report.issues.find((issue) => issue.issue === 1305);
-    expect(realworld?.status).toBe('partial');
-    expect(realworld?.measurementReadiness).toBe('diagnostic_or_smoke_only');
-    expect(realworld?.evidence.join('\n')).toMatch(/bench:realworld/);
-    expect(realworld?.blockers.join('\n')).toMatch(/deterministic scaffold/);
+  it('keeps the closed #1305 real-world task runner out of the open-issue audit', () => {
+    const report = buildBenchmarkReadinessReport(new Date('2026-05-17T00:00:00.000Z'));
+    expect(report.issues.find((issue) => issue.issue === 1305)).toBeUndefined();
+    const headlineGate = report.issues.find((issue) => issue.issue === 1310);
+    expect(headlineGate?.status).toBe('partial');
+    expect(headlineGate?.measurementReadiness).toBe('diagnostic_or_smoke_only');
+    expect(headlineGate?.nonKeyBlockers?.join('\n')).toMatch(/live or recorded-real evidence/);
   });
 
-  it('renders a human-readable not-ready verdict', () => {
-    const report = buildBenchmarkReadinessReport(new Date('2026-05-16T00:00:00.000Z'));
+  it('records the additional PR ladder needed before API keys are the only remaining gate', () => {
+    expect(ADDITIONAL_BENCHMARK_PR_SCOPES.map((scope) => scope.id)).toEqual([
+      'PR-A',
+      'PR-B',
+      'PR-C',
+      'PR-D',
+      'PR-E',
+      'PR-F',
+    ]);
+    const coveredIssues = new Set(ADDITIONAL_BENCHMARK_PR_SCOPES.flatMap((scope) => scope.issues));
+    for (const issue of OPEN_BENCHMARK_ISSUES) expect(coveredIssues.has(issue.issue)).toBe(true);
+  });
+
+  it('renders a human-readable not-ready verdict and API-key-only PR scopes', () => {
+    const report = buildBenchmarkReadinessReport(new Date('2026-05-17T00:00:00.000Z'));
     const markdown = renderBenchmarkReadinessMarkdown(report);
     expect(markdown).toContain('**NOT READY:**');
-    expect(markdown).toContain('Issue matrix');
-    expect(markdown).toContain('#1305');
+    expect(markdown).toContain('API-key-only readiness');
+    expect(markdown).toContain('Additional PR scopes to reach API-key-only readiness');
+    expect(markdown).toContain('PR-A: Wire real LLM episode loops');
+    expect(markdown).not.toContain('#1305');
   });
 });
