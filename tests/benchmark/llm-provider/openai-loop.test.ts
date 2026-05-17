@@ -13,7 +13,7 @@ describe('OpenAI tool-use loop', () => {
     const result = await runOpenAiToolUseLoop({ client, adapter, model: 'gpt-test', instructions: 's', user: 'u', tools: [{ name: 'read_page', description: 'Read page', inputSchema: { type: 'object', properties: { tabId: { type: 'string' } } } }] });
     expect(adapter.callTool).toHaveBeenCalledWith('read_page', { tabId: 'a' });
     expect(client.create).toHaveBeenNthCalledWith(1, expect.objectContaining({ tools: [expect.objectContaining({ type: 'function', name: 'read_page', parameters: expect.objectContaining({ type: 'object' }) })] }));
-    expect(client.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ previous_response_id: 'resp-1', input: [expect.objectContaining({ type: 'reasoning', id: 'rs_1' }), expect.objectContaining({ type: 'function_call_output', call_id: 'c1' })] }));
+    expect(client.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ previous_response_id: 'resp-1', input: [expect.objectContaining({ type: 'reasoning', id: 'rs_1' }), expect.objectContaining({ type: 'function_call', call_id: 'c1' }), expect.objectContaining({ type: 'function_call_output', call_id: 'c1' })] }));
     expect(result.finalText).toBe('done');
     expect(result.totalTokens).toBe(27);
   });

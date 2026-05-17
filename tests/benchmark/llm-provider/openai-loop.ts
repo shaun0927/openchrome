@@ -18,11 +18,15 @@ function toResponsesTools(tools: OpenAiBenchmarkTool[]): Array<Record<string, un
   }));
 }
 
-function reasoningOutputItems(raw: unknown): Array<Record<string, unknown>> {
+function responseOutputContextItems(raw: unknown): Array<Record<string, unknown>> {
   if (!raw || typeof raw !== 'object') return [];
   const output = (raw as { output?: unknown }).output;
   if (!Array.isArray(output)) return [];
-  return output.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && (item as { type?: unknown }).type === 'reasoning');
+  return output.filter((item): item is Record<string, unknown> => {
+    if (!item || typeof item !== 'object') return false;
+    const type = (item as { type?: unknown }).type;
+    return type === 'reasoning' || type === 'function_call';
+  });
 }
 
 export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesClient; adapter: MCPAdapter; model: string; instructions: string; user: string; tools: OpenAiBenchmarkTool[]; maxTurns?: number; budget?: BudgetCaps; }): Promise<OpenAiLoopResult> {
@@ -45,7 +49,7 @@ export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesCli
     if (accounted.aborted) return { turns, toolResults, finalText: turn.text, aborted: accounted.aborted, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
     if (turn.toolCalls.length === 0) return { turns, toolResults, finalText: turn.text, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
     const toolOutputs: Array<Record<string, unknown>> = [
-      ...reasoningOutputItems(raw),
+      ...responseOutputContextItems(raw),
     ];
     for (const call of turn.toolCalls) {
       const result = await options.adapter.callTool(call.name, call.arguments);
