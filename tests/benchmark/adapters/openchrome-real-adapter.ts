@@ -47,18 +47,24 @@ interface MCPResponse {
   error?: { code: number; message: string };
 }
 
-export function chromePortFromCdpEndpoint(cdpEndpoint: string | undefined): string | undefined {
+export function cdpEndpointParts(cdpEndpoint: string | undefined): { host: string; port: string } | undefined {
   if (!cdpEndpoint) return undefined;
   try {
-    return String(new URL(cdpEndpoint).port || 9222);
+    const url = new URL(cdpEndpoint);
+    return { host: url.hostname || '127.0.0.1', port: String(url.port || 9222) };
   } catch {
     return undefined;
   }
 }
 
+export function chromePortFromCdpEndpoint(cdpEndpoint: string | undefined): string | undefined {
+  return cdpEndpointParts(cdpEndpoint)?.port;
+}
+
 export function openChromeServeEnvForCdpEndpoint(cdpEndpoint: string | undefined, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const chromePort = chromePortFromCdpEndpoint(cdpEndpoint);
-  return chromePort ? { ...baseEnv, CHROME_PORT: chromePort } : baseEnv;
+  const endpoint = cdpEndpointParts(cdpEndpoint);
+  return endpoint ? { ...baseEnv, CHROME_HOST: endpoint.host, CHROME_PORT: endpoint.port } : baseEnv;
 }
 
 export class OpenChromeRealAdapter implements MCPAdapter {

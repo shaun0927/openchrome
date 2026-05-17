@@ -341,7 +341,7 @@ describe('BenchmarkRunner', () => {
 
   test('configures OpenChrome MCP serve environment from managed CDP endpoint', () => {
     const env = openChromeServeEnvForCdpEndpoint('http://127.0.0.1:9444', { PATH: '/bin', CHROME_PORT: '9222' });
-    expect(env).toEqual({ PATH: '/bin', CHROME_PORT: '9444' });
+    expect(env).toEqual({ PATH: '/bin', CHROME_HOST: '127.0.0.1', CHROME_PORT: '9444' });
   });
 
   test('real adapter rejects tool results marked isError', async () => {
