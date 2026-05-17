@@ -36,6 +36,10 @@ assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, fi
 assert.throws(() => requireHeadlineReport({ results: [diagnosticRow] }, 'diagnostic-only report'), /contains no headline-eligible rows/);
 assert.throws(() => requireHeadlineReport({ results: [headlineRow, diagnosticRow] }, 'mixed report'), /diagnostic rows/);
 assert.throws(
+  () => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: 'aggregate summary', runs: [{ finalPostconditionEvidence: 'ok' }, { notes: 'missing structured evidence' }] }] }, 'partial aggregate report'),
+  /contains no headline-eligible rows/,
+);
+assert.throws(
   () => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: '' }] }, 'missing evidence'),
   /contains no headline-eligible rows/,
 );

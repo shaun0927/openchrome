@@ -28,9 +28,10 @@ function rowHasPostconditionEvidence(row) {
 }
 
 function hasPostconditionEvidence(result) {
-  if (rowHasPostconditionEvidence(result)) return true;
-  if (Array.isArray(result?.runs) && result.runs.length > 0) return result.runs.every(rowHasPostconditionEvidence);
-  return false;
+  if (Array.isArray(result?.runs) && result.runs.length > 0) {
+    return result.runs.every(rowHasPostconditionEvidence);
+  }
+  return rowHasPostconditionEvidence(result);
 }
 
 function classifyResult(result, index) {
