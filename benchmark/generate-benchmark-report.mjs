@@ -82,6 +82,10 @@ function enforceHeadlineInputs(argv = process.argv.slice(2)) {
   if (!existsSync(REALWORLD_ENVELOPE_PATH)) {
     throw new Error('Missing benchmark/results/realworld-task-completion.json for --require-headline');
   }
+  const realworldSection = readSection('REALWORLD-TASK-COMPLETION-REPORT.md');
+  if (!realworldSection || /Headline gate:\s*\*\*blocked\*\*/i.test(realworldSection)) {
+    throw new Error('REALWORLD-TASK-COMPLETION-REPORT.md is missing or still marks the headline gate as blocked');
+  }
   const envelope = JSON.parse(readFileSync(REALWORLD_ENVELOPE_PATH, 'utf8'));
   requireHeadlineReport(envelope, 'unified benchmark report real-world section');
 }

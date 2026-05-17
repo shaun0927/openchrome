@@ -8,7 +8,7 @@
  * envelopes and provides a fail-closed assertion for headline report generation.
  */
 
-const HEADLINE_MODES = new Set(['live', 'recorded-real']);
+const HEADLINE_MODES = new Set(['live', 'live-llm', 'recorded-real']);
 
 function getMode(result) {
   return result?.mode ?? result?.measurementMode ?? result?.metadata?.mode ?? result?.scenario?.mode ?? 'unknown';

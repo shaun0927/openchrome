@@ -31,6 +31,7 @@ assert.match(mixed.failures[0], /dry-run mode/);
 assert.match(mixed.failures[0], /not headline-eligible/);
 
 assert.doesNotThrow(() => requireHeadlineReport({ results: [headlineRow] }, 'recorded-real report'));
+assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, measurementMode: 'live-llm' }] }, 'live-llm report'));
 assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, finalPostconditionEvaluated: true }] }, 'evaluated aggregate report'));
 assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, runs: [{ finalPostconditionEvidence: 'postcondition checked' }] }] }, 'aggregate with run evidence report'));
 assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, runs: [{ notes: 'recorded final-postcondition evidence: postcondition checked' }] }] }, 'aggregate with recorded note evidence report'));
