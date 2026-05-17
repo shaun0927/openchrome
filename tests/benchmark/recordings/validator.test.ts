@@ -74,6 +74,25 @@ describe('recording corpus validator', () => {
     expect(result.errors).toContain('recording corpus contains secret-like text');
   });
 
+  it('does not reject benign prose about bearer authentication', () => {
+    const benign = run();
+    benign.finalPostconditionEvidence = 'bearer authentication was requested before checkout';
+
+    const result = validateRecordingCorpus(manifest(), [benign]);
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects credential-shaped bearer tokens before corpus publication', () => {
+    const leaked = run();
+    leaked.finalPostconditionEvidence = 'authorization: bearer abcdefghijklmnopqrstuvwxyz.abcdefghijklmno';
+
+    const result = validateRecordingCorpus(manifest(), [leaked]);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('recording corpus contains secret-like text');
+  });
+
   it('does not reject benign task ids that contain sk- substrings', () => {
     const benign = run();
     benign.taskId = 'risk-9-task-1';
