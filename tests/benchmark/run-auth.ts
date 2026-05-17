@@ -31,6 +31,7 @@ import * as path from 'path';
 import { countLoc } from './auth-setup-scripts/loc-counter';
 import { captureEnvironment } from './utils/environment';
 import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
+import { startAuthApp } from './fixtures/auth-app/server';
 
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'auth-usability.json');
 const SCRIPTS_DIR = path.join(__dirname, 'auth-setup-scripts');
@@ -65,6 +66,8 @@ export interface AuthRow {
    * harness pending the live driver).
    */
   loggedInSmoked: boolean;
+  /** Evidence from the reproducible local login-wall fixture. */
+  localFixtureSmoke: 'passed' | 'failed' | 'not-run';
   /** One-line note for the report renderer. */
   note: string;
 }
@@ -88,7 +91,7 @@ const LIBRARY_NOTES: Record<AuthLibrary, { profileAttach: boolean; note: string 
   },
 };
 
-function buildAuthRow(library: AuthLibrary): AuthRow {
+function buildAuthRow(library: AuthLibrary, smoke?: { passed: boolean; wallClockMinutes: number; evidence: string }): AuthRow {
   const scriptPath = path.join(SCRIPTS_DIR, `${library}.auth-setup.ts`);
   if (!fs.existsSync(scriptPath)) {
     throw new Error(`Missing auth-setup script for ${library} at ${scriptPath}`);
@@ -104,14 +107,48 @@ function buildAuthRow(library: AuthLibrary): AuthRow {
     commentLines: loc.commentLines,
     totalLines: loc.totalLines,
     profileAttach: meta.profileAttach,
-    wallClockMinutes: null,
-    loggedInSmoked: false,
-    note: meta.note,
+    wallClockMinutes: smoke?.wallClockMinutes ?? null,
+    loggedInSmoked: smoke?.passed ?? false,
+    localFixtureSmoke: smoke ? (smoke.passed ? 'passed' : 'failed') : 'not-run',
+    note: smoke ? `${meta.note} Local fixture smoke: ${smoke.evidence}` : meta.note,
   };
 }
 
+async function smokeLocalAuthFixture(): Promise<{ passed: boolean; wallClockMinutes: number; evidence: string }> {
+  const app = await startAuthApp();
+  const started = Date.now();
+  try {
+    const login = await fetch(`${app.url}/login`);
+    if (!login.ok) throw new Error(`GET /login HTTP ${login.status}`);
+    const body = new URLSearchParams({ username: app.credentials.username, password: app.credentials.password });
+    const post = await fetch(`${app.url}/login`, {
+      method: 'POST',
+      body,
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    const cookie = post.headers.get('set-cookie');
+    if (post.status !== 302 || !cookie) throw new Error(`POST /login did not set session cookie; status=${post.status}`);
+    const dashboard = await fetch(`${app.url}/`, { headers: { cookie } });
+    const html = await dashboard.text();
+    const passed = dashboard.ok && html.includes('data-testid="protected-content"');
+    return {
+      passed,
+      wallClockMinutes: (Date.now() - started) / 60000,
+      evidence: passed ? 'credential login reached protected content' : 'protected content not observed after login',
+    };
+  } finally {
+    await app.close();
+  }
+}
+
 export function runAuthBenchmark(): AuthRow[] {
-  return AUTH_LIBRARIES.map(buildAuthRow);
+  return AUTH_LIBRARIES.map((library) => buildAuthRow(library));
+}
+
+export async function runAuthBenchmarkWithLocalSmoke(): Promise<AuthRow[]> {
+  const smoke = await smokeLocalAuthFixture();
+  return AUTH_LIBRARIES.map((library) => buildAuthRow(library, smoke));
 }
 
 function readRepoVersion(): string {
@@ -142,8 +179,9 @@ function formatReport(rows: AuthRow[]): string {
   return lines.join('\n');
 }
 
-export function main(): void {
-  const rows = runAuthBenchmark();
+export async function main(argv = process.argv.slice(2)): Promise<void> {
+  const runLocalSmoke = argv.includes('--local-smoke') || process.env.OPENCHROME_BENCH_AUTH_LOCAL_SMOKE === '1';
+  const rows = runLocalSmoke ? await runAuthBenchmarkWithLocalSmoke() : runAuthBenchmark();
   const envelope = buildResultEnvelope({
     axis: 'auth-usability',
     environment: captureEnvironment(),
@@ -161,17 +199,15 @@ export function main(): void {
   console.error(formatReport(rows));
   console.error(`\nSaved: ${path.relative(process.cwd(), OUTPUT_PATH)}`);
   console.error(
-    '\nNote: wall-clock minutes + logged-in smoke require the live driver and ship in a follow-up.\n' +
+    '\nNote: --local-smoke measures the reproducible login-wall fixture without external accounts; third-party live-tier auth remains operator-provided only.\n' +
       'Ethics reminder: live-tier benchmarks must use only the operator\'s own / authorized accounts.\n' +
       'No third-party credentials may be committed to this repository.',
   );
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (err) {
+  main().catch((err) => {
     console.error('Auth benchmark failed:', err);
     process.exit(1);
-  }
+  });
 }
