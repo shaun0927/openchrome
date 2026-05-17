@@ -2,8 +2,8 @@
   "axis": "foundation",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-17T16:01:19.485Z",
-    "gitSha": "43e6bb9d",
+    "capturedAt": "2026-05-17T16:26:02.366Z",
+    "gitSha": "542ab43f",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -105,7 +105,7 @@
       "sameTaskContract": true,
       "status": "passed",
       "skipCategory": "none",
-      "durationMs": 53,
+      "durationMs": 164,
       "payloadChars": 3154,
       "skipReason": "",
       "failure": ""

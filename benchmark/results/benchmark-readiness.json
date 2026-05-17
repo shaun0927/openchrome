@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-05-17T16:23:01.351Z",
+  "generatedAt": "2026-05-17T16:26:33.455Z",
   "summary": {
     "totalOpenBenchmarkIssues": 15,
     "ready": 0,
-    "partial": 12,
-    "notReady": 3,
+    "partial": 13,
+    "notReady": 2,
     "headlineReady": 0,
-    "diagnosticOrSmokeOnly": 12,
-    "notMeasurable": 3,
+    "diagnosticOrSmokeOnly": 13,
+    "notMeasurable": 2,
     "canMeasureEveryOpenBenchmarkIssue": false,
     "apiKeyOnlyReady": 0,
     "nonKeyBlocked": 15,
@@ -284,23 +284,23 @@
       "issue": 1302,
       "title": "Benchmark #B follow-up: native/passive competitor adapter matrix",
       "url": "https://github.com/shaun0927/openchrome/issues/1302",
-      "status": "not_ready",
-      "measurementReadiness": "not_measurable",
+      "status": "partial",
+      "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Library routing identities and dry-run projection exist."
+        "Library routing identities, exact version pins, native execution descriptors, dry-run projections, and adapter-level setup-error surfaces exist for playwright-mcp and browser-use."
       ],
       "blockers": [
-        "playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`."
+        "Native competitor dry-runs and dependency skips are wired, but live/recorded-real LLM rows still require operator runtime and provider credentials before headline use."
       ],
       "nextActions": [
-        "Wire native mode for playwright-mcp and browser-use and keep passive mode as secondary."
+        "Run operator-provided native competitor rows after provider preflight and keep passive rows secondary."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [
         "ANTHROPIC_API_KEY or OPENAI_API_KEY"
       ],
       "nonKeyBlockers": [
-        "playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`."
+        "Native competitor dry-runs and dependency skips are wired, but live/recorded-real LLM rows still require operator runtime and provider credentials before headline use."
       ]
     },
     {
