@@ -82,6 +82,8 @@ export interface ThroughputRunOptions {
   includeLiveCompetitors: boolean;
   /** Reuse one adapter setup per library, or cold-start setup/teardown for every concurrency cell. */
   sessionMode: ThroughputSessionMode;
+  /** CDP endpoint for live Chrome-backed competitor adapters. */
+  cdpEndpoint: string;
 }
 
 export interface ThroughputRow {
@@ -192,6 +194,7 @@ export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
   const sessionMode = parseSessionMode(
     flagValue(argv, "--session-mode") ?? process.env.OPENCHROME_BENCH_SESSION_MODE,
   );
+  const cdpEndpoint = flagValue(argv, "--cdp-endpoint") ?? process.env.OPENCHROME_BENCH_CDP_ENDPOINT ?? 'http://127.0.0.1:9222';
   return {
     ciMode,
     iterations,
@@ -201,6 +204,7 @@ export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
     library,
     includeLiveCompetitors,
     sessionMode,
+    cdpEndpoint,
   };
 }
 
@@ -301,14 +305,14 @@ function buildAdapters(options: ThroughputRunOptions): AdapterEntry[] {
       entries.push({
         library: "Playwright",
         mode: "raw-html-cdp",
-        adapter: new PlaywrightAdapter(),
+        adapter: new PlaywrightAdapter({ cdpEndpoint: options.cdpEndpoint }),
         requiresLiveChrome: true,
       });
     } else if (library === "puppeteer") {
       entries.push({
         library: "Puppeteer",
         mode: "raw-html-cdp",
-        adapter: new PuppeteerAdapter(),
+        adapter: new PuppeteerAdapter({ browserURL: options.cdpEndpoint }),
         requiresLiveChrome: true,
       });
     }

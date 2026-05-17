@@ -10,9 +10,16 @@ export async function runLiveThroughputExecutor(options: LiveThroughputExecutorO
   try {
     if (options.launchChrome) chrome = await (options.launcher ?? ((p) => launchManagedChrome({ port: p })))(port);
     const cdpEndpoint = chrome?.endpoint ?? process.env.OPENCHROME_BENCH_CDP_ENDPOINT ?? `http://127.0.0.1:${port}`;
-    const args = parseThroughputArgs([...options.argv, '--live']);
-    const rows = await (options.runBenchmark ?? runThroughputBenchmark)(args);
-    return { rows, cdpEndpoint, launchedChrome: Boolean(chrome) };
+    const previousEndpoint = process.env.OPENCHROME_BENCH_CDP_ENDPOINT;
+    process.env.OPENCHROME_BENCH_CDP_ENDPOINT = cdpEndpoint;
+    try {
+      const args = parseThroughputArgs([...options.argv, '--live', `--cdp-endpoint=${cdpEndpoint}`]);
+      const rows = await (options.runBenchmark ?? runThroughputBenchmark)(args);
+      return { rows, cdpEndpoint, launchedChrome: Boolean(chrome) };
+    } finally {
+      if (previousEndpoint === undefined) delete process.env.OPENCHROME_BENCH_CDP_ENDPOINT;
+      else process.env.OPENCHROME_BENCH_CDP_ENDPOINT = previousEndpoint;
+    }
   } catch (err) {
     return { rows: [], cdpEndpoint: chrome?.endpoint ?? `http://127.0.0.1:${port}`, launchedChrome: Boolean(chrome), failureCategory: err instanceof Error ? err.message : String(err) };
   } finally {

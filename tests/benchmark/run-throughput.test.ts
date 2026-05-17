@@ -25,6 +25,12 @@ describe('run-throughput competitor selection', () => {
     expect(opts.concurrencies).toEqual([1, 5]);
     expect(opts.iterations).toBe(5);
     expect(opts.sessionMode).toBe('reuse');
+    expect(opts.cdpEndpoint).toBe('http://127.0.0.1:9222');
+  });
+
+  test('parses CDP endpoint flag', () => {
+    const opts = parseThroughputArgs(['--cdp-endpoint=http://127.0.0.1:9444']);
+    expect(opts.cdpEndpoint).toBe('http://127.0.0.1:9444');
   });
 
   test('parses cold session mode', () => {
