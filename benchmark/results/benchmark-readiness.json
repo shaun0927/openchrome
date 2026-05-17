@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-05-17T16:29:42.942Z",
+  "generatedAt": "2026-05-17T16:32:47.118Z",
   "summary": {
     "totalOpenBenchmarkIssues": 15,
     "ready": 0,
-    "partial": 14,
-    "notReady": 1,
+    "partial": 15,
+    "notReady": 0,
     "headlineReady": 0,
-    "diagnosticOrSmokeOnly": 14,
-    "notMeasurable": 1,
+    "diagnosticOrSmokeOnly": 15,
+    "notMeasurable": 0,
     "canMeasureEveryOpenBenchmarkIssue": false,
     "apiKeyOnlyReady": 0,
     "nonKeyBlocked": 15,
@@ -38,21 +38,21 @@
       "issue": 1254,
       "title": "Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source",
       "url": "https://github.com/shaun0927/openchrome/issues/1254",
-      "status": "not_ready",
-      "measurementReadiness": "not_measurable",
+      "status": "partial",
+      "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Some axis runners and result envelopes exist under tests/benchmark/ and benchmark/results/."
+        "Axis runners, result envelopes, ordered full-live preflight, recorded report wrapper, cost estimate, and readiness/headline gates exist."
       ],
       "blockers": [
-        "Multiple child axes remain partial or scaffolded; unified report still marks several sections pending."
+        "The suite still lacks live/recorded-real headline-eligible rows across the full comparison, so the full report remains diagnostic until operator evidence is supplied."
       ],
       "nextActions": [
-        "Close only after #1255-#1261 plus real-world follow-ups have headline-eligible measured rows."
+        "Run the ordered live/recorded workflow after preflight passes and keep strict readiness failing until headline eligibility is justified by artifacts."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [],
       "nonKeyBlockers": [
-        "Multiple child axes remain partial or scaffolded; unified report still marks several sections pending."
+        "The suite still lacks live/recorded-real headline-eligible rows across the full comparison, so the full report remains diagnostic until operator evidence is supplied."
       ]
     },
     {
@@ -349,20 +349,20 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Episode harness reports include `claimEligibility`, and the unified report documents primary evidence policy."
+        "Episode harness reports include `claimEligibility`, unified report headline enforcement exists, and full benchmark preflight/readiness gates fail closed before live promotion."
       ],
       "blockers": [
-        "Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence."
+        "No current row can be promoted without live or recorded-real evidence plus N/version/LLM gates, so strict readiness must still fail."
       ],
       "nextActions": [
-        "Extend claim eligibility checks to every live/recorded-real runner and fail report generation on missing eligibility metadata."
+        "Use `bench:full:live -- --preflight` and strict readiness as the release gate before promoting any headline row."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [
         "ANTHROPIC_API_KEY or OPENAI_API_KEY"
       ],
       "nonKeyBlockers": [
-        "Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence."
+        "No current row can be promoted without live or recorded-real evidence plus N/version/LLM gates, so strict readiness must still fail."
       ]
     }
   ],
