@@ -1,5 +1,3 @@
-import * as cheerio from 'cheerio';
-
 import type { Extractor, ExtractorContext, ExtractorResult } from './types';
 import type { MCPAdapter } from '../benchmark-runner';
 
@@ -10,7 +8,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function serializedSnapshotFieldText(payload: string, fieldKey: string): string | null {
+function fieldTextFromMarkupOrSnapshot(payload: string, fieldKey: string): string | null {
   const escapedKey = escapeRegExp(fieldKey);
   const snapshotLine = new RegExp(String.raw`<[^>]*\bdata-field=(?:"${escapedKey}"|'${escapedKey}')[^>]*\/?>\s*([^<\n]*)`, 'i');
   const match = payload.match(snapshotLine);
@@ -22,7 +20,7 @@ function serializedSnapshotFields(payload: string, ctx: ExtractorContext): Recor
   const extracted: Record<string, string | null> = Object.fromEntries(ctx.groundTruth.fields.map((field) => [field.key, null]));
   let found = false;
   for (const field of ctx.groundTruth.fields) {
-    const value = serializedSnapshotFieldText(payload, field.key);
+    const value = fieldTextFromMarkupOrSnapshot(payload, field.key);
     if (value !== null) found = true;
     extracted[field.key] = value;
   }
@@ -46,15 +44,7 @@ function fieldExtractionFromPayload(payload: string, ctx: ExtractorContext): Rec
   }
   const snapshotExtracted = serializedSnapshotFields(payload, ctx);
   if (snapshotExtracted) return snapshotExtracted;
-  if (/<[a-z][\s\S]*>/i.test(payload)) {
-    const $ = cheerio.load(payload);
-    for (const field of ctx.groundTruth.fields) {
-      const node = $(`[data-field="${field.key}"]`).first();
-      const htmlText = node.length > 0 ? node.text().trim() : '';
-      extracted[field.key] = htmlText || null;
-    }
-  }
-  return extracted;
+  return snapshotExtracted ?? extracted;
 }
 
 export function createLiveMcpExtractor(options: LiveExtractorFactoryOptions): Extractor {
