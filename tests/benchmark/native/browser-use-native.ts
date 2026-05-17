@@ -1,6 +1,7 @@
 import type { BridgeResponse, BrowserUseBridgeTransport } from '../adapters/browser-use-adapter';
 
 let requestSeq = 0;
+const lifecycleState = new WeakMap<BrowserUseBridgeTransport, { active: number }>();
 
 function nextRequestId(): number {
   requestSeq = (requestSeq % Number.MAX_SAFE_INTEGER) + 1;
@@ -14,8 +15,11 @@ function isTimeoutError(err: unknown): boolean {
 export interface BrowserUseNativeResult { library: 'browser-use'; mode: 'native'; taskId: string; status: 'passed' | 'failed' | 'timeout'; finalText: string; trace: unknown[]; failureCategory?: string; }
 
 export async function runBrowserUseNativeTask(transport: BrowserUseBridgeTransport, task: { id: string; startUrl: string; goal: string }, timeoutMs = 60000): Promise<BrowserUseNativeResult> {
+  const lifecycle = lifecycleState.get(transport) ?? { active: 0 };
+  lifecycle.active += 1;
+  lifecycleState.set(transport, lifecycle);
   try {
-    await transport.start();
+    if (lifecycle.active === 1) await transport.start();
     const response: BridgeResponse = await transport.send({ id: nextRequestId(), method: 'run_task' as never, args: { startUrl: task.startUrl, instruction: task.goal, timeoutMs } });
     if (!response.ok) return { library: 'browser-use', mode: 'native', taskId: task.id, status: 'failed', finalText: '', trace: [], failureCategory: response.error ?? 'browser-use bridge error' };
     const result = response.result ?? {};
@@ -33,6 +37,10 @@ export async function runBrowserUseNativeTask(transport: BrowserUseBridgeTranspo
     if (isTimeoutError(err)) return { library: 'browser-use', mode: 'native', taskId: task.id, status: 'timeout', finalText: '', trace: [], failureCategory: 'timeout' };
     return { library: 'browser-use', mode: 'native', taskId: task.id, status: 'failed', finalText: '', trace: [], failureCategory: err instanceof Error ? err.message : String(err) };
   } finally {
-    await transport.stop().catch(() => undefined);
+    lifecycle.active -= 1;
+    if (lifecycle.active === 0) {
+      lifecycleState.delete(transport);
+      await transport.stop().catch(() => undefined);
+    }
   }
 }

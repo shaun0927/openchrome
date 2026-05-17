@@ -1,4 +1,5 @@
 /// <reference types="jest" />
+import type { BridgeResponse } from '../adapters/browser-use-adapter';
 import { runBrowserUseNativeTask } from './browser-use-native';
 
 describe('browser-use native loop', () => {
@@ -36,6 +37,27 @@ describe('browser-use native loop', () => {
 
     const ids = (transport.send as jest.Mock).mock.calls.map(([request]) => request.id);
     expect(new Set(ids).size).toBe(2);
+  });
+
+  test('keeps shared transport open until overlapping calls finish', async () => {
+    let releaseFirst: (() => void) | undefined;
+    const first = new Promise((resolve) => { releaseFirst = () => resolve({ id: 1, ok: true, result: { status: 'passed', finalText: 'one', trace: [] } }); });
+    const transport = {
+      start: jest.fn(async () => undefined),
+      stop: jest.fn(async () => undefined),
+      send: jest.fn(async (request): Promise<BridgeResponse> => {
+        if (request.args.instruction === 'one') return first as Promise<BridgeResponse>;
+        return { id: 2, ok: true, result: { status: 'passed', finalText: 'two', trace: [] } };
+      }),
+    };
+
+    const pending = runBrowserUseNativeTask(transport, { id: 'rw1', startUrl: 'http://x', goal: 'one' });
+    const second = await runBrowserUseNativeTask(transport, { id: 'rw2', startUrl: 'http://x', goal: 'two' });
+    expect(second.status).toBe('passed');
+    expect(transport.stop).not.toHaveBeenCalled();
+    releaseFirst?.();
+    await pending;
+    expect(transport.stop).toHaveBeenCalledTimes(1);
   });
 
   test('returns failed result on bridge error', async () => {
