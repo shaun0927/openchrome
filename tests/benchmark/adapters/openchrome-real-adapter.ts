@@ -54,6 +54,11 @@ export function chromePortFromCdpEndpoint(cdpEndpoint: string | undefined): stri
   }
 }
 
+export function openChromeServeEnvForCdpEndpoint(cdpEndpoint: string | undefined, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const chromePort = chromePortFromCdpEndpoint(cdpEndpoint);
+  return chromePort ? { ...baseEnv, CHROME_PORT: chromePort } : baseEnv;
+}
+
 export class OpenChromeRealAdapter implements MCPAdapter {
   name = 'OpenChrome';
   mode: string;
@@ -82,10 +87,9 @@ export class OpenChromeRealAdapter implements MCPAdapter {
 
   async setup(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const chromePort = chromePortFromCdpEndpoint(this.options.cdpEndpoint);
       this.process = spawn('node', [this.options.serverPath, 'serve'], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: chromePort ? { ...process.env, CHROME_PORT: chromePort } : process.env,
+        env: openChromeServeEnvForCdpEndpoint(this.options.cdpEndpoint),
       });
 
       let ready = false;

@@ -8,7 +8,7 @@ import {
   BenchmarkRunnerOptions,
   BenchmarkReport,
 } from './benchmark-runner';
-import { chromePortFromCdpEndpoint, OpenChromeRealAdapter } from './adapters/openchrome-real-adapter';
+import { chromePortFromCdpEndpoint, openChromeServeEnvForCdpEndpoint, OpenChromeRealAdapter } from './adapters/openchrome-real-adapter';
 import { main, writeCiOutput } from './run';
 
 // ---------------------------------------------------------------------------
@@ -337,6 +337,11 @@ describe('BenchmarkRunner', () => {
     expect(chromePortFromCdpEndpoint('http://127.0.0.1:9444')).toBe('9444');
     expect(chromePortFromCdpEndpoint('http://127.0.0.1')).toBe('9222');
     expect(chromePortFromCdpEndpoint('not a url')).toBeUndefined();
+  });
+
+  test('configures OpenChrome MCP serve environment from managed CDP endpoint', () => {
+    const env = openChromeServeEnvForCdpEndpoint('http://127.0.0.1:9444', { PATH: '/bin', CHROME_PORT: '9222' });
+    expect(env).toEqual({ PATH: '/bin', CHROME_PORT: '9444' });
   });
 
   test('real adapter rejects tool results marked isError', async () => {
