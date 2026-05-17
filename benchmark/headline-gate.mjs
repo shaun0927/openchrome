@@ -11,7 +11,7 @@
 const HEADLINE_MODES = new Set(['live', 'recorded-real']);
 
 function getMode(result) {
-  return result?.mode ?? result?.metadata?.mode ?? result?.scenario?.mode ?? 'unknown';
+  return result?.mode ?? result?.measurementMode ?? result?.metadata?.mode ?? result?.scenario?.mode ?? 'unknown';
 }
 
 function getLibrary(result) {
@@ -24,7 +24,7 @@ function getTaskId(result) {
 
 function hasPostconditionEvidence(result) {
   const evidence = result?.finalPostconditionEvidence ?? result?.postconditionEvidence ?? result?.evidence?.finalPostcondition;
-  return typeof evidence === 'string' && evidence.trim().length > 0;
+  return (typeof evidence === 'string' && evidence.trim().length > 0) || result?.finalPostconditionEvaluated === true;
 }
 
 function classifyResult(result, index) {

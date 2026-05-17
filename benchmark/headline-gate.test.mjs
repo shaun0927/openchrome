@@ -4,7 +4,7 @@ import { partitionHeadlineResults, requireHeadlineReport } from './headline-gate
 const headlineRow = {
   library: 'openchrome',
   taskId: 'checkout-product',
-  mode: 'recorded-real',
+  measurementMode: 'recorded-real',
   finalPostconditionEvidence: 'cart contains expected product',
   claimEligibility: { eligible: true, reasons: [] },
 };
@@ -31,6 +31,7 @@ assert.match(mixed.failures[0], /dry-run mode/);
 assert.match(mixed.failures[0], /not headline-eligible/);
 
 assert.doesNotThrow(() => requireHeadlineReport({ results: [headlineRow] }, 'recorded-real report'));
+assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, finalPostconditionEvaluated: true }] }, 'evaluated aggregate report'));
 assert.throws(() => requireHeadlineReport({ results: [diagnosticRow] }, 'diagnostic-only report'), /contains no headline-eligible rows/);
 assert.throws(() => requireHeadlineReport({ results: [headlineRow, diagnosticRow] }, 'mixed report'), /diagnostic rows/);
 assert.throws(

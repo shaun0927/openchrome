@@ -2,7 +2,8 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { findClaimEligibilityFailures, requireHeadlineEligibility } from './claim-eligibility.mjs';
+import { findClaimEligibilityFailures } from './claim-eligibility.mjs';
+import { requireHeadlineReport } from './headline-gate.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,7 +34,7 @@ function main(argv = process.argv.slice(2)) {
   }
 
   if (requireHeadline) {
-    requireHeadlineEligibility(envelope, 'realworld-task-completion');
+    requireHeadlineReport(envelope, 'realworld-task-completion');
   }
   const eligibilityFailures = findClaimEligibilityFailures(envelope);
 
