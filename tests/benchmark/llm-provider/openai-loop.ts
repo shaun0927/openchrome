@@ -18,22 +18,16 @@ function toResponsesTools(tools: OpenAiBenchmarkTool[]): Array<Record<string, un
   }));
 }
 
-function toResponseInputItems(raw: unknown): Array<Record<string, unknown>> {
-  if (!raw || typeof raw !== 'object') return [];
-  const output = (raw as { output?: unknown }).output;
-  return Array.isArray(output) ? output.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object') : [];
-}
-
 export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesClient; adapter: MCPAdapter; model: string; instructions: string; user: string; tools: OpenAiBenchmarkTool[]; maxTurns?: number; budget?: BudgetCaps; }): Promise<OpenAiLoopResult> {
   const budget = options.budget ?? WEBVOYAGER_BUDGET;
   const maxTurns = options.maxTurns ?? budget.max_tool_iterations;
   const turns: NormalizedLlmTurn[] = [];
   const toolResults: MCPToolResult[] = [];
-  const input: Array<Record<string, unknown>> = [{ role: 'user', content: options.user }];
+  let nextInput: Array<Record<string, unknown>> = [{ role: 'user', content: options.user }];
   const tools = toResponsesTools(options.tools);
   let previousResponseId: string | undefined;
   for (let i = 0; i < maxTurns; i++) {
-    const request: Record<string, unknown> = { model: options.model, instructions: options.instructions, input, tools };
+    const request: Record<string, unknown> = { model: options.model, instructions: options.instructions, input: nextInput, tools };
     if (previousResponseId) request.previous_response_id = previousResponseId;
     const raw = await options.client.create(request);
     const responseId = raw && typeof raw === 'object' ? (raw as { id?: unknown }).id : undefined;
@@ -43,12 +37,13 @@ export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesCli
     const accounted = accountLlmBudget(turns.map((t) => ({ inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, toolCalls: t.toolCalls.length })), budget, DEFAULT_PRICING);
     if (accounted.aborted) return { turns, toolResults, finalText: turn.text, aborted: accounted.aborted, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
     if (turn.toolCalls.length === 0) return { turns, toolResults, finalText: turn.text, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
-    input.push(...toResponseInputItems(raw));
+    const toolOutputs: Array<Record<string, unknown>> = [];
     for (const call of turn.toolCalls) {
       const result = await options.adapter.callTool(call.name, call.arguments);
       toolResults.push(result);
-      input.push({ type: 'function_call_output', call_id: call.id, output: result.content?.map((c) => c.text ?? '').join('\n') ?? '' });
+      toolOutputs.push({ type: 'function_call_output', call_id: call.id, output: result.content?.map((c) => c.text ?? '').join('\n') ?? '' });
     }
+    nextInput = toolOutputs;
   }
   const accounted = accountLlmBudget(turns.map((t) => ({ inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, toolCalls: t.toolCalls.length })), budget, DEFAULT_PRICING);
   return { turns, toolResults, finalText: turns.at(-1)?.text ?? '', aborted: 'MAX_ITERATIONS', totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
