@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T15:56:16.091Z
+Generated: 2026-05-17T16:01:48.600Z
 
 ## Verdict
 
@@ -17,7 +17,7 @@ Generated: 2026-05-17T15:56:16.091Z
 | Not measurable yet | 5 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
-| Stale OpenChrome result artifacts | 10 |
+| Stale OpenChrome result artifacts | 9 |
 
 ## Issue matrix
 
@@ -268,7 +268,6 @@ These committed result artifacts contain OpenChrome version pins older than the 
 | Artifact | Expected OpenChrome version | Found OpenChrome versions |
 | --- | --- | --- |
 | `benchmark/results/auth-usability.json` | `1.12.4` | `1.12.2` |
-| `benchmark/results/competitor-smoke.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/dx.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/episode-token-cost.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/longrun-stability.json` | `1.12.4` | `1.11.0` |

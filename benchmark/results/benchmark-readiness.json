@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-17T15:56:16.091Z",
+  "generatedAt": "2026-05-17T16:01:48.600Z",
   "summary": {
     "totalOpenBenchmarkIssues": 15,
     "ready": 0,
@@ -12,20 +12,13 @@
     "apiKeyOnlyReady": 0,
     "nonKeyBlocked": 15,
     "apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue": false,
-    "staleResultArtifactCount": 10
+    "staleResultArtifactCount": 9
   },
   "artifactFreshness": {
     "currentOpenChromeVersion": "1.12.4",
     "staleArtifacts": [
       {
         "file": "benchmark/results/auth-usability.json",
-        "expectedOpenChromeVersion": "1.12.4",
-        "foundVersions": [
-          "1.12.2"
-        ]
-      },
-      {
-        "file": "benchmark/results/competitor-smoke.json",
         "expectedOpenChromeVersion": "1.12.4",
         "foundVersions": [
           "1.12.2"

@@ -15,7 +15,12 @@ describe('competitor smoke matrix', () => {
     expect(rows.map((row) => row.library).sort()).toEqual(['Crawlee', 'OpenChrome', 'Playwright', 'Puppeteer', 'browser-use', 'playwright-mcp'].sort());
     expect(rows.find((row) => row.library === 'OpenChrome')?.status).toBe('passed');
     expect(rows.find((row) => row.library === 'Crawlee')?.status).toBe('passed');
-    expect(rows.find((row) => row.library === 'Playwright')?.status).toBe('skipped');
+    const playwright = rows.find((row) => row.library === 'Playwright');
+    expect(playwright?.status).toBe('skipped');
+    expect(playwright?.skipCategory).toBe('not_requested');
+    expect(playwright?.version).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+/);
+    expect(playwright?.versionPinned).toBe(true);
+    expect(rows.find((row) => row.library === 'OpenChrome')?.version).toBe('1.12.4');
     expect(rows.every((row) => row.sameTaskContract)).toBe(true);
   }, 30000);
 });
