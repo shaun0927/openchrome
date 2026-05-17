@@ -15,5 +15,25 @@ describe('live token extractor wiring', () => {
     expect(result.payload).toContain('Hello');
     expect(result.extracted.title).toBe('Hello');
     expect(adapter.callTool).toHaveBeenCalledWith('read_page', { tabId: 't', mode: 'dom' });
+    expect(adapter.callTool).toHaveBeenCalledWith('tabs_close', { tabId: 't' });
+  });
+
+  test('closes created tabs when read_page fails', async () => {
+    const adapter: MCPAdapter = {
+      name: 'mock',
+      mode: 'live',
+      kind: 'library',
+      teardown: jest.fn(),
+      callTool: jest.fn(async (tool: string) => {
+        if (tool === 'tabs_create') return { content: [{ type: 'text', text: '{\"tabId\":\"t\"}' }] };
+        if (tool === 'read_page') return { isError: true, content: [{ type: 'text', text: 'read failed' }] };
+        return { content: [{ type: 'text', text: 'closed' }] };
+      }),
+    };
+
+    await expect(extractLiveMcpPayload({ library: 'openchrome', mode: 'ax', adapterFactory: () => adapter }, 'http://x', ctx)).rejects.toThrow(/read failed/);
+
+    expect(adapter.callTool).toHaveBeenCalledWith('tabs_close', { tabId: 't' });
+    expect(adapter.teardown).toHaveBeenCalled();
   });
 });
