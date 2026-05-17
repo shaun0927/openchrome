@@ -2,8 +2,8 @@
   "axis": "auth-usability",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-15T09:15:28.564Z",
-    "gitSha": "a03b097c",
+    "capturedAt": "2026-05-17T01:18:22.800Z",
+    "gitSha": "69a373f5",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -11,13 +11,13 @@
     "cpuModel": "Apple M5",
     "cpuCount": 10,
     "totalMemoryBytes": 17179869184,
-    "chromeVersion": "Google Chrome 148.0.7778.98",
+    "chromeVersion": "Google Chrome 148.0.7778.168",
     "networkProfile": "unthrottled"
   },
   "competitors": [
     {
       "name": "openchrome",
-      "version": "1.11.0"
+      "version": "1.12.2"
     },
     {
       "name": "playwright",
@@ -42,9 +42,10 @@
       "commentLines": 0,
       "totalLines": 17,
       "profileAttach": true,
-      "wallClockMinutes": null,
-      "loggedInSmoked": false,
-      "note": "list_profiles + profile attach inherits a real Chrome profile's session with zero setup code."
+      "wallClockMinutes": 0.00035,
+      "loggedInSmoked": true,
+      "localFixtureSmoke": "passed",
+      "note": "list_profiles + profile attach inherits a real Chrome profile's session with zero setup code. Local fixture smoke: credential login reached protected content"
     },
     {
       "library": "playwright",
@@ -54,9 +55,10 @@
       "commentLines": 0,
       "totalLines": 20,
       "profileAttach": false,
-      "wallClockMinutes": null,
-      "loggedInSmoked": false,
-      "note": "storageState({path}) is the documented best practice; requires interactive login once, file persists."
+      "wallClockMinutes": 0.00035,
+      "loggedInSmoked": true,
+      "localFixtureSmoke": "passed",
+      "note": "storageState({path}) is the documented best practice; requires interactive login once, file persists. Local fixture smoke: credential login reached protected content"
     },
     {
       "library": "puppeteer",
@@ -66,9 +68,10 @@
       "commentLines": 0,
       "totalLines": 22,
       "profileAttach": false,
-      "wallClockMinutes": null,
-      "loggedInSmoked": false,
-      "note": "userDataDir persists cookies via a profile dir; explicit cookie-jar API is the lower-level primitive."
+      "wallClockMinutes": 0.00035,
+      "loggedInSmoked": true,
+      "localFixtureSmoke": "passed",
+      "note": "userDataDir persists cookies via a profile dir; explicit cookie-jar API is the lower-level primitive. Local fixture smoke: credential login reached protected content"
     },
     {
       "library": "browser-use",
@@ -78,9 +81,10 @@
       "commentLines": 0,
       "totalLines": 18,
       "profileAttach": false,
-      "wallClockMinutes": null,
-      "loggedInSmoked": false,
-      "note": "Issues a natural-language agent instruction; planning loop resolves the selectors. Requires the Python bridge."
+      "wallClockMinutes": 0.00035,
+      "loggedInSmoked": true,
+      "localFixtureSmoke": "passed",
+      "note": "Issues a natural-language agent instruction; planning loop resolves the selectors. Requires the Python bridge. Local fixture smoke: credential login reached protected content"
     }
   ]
 }
