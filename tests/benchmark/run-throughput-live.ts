@@ -1,0 +1,21 @@
+import { launchManagedChrome, ManagedChrome } from './runtime/chrome-launcher';
+import { parseThroughputArgs, runThroughputBenchmark, ThroughputRow } from './run-throughput';
+
+export interface LiveThroughputExecutorOptions { argv: string[]; launchChrome: boolean; launcher?: (port: number) => Promise<ManagedChrome>; runBenchmark?: typeof runThroughputBenchmark; port?: number; }
+export interface LiveThroughputExecutorResult { rows: ThroughputRow[]; cdpEndpoint: string; launchedChrome: boolean; failureCategory?: string; }
+
+export async function runLiveThroughputExecutor(options: LiveThroughputExecutorOptions): Promise<LiveThroughputExecutorResult> {
+  const port = options.port ?? 9222;
+  let chrome: ManagedChrome | undefined;
+  try {
+    if (options.launchChrome) chrome = await (options.launcher ?? ((p) => launchManagedChrome({ port: p })))(port);
+    const cdpEndpoint = chrome?.endpoint ?? process.env.OPENCHROME_BENCH_CDP_ENDPOINT ?? `http://127.0.0.1:${port}`;
+    const args = parseThroughputArgs([...options.argv, '--live']);
+    const rows = await (options.runBenchmark ?? runThroughputBenchmark)(args);
+    return { rows, cdpEndpoint, launchedChrome: Boolean(chrome) };
+  } catch (err) {
+    return { rows: [], cdpEndpoint: chrome?.endpoint ?? `http://127.0.0.1:${port}`, launchedChrome: Boolean(chrome), failureCategory: err instanceof Error ? err.message : String(err) };
+  } finally {
+    await chrome?.close();
+  }
+}
