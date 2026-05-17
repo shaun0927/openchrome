@@ -1,7 +1,7 @@
 import type { BridgeResponse, BrowserUseBridgeTransport } from '../adapters/browser-use-adapter';
 
 let requestSeq = 0;
-const lifecycleState = new WeakMap<BrowserUseBridgeTransport, { active: number }>();
+const lifecycleState = new WeakMap<BrowserUseBridgeTransport, { active: number; startup?: Promise<void> }>();
 
 function nextRequestId(): number {
   requestSeq = (requestSeq % Number.MAX_SAFE_INTEGER) + 1;
@@ -26,9 +26,10 @@ export interface BrowserUseNativeResult { library: 'browser-use'; mode: 'native'
 export async function runBrowserUseNativeTask(transport: BrowserUseBridgeTransport, task: { id: string; startUrl: string; goal: string }, timeoutMs = 60000): Promise<BrowserUseNativeResult> {
   const lifecycle = lifecycleState.get(transport) ?? { active: 0 };
   lifecycle.active += 1;
+  if (!lifecycle.startup) lifecycle.startup = transport.start();
   lifecycleState.set(transport, lifecycle);
   try {
-    if (lifecycle.active === 1) await transport.start();
+    await lifecycle.startup;
     const response: BridgeResponse = await transport.send({ id: nextRequestId(), method: 'run_task' as never, args: { startUrl: task.startUrl, instruction: task.goal, timeoutMs } });
     if (!response.ok) {
       if (isTimeoutText(response.error)) return timeoutResult(task.id);

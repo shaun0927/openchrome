@@ -48,6 +48,25 @@ describe('browser-use native loop', () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  test('awaits shared transport startup before overlapping sends', async () => {
+    let releaseStart: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { releaseStart = resolve; });
+    const transport = {
+      start: jest.fn(async () => started),
+      stop: jest.fn(async () => undefined),
+      send: jest.fn(async (): Promise<BridgeResponse> => ({ id: 1, ok: true, result: { status: 'passed', finalText: 'done', trace: [] } })),
+    };
+
+    const first = runBrowserUseNativeTask(transport, { id: 'rw1', startUrl: 'http://x', goal: 'one' });
+    const second = runBrowserUseNativeTask(transport, { id: 'rw2', startUrl: 'http://x', goal: 'two' });
+    await Promise.resolve();
+    expect(transport.start).toHaveBeenCalledTimes(1);
+    expect(transport.send).not.toHaveBeenCalled();
+    releaseStart?.();
+    await Promise.all([first, second]);
+    expect(transport.send).toHaveBeenCalledTimes(2);
+  });
+
   test('keeps shared transport open until overlapping calls finish', async () => {
     let releaseFirst: (() => void) | undefined;
     const first = new Promise((resolve) => { releaseFirst = () => resolve({ id: 1, ok: true, result: { status: 'passed', finalText: 'one', trace: [] } }); });
