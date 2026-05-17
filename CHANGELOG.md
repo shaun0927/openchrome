@@ -4,6 +4,27 @@ All notable changes to OpenChrome are documented here. For full release notes se
 
 ---
 
+## v1.12.4 — API-key-only benchmark readiness gate (2026-05-17)
+
+Focused benchmark release-safety patch. This release adds an explicit
+API-key-only readiness gate, removes closed #1305 from the open benchmark
+audit, codifies the remaining non-key benchmark implementation PR ladder, and
+keeps benchmark reporting fail-closed until live or recorded-real rows are
+actually headline eligible.
+
+See [`docs/releases/v1.12.4.md`](docs/releases/v1.12.4.md) for the full
+release notes.
+
+## v1.12.3 — live benchmark execution and publication gates (2026-05-17)
+
+Focused live-benchmark hardening patch. This release adds injectable LLM/tool
+use loop seams, native competitor task-loop surfaces, live Chrome/CDP throughput
+execution support, recorded-real corpus validation, and stricter headline report
+gates so mock/scaffold rows cannot be published as competitive wins.
+
+See [`docs/releases/v1.12.3.md`](docs/releases/v1.12.3.md) for the full
+release notes.
+
 ## v1.12.2 — benchmark measurement readiness (2026-05-15)
 
 Focused benchmark-readiness patch for the Competitive Benchmark Suite. This
