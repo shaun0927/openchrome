@@ -48,6 +48,7 @@ function main(argv = process.argv.slice(2)) {
   lines.push('');
   lines.push(`- Measurement mode: \`${result.measurementMode}\``);
   lines.push(`- Claim scope: **${result.claimScope}**`);
+  if (result.stressMode) lines.push('- Stress mode: **yes** — recovered means the final task postcondition passed after an injected fault.');
   lines.push('- This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.');
   if (result.claimEligibility) {
     lines.push(`- Claim eligibility tier: **${result.claimEligibility.tier}**; eligible: **${result.claimEligibility.eligible ? 'yes' : 'no'}**.`);
@@ -58,6 +59,17 @@ function main(argv = process.argv.slice(2)) {
   if (eligibilityFailures.length > 0) lines.push('- Headline gate: **blocked**. Use `node benchmark/generate-realworld-task-completion-section.mjs --require-headline` in release workflows to enforce this.');
   lines.push('- #1261 remains the DX/supporting axis; this section is the primary task-completion axis.');
   lines.push('');
+
+  if ((result.faultRows ?? []).length > 0) {
+    lines.push('## Fault stress rows');
+    lines.push('');
+    lines.push('| Library | Task | Fault | Injected step | Recovered by final postcondition | Recovery steps | Recovery ms | Chrome RSS | Zombies | Evidence |');
+    lines.push('| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- |');
+    for (const run of result.faultRows ?? []) {
+      lines.push(`| \`${run.library}\` | \`${run.taskId}\` | ${run.faultCheckpoint?.fault ?? 'missing'} | ${run.faultCheckpoint?.injectAtStep ?? 'n/a'} | ${run.recovered === true && run.finalPostconditionEvaluated === true ? 'yes' : 'no'} | ${run.recoverySteps ?? 'n/a'} | ${run.recoveryTimeMs ?? 'n/a'} | ${run.chromeRssBytes ?? 'n/a'} | ${run.zombieProcessCount ?? 'n/a'} | ${run.faultCheckpoint?.evidence ?? 'missing'} |`);
+    }
+    lines.push('');
+  }
 
   lines.push('## Metrics by library');
   lines.push('');

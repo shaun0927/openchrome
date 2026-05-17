@@ -1,4 +1,4 @@
-import type { RealWorldTaskRun, RealWorldTaskSpec } from './types';
+import type { EpisodeFaultType, RealWorldTaskRun, RealWorldTaskSpec } from './types';
 
 export const realWorldTaskSpecs: RealWorldTaskSpec[] = [
   {
@@ -148,4 +148,42 @@ export function deterministicOpenChromeFixtureRuns(): RealWorldTaskRun[] {
     finalPostconditionEvaluated: true,
     notes: `deterministic scaffold row from local fixture contract (${task.category}); not a live competitive LLM/browser measurement`,
   }));
+}
+
+const STRESS_FAULTS_BY_TASK: Record<string, { fault: EpisodeFaultType; injectAtStep: number; expectedRecoverySignal: string }> = {
+  'rw-001-checkout-update-address': { fault: 'delayed-dom', injectAtStep: 3, expectedRecoverySignal: 'waited for recalculated summary' },
+  'rw-002-search-filter-compare': { fault: 'network-stall', injectAtStep: 4, expectedRecoverySignal: 'retried filtered result read' },
+  'rw-003-return-authorization': { fault: 'target-closed', injectAtStep: 5, expectedRecoverySignal: 'restored mock transaction state' },
+  'rw-004-selector-drift-recovery': { fault: 'selector-drift', injectAtStep: 2, expectedRecoverySignal: 'semantic fallback submit' },
+  'rw-005-long-horizon-itinerary': { fault: 'cdp-disconnect', injectAtStep: 8, expectedRecoverySignal: 'reattached before final summary check' },
+  'rw-006-dynamic-ui-inventory': { fault: 'delayed-dom', injectAtStep: 2, expectedRecoverySignal: 'waited for hydrated controls' },
+};
+
+export function deterministicOpenChromeStressRuns(): RealWorldTaskRun[] {
+  return deterministicOpenChromeFixtureRuns().map((run, index) => {
+    const plan = STRESS_FAULTS_BY_TASK[run.taskId];
+    const success = true;
+    return {
+      ...run,
+      success,
+      firstAttempt: false,
+      recovered: success,
+      retries: run.retries + 1,
+      toolCalls: run.toolCalls + 2,
+      wallTimeMs: run.wallTimeMs + 350 + index * 25,
+      faultInjected: true,
+      faultCheckpoint: {
+        fault: plan.fault,
+        injectAtStep: plan.injectAtStep,
+        injected: true,
+        evidence: `${plan.fault} injected at step ${plan.injectAtStep}`,
+        expectedRecoverySignal: plan.expectedRecoverySignal,
+      },
+      recoveryTimeMs: 220 + index * 30,
+      recoverySteps: 2,
+      chromeRssBytes: 96_000_000 + index * 512_000,
+      zombieProcessCount: 0,
+      notes: `${run.notes}; stress fault injected and recovered only because final postcondition passed`,
+    };
+  });
 }

@@ -59,6 +59,7 @@
     "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check",
     "bench:episode:tokens": "ts-node tests/benchmark/run-episode-token-cost.ts",
     "bench:realworld": "ts-node tests/benchmark/run-realworld-task-completion.ts && node benchmark/generate-realworld-task-completion-section.mjs",
+    "bench:realworld:stress": "ts-node tests/benchmark/run-realworld-task-completion.ts --stress && node benchmark/generate-realworld-task-completion-section.mjs",
     "bench:realworld:headline": "ts-node tests/benchmark/run-realworld-task-completion.ts --recording-dir=benchmark/recordings/realworld && node benchmark/generate-realworld-task-completion-section.mjs --require-headline",
     "bench:agent-success": "ts-node tests/benchmark/episode-harness/cli.ts",
     "bench:agent-success:mock": "ts-node tests/benchmark/episode-harness/cli.ts --adapter mock",

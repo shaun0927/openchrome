@@ -21,6 +21,16 @@ export type FailureCategory =
   | 'infrastructure'
   | 'none';
 
+export type EpisodeFaultType = 'selector-drift' | 'network-stall' | 'target-closed' | 'delayed-dom' | 'cdp-disconnect';
+
+export interface FaultCheckpointEvidence {
+  fault: EpisodeFaultType;
+  injectAtStep: number;
+  injected: boolean;
+  evidence: string;
+  expectedRecoverySignal: string;
+}
+
 export interface RealWorldTaskSpec {
   id: string;
   title: string;
@@ -60,6 +70,12 @@ export interface RealWorldTaskRun {
   notes: string;
   finalPostconditionEvidence?: string;
   finalPostconditionEvaluated?: boolean;
+  faultInjected?: boolean;
+  faultCheckpoint?: FaultCheckpointEvidence;
+  recoveryTimeMs?: number | null;
+  recoverySteps?: number | null;
+  chromeRssBytes?: number | null;
+  zombieProcessCount?: number | null;
 }
 
 export interface RealWorldLibraryMetrics {
