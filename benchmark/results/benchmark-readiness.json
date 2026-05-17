@@ -1,14 +1,17 @@
 {
-  "generatedAt": "2026-05-16T03:34:40.041Z",
+  "generatedAt": "2026-05-17T10:04:50.876Z",
   "summary": {
-    "totalOpenBenchmarkIssues": 16,
+    "totalOpenBenchmarkIssues": 15,
     "ready": 0,
-    "partial": 11,
+    "partial": 10,
     "notReady": 5,
     "headlineReady": 0,
-    "diagnosticOrSmokeOnly": 11,
+    "diagnosticOrSmokeOnly": 10,
     "notMeasurable": 5,
-    "canMeasureEveryOpenBenchmarkIssue": false
+    "canMeasureEveryOpenBenchmarkIssue": false,
+    "apiKeyOnlyReady": 0,
+    "nonKeyBlocked": 15,
+    "apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue": false
   },
   "issues": [
     {
@@ -25,6 +28,11 @@
       ],
       "nextActions": [
         "Close only after #1255-#1261 plus real-world follow-ups have headline-eligible measured rows."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [],
+      "nonKeyBlockers": [
+        "Multiple child axes remain partial or scaffolded; unified report still marks several sections pending."
       ]
     },
     {
@@ -41,6 +49,11 @@
       ],
       "nextActions": [
         "Run a shared live smoke matrix for OpenChrome, Playwright, Puppeteer, playwright-mcp, browser-use, and Crawlee; commit version pins."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [],
+      "nonKeyBlockers": [
+        "The suite is not yet proven with every live competitor adapter passing the same smoke task and pinned versions."
       ]
     },
     {
@@ -57,6 +70,11 @@
       ],
       "nextActions": [
         "Wire remaining live extractor calls and version pins before publishing competitive token-efficiency claims."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [],
+      "nonKeyBlockers": [
+        "OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims."
       ]
     },
     {
@@ -73,6 +91,13 @@
       ],
       "nextActions": [
         "Implement live/recorded-real adapter rows with pinned LLM settings and competitor versions before headline claims."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "ANTHROPIC_API_KEY or OPENAI_API_KEY"
+      ],
+      "nonKeyBlockers": [
+        "Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only."
       ]
     },
     {
@@ -89,6 +114,11 @@
       ],
       "nextActions": [
         "Run live Chrome throughput cells for OpenChrome/Playwright/Puppeteer and add session-reuse mode."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [],
+      "nonKeyBlockers": [
+        "Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence."
       ]
     },
     {
@@ -105,6 +135,11 @@
       ],
       "nextActions": [
         "Implement library-agnostic live fault injection inside real-world task episodes plus process sampling."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [],
+      "nonKeyBlockers": [
+        "Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired."
       ]
     },
     {
@@ -121,6 +156,13 @@
       ],
       "nextActions": [
         "Wire live local login-wall smoke for each library and keep third-party live tier best-effort only."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "operator-owned live-site credentials for optional live tier"
+      ],
+      "nonKeyBlockers": [
+        "Wall-clock setup time and logged-in smoke success are null/pending in the current runner."
       ]
     },
     {
@@ -137,6 +179,11 @@
       ],
       "nextActions": [
         "Add tools/list introspection for MCP competitors and fixed induced-failure scoring."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [],
+      "nonKeyBlockers": [
+        "Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction."
       ]
     },
     {
@@ -153,6 +200,13 @@
       ],
       "nextActions": [
         "Add live/recorded-real token accounting with pinned LLM settings, budgets, and competitor versions."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "ANTHROPIC_API_KEY or OPENAI_API_KEY"
+      ],
+      "nonKeyBlockers": [
+        "Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired."
       ]
     },
     {
@@ -169,6 +223,11 @@
       ],
       "nextActions": [
         "Expand taxonomy coverage and wire live/recorded-real adapter rows before headline use."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [],
+      "nonKeyBlockers": [
+        "The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy."
       ]
     },
     {
@@ -185,6 +244,13 @@
       ],
       "nextActions": [
         "Implement Messages tool-use loop, repetition matrix, budget aborts, and sample-count gates."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "ANTHROPIC_API_KEY or OPENAI_API_KEY"
+      ],
+      "nonKeyBlockers": [
+        "Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing."
       ]
     },
     {
@@ -201,6 +267,13 @@
       ],
       "nextActions": [
         "Wire native mode for playwright-mcp and browser-use and keep passive mode as secondary."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "ANTHROPIC_API_KEY or OPENAI_API_KEY"
+      ],
+      "nonKeyBlockers": [
+        "playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`."
       ]
     },
     {
@@ -217,6 +290,13 @@
       ],
       "nextActions": [
         "Add stress-mode episode runner with deterministic fault checkpoints."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "ANTHROPIC_API_KEY or OPENAI_API_KEY"
+      ],
+      "nonKeyBlockers": [
+        "Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions."
       ]
     },
     {
@@ -233,22 +313,13 @@
       ],
       "nextActions": [
         "Unify reliability reporting around task-completion episodes and demote isolated cells to stress diagnostics."
-      ]
-    },
-    {
-      "issue": 1305,
-      "title": "Benchmark #G: Complex Real-World Task Completion",
-      "url": "https://github.com/shaun0927/openchrome/issues/1305",
-      "status": "partial",
-      "measurementReadiness": "diagnostic_or_smoke_only",
-      "evidence": [
-        "`bench:realworld`, deterministic real-world fixtures, scoring, result envelope, report generator, and docs exist."
       ],
-      "blockers": [
-        "Current rows are deterministic scaffold/local-fixture evidence, not live competitive task-completion measurements."
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "ANTHROPIC_API_KEY or OPENAI_API_KEY"
       ],
-      "nextActions": [
-        "Add live/recorded-real OpenChrome and competitor rows with pinned versions and claim eligibility before headline claims."
+      "nonKeyBlockers": [
+        "No library × task × repetition matrix uses real-world task completion as the primary reliability metric."
       ]
     },
     {
@@ -265,6 +336,105 @@
       ],
       "nextActions": [
         "Extend claim eligibility checks to every live/recorded-real runner and fail report generation on missing eligibility metadata."
+      ],
+      "apiKeyOnlyReadiness": "non_key_blockers",
+      "requiredSecrets": [
+        "ANTHROPIC_API_KEY or OPENAI_API_KEY"
+      ],
+      "nonKeyBlockers": [
+        "Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence."
+      ]
+    }
+  ],
+  "additionalPrScopes": [
+    {
+      "id": "PR-A",
+      "title": "Wire real LLM episode loops and repetition accounting",
+      "issues": [
+        1257,
+        1299,
+        1301
+      ],
+      "objective": "Connect the Anthropic/OpenAI tool-use loop seams to the WebVoyager and episode-token runners, expand task × library × mode × repetition cells, and persist full token/USD/budget-abort metrics.",
+      "acceptanceCriteria": [
+        "`--repetitions 10` writes ten samples per selected task/library/mode cell.",
+        "Live runs refuse to start without pinned provider/model/temperature/budget metadata.",
+        "Token, USD, tool-call, wall-time, and budget-abort fields are present in every live/recorded-real row."
+      ]
+    },
+    {
+      "id": "PR-B",
+      "title": "Enable native/passive competitor matrix execution",
+      "issues": [
+        1255,
+        1257,
+        1302
+      ],
+      "objective": "Promote playwright-mcp and browser-use from native-loop scaffolds to runnable competitors and keep passive browser-use rows secondary/non-headline.",
+      "acceptanceCriteria": [
+        "`bench:webvoyager:real --library playwright-mcp --mode native` and `--library browser-use --mode native` run or emit explicit dependency-only setup errors.",
+        "Cross-library JSON separates native headline rows from passive secondary rows.",
+        "Competitor versions are pinned in result envelopes before comparison rows are publishable."
+      ]
+    },
+    {
+      "id": "PR-C",
+      "title": "Wire live token-efficiency extractors and recorded payload ingestion",
+      "issues": [
+        1256
+      ],
+      "objective": "Replace token live-only stubs for OpenChrome read_page/AX, Playwright accessibility, playwright-mcp snapshot, and browser-use DOM serialization with real or recorded-live extractors.",
+      "acceptanceCriteria": [
+        "`OPENCHROME_BENCH_LIVE=1 npm run bench:tokens` measures all live extractor cells instead of throwing scaffold errors.",
+        "Recorded payloads include source/version/timestamp evidence and are validated before inclusion.",
+        "Reports distinguish live/recorded-real rows from deterministic diagnostic rows."
+      ]
+    },
+    {
+      "id": "PR-D",
+      "title": "Make real-world completion and fault stress headline-eligible",
+      "issues": [
+        1300,
+        1303,
+        1304,
+        1310,
+        1259
+      ],
+      "objective": "Unify live/recorded-real real-world task completion with deterministic fault checkpoints, final postcondition recovery judging, and per-row claimEligibility.",
+      "acceptanceCriteria": [
+        "`bench:realworld` can run live/recorded-real OpenChrome and competitor rows with N>=10 aggregate samples.",
+        "Fault-injected rows set `fault_injected=true` and count recovered only when the final task postcondition passes.",
+        "`benchmark/generate-realworld-task-completion-section.mjs --require-headline` passes only with eligible live/recorded-real rows."
+      ]
+    },
+    {
+      "id": "PR-E",
+      "title": "Finish speed/auth/DX live measurement gaps",
+      "issues": [
+        1258,
+        1260,
+        1261
+      ],
+      "objective": "Close remaining non-LLM measurement gaps: live throughput/session-reuse evidence, auth fixture wall-clock/pass evidence, MCP schema introspection, and induced error-actionability scoring.",
+      "acceptanceCriteria": [
+        "Throughput reports include live OpenChrome/Playwright/Puppeteer/Crawlee rows plus reuse-vs-cold deltas.",
+        "Auth reports include local login-wall pass/fail and setup minutes for every library.",
+        "DX reports include schema completeness and error actionability scores with null-free measured rows for MCP competitors."
+      ]
+    },
+    {
+      "id": "PR-F",
+      "title": "Add full live benchmark orchestration and release gate",
+      "issues": [
+        1254,
+        1255,
+        1310
+      ],
+      "objective": "Provide one preflighted command that, after API keys and local runtime credentials are present, runs every axis, validates result envelopes, and blocks headline report publication on any diagnostic-only row.",
+      "acceptanceCriteria": [
+        "`npm run bench:full:live -- --preflight` reports only missing secrets/runtime services before execution.",
+        "The full command runs axes in dependency order and writes a unified report with no mock/scaffold headline rows.",
+        "`npm run bench:readiness -- --api-key-only` passes only when non-key blockers are gone."
       ]
     }
   ]
