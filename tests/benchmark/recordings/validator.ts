@@ -32,21 +32,21 @@ export function validateRecordingCorpus(
   }
 
   if (manifest.schemaVersion !== 'recording-corpus/v1') errors.push('manifest.schemaVersion must be recording-corpus/v1');
-  if (!manifest.corpusId?.trim()) errors.push('manifest.corpusId is required');
+  if (typeof manifest.corpusId !== 'string' || !manifest.corpusId.trim()) errors.push('manifest.corpusId is required');
   if (!isIsoDate(manifest.capturedAt)) errors.push('manifest.capturedAt must be an ISO-like date');
-  if (!manifest.operator?.trim()) errors.push('manifest.operator is required');
-  if (!manifest.environment?.os?.trim()) errors.push('manifest.environment.os is required');
-  if (!manifest.environment?.chromeVersion?.trim()) errors.push('manifest.environment.chromeVersion is required');
+  if (typeof manifest.operator !== 'string' || !manifest.operator.trim()) errors.push('manifest.operator is required');
+  if (typeof manifest.environment?.os !== 'string' || !manifest.environment.os.trim()) errors.push('manifest.environment.os is required');
+  if (typeof manifest.environment?.chromeVersion !== 'string' || !manifest.environment.chromeVersion.trim()) errors.push('manifest.environment.chromeVersion is required');
   if (manifest.llm?.provider !== 'anthropic' && manifest.llm?.provider !== 'openai') {
     errors.push('manifest.llm.provider must be anthropic or openai');
   }
-  if (!manifest.llm?.model?.trim()) errors.push('manifest.llm.model is required');
+  if (typeof manifest.llm?.model !== 'string' || !manifest.llm.model.trim()) errors.push('manifest.llm.model is required');
   if (!isFiniteNonNegative(manifest.llm?.temperature)) errors.push('manifest.llm.temperature must be non-negative');
   if (!Number.isInteger(manifest.llm?.maxSteps) || manifest.llm.maxSteps <= 0) {
     errors.push('manifest.llm.maxSteps must be a positive integer');
   }
-  if (!manifest.redaction?.secretsRemoved) errors.push('manifest.redaction.secretsRemoved must be true');
-  if (!manifest.redaction?.reviewedBy?.trim()) errors.push('manifest.redaction.reviewedBy is required');
+  if (manifest.redaction?.secretsRemoved !== true) errors.push('manifest.redaction.secretsRemoved must be true');
+  if (typeof manifest.redaction?.reviewedBy !== 'string' || !manifest.redaction.reviewedBy.trim()) errors.push('manifest.redaction.reviewedBy is required');
 
   const competitors = manifest.competitors ?? {};
   for (const [library, version] of Object.entries(competitors)) {
@@ -56,7 +56,7 @@ export function validateRecordingCorpus(
       continue;
     }
     if (typeof version.version !== 'string' || !version.version.trim()) errors.push(`manifest.competitors.${library}.version is required`);
-    if (typeof version.source !== 'string' || !version.source.trim()) errors.push(`manifest.competitors.${library}.source is required`);
+    if (version.source !== 'package-lock' && version.source !== 'pip-freeze' && version.source !== 'git-sha' && version.source !== 'manual') errors.push(`manifest.competitors.${library}.source must be package-lock, pip-freeze, git-sha, or manual`);
   }
 
   if (!Array.isArray(runs) || runs.length === 0) errors.push('runs must contain at least one recorded episode');

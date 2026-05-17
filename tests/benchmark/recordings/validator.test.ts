@@ -80,6 +80,26 @@ describe('recording corpus validator', () => {
     expect(result.errors).toContain('runs[0] must be an object');
   });
 
+  it('reports malformed manifest strings without throwing', () => {
+    const malformed = { ...manifest(), corpusId: 123, redaction: { secretsRemoved: 'yes', reviewedBy: 456 } } as unknown as RecordingManifest;
+
+    const result = validateRecordingCorpus(malformed, [run()]);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('manifest.corpusId is required');
+    expect(result.errors).toContain('manifest.redaction.secretsRemoved must be true');
+    expect(result.errors).toContain('manifest.redaction.reviewedBy is required');
+  });
+
+  it('restricts competitor version provenance values', () => {
+    const malformed = { ...manifest(), competitors: { openchrome: { version: 'abc123', source: 'blog' } } } as unknown as RecordingManifest;
+
+    const result = validateRecordingCorpus(malformed, [run()]);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('manifest.competitors.openchrome.source must be package-lock, pip-freeze, git-sha, or manual');
+  });
+
   it('reports non-string competitor versions without throwing', () => {
     const malformed = { ...manifest(), competitors: { openchrome: { version: 123, source: 'manual' } } } as unknown as RecordingManifest;
 
