@@ -47,12 +47,37 @@ describe('recording corpus validator', () => {
 
   it('rejects secret-like payloads before corpus publication', () => {
     const result = validateRecordingCorpus(
-      { ...manifest(), operator: 'sk-proj-not-a-real-key' },
+      { ...manifest(), operator: 'sk-proj-abcdefghijklmnopqrstuvwxyz' },
       [run()],
     );
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('recording corpus contains secret-like text');
+  });
+
+  it('does not reject benign task ids that contain sk- substrings', () => {
+    const benign = run();
+    benign.taskId = 'risk-9-task-1';
+
+    const result = validateRecordingCorpus(manifest(), [benign]);
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('reports malformed competitor entries without throwing', () => {
+    const malformed = { ...manifest(), competitors: { openchrome: null } } as unknown as RecordingManifest;
+
+    const result = validateRecordingCorpus(malformed, [run()]);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('manifest.competitors.openchrome must be an object');
+  });
+
+  it('reports malformed run entries without throwing', () => {
+    const result = validateRecordingCorpus(manifest(), [null] as unknown as RecordingRun[]);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('runs[0] must be an object');
   });
 
   it('requires every recorded library to have a pinned competitor version', () => {

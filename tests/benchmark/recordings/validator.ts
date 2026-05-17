@@ -1,6 +1,6 @@
 import type { RecordingCorpusValidation, RecordingManifest, RecordingRun } from './schema';
 
-const SECRET_PATTERN = /(sk-ant-|sk-proj-|sk-[A-Za-z0-9]|AKIA[0-9A-Z]{16}|api[_-]?key|secret|bearer\s+[A-Za-z0-9._-]+)/i;
+const SECRET_PATTERN = /(sk-ant-[A-Za-z0-9_-]{10,}|sk-proj-[A-Za-z0-9_-]{10,}|AKIA[0-9A-Z]{16}|api[_-]?key|secret|bearer\s+[A-Za-z0-9._-]{10,})/i;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -51,29 +51,38 @@ export function validateRecordingCorpus(
   const competitors = manifest.competitors ?? {};
   for (const [library, version] of Object.entries(competitors)) {
     if (!library.trim()) errors.push('manifest.competitors contains an empty library key');
-    if (!version.version?.trim()) errors.push(`manifest.competitors.${library}.version is required`);
-    if (!version.source?.trim()) errors.push(`manifest.competitors.${library}.source is required`);
+    if (!isPlainObject(version)) {
+      errors.push(`manifest.competitors.${library} must be an object`);
+      continue;
+    }
+    if (typeof version.version !== 'string' || !version.version.trim()) errors.push(`manifest.competitors.${library}.version is required`);
+    if (typeof version.source !== 'string' || !version.source.trim()) errors.push(`manifest.competitors.${library}.source is required`);
   }
 
   if (!Array.isArray(runs) || runs.length === 0) errors.push('runs must contain at least one recorded episode');
 
   const libraries = new Set<string>();
   const taskIds = new Set<string>();
-  for (const [index, run] of (Array.isArray(runs) ? runs : []).entries()) {
+  for (const [index, maybeRun] of (Array.isArray(runs) ? runs : []).entries()) {
     const prefix = `runs[${index}]`;
-    if (!run.taskId?.trim()) errors.push(`${prefix}.taskId is required`);
-    if (!run.library?.trim()) errors.push(`${prefix}.library is required`);
+    if (!isPlainObject(maybeRun)) {
+      errors.push(`${prefix} must be an object`);
+      continue;
+    }
+    const run = maybeRun as unknown as Partial<RecordingRun>;
+    if (typeof run.taskId !== 'string' || !run.taskId.trim()) errors.push(`${prefix}.taskId is required`);
+    if (typeof run.library !== 'string' || !run.library.trim()) errors.push(`${prefix}.library is required`);
     if (run.mode !== 'recorded-real') errors.push(`${prefix}.mode must be recorded-real`);
     if (typeof run.success !== 'boolean') errors.push(`${prefix}.success must be boolean`);
-    if (!run.finalPostconditionEvidence?.trim()) errors.push(`${prefix}.finalPostconditionEvidence is required`);
+    if (typeof run.finalPostconditionEvidence !== 'string' || !run.finalPostconditionEvidence.trim()) errors.push(`${prefix}.finalPostconditionEvidence is required`);
     if (!isFiniteNonNegative(run.tokens)) errors.push(`${prefix}.tokens must be non-negative`);
     if (!isFiniteNonNegative(run.usd)) errors.push(`${prefix}.usd must be non-negative`);
     if (!isFiniteNonNegative(run.wallTimeMs)) errors.push(`${prefix}.wallTimeMs must be non-negative`);
-    if (!Number.isInteger(run.toolCalls) || run.toolCalls < 0) errors.push(`${prefix}.toolCalls must be a non-negative integer`);
+    if (typeof run.toolCalls !== 'number' || !Number.isInteger(run.toolCalls) || run.toolCalls < 0) errors.push(`${prefix}.toolCalls must be a non-negative integer`);
     if (!Array.isArray(run.artifactRefs) || run.artifactRefs.length === 0) errors.push(`${prefix}.artifactRefs must not be empty`);
 
-    if (run.library?.trim()) libraries.add(run.library);
-    if (run.taskId?.trim()) taskIds.add(run.taskId);
+    if (typeof run.library === 'string' && run.library.trim()) libraries.add(run.library);
+    if (typeof run.taskId === 'string' && run.taskId.trim()) taskIds.add(run.taskId);
   }
 
   for (const library of libraries) {
