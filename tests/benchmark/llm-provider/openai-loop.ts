@@ -37,7 +37,10 @@ export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesCli
     const accounted = accountLlmBudget(turns.map((t) => ({ inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, toolCalls: t.toolCalls.length })), budget, DEFAULT_PRICING);
     if (accounted.aborted) return { turns, toolResults, finalText: turn.text, aborted: accounted.aborted, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
     if (turn.toolCalls.length === 0) return { turns, toolResults, finalText: turn.text, totalTokens: accounted.totalTokens, usdSpent: accounted.usdSpent };
-    const toolOutputs: Array<Record<string, unknown>> = [];
+    const preservedReasoning = raw && typeof raw === 'object' && Array.isArray((raw as { output?: unknown }).output)
+      ? ((raw as { output: unknown[] }).output.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && (item as { type?: unknown }).type === 'reasoning') as Array<Record<string, unknown>>)
+      : [];
+    const toolOutputs: Array<Record<string, unknown>> = [...preservedReasoning];
     for (const call of turn.toolCalls) {
       const result = await options.adapter.callTool(call.name, call.arguments);
       toolResults.push(result);
