@@ -28,4 +28,17 @@ describe('live throughput executor', () => {
     expect(result.failureCategory).toMatch(/benchmark failed/);
     expect(close).toHaveBeenCalled();
   });
+
+  test('sets CHROME_PORT for OpenChrome live adapter subprocesses', async () => {
+    const seen: Array<string | undefined> = [];
+    await runLiveThroughputExecutor({
+      argv: ['--library=openchrome'],
+      launchChrome: false,
+      port: 9666,
+      runBenchmark: async () => { seen.push(process.env.CHROME_PORT); return []; },
+    });
+    expect(seen).toEqual(['9666']);
+    expect(process.env.CHROME_PORT).toBeUndefined();
+  });
+
 });

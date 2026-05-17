@@ -12,7 +12,10 @@ export async function runLiveThroughputExecutor(options: LiveThroughputExecutorO
     if (options.launchChrome) chrome = await (options.launcher ?? ((p) => launchManagedChrome({ port: p })))(port);
     cdpEndpoint = chrome?.endpoint ?? cdpEndpoint;
     const previousEndpoint = process.env.OPENCHROME_BENCH_CDP_ENDPOINT;
+    const previousChromePort = process.env.CHROME_PORT;
+    const chromePort = new URL(cdpEndpoint).port || '9222';
     process.env.OPENCHROME_BENCH_CDP_ENDPOINT = cdpEndpoint;
+    process.env.CHROME_PORT = chromePort;
     try {
       const args = parseThroughputArgs([...options.argv, '--live', `--cdp-endpoint=${cdpEndpoint}`]);
       const rows = await (options.runBenchmark ?? runThroughputBenchmark)(args);
@@ -20,6 +23,8 @@ export async function runLiveThroughputExecutor(options: LiveThroughputExecutorO
     } finally {
       if (previousEndpoint === undefined) delete process.env.OPENCHROME_BENCH_CDP_ENDPOINT;
       else process.env.OPENCHROME_BENCH_CDP_ENDPOINT = previousEndpoint;
+      if (previousChromePort === undefined) delete process.env.CHROME_PORT;
+      else process.env.CHROME_PORT = previousChromePort;
     }
   } catch (err) {
     return { rows: [], cdpEndpoint: chrome?.endpoint ?? cdpEndpoint, launchedChrome: Boolean(chrome), failureCategory: err instanceof Error ? err.message : String(err) };
