@@ -2,8 +2,8 @@
   "axis": "developer-experience",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-16T17:12:42.309Z",
-    "gitSha": "facc9371",
+    "capturedAt": "2026-05-17T16:10:37.704Z",
+    "gitSha": "1ad1b79c",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -17,7 +17,7 @@
   "competitors": [
     {
       "name": "openchrome",
-      "version": "1.12.2"
+      "version": "1.12.4"
     },
     {
       "name": "playwright",
@@ -39,7 +39,9 @@
       "commentLines": 0,
       "totalLines": 14,
       "schemaCompleteness": 0.8666666666666667,
+      "schemaCompletenessStatus": "measured",
       "errorActionability": 3,
+      "errorActionabilityStatus": "measured",
       "isMcp": true
     },
     {
@@ -51,7 +53,9 @@
       "commentLines": 0,
       "totalLines": 11,
       "schemaCompleteness": 0.8666666666666667,
+      "schemaCompletenessStatus": "measured",
       "errorActionability": 3,
+      "errorActionabilityStatus": "measured",
       "isMcp": true
     },
     {
@@ -63,7 +67,9 @@
       "commentLines": 0,
       "totalLines": 16,
       "schemaCompleteness": null,
+      "schemaCompletenessStatus": "not_applicable",
       "errorActionability": 3,
+      "errorActionabilityStatus": "measured",
       "isMcp": false
     },
     {
@@ -75,7 +81,9 @@
       "commentLines": 0,
       "totalLines": 14,
       "schemaCompleteness": null,
+      "schemaCompletenessStatus": "not_applicable",
       "errorActionability": 3,
+      "errorActionabilityStatus": "measured",
       "isMcp": false
     },
     {
@@ -87,7 +95,9 @@
       "commentLines": 0,
       "totalLines": 20,
       "schemaCompleteness": null,
+      "schemaCompletenessStatus": "not_applicable",
       "errorActionability": 3,
+      "errorActionabilityStatus": "measured",
       "isMcp": false
     },
     {
@@ -99,7 +109,9 @@
       "commentLines": 0,
       "totalLines": 14,
       "schemaCompleteness": null,
+      "schemaCompletenessStatus": "not_applicable",
       "errorActionability": 3,
+      "errorActionabilityStatus": "measured",
       "isMcp": false
     }
   ]

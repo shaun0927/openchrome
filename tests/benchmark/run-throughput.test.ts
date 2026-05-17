@@ -39,6 +39,11 @@ describe('run-throughput competitor selection', () => {
     expect(opts.sessionMode).toBe('cold');
   });
 
+  test('parses both session modes for cold-vs-reuse evidence', () => {
+    const opts = parseThroughputArgs(['--session-mode=both']);
+    expect(opts.sessionMode).toBe('both');
+  });
+
   test('can run the no-Chrome Crawlee competitor cell against local fixtures', async () => {
     const rows = await runThroughputBenchmark(
       parseThroughputArgs([
@@ -79,4 +84,17 @@ test('cold session mode records cold-start rows for each concurrency cell', asyn
   );
   expect(rows).toHaveLength(2);
   expect(rows.every((row) => row.sessionMode === 'cold')).toBe(true);
+}, 30000);
+
+test('both session mode records reuse and cold-start rows for each concurrency cell', async () => {
+  const rows = await runThroughputBenchmark(
+    parseThroughputArgs([
+      '--library=crawlee',
+      '--session-mode=both',
+      '--concurrency=1,2',
+      '--iterations=4',
+    ]),
+  );
+  expect(rows).toHaveLength(4);
+  expect(rows.map((row) => row.sessionMode).sort()).toEqual(['cold', 'cold', 'reuse', 'reuse']);
 }, 30000);
