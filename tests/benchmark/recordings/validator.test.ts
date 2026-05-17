@@ -80,6 +80,15 @@ describe('recording corpus validator', () => {
     expect(result.errors).toContain('runs[0] must be an object');
   });
 
+  it('reports non-string competitor versions without throwing', () => {
+    const malformed = { ...manifest(), competitors: { openchrome: { version: 123, source: 'manual' } } } as unknown as RecordingManifest;
+
+    const result = validateRecordingCorpus(malformed, [run()]);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('manifest.competitors.openchrome.version is required for recorded run');
+  });
+
   it('requires every recorded library to have a pinned competitor version', () => {
     const incomplete = manifest();
     delete incomplete.competitors.openchrome;

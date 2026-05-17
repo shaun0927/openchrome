@@ -86,7 +86,10 @@ export function validateRecordingCorpus(
   }
 
   for (const library of libraries) {
-    if (!competitors[library]?.version?.trim()) errors.push(`manifest.competitors.${library}.version is required for recorded run`);
+    const competitor = competitors[library];
+    if (!isPlainObject(competitor) || typeof competitor.version !== 'string' || !competitor.version.trim()) {
+      errors.push(`manifest.competitors.${library}.version is required for recorded run`);
+    }
   }
 
   if (hasSecretLikeText(manifest) || hasSecretLikeText(runs)) {
