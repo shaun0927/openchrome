@@ -47,6 +47,9 @@ describe('real-world recorded evidence ingestion', () => {
     const result = envelope.results[0];
     expect(result.measurementMode).toBe('recorded-real');
     expect(result.claimEligibility.eligible).toBe(true);
+    expect(result.finalPostconditionEvaluated).toBe(true);
+    expect(result.finalPostconditionEvidence).toContain('postcondition ok 0');
+    expect(result.runs.every((run: { finalPostconditionEvidence?: string; finalPostconditionEvaluated?: boolean }) => run.finalPostconditionEvaluated === true && typeof run.finalPostconditionEvidence === 'string')).toBe(true);
     expect(result.metrics.map((row: { library: string }) => row.library).sort()).toEqual(['openchrome', 'playwright']);
   });
 });
