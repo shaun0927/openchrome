@@ -26,6 +26,14 @@ describe('playwright-mcp native loop', () => {
     expect(result.trace[0]).toEqual(expect.objectContaining({ tool: 'transport', ok: false, error: 'mcp down' }));
   });
 
+  test('accepts Set-valued tool discovery from stdio MCP clients', async () => {
+    const transport = { listTools: jest.fn(async () => new Set(['browser_navigate', 'browser_snapshot'])), callTool: jest.fn(async (name: string) => ({ content: [{ type: 'text', text: `${name} ok` }] })) };
+
+    const result = await runPlaywrightMcpNativeTask(transport, { id: 't1', startUrl: 'http://x', goal: 'read', successText: 'browser_snapshot ok' });
+
+    expect(result.status).toBe('passed');
+  });
+
   test('reports unsupported when required tools are absent', async () => {
     const result = await runPlaywrightMcpNativeTask({ listTools: async () => ['browser_navigate'], callTool: jest.fn() }, { id: 't1', startUrl: 'http://x', goal: 'read' });
     expect(result.status).toBe('unsupported');
