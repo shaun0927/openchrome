@@ -22,9 +22,15 @@ function getTaskId(result) {
   return result?.taskId ?? result?.task ?? result?.scenario?.taskId ?? 'unknown';
 }
 
+function rowHasPostconditionEvidence(row) {
+  const evidence = row?.finalPostconditionEvidence ?? row?.postconditionEvidence ?? row?.evidence?.finalPostcondition;
+  return (typeof evidence === 'string' && evidence.trim().length > 0) || row?.finalPostconditionEvaluated === true;
+}
+
 function hasPostconditionEvidence(result) {
-  const evidence = result?.finalPostconditionEvidence ?? result?.postconditionEvidence ?? result?.evidence?.finalPostcondition;
-  return (typeof evidence === 'string' && evidence.trim().length > 0) || result?.finalPostconditionEvaluated === true;
+  if (rowHasPostconditionEvidence(result)) return true;
+  if (Array.isArray(result?.runs) && result.runs.length > 0) return result.runs.every(rowHasPostconditionEvidence);
+  return false;
 }
 
 function classifyResult(result, index) {

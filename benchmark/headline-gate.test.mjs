@@ -32,6 +32,7 @@ assert.match(mixed.failures[0], /not headline-eligible/);
 
 assert.doesNotThrow(() => requireHeadlineReport({ results: [headlineRow] }, 'recorded-real report'));
 assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, finalPostconditionEvaluated: true }] }, 'evaluated aggregate report'));
+assert.doesNotThrow(() => requireHeadlineReport({ results: [{ ...headlineRow, finalPostconditionEvidence: undefined, runs: [{ finalPostconditionEvidence: 'postcondition checked' }] }] }, 'aggregate with run evidence report'));
 assert.throws(() => requireHeadlineReport({ results: [diagnosticRow] }, 'diagnostic-only report'), /contains no headline-eligible rows/);
 assert.throws(() => requireHeadlineReport({ results: [headlineRow, diagnosticRow] }, 'mixed report'), /diagnostic rows/);
 assert.throws(
