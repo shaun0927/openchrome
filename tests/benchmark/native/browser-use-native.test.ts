@@ -8,6 +8,15 @@ describe('browser-use native loop', () => {
     expect(result.status).toBe('passed');
     expect(transport.send).toHaveBeenCalledWith({ id: 1, method: 'run_task', args: { startUrl: 'http://x', instruction: 'do it', timeoutMs: 60000 } });
   });
+  test('preserves timeout status from bridge results', async () => {
+    const transport = { start: jest.fn(async () => undefined), stop: jest.fn(async () => undefined), send: jest.fn(async () => ({ id: 1, ok: true, result: { status: 'timeout', finalText: '', trace: [], failureCategory: 'timeout' } })) };
+
+    const result = await runBrowserUseNativeTask(transport, { id: 'rw', startUrl: 'http://x', goal: 'do it' });
+
+    expect(result.status).toBe('timeout');
+    expect(result.failureCategory).toBe('timeout');
+  });
+
   test('returns failed result on bridge error', async () => {
     const transport = { start: jest.fn(async () => undefined), stop: jest.fn(async () => undefined), send: jest.fn(async () => ({ id: 1, ok: false, error: 'missing browser-use' })) };
     const result = await runBrowserUseNativeTask(transport, { id: 'rw', startUrl: 'http://x', goal: 'do it' });
