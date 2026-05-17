@@ -24,7 +24,8 @@ function getTaskId(result) {
 
 function rowHasPostconditionEvidence(row) {
   const evidence = row?.finalPostconditionEvidence ?? row?.postconditionEvidence ?? row?.evidence?.finalPostcondition;
-  return (typeof evidence === 'string' && evidence.trim().length > 0) || row?.finalPostconditionEvaluated === true;
+  const recordedNoteEvidence = typeof row?.notes === 'string' && /^recorded final-postcondition evidence:\s*\S/i.test(row.notes);
+  return (typeof evidence === 'string' && evidence.trim().length > 0) || row?.finalPostconditionEvaluated === true || recordedNoteEvidence;
 }
 
 function hasPostconditionEvidence(result) {
