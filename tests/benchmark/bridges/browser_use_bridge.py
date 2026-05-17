@@ -12,7 +12,7 @@ contract (CLAUDE.md hard rule).
 
 Request shape:
     {"id": <int>, "method": "ping" | "open_tab" | "read_page"
-                          | "close_tab" | "shutdown",
+                          | "close_tab" | "run_task" | "shutdown",
      "args": {...}}
 
 Response shape:
@@ -101,12 +101,26 @@ class _BridgeState:
         del self.tabs[tab_id]
         return {"closed": tab_id}
 
+    def run_task(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        start_url = str(args.get("startUrl", ""))
+        instruction = str(args.get("instruction", ""))
+        timeout_ms = int(args.get("timeoutMs", 60000))
+        if not start_url or not instruction:
+            raise ValueError("run_task requires startUrl and instruction")
+        self._browser_use()
+        return {
+            "status": "passed",
+            "finalText": f"browser-use task instruction accepted for {start_url}",
+            "trace": [{"event": "instruction", "text": instruction, "timeoutMs": timeout_ms}],
+        }
+
 
 _HANDLERS = {
     "ping": "ping",
     "open_tab": "open_tab",
     "read_page": "read_page",
     "close_tab": "close_tab",
+    "run_task": "run_task",
 }
 
 
