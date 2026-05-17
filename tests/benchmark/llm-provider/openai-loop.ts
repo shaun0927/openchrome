@@ -31,8 +31,13 @@ export async function runOpenAiToolUseLoop(options: { client: OpenAiResponsesCli
   const toolResults: MCPToolResult[] = [];
   const input: Array<Record<string, unknown>> = [{ role: 'user', content: options.user }];
   const tools = toResponsesTools(options.tools);
+  let previousResponseId: string | undefined;
   for (let i = 0; i < maxTurns; i++) {
-    const raw = await options.client.create({ model: options.model, instructions: options.instructions, input, tools });
+    const request: Record<string, unknown> = { model: options.model, instructions: options.instructions, input, tools };
+    if (previousResponseId) request.previous_response_id = previousResponseId;
+    const raw = await options.client.create(request);
+    const responseId = raw && typeof raw === 'object' ? (raw as { id?: unknown }).id : undefined;
+    if (typeof responseId === 'string' && responseId.trim()) previousResponseId = responseId;
     const turn = normalizeOpenAiTurn(raw as Parameters<typeof normalizeOpenAiTurn>[0]);
     turns.push(turn);
     const accounted = accountLlmBudget(turns.map((t) => ({ inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, toolCalls: t.toolCalls.length })), budget, DEFAULT_PRICING);
