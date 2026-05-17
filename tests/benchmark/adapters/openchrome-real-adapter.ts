@@ -87,7 +87,9 @@ export class OpenChromeRealAdapter implements MCPAdapter {
 
   async setup(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.process = spawn('node', [this.options.serverPath, 'serve'], {
+      const chromePort = chromePortFromCdpEndpoint(this.options.cdpEndpoint);
+      const serveArgs = [this.options.serverPath, 'serve', ...(chromePort ? ['--port', chromePort] : [])];
+      this.process = spawn('node', serveArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: openChromeServeEnvForCdpEndpoint(this.options.cdpEndpoint),
       });
