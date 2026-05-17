@@ -27,6 +27,7 @@
 import type { EvalContext } from '../../../../src/contracts/eval-context';
 import type { BudgetCaps } from './budget';
 import type { WebVoyagerTask } from '../types';
+import { accountLlmBudget, LlmUsageSample } from './token-budget';
 
 export interface ClaudeAdapterPricing {
   input_usd_per_million: number;
@@ -43,6 +44,9 @@ export interface ClaudeAdapterResult {
   tool_calls: number;
   response_bytes: number;
   usd_spent: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
   /** Reason the task aborted before producing a final state, if any. */
   aborted?: 'BUDGET_EXCEEDED' | 'MAX_ITERATIONS' | 'API_ERROR';
 }
@@ -56,6 +60,18 @@ export interface ClaudeAdapterResult {
  * loop and (b) v1 CI gating uses mock-mode only. The scaffold demonstrates
  * the budget plumbing and surfaces the integration seam for the recorder.
  */
+export function summarizeClaudeUsage(samples: readonly LlmUsageSample[], budget: BudgetCaps, pricing: ClaudeAdapterPricing = DEFAULT_PRICING): Pick<ClaudeAdapterResult, 'tool_calls' | 'usd_spent' | 'input_tokens' | 'output_tokens' | 'total_tokens' | 'aborted'> {
+  const accounted = accountLlmBudget(samples, budget, pricing);
+  return {
+    tool_calls: accounted.toolCalls,
+    usd_spent: accounted.usdSpent,
+    input_tokens: accounted.inputTokens,
+    output_tokens: accounted.outputTokens,
+    total_tokens: accounted.totalTokens,
+    ...(accounted.aborted && { aborted: accounted.aborted }),
+  };
+}
+
 export async function runClaudeTask(
   _task: WebVoyagerTask,
   _budget: BudgetCaps,
