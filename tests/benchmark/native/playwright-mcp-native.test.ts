@@ -34,6 +34,15 @@ describe('playwright-mcp native loop', () => {
     expect(result.status).toBe('passed');
   });
 
+  test('snapshots one-shot iterators before required tool membership checks', async () => {
+    const discovered = ['browser_navigate', 'browser_snapshot'].values();
+    const transport = { listTools: jest.fn(async () => discovered), callTool: jest.fn(async (name: string) => ({ content: [{ type: 'text', text: `${name} ok` }] })) };
+
+    const result = await runPlaywrightMcpNativeTask(transport, { id: 't1', startUrl: 'http://x', goal: 'read', successText: 'browser_snapshot ok' });
+
+    expect(result.status).toBe('passed');
+  });
+
   test('reports unsupported when required tools are absent', async () => {
     const result = await runPlaywrightMcpNativeTask({ listTools: async () => ['browser_navigate'], callTool: jest.fn() }, { id: 't1', startUrl: 'http://x', goal: 'read' });
     expect(result.status).toBe('unsupported');
