@@ -30,6 +30,7 @@ export async function runLiveRealWorldEpisodes(options: LiveRealWorldRunOptions,
   const selectedIds = new Set(selected.map((task) => task.id));
   const unknownTaskIds = [...requestedTaskIds].filter((id) => !selectedIds.has(id));
   if (unknownTaskIds.length > 0) throw new Error(`Unknown real-world taskIds: ${unknownTaskIds.join(', ')}`);
+  if (selected.length === 0) throw new Error('At least one real-world task must be selected');
   const runs: RealWorldTaskRun[] = [];
   const postconditionEvidence: boolean[] = [];
   for (const task of selected) {

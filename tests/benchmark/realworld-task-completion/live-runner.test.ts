@@ -10,6 +10,13 @@ describe('live real-world episode runner', () => {
     expect(result.claimEligibility.eligible).toBe(false);
     expect(result.claimEligibility.reasons.join('\n')).toMatch(/dry-run/);
   });
+  test('rejects empty task selections instead of returning zero-coverage results', async () => {
+    const executor = { run: jest.fn() };
+
+    await expect(runLiveRealWorldEpisodes({ provider: 'openai', library: 'openchrome', repetitions: 1, taskIds: [], mode: 'dry-run' }, executor)).rejects.toThrow(/At least one/);
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+
   test('rejects unknown task ids instead of silently shrinking coverage', async () => {
     const executor = { run: jest.fn() };
 
