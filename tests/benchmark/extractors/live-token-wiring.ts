@@ -29,7 +29,7 @@ export async function extractLiveMcpPayload(options: LiveExtractorFactoryOptions
     const create = await adapter.callTool('tabs_create', { url });
     if (create.isError) throw new Error(create.content?.[0]?.text ?? 'tabs_create failed');
     const tabId = JSON.parse(create.content?.[0]?.text ?? '{}').tabId;
-    const read = await adapter.callTool('read_page', { tabId });
+    const read = await adapter.callTool('read_page', { tabId, mode: options.mode });
     if (read.isError) throw new Error(read.content?.[0]?.text ?? 'read_page failed');
     const payload = read.content?.map((c) => c.text ?? '').join('\n') ?? '';
     await adapter.callTool('tabs_close', { tabId }).catch(() => undefined);

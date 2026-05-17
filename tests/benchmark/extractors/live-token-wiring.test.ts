@@ -14,6 +14,6 @@ describe('live token extractor wiring', () => {
     const result = await extractLiveMcpPayload({ library: 'openchrome', mode: 'dom', adapterFactory: () => adapter }, 'http://x', ctx);
     expect(result.payload).toContain('Hello');
     expect(result.extracted.title).toBe('Hello');
-    expect(adapter.callTool).toHaveBeenCalledWith('read_page', { tabId: 't' });
+    expect(adapter.callTool).toHaveBeenCalledWith('read_page', { tabId: 't', mode: 'dom' });
   });
 });
