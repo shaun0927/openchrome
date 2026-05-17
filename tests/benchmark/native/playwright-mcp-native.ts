@@ -4,9 +4,14 @@ export interface NativeToolEvent { tool: string; ok: boolean; text?: string; err
 export interface NativeEpisodeResult { library: 'playwright-mcp'; mode: 'native'; taskId: string; status: 'passed' | 'failed' | 'unsupported' | 'timeout'; trace: NativeToolEvent[]; finalText: string; failureCategory?: string; }
 export interface PlaywrightMcpNativeTransport { listTools(): Promise<string[]>; callTool(name: string, args: Record<string, unknown>): Promise<MCPToolResult>; }
 
+function goalSatisfied(text: string, task: { goal: string; successText?: string; successCriteria?: string[] }): boolean {
+  const criteria = task.successCriteria?.length ? task.successCriteria : [task.successText ?? task.goal];
+  return criteria.every((criterion) => text.toLocaleLowerCase().includes(criterion.toLocaleLowerCase()));
+}
+
 const REQUIRED = ['browser_navigate', 'browser_snapshot'];
 
-export async function runPlaywrightMcpNativeTask(transport: PlaywrightMcpNativeTransport, task: { id: string; startUrl: string; goal: string }): Promise<NativeEpisodeResult> {
+export async function runPlaywrightMcpNativeTask(transport: PlaywrightMcpNativeTransport, task: { id: string; startUrl: string; goal: string; successText?: string; successCriteria?: string[] }): Promise<NativeEpisodeResult> {
   const trace: NativeToolEvent[] = [];
   try {
     const tools = await transport.listTools();
@@ -18,7 +23,9 @@ export async function runPlaywrightMcpNativeTask(transport: PlaywrightMcpNativeT
     const snapshot = await transport.callTool('browser_snapshot', {});
     const text = snapshot.content?.map((c) => c.text ?? '').join('\n') ?? '';
     trace.push({ tool: 'browser_snapshot', ok: !snapshot.isError, text });
-    return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: snapshot.isError ? 'failed' : 'passed', trace, finalText: text, ...(snapshot.isError && { failureCategory: 'snapshot' }) };
+    if (snapshot.isError) return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: 'failed', trace, finalText: text, failureCategory: 'snapshot' };
+    if (!goalSatisfied(text, task)) return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: 'failed', trace, finalText: text, failureCategory: 'postcondition' };
+    return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: 'passed', trace, finalText: text };
   } catch (err) {
     trace.push({ tool: 'transport', ok: false, error: err instanceof Error ? err.message : String(err) });
     return { library: 'playwright-mcp', mode: 'native', taskId: task.id, status: 'failed', trace, finalText: '', failureCategory: 'infrastructure' };
