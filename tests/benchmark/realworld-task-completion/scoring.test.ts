@@ -10,9 +10,9 @@ describe('real-world task completion scoring', () => {
     const [metrics] = aggregateRealWorldMetrics(runs);
     expect(metrics.library).toBe('openchrome');
     expect(metrics.mode).toBe('deterministic-fixture');
-    expect(metrics.totalRuns).toBe(5);
+    expect(metrics.totalRuns).toBe(6);
     expect(metrics.successRate).toBe(1);
-    expect(metrics.firstAttemptSuccessRate).toBe(4 / 5);
+    expect(metrics.firstAttemptSuccessRate).toBe(5 / 6);
     expect(metrics.recoverySuccessRate).toBe(1);
     expect(metrics.meanTokens).toBeNull();
     expect(metrics.costPerSuccessUsd).toBeNull();

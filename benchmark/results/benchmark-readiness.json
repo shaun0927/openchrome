@@ -1,18 +1,18 @@
 {
-  "generatedAt": "2026-05-17T16:11:42.288Z",
+  "generatedAt": "2026-05-17T16:18:01.062Z",
   "summary": {
     "totalOpenBenchmarkIssues": 15,
     "ready": 0,
-    "partial": 10,
-    "notReady": 5,
+    "partial": 11,
+    "notReady": 4,
     "headlineReady": 0,
-    "diagnosticOrSmokeOnly": 10,
-    "notMeasurable": 5,
+    "diagnosticOrSmokeOnly": 11,
+    "notMeasurable": 4,
     "canMeasureEveryOpenBenchmarkIssue": false,
     "apiKeyOnlyReady": 0,
     "nonKeyBlocked": 15,
     "apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue": false,
-    "staleResultArtifactCount": 5
+    "staleResultArtifactCount": 4
   },
   "artifactFreshness": {
     "currentOpenChromeVersion": "1.12.4",
@@ -29,13 +29,6 @@
         "expectedOpenChromeVersion": "1.12.4",
         "foundVersions": [
           "1.11.0"
-        ]
-      },
-      {
-        "file": "benchmark/results/realworld-task-completion.json",
-        "expectedOpenChromeVersion": "1.12.4",
-        "foundVersions": [
-          "1.12.2"
         ]
       },
       {
@@ -257,18 +250,18 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Controlled mock workflow matrix includes categorized fixtures, repeated samples, first-tool accuracy, and no-progress metrics."
+        "Controlled task corpus covers info_retrieval, form_fill, transactional_mock, recovery, dynamic_ui, and long_horizon with reset contracts and final postcondition evidence."
       ],
       "blockers": [
-        "The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy."
+        "The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy."
       ],
       "nextActions": [
-        "Expand taxonomy coverage and wire live/recorded-real adapter rows before headline use."
+        "Wire live/recorded-real adapter rows over the committed task contracts before headline use."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [],
       "nonKeyBlockers": [
-        "The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy."
+        "The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy."
       ]
     },
     {
@@ -344,23 +337,23 @@
       "issue": 1304,
       "title": "Benchmark #D follow-up: real-world task completion as primary reliability signal",
       "url": "https://github.com/shaun0927/openchrome/issues/1304",
-      "status": "not_ready",
-      "measurementReadiness": "not_measurable",
+      "status": "partial",
+      "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Current code separates episode harness and reliability mock matrix."
+        "The real-world task-completion runner emits a local deterministic library × task matrix with final postcondition evidence and diagnostic-only claim eligibility."
       ],
       "blockers": [
-        "No library × task × repetition matrix uses real-world task completion as the primary reliability metric."
+        "No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet."
       ],
       "nextActions": [
-        "Unify reliability reporting around task-completion episodes and demote isolated cells to stress diagnostics."
+        "Add repeated live/recorded-real task-completion rows and connect reliability stress signals to these final postcondition contracts."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [
         "ANTHROPIC_API_KEY or OPENAI_API_KEY"
       ],
       "nonKeyBlockers": [
-        "No library × task × repetition matrix uses real-world task completion as the primary reliability metric."
+        "No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet."
       ]
     },
     {

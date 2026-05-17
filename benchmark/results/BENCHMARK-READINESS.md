@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T16:11:42.288Z
+Generated: 2026-05-17T16:18:01.062Z
 
 ## Verdict
 
@@ -10,14 +10,14 @@ Generated: 2026-05-17T16:11:42.288Z
 | --- | ---: |
 | Open benchmark issues audited | 15 |
 | Ready | 0 |
-| Partial | 10 |
-| Not ready | 5 |
+| Partial | 11 |
+| Not ready | 4 |
 | Headline-measurement-ready | 0 |
-| Diagnostic/smoke only | 10 |
-| Not measurable yet | 5 |
+| Diagnostic/smoke only | 11 |
+| Not measurable yet | 4 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
-| Stale OpenChrome result artifacts | 5 |
+| Stale OpenChrome result artifacts | 4 |
 
 ## Issue matrix
 
@@ -32,11 +32,11 @@ Generated: 2026-05-17T16:11:42.288Z
 | [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost | partial | diagnostic_or_smoke_only | non_key_blockers | Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied. |
 | [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability | partial | diagnostic_or_smoke_only | non_key_blockers | Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix. |
 | [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | partial | diagnostic_or_smoke_only | non_key_blockers | Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired. |
-| [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy. |
+| [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy. |
 | [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate | not_ready | not_measurable | non_key_blockers | Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing. |
 | [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix | not_ready | not_measurable | non_key_blockers | playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`. |
 | [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks | not_ready | not_measurable | non_key_blockers | Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions. |
-| [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal | not_ready | not_measurable | non_key_blockers | No library × task × repetition matrix uses real-world task completion as the primary reliability metric. |
+| [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal | partial | diagnostic_or_smoke_only | non_key_blockers | No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet. |
 | [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims | partial | diagnostic_or_smoke_only | non_key_blockers | Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence. |
 
 ## Details
@@ -175,14 +175,14 @@ Generated: 2026-05-17T16:11:42.288Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Controlled mock workflow matrix includes categorized fixtures, repeated samples, first-tool accuracy, and no-progress metrics.
+  - Controlled task corpus covers info_retrieval, form_fill, transactional_mock, recovery, dynamic_ui, and long_horizon with reset contracts and final postcondition evidence.
 - Blockers:
-  - The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy.
+  - The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy.
 - API-key-only readiness: `non_key_blockers`
 - Non-key blockers:
-  - The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy.
+  - The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy.
 - Next actions:
-  - Expand taxonomy coverage and wire live/recorded-real adapter rows before headline use.
+  - Wire live/recorded-real adapter rows over the committed task contracts before headline use.
 
 ### [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate
 
@@ -231,18 +231,18 @@ Generated: 2026-05-17T16:11:42.288Z
 
 ### [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Current code separates episode harness and reliability mock matrix.
+  - The real-world task-completion runner emits a local deterministic library × task matrix with final postcondition evidence and diagnostic-only claim eligibility.
 - Blockers:
-  - No library × task × repetition matrix uses real-world task completion as the primary reliability metric.
+  - No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `ANTHROPIC_API_KEY or OPENAI_API_KEY`
 - Non-key blockers:
-  - No library × task × repetition matrix uses real-world task completion as the primary reliability metric.
+  - No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet.
 - Next actions:
-  - Unify reliability reporting around task-completion episodes and demote isolated cells to stress diagnostics.
+  - Add repeated live/recorded-real task-completion rows and connect reliability stress signals to these final postcondition contracts.
 
 ### [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims
 
@@ -269,7 +269,6 @@ These committed result artifacts contain OpenChrome version pins older than the 
 | --- | --- | --- |
 | `benchmark/results/episode-token-cost.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/longrun-stability.json` | `1.12.4` | `1.11.0` |
-| `benchmark/results/realworld-task-completion.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/reliability.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/runtime-preflight.json` | `1.12.4` | `1.12.2` |
 
