@@ -8,9 +8,19 @@ describe('episode fault hooks', () => {
     const executor = { inject: jest.fn(async () => 'selector changed') };
     await beforeEpisodeStep(1, plan, executor, state);
     await beforeEpisodeStep(2, plan, executor, state);
+    await beforeEpisodeStep(2, plan, executor, state);
     expect(executor.inject).toHaveBeenCalledTimes(1);
     expect(state.events[0].fault).toBe('selector-drift');
     expect(finalizeFaultRecovery(state, true).recovered).toBe(true);
     expect(finalizeFaultRecovery(state, false).recovered).toBe(false);
+  });
+
+  test('rejects unsupported runtime fault kinds', async () => {
+    const state: import('./episode-fault-hooks').FaultHookState = { events: [], recovered: null };
+    const plan = { taskId: 'rw', injectAtStep: 0, fault: 'bad-fault' as never, expectedRecoverySignal: 'retry' };
+    const executor = { inject: jest.fn(async () => 'nope') };
+
+    await expect(beforeEpisodeStep(0, plan, executor, state)).rejects.toThrow(/unsupported/);
+    expect(executor.inject).not.toHaveBeenCalled();
   });
 });
