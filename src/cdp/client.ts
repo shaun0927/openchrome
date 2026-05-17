@@ -433,6 +433,14 @@ export class CDPClient {
   }
 
   /**
+   * Return whether the connected Chrome is managed by OpenChrome or attached.
+   * Used by session cleanup to avoid closing user-owned tabs in attach mode.
+   */
+  getChromeLifecycleMode(): 'isolated' | 'attach' | undefined {
+    return getChromeLauncher(this.port).getInstance()?.launchMode;
+  }
+
+  /**
    * Get connection health metrics.
    */
   getConnectionMetrics(): {
