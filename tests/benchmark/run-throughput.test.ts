@@ -31,6 +31,7 @@ describe('run-throughput competitor selection', () => {
   test('parses CDP endpoint flag', () => {
     const opts = parseThroughputArgs(['--cdp-endpoint=http://127.0.0.1:9444']);
     expect(opts.cdpEndpoint).toBe('http://127.0.0.1:9444');
+    expect(opts.openChromePort).toBe('9444');
   });
 
   test('parses cold session mode', () => {

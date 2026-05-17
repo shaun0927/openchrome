@@ -84,6 +84,8 @@ export interface ThroughputRunOptions {
   sessionMode: ThroughputSessionMode;
   /** CDP endpoint for live Chrome-backed competitor adapters. */
   cdpEndpoint: string;
+  /** Explicit OpenChrome MCP serve port derived from the live CDP endpoint. */
+  openChromePort: string;
 }
 
 export interface ThroughputRow {
@@ -195,6 +197,7 @@ export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
     flagValue(argv, "--session-mode") ?? process.env.OPENCHROME_BENCH_SESSION_MODE,
   );
   const cdpEndpoint = flagValue(argv, "--cdp-endpoint") ?? process.env.OPENCHROME_BENCH_CDP_ENDPOINT ?? 'http://127.0.0.1:9222';
+  const openChromePort = flagValue(argv, "--openchrome-port") ?? (new URL(cdpEndpoint).port || '9222');
   return {
     ciMode,
     iterations,
@@ -205,6 +208,7 @@ export function parseThroughputArgs(argv: string[]): ThroughputRunOptions {
     includeLiveCompetitors,
     sessionMode,
     cdpEndpoint,
+    openChromePort,
   };
 }
 
@@ -283,7 +287,7 @@ function buildAdapters(options: ThroughputRunOptions): AdapterEntry[] {
         entries.push({
           library: "OpenChrome",
           mode: "dom-live",
-          adapter: new OpenChromeRealAdapter({ mode: "dom", cdpEndpoint: options.cdpEndpoint }),
+          adapter: new OpenChromeRealAdapter({ mode: "dom", cdpEndpoint: options.cdpEndpoint, chromePort: options.openChromePort }),
           requiresLiveChrome: true,
         });
       } else {

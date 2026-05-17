@@ -25,6 +25,8 @@ export interface RealAdapterOptions {
   startupTimeoutMs?: number;
   /** CDP endpoint whose port should be used by the OpenChrome MCP server. */
   cdpEndpoint?: string;
+  /** Explicit Chrome debugging port for OpenChrome MCP serve. */
+  chromePort?: string;
 }
 
 interface MCPRequest {
@@ -63,7 +65,7 @@ export class OpenChromeRealAdapter implements MCPAdapter {
   name = 'OpenChrome';
   mode: string;
 
-  private options: Required<Omit<RealAdapterOptions, 'cdpEndpoint'>> & Pick<RealAdapterOptions, 'cdpEndpoint'>;
+  private options: Required<Omit<RealAdapterOptions, 'cdpEndpoint' | 'chromePort'>> & Pick<RealAdapterOptions, 'cdpEndpoint' | 'chromePort'>;
   private process: ChildProcess | null = null;
   private requestId = 0;
   private pending: Map<number, {
@@ -81,13 +83,14 @@ export class OpenChromeRealAdapter implements MCPAdapter {
       callTimeoutMs: options.callTimeoutMs || 30000,
       startupTimeoutMs: options.startupTimeoutMs || 15000,
       cdpEndpoint: options.cdpEndpoint,
+      chromePort: options.chromePort,
     };
   }
 
 
   async setup(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const chromePort = chromePortFromCdpEndpoint(this.options.cdpEndpoint);
+      const chromePort = this.options.chromePort ?? chromePortFromCdpEndpoint(this.options.cdpEndpoint);
       const serveArgs = [this.options.serverPath, 'serve', ...(chromePort ? ['--port', chromePort] : [])];
       this.process = spawn('node', serveArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
