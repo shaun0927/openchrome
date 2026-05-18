@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T16:18:01.062Z
+Generated: 2026-05-17T16:23:01.351Z
 
 ## Verdict
 
@@ -10,14 +10,14 @@ Generated: 2026-05-17T16:18:01.062Z
 | --- | ---: |
 | Open benchmark issues audited | 15 |
 | Ready | 0 |
-| Partial | 11 |
-| Not ready | 4 |
+| Partial | 12 |
+| Not ready | 3 |
 | Headline-measurement-ready | 0 |
-| Diagnostic/smoke only | 11 |
-| Not measurable yet | 4 |
+| Diagnostic/smoke only | 12 |
+| Not measurable yet | 3 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
-| Stale OpenChrome result artifacts | 4 |
+| Stale OpenChrome result artifacts | 3 |
 
 ## Issue matrix
 
@@ -26,14 +26,14 @@ Generated: 2026-05-17T16:18:01.062Z
 | [#1254](https://github.com/shaun0927/openchrome/issues/1254) Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source | not_ready | not_measurable | non_key_blockers | Multiple child axes remain partial or scaffolded; unified report still marks several sections pending. |
 | [#1255](https://github.com/shaun0927/openchrome/issues/1255) Benchmark #0: Harness Foundation — competitor adapters, exact tokenizer, env metadata | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is not yet proven with every live competitor adapter passing the same smoke task and pinned versions. |
 | [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | non_key_blockers | Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims. |
-| [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | partial | diagnostic_or_smoke_only | non_key_blockers | Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only. |
+| [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | partial | diagnostic_or_smoke_only | non_key_blockers | Live Claude/OpenAI WebVoyager tool-use loops and competitor-native loops remain unwired, so current rows are controlled mock evidence only. |
 | [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput | partial | diagnostic_or_smoke_only | non_key_blockers | Playwright/Puppeteer live throughput cells still require an operator-run Chrome/CDP endpoint, so the headline competitor matrix needs live evidence before promotion. |
 | [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie | partial | diagnostic_or_smoke_only | non_key_blockers | Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired. |
 | [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost | partial | diagnostic_or_smoke_only | non_key_blockers | Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied. |
 | [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability | partial | diagnostic_or_smoke_only | non_key_blockers | Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix. |
-| [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | partial | diagnostic_or_smoke_only | non_key_blockers | Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired. |
+| [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | partial | diagnostic_or_smoke_only | non_key_blockers | Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not yet backed by live/recorded-real samples. |
 | [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy. |
-| [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate | not_ready | not_measurable | non_key_blockers | Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing. |
+| [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate | partial | diagnostic_or_smoke_only | non_key_blockers | Real Anthropic/OpenAI Messages tool-use loops still stop at explicit adapter seams, so live/recorded-real samples are not yet headline-eligible. |
 | [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix | not_ready | not_measurable | non_key_blockers | playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`. |
 | [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks | not_ready | not_measurable | non_key_blockers | Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions. |
 | [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal | partial | diagnostic_or_smoke_only | non_key_blockers | No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet. |
@@ -88,15 +88,15 @@ Generated: 2026-05-17T16:18:01.062Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Controlled agent-success harness, mock workflow repetitions, task taxonomy, first-tool accuracy, and no-progress metrics exist.
+  - Controlled agent-success harness, mock workflow repetitions, task taxonomy, first-tool accuracy, provider metadata, and no-progress metrics exist.
 - Blockers:
-  - Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only.
+  - Live Claude/OpenAI WebVoyager tool-use loops and competitor-native loops remain unwired, so current rows are controlled mock evidence only.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `ANTHROPIC_API_KEY or OPENAI_API_KEY`
 - Non-key blockers:
-  - Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only.
+  - Live Claude/OpenAI WebVoyager tool-use loops and competitor-native loops remain unwired, so current rows are controlled mock evidence only.
 - Next actions:
-  - Implement live/recorded-real adapter rows with pinned LLM settings and competitor versions before headline claims.
+  - Implement live/recorded-real adapter rows with pinned LLM settings, budgets, provider metadata, and competitor versions before headline claims.
 
 ### [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput
 
@@ -160,13 +160,13 @@ Generated: 2026-05-17T16:18:01.062Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - `bench:episode:tokens` exists and reports deterministic mock episode token breakdowns through `tokenUsage`.
+  - `bench:episode:tokens` reports deterministic mock episode token breakdowns through `tokenUsage`, and WebVoyager rows now carry token/USD/budget metadata fields for live samples.
 - Blockers:
-  - Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired.
+  - Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not yet backed by live/recorded-real samples.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `ANTHROPIC_API_KEY or OPENAI_API_KEY`
 - Non-key blockers:
-  - Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired.
+  - Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not yet backed by live/recorded-real samples.
 - Next actions:
   - Add live/recorded-real token accounting with pinned LLM settings, budgets, and competitor versions.
 
@@ -186,18 +186,18 @@ Generated: 2026-05-17T16:18:01.062Z
 
 ### [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Budget constants and repetition CLI parsing exist.
+  - Provider/model/temperature/budget metadata, fail-closed Anthropic/OpenAI preflight, repeated sample expansion, and token/USD/budget-abort report fields exist.
 - Blockers:
-  - Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing.
+  - Real Anthropic/OpenAI Messages tool-use loops still stop at explicit adapter seams, so live/recorded-real samples are not yet headline-eligible.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `ANTHROPIC_API_KEY or OPENAI_API_KEY`
 - Non-key blockers:
-  - Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing.
+  - Real Anthropic/OpenAI Messages tool-use loops still stop at explicit adapter seams, so live/recorded-real samples are not yet headline-eligible.
 - Next actions:
-  - Implement Messages tool-use loop, repetition matrix, budget aborts, and sample-count gates.
+  - Implement provider tool-use loops against the recorded-real task contract and persist live samples only after preflight passes.
 
 ### [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix
 
@@ -267,7 +267,6 @@ These committed result artifacts contain OpenChrome version pins older than the 
 
 | Artifact | Expected OpenChrome version | Found OpenChrome versions |
 | --- | --- | --- |
-| `benchmark/results/episode-token-cost.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/longrun-stability.json` | `1.12.4` | `1.11.0` |
 | `benchmark/results/reliability.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/runtime-preflight.json` | `1.12.4` | `1.12.2` |

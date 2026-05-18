@@ -7,7 +7,7 @@
  *
  * Run via:
  *   npm run bench:webvoyager:mock   # default, deterministic
- *   npm run bench:webvoyager:real   # requires ANTHROPIC_API_KEY + OPENCHROME_BENCH_REAL=1
+ *   npm run bench:webvoyager:real   # requires provider API key + OPENCHROME_BENCH_REAL=1
  */
 
 import { promises as fs } from 'node:fs';
@@ -21,6 +21,7 @@ import type { EvalContext } from '../../../src/contracts/eval-context';
 import { runMockTask } from './llm/mock-adapter';
 import { renderMarkdown } from './report';
 import { WEBVOYAGER_BUDGET } from './llm/budget';
+import { buildProviderRunMetadata, preflightProviderRun, providerForAdapter } from './llm/provider';
 import {
   WEBVOYAGER_LIBRARIES,
   WebVoyagerLibrary,
@@ -43,7 +44,7 @@ const TASKS_DIR = path.join(__dirname, 'tasks');
 const REPORTS_DIR = path.join(__dirname, 'reports');
 const BASELINE_PATH = path.join(__dirname, 'baseline.json');
 
-type AdapterName = 'mock' | 'claude';
+type AdapterName = 'mock' | 'claude' | 'openai';
 
 interface CliOptions {
   adapter: AdapterName;
@@ -70,6 +71,10 @@ interface CliOptions {
   dryRun: boolean;
   /** Repetitions per task; issue #1257 mandates N >= 10 for native-mode runs. */
   repetitions: number;
+  /** Print live provider/runtime readiness and exit before any API call. */
+  preflight: boolean;
+  model?: string;
+  temperature: number;
 }
 
 function isLibrary(v: string): v is WebVoyagerLibrary {
@@ -87,12 +92,14 @@ function parseArgs(argv: string[]): CliOptions {
     mode: 'native',
     dryRun: false,
     repetitions: 1,
+    preflight: false,
+    temperature: 0,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--adapter') {
       const v = argv[++i];
-      if (v !== 'mock' && v !== 'claude') {
+      if (v !== 'mock' && v !== 'claude' && v !== 'openai') {
         throw new Error(`unknown adapter: ${v}`);
       }
       opts.adapter = v;
@@ -110,8 +117,21 @@ function parseArgs(argv: string[]): CliOptions {
         throw new Error(`--repetitions must be a positive integer; got ${argv[i]}`);
       }
       opts.repetitions = n;
+    } else if (a.startsWith('--repetitions=') || a.startsWith('--reps=')) {
+      const raw = a.includes('--repetitions=') ? a.slice('--repetitions='.length) : a.slice('--reps='.length);
+      const n = parseInt(raw, 10);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new Error(`--repetitions must be a positive integer; got ${raw}`);
+      }
+      opts.repetitions = n;
     } else if (a === '--dry-run') {
       opts.dryRun = true;
+    } else if (a === '--preflight') {
+      opts.preflight = true;
+    } else if (a === '--model') {
+      opts.model = argv[++i];
+    } else if (a === '--temperature') {
+      opts.temperature = Number(argv[++i]);
     } else if (a === '--mode') {
       const v = argv[++i];
       if (!isMode(v)) {
@@ -126,12 +146,16 @@ function parseArgs(argv: string[]): CliOptions {
       opts.mode = v;
     } else if (a.startsWith('--adapter=')) {
       const v = a.slice('--adapter='.length);
-      if (v !== 'mock' && v !== 'claude') {
+      if (v !== 'mock' && v !== 'claude' && v !== 'openai') {
         throw new Error(`unknown adapter: ${v}`);
       }
       opts.adapter = v;
     } else if (a.startsWith('--task=')) {
       opts.taskFilter = a.slice('--task='.length);
+    } else if (a.startsWith('--model=')) {
+      opts.model = a.slice('--model='.length);
+    } else if (a.startsWith('--temperature=')) {
+      opts.temperature = Number(a.slice('--temperature='.length));
     } else if (a.startsWith('--library=')) {
       const v = a.slice('--library='.length);
       if (!isLibrary(v)) {
@@ -142,9 +166,10 @@ function parseArgs(argv: string[]): CliOptions {
   }
   // env override (e.g. OPENCHROME_BENCH_ADAPTER=claude)
   const envAdapter = process.env.OPENCHROME_BENCH_ADAPTER;
-  if (envAdapter === 'mock' || envAdapter === 'claude') {
+  if (envAdapter === 'mock' || envAdapter === 'claude' || envAdapter === 'openai') {
     opts.adapter = envAdapter;
   }
+  if (!Number.isFinite(opts.temperature) || opts.temperature < 0) throw new Error('--temperature must be a non-negative number');
   return opts;
 }
 
@@ -238,16 +263,22 @@ function describeFailure(evidence: { assertion_kind: string; details: Record<str
 async function runTask(
   task: WebVoyagerTask,
   adapter: AdapterName,
+  repetition: number,
 ): Promise<TaskRunReport> {
   const started = Date.now();
 
   if (task.pending) {
     return {
       name: task.name,
+      repetition,
       result: 'pending',
       duration_ms: 0,
       tool_calls: 0,
       response_bytes: 0,
+      input_tokens: null,
+      output_tokens: null,
+      total_tokens: null,
+      usd: null,
     };
   }
 
@@ -257,48 +288,65 @@ async function runTask(
       if (run.drift) {
         return {
           name: task.name,
+          repetition,
           result: 'replay_drift',
           duration_ms: Date.now() - started,
           tool_calls: run.tool_calls,
           response_bytes: run.response_bytes,
+          input_tokens: null,
+          output_tokens: null,
+          total_tokens: null,
+          usd: null,
           error: run.drift,
         };
       }
       const check = await evaluateContract(task.contract.postconditions, run.context);
       return {
         name: task.name,
+        repetition,
         result: check.passed ? 'passed' : 'failed',
         duration_ms: Date.now() - started,
         tool_calls: run.tool_calls,
         response_bytes: run.response_bytes,
+        input_tokens: null,
+        output_tokens: null,
+        total_tokens: null,
+        usd: null,
         failed_postcondition: check.passed ? undefined : check.failedDescription,
       };
     }
 
-    // claude adapter
-    const { runClaudeTask } = await import('./llm/claude-adapter');
-    const run = await withTimeout(
-      runClaudeTask(task, WEBVOYAGER_BUDGET),
-      task.timeout_ms,
-      task.name,
-    );
+    const run = adapter === 'claude'
+      ? await withTimeout((await import('./llm/claude-adapter')).runClaudeTask(task, WEBVOYAGER_BUDGET), task.timeout_ms, task.name)
+      : await withTimeout((await import('./llm/openai-adapter')).runOpenAiTask(task, WEBVOYAGER_BUDGET), task.timeout_ms, task.name);
     const check = await evaluateContract(task.contract.postconditions, run.context);
     return {
       name: task.name,
+      repetition,
       result: check.passed ? 'passed' : 'failed',
       duration_ms: Date.now() - started,
       tool_calls: run.tool_calls,
       response_bytes: run.response_bytes,
+      input_tokens: run.input_tokens ?? null,
+      output_tokens: run.output_tokens ?? null,
+      total_tokens: run.total_tokens ?? null,
+      usd: run.usd_spent,
+      budget_abort: run.aborted,
       failed_postcondition: check.passed ? undefined : check.failedDescription,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
       name: task.name,
+      repetition,
       result: 'error',
       duration_ms: Date.now() - started,
       tool_calls: 0,
       response_bytes: 0,
+      input_tokens: null,
+      output_tokens: null,
+      total_tokens: null,
+      usd: null,
       error: message,
     };
   }
@@ -327,6 +375,28 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   if (tasks.length === 0) {
     console.error('[webvoyager] no tasks selected');
     return 1;
+  }
+  const providerMetadata = opts.adapter === 'mock'
+    ? null
+    : buildProviderRunMetadata({
+      provider: providerForAdapter(opts.adapter),
+      model: opts.model,
+      temperature: opts.temperature,
+      budget: WEBVOYAGER_BUDGET,
+    });
+
+  if (opts.preflight) {
+    if (!providerMetadata) {
+      console.error('[webvoyager] preflight: mock adapter selected; no live provider/API call required.');
+      return 0;
+    }
+    const preflight = preflightProviderRun(providerMetadata);
+    console.error(
+      `[webvoyager] preflight provider=${preflight.provider} model=${preflight.model} ` +
+        `ok=${preflight.ok ? 'yes' : 'no'}` +
+        (preflight.missing.length > 0 ? ` missing=${preflight.missing.join(',')}` : ''),
+    );
+    return preflight.ok ? 0 : 1;
   }
 
   // Dry-run gate (#1257): print the worst-case cost projection and exit 0
@@ -373,13 +443,15 @@ export async function main(argv: string[] = process.argv): Promise<number> {
 
   const taskReports: TaskRunReport[] = [];
   for (const t of tasks) {
-    const r = await runTask(t, opts.adapter);
-    taskReports.push(r);
-    console.error(
-      `[webvoyager] ${r.name}: ${r.result}` +
-        (r.failed_postcondition ? ` — ${r.failed_postcondition}` : '') +
-        (r.error ? ` — ${r.error}` : ''),
-    );
+    for (let repetition = 1; repetition <= opts.repetitions; repetition++) {
+      const r = await runTask(t, opts.adapter, repetition);
+      taskReports.push(r);
+      console.error(
+        `[webvoyager] ${r.name}#${r.repetition}: ${r.result}` +
+          (r.failed_postcondition ? ` — ${r.failed_postcondition}` : '') +
+          (r.error ? ` — ${r.error}` : ''),
+      );
+    }
   }
 
   const passCount = taskReports.filter((r) => r.result === 'passed').length;
@@ -405,6 +477,12 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     mode: opts.mode,
     library: opts.library,
     repetitions: opts.repetitions,
+    provider: providerMetadata?.provider ?? 'none',
+    model: providerMetadata?.model ?? 'none',
+    temperature: providerMetadata?.temperature ?? 0,
+    max_tokens: WEBVOYAGER_BUDGET.max_tokens,
+    max_tool_iterations: WEBVOYAGER_BUDGET.max_tool_iterations,
+    max_usd_per_task: WEBVOYAGER_BUDGET.max_usd_per_task,
     total_tasks: totalCount,
     pass_count: passCount,
     fail_count: failCount,

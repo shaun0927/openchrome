@@ -13,6 +13,8 @@ export function renderMarkdown(report: BenchReport): string {
   lines.push('');
   lines.push(`- git_sha: \`${report.git_sha}\``);
   lines.push(`- adapter: \`${report.adapter}\``);
+  lines.push(`- provider/model: \`${report.provider}\` / \`${report.model}\``);
+  lines.push(`- budget: max_tokens=${report.max_tokens}, max_tool_iterations=${report.max_tool_iterations}, max_usd_per_task=$${report.max_usd_per_task}`);
   lines.push(`- timestamp: \`${report.timestamp}\``);
   lines.push(
     `- contract_eval_score: **${report.contract_eval_score}** ` +
@@ -29,8 +31,8 @@ export function renderMarkdown(report: BenchReport): string {
   lines.push('');
   lines.push('## Per-task results');
   lines.push('');
-  lines.push('| Task | Result | Duration (ms) | Tool calls | Response bytes | Failed postcondition |');
-  lines.push('| --- | --- | ---: | ---: | ---: | --- |');
+  lines.push('| Task | Rep | Result | Duration (ms) | Tool calls | Tokens | USD | Budget abort | Failed postcondition |');
+  lines.push('| --- | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |');
   for (const t of report.tasks) {
     lines.push(rowFor(t));
   }
@@ -53,7 +55,7 @@ export function renderMarkdown(report: BenchReport): string {
 
 function rowFor(t: TaskRunReport): string {
   const failed = t.failed_postcondition ?? (t.error ? `error: ${t.error}` : '');
-  return `| ${escape(t.name)} | ${t.result} | ${t.duration_ms} | ${t.tool_calls} | ${t.response_bytes} | ${escape(failed)} |`;
+  return `| ${escape(t.name)} | ${t.repetition} | ${t.result} | ${t.duration_ms} | ${t.tool_calls} | ${t.total_tokens ?? 'n/a'} | ${t.usd ?? 'n/a'} | ${t.budget_abort ?? ''} | ${escape(failed)} |`;
 }
 
 function escape(s: string): string {

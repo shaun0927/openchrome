@@ -1,29 +1,22 @@
 {
-  "generatedAt": "2026-05-17T16:18:01.062Z",
+  "generatedAt": "2026-05-17T16:23:01.351Z",
   "summary": {
     "totalOpenBenchmarkIssues": 15,
     "ready": 0,
-    "partial": 11,
-    "notReady": 4,
+    "partial": 12,
+    "notReady": 3,
     "headlineReady": 0,
-    "diagnosticOrSmokeOnly": 11,
-    "notMeasurable": 4,
+    "diagnosticOrSmokeOnly": 12,
+    "notMeasurable": 3,
     "canMeasureEveryOpenBenchmarkIssue": false,
     "apiKeyOnlyReady": 0,
     "nonKeyBlocked": 15,
     "apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue": false,
-    "staleResultArtifactCount": 4
+    "staleResultArtifactCount": 3
   },
   "artifactFreshness": {
     "currentOpenChromeVersion": "1.12.4",
     "staleArtifacts": [
-      {
-        "file": "benchmark/results/episode-token-cost.json",
-        "expectedOpenChromeVersion": "1.12.4",
-        "foundVersions": [
-          "1.12.2"
-        ]
-      },
       {
         "file": "benchmark/results/longrun-stability.json",
         "expectedOpenChromeVersion": "1.12.4",
@@ -118,20 +111,20 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Controlled agent-success harness, mock workflow repetitions, task taxonomy, first-tool accuracy, and no-progress metrics exist."
+        "Controlled agent-success harness, mock workflow repetitions, task taxonomy, first-tool accuracy, provider metadata, and no-progress metrics exist."
       ],
       "blockers": [
-        "Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only."
+        "Live Claude/OpenAI WebVoyager tool-use loops and competitor-native loops remain unwired, so current rows are controlled mock evidence only."
       ],
       "nextActions": [
-        "Implement live/recorded-real adapter rows with pinned LLM settings and competitor versions before headline claims."
+        "Implement live/recorded-real adapter rows with pinned LLM settings, budgets, provider metadata, and competitor versions before headline claims."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [
         "ANTHROPIC_API_KEY or OPENAI_API_KEY"
       ],
       "nonKeyBlockers": [
-        "Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only."
+        "Live Claude/OpenAI WebVoyager tool-use loops and competitor-native loops remain unwired, so current rows are controlled mock evidence only."
       ]
     },
     {
@@ -227,10 +220,10 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "`bench:episode:tokens` exists and reports deterministic mock episode token breakdowns through `tokenUsage`."
+        "`bench:episode:tokens` reports deterministic mock episode token breakdowns through `tokenUsage`, and WebVoyager rows now carry token/USD/budget metadata fields for live samples."
       ],
       "blockers": [
-        "Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired."
+        "Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not yet backed by live/recorded-real samples."
       ],
       "nextActions": [
         "Add live/recorded-real token accounting with pinned LLM settings, budgets, and competitor versions."
@@ -240,7 +233,7 @@
         "ANTHROPIC_API_KEY or OPENAI_API_KEY"
       ],
       "nonKeyBlockers": [
-        "Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired."
+        "Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not yet backed by live/recorded-real samples."
       ]
     },
     {
@@ -268,23 +261,23 @@
       "issue": 1301,
       "title": "Benchmark #B follow-up: real LLM repetitions and full-task metrics gate",
       "url": "https://github.com/shaun0927/openchrome/issues/1301",
-      "status": "not_ready",
-      "measurementReadiness": "not_measurable",
+      "status": "partial",
+      "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Budget constants and repetition CLI parsing exist."
+        "Provider/model/temperature/budget metadata, fail-closed Anthropic/OpenAI preflight, repeated sample expansion, and token/USD/budget-abort report fields exist."
       ],
       "blockers": [
-        "Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing."
+        "Real Anthropic/OpenAI Messages tool-use loops still stop at explicit adapter seams, so live/recorded-real samples are not yet headline-eligible."
       ],
       "nextActions": [
-        "Implement Messages tool-use loop, repetition matrix, budget aborts, and sample-count gates."
+        "Implement provider tool-use loops against the recorded-real task contract and persist live samples only after preflight passes."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [
         "ANTHROPIC_API_KEY or OPENAI_API_KEY"
       ],
       "nonKeyBlockers": [
-        "Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing."
+        "Real Anthropic/OpenAI Messages tool-use loops still stop at explicit adapter seams, so live/recorded-real samples are not yet headline-eligible."
       ]
     },
     {

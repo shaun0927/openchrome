@@ -15,7 +15,7 @@ This benchmark complements #1256. #1256 measures a single page-observation paylo
 
 | Task | Status | Success | Total tokens | Prompt | Tool req | Tool result | Contract | Tool calls | No-progress | Duration ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| example-h1 | passed | true | 145 | 62 | 13 | 24 | 46 | 1 | 0 | 0 |
+| example-h1 | passed | true | 145 | 62 | 13 | 24 | 46 | 1 | 0 | 117 |
 | local-form-submit | passed | true | 434 | 61 | 75 | 103 | 195 | 5 | 0 | 0 |
 | local-recovery-stall | max_steps | false | 413 | 68 | 44 | 137 | 164 | 4 | 1 | 0 |
 
