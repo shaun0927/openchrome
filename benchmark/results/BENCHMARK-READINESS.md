@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T16:23:01.351Z
+Generated: 2026-05-17T16:26:33.455Z
 
 ## Verdict
 
@@ -10,11 +10,11 @@ Generated: 2026-05-17T16:23:01.351Z
 | --- | ---: |
 | Open benchmark issues audited | 15 |
 | Ready | 0 |
-| Partial | 12 |
-| Not ready | 3 |
+| Partial | 13 |
+| Not ready | 2 |
 | Headline-measurement-ready | 0 |
-| Diagnostic/smoke only | 12 |
-| Not measurable yet | 3 |
+| Diagnostic/smoke only | 13 |
+| Not measurable yet | 2 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
 | Stale OpenChrome result artifacts | 3 |
@@ -34,7 +34,7 @@ Generated: 2026-05-17T16:23:01.351Z
 | [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | partial | diagnostic_or_smoke_only | non_key_blockers | Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not yet backed by live/recorded-real samples. |
 | [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy. |
 | [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate | partial | diagnostic_or_smoke_only | non_key_blockers | Real Anthropic/OpenAI Messages tool-use loops still stop at explicit adapter seams, so live/recorded-real samples are not yet headline-eligible. |
-| [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix | not_ready | not_measurable | non_key_blockers | playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`. |
+| [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix | partial | diagnostic_or_smoke_only | non_key_blockers | Native competitor dry-runs and dependency skips are wired, but live/recorded-real LLM rows still require operator runtime and provider credentials before headline use. |
 | [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks | not_ready | not_measurable | non_key_blockers | Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions. |
 | [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal | partial | diagnostic_or_smoke_only | non_key_blockers | No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet. |
 | [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims | partial | diagnostic_or_smoke_only | non_key_blockers | Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence. |
@@ -201,18 +201,18 @@ Generated: 2026-05-17T16:23:01.351Z
 
 ### [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Library routing identities and dry-run projection exist.
+  - Library routing identities, exact version pins, native execution descriptors, dry-run projections, and adapter-level setup-error surfaces exist for playwright-mcp and browser-use.
 - Blockers:
-  - playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`.
+  - Native competitor dry-runs and dependency skips are wired, but live/recorded-real LLM rows still require operator runtime and provider credentials before headline use.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `ANTHROPIC_API_KEY or OPENAI_API_KEY`
 - Non-key blockers:
-  - playwright-mcp and browser-use native loops are marked `nativeLoopWired: false`.
+  - Native competitor dry-runs and dependency skips are wired, but live/recorded-real LLM rows still require operator runtime and provider credentials before headline use.
 - Next actions:
-  - Wire native mode for playwright-mcp and browser-use and keep passive mode as secondary.
+  - Run operator-provided native competitor rows after provider preflight and keep passive rows secondary.
 
 ### [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks
 
