@@ -24,6 +24,37 @@ export type BenchmarkAxis =
   | 'episode-token-cost'
   | 'realworld-task-completion';
 
+export type BenchmarkResultStatus =
+  | 'measured'
+  | 'passed'
+  | 'failed'
+  | 'partial'
+  | 'skipped'
+  | 'dependency_missing'
+  | 'not_wired'
+  | 'dry_run'
+  | 'mock'
+  | 'scaffold'
+  | 'diagnostic';
+
+export const HEADLINE_RESULT_STATUSES: readonly BenchmarkResultStatus[] = ['measured', 'passed'];
+
+export const DIAGNOSTIC_RESULT_STATUSES: readonly BenchmarkResultStatus[] = [
+  'failed',
+  'partial',
+  'skipped',
+  'dependency_missing',
+  'not_wired',
+  'dry_run',
+  'mock',
+  'scaffold',
+  'diagnostic',
+];
+
+export function isHeadlineEligibleResultStatus(status: unknown): boolean {
+  return typeof status === 'string' && (HEADLINE_RESULT_STATUSES as readonly string[]).includes(status);
+}
+
 export interface CompetitorPin {
   name: string;
   version: string;

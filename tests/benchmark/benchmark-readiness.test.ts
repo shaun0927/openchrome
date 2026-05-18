@@ -40,6 +40,8 @@ describe('benchmark readiness audit', () => {
     expect(report.summary.apiKeyOnlyReady).toBe(0);
     expect(report.summary.nonKeyBlocked).toBe(15);
     expect(report.summary.apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue).toBe(false);
+    expect(report.summary.staleResultArtifactCount).toBeGreaterThan(0);
+    expect(report.artifactFreshness.currentOpenChromeVersion).toBe('1.12.4');
   });
 
   it('keeps the closed #1305 real-world task runner out of the open-issue audit', () => {
@@ -53,15 +55,19 @@ describe('benchmark readiness audit', () => {
 
   it('records the additional PR ladder needed before API keys are the only remaining gate', () => {
     expect(ADDITIONAL_BENCHMARK_PR_SCOPES.map((scope) => scope.id)).toEqual([
-      'PR-A',
-      'PR-B',
-      'PR-C',
-      'PR-D',
-      'PR-E',
-      'PR-F',
+      'PR1',
+      'PR2',
+      'PR3',
+      'PR4',
+      'PR5',
+      'PR6',
+      'PR7',
+      'PR8',
     ]);
     const coveredIssues = new Set(ADDITIONAL_BENCHMARK_PR_SCOPES.flatMap((scope) => scope.issues));
     for (const issue of OPEN_BENCHMARK_ISSUES) expect(coveredIssues.has(issue.issue)).toBe(true);
+    expect(ADDITIONAL_BENCHMARK_PR_SCOPES[0].inScope).toContain('claimEligibility validation for rows and aggregates');
+    expect(ADDITIONAL_BENCHMARK_PR_SCOPES[0].outOfScope).toContain('OpenChrome product/core changes');
   });
 
   it('renders a human-readable not-ready verdict and API-key-only PR scopes', () => {
@@ -70,7 +76,11 @@ describe('benchmark readiness audit', () => {
     expect(markdown).toContain('**NOT READY:**');
     expect(markdown).toContain('API-key-only readiness');
     expect(markdown).toContain('Additional PR scopes to reach API-key-only readiness');
-    expect(markdown).toContain('PR-A: Wire real LLM episode loops');
+    expect(markdown).toContain('Result artifact freshness');
+    expect(markdown).toContain('Stale OpenChrome result artifacts');
+    expect(markdown).toContain('PR1: Benchmark contract hardening');
+    expect(markdown).toContain('Out of scope:');
+    expect(markdown).toContain('OpenChrome product/core changes');
     expect(markdown).not.toContain('#1305');
   });
 });

@@ -9,6 +9,7 @@
  */
 
 const HEADLINE_MODES = new Set(['live', 'live-llm', 'recorded-real']);
+const DIAGNOSTIC_STATUSES = new Set(['skipped', 'dependency_missing', 'not_wired', 'dry_run', 'mock', 'scaffold', 'diagnostic']);
 
 function getMode(result) {
   return result?.mode ?? result?.measurementMode ?? result?.metadata?.mode ?? result?.scenario?.mode ?? 'unknown';
@@ -20,6 +21,10 @@ function getLibrary(result) {
 
 function getTaskId(result) {
   return result?.taskId ?? result?.task ?? result?.scenario?.taskId ?? 'unknown';
+}
+
+function getStatus(result) {
+  return result?.status ?? result?.measurementStatus ?? result?.resultStatus ?? 'unknown';
 }
 
 function rowHasPostconditionEvidence(row) {
@@ -50,6 +55,8 @@ function classifyResult(result, index) {
   }
 
   if (!HEADLINE_MODES.has(mode)) reasons.push(`mode ${mode} is not headline-eligible`);
+  const status = getStatus(result);
+  if (DIAGNOSTIC_STATUSES.has(status)) reasons.push(`status ${status} is diagnostic-only`);
   if (!hasPostconditionEvidence(result)) reasons.push('missing final postcondition evidence');
 
   if (reasons.length > 0) {
