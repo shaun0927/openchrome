@@ -2,6 +2,14 @@ export type RealWorldTaskTier = 'local-fixture' | 'stable-public-reference' | 'r
 
 export type MeasurementMode = 'deterministic-fixture' | 'recorded-real' | 'live-llm';
 
+export type RealWorldTaskCategory =
+  | 'info_retrieval'
+  | 'form_fill'
+  | 'transactional_mock'
+  | 'recovery'
+  | 'dynamic_ui'
+  | 'long_horizon';
+
 export type FailureCategory =
   | 'planning'
   | 'navigation'
@@ -17,11 +25,22 @@ export interface RealWorldTaskSpec {
   id: string;
   title: string;
   tier: RealWorldTaskTier;
+  category: RealWorldTaskCategory;
   goal: string;
   maxSteps: number;
   successCriteria: string[];
   complexityTags: string[];
   requiresRecovery: boolean;
+  fixturePath: string;
+  resetContract: {
+    kind: 'fixture-reset';
+    description: string;
+    evidence: string;
+  };
+  postconditionContract: {
+    description: string;
+    requiredEvidence: string[];
+  };
 }
 
 export interface RealWorldTaskRun {

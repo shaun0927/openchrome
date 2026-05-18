@@ -31,11 +31,11 @@ describe('benchmark readiness audit', () => {
     const report = buildBenchmarkReadinessReport(new Date('2026-05-17T00:00:00.000Z'));
     expect(report.summary.totalOpenBenchmarkIssues).toBe(15);
     expect(report.summary.ready).toBe(0);
-    expect(report.summary.partial).toBe(10);
-    expect(report.summary.notReady).toBe(5);
+    expect(report.summary.partial).toBe(11);
+    expect(report.summary.notReady).toBe(4);
     expect(report.summary.headlineReady).toBe(0);
-    expect(report.summary.diagnosticOrSmokeOnly).toBe(10);
-    expect(report.summary.notMeasurable).toBe(5);
+    expect(report.summary.diagnosticOrSmokeOnly).toBe(11);
+    expect(report.summary.notMeasurable).toBe(4);
     expect(report.summary.canMeasureEveryOpenBenchmarkIssue).toBe(false);
     expect(report.summary.apiKeyOnlyReady).toBe(0);
     expect(report.summary.nonKeyBlocked).toBe(15);

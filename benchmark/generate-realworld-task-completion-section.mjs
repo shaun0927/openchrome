@@ -70,10 +70,19 @@ function main(argv = process.argv.slice(2)) {
 
   lines.push('## Task corpus');
   lines.push('');
-  lines.push('| Task | Tier | Max steps | Recovery? | Complexity tags |');
-  lines.push('| --- | --- | ---: | --- | --- |');
+  lines.push('| Task | Category | Tier | Max steps | Recovery? | Reset contract | Postcondition evidence required |');
+  lines.push('| --- | --- | --- | ---: | --- | --- | --- |');
   for (const task of result.tasks ?? []) {
-    lines.push(`| \`${task.id}\` ${task.title} | ${task.tier} | ${task.maxSteps} | ${task.requiresRecovery ? 'yes' : 'no'} | ${task.complexityTags.join(', ')} |`);
+    lines.push(`| \`${task.id}\` ${task.title} | ${task.category ?? 'unknown'} | ${task.tier} | ${task.maxSteps} | ${task.requiresRecovery ? 'yes' : 'no'} | ${task.resetContract?.description ?? 'missing'} | ${(task.postconditionContract?.requiredEvidence ?? []).join(', ') || 'missing'} |`);
+  }
+  lines.push('');
+
+  lines.push('## Final postcondition evidence');
+  lines.push('');
+  lines.push('| Library | Task | Success | Final postcondition evaluated | Evidence |');
+  lines.push('| --- | --- | --- | --- | --- |');
+  for (const run of result.runs ?? []) {
+    lines.push(`| \`${run.library}\` | \`${run.taskId}\` | ${run.success ? 'yes' : 'no'} | ${run.finalPostconditionEvaluated ? 'yes' : 'no'} | ${run.finalPostconditionEvidence ?? 'missing'} |`);
   }
   lines.push('');
 

@@ -1,6 +1,6 @@
 # Complex Real-World Task Completion (#1305)
 
-Generated: 2026-05-16T17:01:45.500Z
+Generated: 2026-05-17T16:18:19.567Z
 Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-task-completion`).
 
 ## Claim scope
@@ -10,7 +10,7 @@ Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-tas
 - This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.
 - Claim eligibility tier: **diagnostic-only**; eligible: **no**.
   - Blocker: measurement mode scaffold is not headline-eligible; use live or recorded-real
-  - Blocker: sample count 5 is below aggregate threshold N >= 10
+  - Blocker: sample count 6 is below aggregate threshold N >= 10
   - Blocker: LLM model/settings/budgets are not pinned
 - Headline gate: **blocked**. Use `node benchmark/generate-realworld-task-completion-section.mjs --require-headline` in release workflows to enforce this.
 - #1261 remains the DX/supporting axis; this section is the primary task-completion axis.
@@ -19,17 +19,29 @@ Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-tas
 
 | Library | Mode | Runs | Success | First-attempt success | Recovery success | Mean tool calls | Mean wall time ms | p95 wall time ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `openchrome` | `deterministic-fixture` | 5 | 100.0% | 80.0% | 100.0% | 9.6 | 1640 | 2175 |
+| `openchrome` | `deterministic-fixture` | 6 | 100.0% | 83.3% | 100.0% | 10.5 | 1712.5 | 2175 |
 
 ## Task corpus
 
-| Task | Tier | Max steps | Recovery? | Complexity tags |
-| --- | --- | ---: | --- | --- |
-| `rw-001-checkout-update-address` Update a checkout shipping address and verify recalculated summary | local-fixture | 14 | no | form-fill, stateful-ui, verification |
-| `rw-002-search-filter-compare` Search, filter, compare two products, and extract the cheaper eligible item | local-fixture | 16 | no | search, filtering, extraction, decision |
-| `rw-003-tab-research-synthesis` Use multiple tabs to synthesize two reference pages into one answer | stable-public-reference | 18 | no | tabs, reading, synthesis |
-| `rw-004-selector-drift-recovery` Recover from selector drift while submitting a feedback form | recovery | 20 | yes | fault-recovery, form-fill, grounding |
-| `rw-005-long-horizon-itinerary` Build and verify a multi-step itinerary from constrained options | long-horizon | 28 | no | long-horizon, filtering, decision, stateful-ui |
+| Task | Category | Tier | Max steps | Recovery? | Reset contract | Postcondition evidence required |
+| --- | --- | --- | ---: | --- | --- | --- |
+| `rw-001-checkout-update-address` Update a checkout shipping address and verify recalculated summary | form_fill | local-fixture | 14 | no | Reloading the local checkout fixture restores the original address and order summary. | saved city/postal text, summary destination text, recalculated shipping/tax values |
+| `rw-002-search-filter-compare` Search, filter, compare two products, and extract the cheaper eligible item | info_retrieval | local-fixture | 16 | no | Reloading the fixture clears query text, filters, comparison tray, and selected answer. | active filters, two compared item names/prices, selected cheaper eligible item |
+| `rw-003-return-authorization` Complete a mock return authorization transaction | transactional_mock | local-fixture | 18 | no | Reloading the fixture clears selected items, reason, confirmation state, and generated authorization number. | confirmation banner, authorization number, returned item name |
+| `rw-004-selector-drift-recovery` Recover from selector drift while submitting a feedback form | recovery | recovery | 20 | yes | Reloading the fixture restores the pre-drift selector state and clears submitted feedback. | selector failure/fallback note, feedback receipt text, submitted email/value |
+| `rw-005-long-horizon-itinerary` Build and verify a multi-step itinerary from constrained options | long_horizon | long-horizon | 28 | no | Reloading the fixture clears filters, selected legs, cart state, and itinerary summary. | applied constraints, selected option id, summary total and transit time |
+| `rw-006-dynamic-ui-inventory` Handle delayed dynamic inventory controls and verify saved selection | dynamic_ui | local-fixture | 18 | no | Reloading the fixture returns controls to the loading state and clears the saved variant summary. | hydration complete marker, selected variant label, saved selection summary |
+
+## Final postcondition evidence
+
+| Library | Task | Success | Final postcondition evaluated | Evidence |
+| --- | --- | --- | --- | --- |
+| `openchrome` | `rw-001-checkout-update-address` | yes | yes | rw-001-checkout-update-address: saved city/postal text + summary destination text + recalculated shipping/tax values observed after fixture-reset |
+| `openchrome` | `rw-002-search-filter-compare` | yes | yes | rw-002-search-filter-compare: active filters + two compared item names/prices + selected cheaper eligible item observed after fixture-reset |
+| `openchrome` | `rw-003-return-authorization` | yes | yes | rw-003-return-authorization: confirmation banner + authorization number + returned item name observed after fixture-reset |
+| `openchrome` | `rw-004-selector-drift-recovery` | yes | yes | rw-004-selector-drift-recovery: selector failure/fallback note + feedback receipt text + submitted email/value observed after fixture-reset |
+| `openchrome` | `rw-005-long-horizon-itinerary` | yes | yes | rw-005-long-horizon-itinerary: applied constraints + selected option id + summary total and transit time observed after fixture-reset |
+| `openchrome` | `rw-006-dynamic-ui-inventory` | yes | yes | rw-006-dynamic-ui-inventory: hydration complete marker + selected variant label + saved selection summary observed after fixture-reset |
 
 ## Next measurement work
 

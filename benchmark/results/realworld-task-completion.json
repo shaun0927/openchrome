@@ -2,8 +2,8 @@
   "axis": "realworld-task-completion",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-16T17:01:41.662Z",
-    "gitSha": "26c4ce33",
+    "capturedAt": "2026-05-17T16:16:41.454Z",
+    "gitSha": "55e7a8a8",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -17,7 +17,7 @@
   "competitors": [
     {
       "name": "openchrome",
-      "version": "1.12.2"
+      "version": "1.12.4"
     }
   ],
   "tokenizer": "cl100k_base",
@@ -32,6 +32,7 @@
           "id": "rw-001-checkout-update-address",
           "title": "Update a checkout shipping address and verify recalculated summary",
           "tier": "local-fixture",
+          "category": "form_fill",
           "goal": "Find the checkout address form, update the shipping city/postal code, and verify the order summary reflects the new destination.",
           "maxSteps": 14,
           "successCriteria": [
@@ -44,12 +45,27 @@
             "stateful-ui",
             "verification"
           ],
-          "requiresRecovery": false
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/checkout-address.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the local checkout fixture restores the original address and order summary.",
+            "evidence": "initial city=Springfield; initial postal=01103; order summary destination=MA"
+          },
+          "postconditionContract": {
+            "description": "The saved address and order summary must both show the requested destination after submit.",
+            "requiredEvidence": [
+              "saved city/postal text",
+              "summary destination text",
+              "recalculated shipping/tax values"
+            ]
+          }
         },
         {
           "id": "rw-002-search-filter-compare",
           "title": "Search, filter, compare two products, and extract the cheaper eligible item",
           "tier": "local-fixture",
+          "category": "info_retrieval",
           "goal": "Search a product catalog, apply availability and rating filters, compare two candidates, and report the cheaper eligible item.",
           "maxSteps": 16,
           "successCriteria": [
@@ -63,31 +79,61 @@
             "extraction",
             "decision"
           ],
-          "requiresRecovery": false
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/product-search.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture clears query text, filters, comparison tray, and selected answer.",
+            "evidence": "query empty; availability filter unset; comparison tray count=0"
+          },
+          "postconditionContract": {
+            "description": "The final answer must name the cheapest in-stock item that satisfies the rating filter.",
+            "requiredEvidence": [
+              "active filters",
+              "two compared item names/prices",
+              "selected cheaper eligible item"
+            ]
+          }
         },
         {
-          "id": "rw-003-tab-research-synthesis",
-          "title": "Use multiple tabs to synthesize two reference pages into one answer",
-          "tier": "stable-public-reference",
-          "goal": "Open two reference pages, extract the requested facts from each, and produce a synthesized answer with both facts.",
+          "id": "rw-003-return-authorization",
+          "title": "Complete a mock return authorization transaction",
+          "tier": "local-fixture",
+          "category": "transactional_mock",
+          "goal": "Find an order, select eligible items for return, choose a reason, submit the mock return request, and verify the authorization number.",
           "maxSteps": 18,
           "successCriteria": [
-            "two tabs used",
-            "fact from page A extracted",
-            "fact from page B extracted",
-            "combined answer produced"
+            "eligible order found",
+            "return reason selected",
+            "mock transaction submitted",
+            "authorization number verified"
           ],
           "complexityTags": [
-            "tabs",
-            "reading",
-            "synthesis"
+            "transactional-mock",
+            "stateful-ui",
+            "verification"
           ],
-          "requiresRecovery": false
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/return-authorization.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture clears selected items, reason, confirmation state, and generated authorization number.",
+            "evidence": "selected return items=0; confirmation hidden; authorization number absent"
+          },
+          "postconditionContract": {
+            "description": "The final confirmation must include the expected mock return authorization number and selected item.",
+            "requiredEvidence": [
+              "confirmation banner",
+              "authorization number",
+              "returned item name"
+            ]
+          }
         },
         {
           "id": "rw-004-selector-drift-recovery",
           "title": "Recover from selector drift while submitting a feedback form",
           "tier": "recovery",
+          "category": "recovery",
           "goal": "Submit a feedback form after the primary submit selector changes during the run.",
           "maxSteps": 20,
           "successCriteria": [
@@ -100,12 +146,27 @@
             "form-fill",
             "grounding"
           ],
-          "requiresRecovery": true
+          "requiresRecovery": true,
+          "fixturePath": "tests/benchmark/fixtures/realworld/selector-drift-feedback.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture restores the pre-drift selector state and clears submitted feedback.",
+            "evidence": "primary submit selector present before drift; submission receipt absent"
+          },
+          "postconditionContract": {
+            "description": "The feedback receipt must be visible after recovering from the drifted submit selector.",
+            "requiredEvidence": [
+              "selector failure/fallback note",
+              "feedback receipt text",
+              "submitted email/value"
+            ]
+          }
         },
         {
           "id": "rw-005-long-horizon-itinerary",
           "title": "Build and verify a multi-step itinerary from constrained options",
           "tier": "long-horizon",
+          "category": "long_horizon",
           "goal": "Filter itinerary options by date, budget, and transit time; add the best option; verify the final itinerary summary.",
           "maxSteps": 28,
           "successCriteria": [
@@ -120,7 +181,55 @@
             "decision",
             "stateful-ui"
           ],
-          "requiresRecovery": false
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/itinerary-builder.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture clears filters, selected legs, cart state, and itinerary summary.",
+            "evidence": "filters empty; selected legs=0; itinerary summary hidden"
+          },
+          "postconditionContract": {
+            "description": "The itinerary summary must include the selected option satisfying date, budget, and transit constraints.",
+            "requiredEvidence": [
+              "applied constraints",
+              "selected option id",
+              "summary total and transit time"
+            ]
+          }
+        },
+        {
+          "id": "rw-006-dynamic-ui-inventory",
+          "title": "Handle delayed dynamic inventory controls and verify saved selection",
+          "tier": "local-fixture",
+          "category": "dynamic_ui",
+          "goal": "Wait for inventory controls to hydrate, open the variant picker, select the only in-stock variant, and verify the saved selection.",
+          "maxSteps": 18,
+          "successCriteria": [
+            "hydrated controls observed",
+            "in-stock variant selected",
+            "selection persisted in summary"
+          ],
+          "complexityTags": [
+            "dynamic-ui",
+            "hydration",
+            "stateful-ui",
+            "verification"
+          ],
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/dynamic-inventory.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture returns controls to the loading state and clears the saved variant summary.",
+            "evidence": "controls loading; selected variant empty; summary hidden"
+          },
+          "postconditionContract": {
+            "description": "The summary must show the selected in-stock variant after delayed controls hydrate.",
+            "requiredEvidence": [
+              "hydration complete marker",
+              "selected variant label",
+              "saved selection summary"
+            ]
+          }
         }
       ],
       "runs": [
@@ -138,7 +247,9 @@
           "tokens": null,
           "usd": null,
           "failureCategory": "none",
-          "notes": "deterministic scaffold row from local fixture contract; not a live competitive LLM/browser measurement"
+          "finalPostconditionEvidence": "rw-001-checkout-update-address: saved city/postal text + summary destination text + recalculated shipping/tax values observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (form_fill); not a live competitive LLM/browser measurement"
         },
         {
           "library": "openchrome",
@@ -154,11 +265,13 @@
           "tokens": null,
           "usd": null,
           "failureCategory": "none",
-          "notes": "deterministic scaffold row from local fixture contract; not a live competitive LLM/browser measurement"
+          "finalPostconditionEvidence": "rw-002-search-filter-compare: active filters + two compared item names/prices + selected cheaper eligible item observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (info_retrieval); not a live competitive LLM/browser measurement"
         },
         {
           "library": "openchrome",
-          "taskId": "rw-003-tab-research-synthesis",
+          "taskId": "rw-003-return-authorization",
           "mode": "deterministic-fixture",
           "success": true,
           "firstAttempt": true,
@@ -170,7 +283,9 @@
           "tokens": null,
           "usd": null,
           "failureCategory": "none",
-          "notes": "deterministic scaffold row from local fixture contract; not a live competitive LLM/browser measurement"
+          "finalPostconditionEvidence": "rw-003-return-authorization: confirmation banner + authorization number + returned item name observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (transactional_mock); not a live competitive LLM/browser measurement"
         },
         {
           "library": "openchrome",
@@ -186,7 +301,9 @@
           "tokens": null,
           "usd": null,
           "failureCategory": "none",
-          "notes": "deterministic scaffold row from local fixture contract; not a live competitive LLM/browser measurement"
+          "finalPostconditionEvidence": "rw-004-selector-drift-recovery: selector failure/fallback note + feedback receipt text + submitted email/value observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (recovery); not a live competitive LLM/browser measurement"
         },
         {
           "library": "openchrome",
@@ -202,33 +319,55 @@
           "tokens": null,
           "usd": null,
           "failureCategory": "none",
-          "notes": "deterministic scaffold row from local fixture contract; not a live competitive LLM/browser measurement"
+          "finalPostconditionEvidence": "rw-005-long-horizon-itinerary: applied constraints + selected option id + summary total and transit time observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (long_horizon); not a live competitive LLM/browser measurement"
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-006-dynamic-ui-inventory",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": true,
+          "recovered": null,
+          "wallTimeMs": 2075,
+          "toolCalls": 15,
+          "retries": 0,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-006-dynamic-ui-inventory: hydration complete marker + selected variant label + saved selection summary observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (dynamic_ui); not a live competitive LLM/browser measurement"
         }
       ],
       "metrics": [
         {
           "library": "openchrome",
           "mode": "deterministic-fixture",
-          "totalRuns": 5,
+          "totalRuns": 6,
           "successRate": 1,
-          "firstAttemptSuccessRate": 0.8,
+          "firstAttemptSuccessRate": 0.8333333333333334,
           "recoverySuccessRate": 1,
-          "meanWallTimeMs": 1640,
+          "meanWallTimeMs": 1712.5,
           "p50WallTimeMs": 1550,
           "p95WallTimeMs": 2175,
-          "meanToolCalls": 9.6,
-          "meanRetries": 0.2,
+          "meanToolCalls": 10.5,
+          "meanRetries": 0.16666666666666666,
           "meanNoProgressLoops": 0,
           "meanTokens": null,
           "costPerSuccessUsd": null
         }
       ],
+      "finalPostconditionEvidence": "rw-001-checkout-update-address: saved city/postal text + summary destination text + recalculated shipping/tax values observed after fixture-reset; rw-002-search-filter-compare: active filters + two compared item names/prices + selected cheaper eligible item observed after fixture-reset; rw-003-return-authorization: confirmation banner + authorization number + returned item name observed after fixture-reset; rw-004-selector-drift-recovery: selector failure/fallback note + feedback receipt text + submitted email/value observed after fixture-reset; rw-005-long-horizon-itinerary: applied constraints + selected option id + summary total and transit time observed after fixture-reset; rw-006-dynamic-ui-inventory: hydration complete marker + selected variant label + saved selection summary observed after fixture-reset",
+      "finalPostconditionEvaluated": true,
       "claimEligibility": {
         "eligible": false,
         "tier": "diagnostic-only",
         "reasons": [
           "measurement mode scaffold is not headline-eligible; use live or recorded-real",
-          "sample count 5 is below aggregate threshold N >= 10",
+          "sample count 6 is below aggregate threshold N >= 10",
           "LLM model/settings/budgets are not pinned"
         ],
         "requiredSamples": 10
