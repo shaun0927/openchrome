@@ -66,6 +66,8 @@
     "bench:readiness": "ts-node tests/benchmark/benchmark-readiness.ts",
     "bench:competitor-smoke": "ts-node tests/benchmark/run-competitor-smoke.ts",
     "bench:runtime-preflight": "ts-node tests/benchmark/runtime-preflight.ts",
+    "bench:full:live": "ts-node tests/benchmark/run-full-benchmark.ts --mode live",
+    "bench:full:recorded": "ts-node tests/benchmark/run-full-benchmark.ts --mode recorded",
     "bench:api-key-readiness": "ts-node tests/benchmark/benchmark-readiness.ts --api-key-only"
   },
   "keywords": [

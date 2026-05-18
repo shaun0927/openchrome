@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T16:29:42.942Z
+Generated: 2026-05-17T16:32:47.118Z
 
 ## Verdict
 
@@ -10,11 +10,11 @@ Generated: 2026-05-17T16:29:42.942Z
 | --- | ---: |
 | Open benchmark issues audited | 15 |
 | Ready | 0 |
-| Partial | 14 |
-| Not ready | 1 |
+| Partial | 15 |
+| Not ready | 0 |
 | Headline-measurement-ready | 0 |
-| Diagnostic/smoke only | 14 |
-| Not measurable yet | 1 |
+| Diagnostic/smoke only | 15 |
+| Not measurable yet | 0 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
 | Stale OpenChrome result artifacts | 2 |
@@ -23,7 +23,7 @@ Generated: 2026-05-17T16:29:42.942Z
 
 | Issue | Status | Measurement readiness | API-key-only readiness | Primary non-key blocker |
 | --- | --- | --- | --- | --- |
-| [#1254](https://github.com/shaun0927/openchrome/issues/1254) Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source | not_ready | not_measurable | non_key_blockers | Multiple child axes remain partial or scaffolded; unified report still marks several sections pending. |
+| [#1254](https://github.com/shaun0927/openchrome/issues/1254) Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source | partial | diagnostic_or_smoke_only | non_key_blockers | The suite still lacks live/recorded-real headline-eligible rows across the full comparison, so the full report remains diagnostic until operator evidence is supplied. |
 | [#1255](https://github.com/shaun0927/openchrome/issues/1255) Benchmark #0: Harness Foundation — competitor adapters, exact tokenizer, env metadata | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is not yet proven with every live competitor adapter passing the same smoke task and pinned versions. |
 | [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | non_key_blockers | Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims. |
 | [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | partial | diagnostic_or_smoke_only | non_key_blockers | Live Claude/OpenAI WebVoyager tool-use loops and competitor-native loops remain unwired, so current rows are controlled mock evidence only. |
@@ -37,23 +37,23 @@ Generated: 2026-05-17T16:29:42.942Z
 | [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix | partial | diagnostic_or_smoke_only | non_key_blockers | Native competitor dry-runs and dependency skips are wired, but live/recorded-real LLM rows still require operator runtime and provider credentials before headline use. |
 | [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks | partial | diagnostic_or_smoke_only | non_key_blockers | Stress rows are still local deterministic scaffold evidence; live/recorded-real fault injection is not yet publishable. |
 | [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal | partial | diagnostic_or_smoke_only | non_key_blockers | No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet. |
-| [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims | partial | diagnostic_or_smoke_only | non_key_blockers | Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence. |
+| [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims | partial | diagnostic_or_smoke_only | non_key_blockers | No current row can be promoted without live or recorded-real evidence plus N/version/LLM gates, so strict readiness must still fail. |
 
 ## Details
 
 ### [#1254](https://github.com/shaun0927/openchrome/issues/1254) Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Some axis runners and result envelopes exist under tests/benchmark/ and benchmark/results/.
+  - Axis runners, result envelopes, ordered full-live preflight, recorded report wrapper, cost estimate, and readiness/headline gates exist.
 - Blockers:
-  - Multiple child axes remain partial or scaffolded; unified report still marks several sections pending.
+  - The suite still lacks live/recorded-real headline-eligible rows across the full comparison, so the full report remains diagnostic until operator evidence is supplied.
 - API-key-only readiness: `non_key_blockers`
 - Non-key blockers:
-  - Multiple child axes remain partial or scaffolded; unified report still marks several sections pending.
+  - The suite still lacks live/recorded-real headline-eligible rows across the full comparison, so the full report remains diagnostic until operator evidence is supplied.
 - Next actions:
-  - Close only after #1255-#1261 plus real-world follow-ups have headline-eligible measured rows.
+  - Run the ordered live/recorded workflow after preflight passes and keep strict readiness failing until headline eligibility is justified by artifacts.
 
 ### [#1255](https://github.com/shaun0927/openchrome/issues/1255) Benchmark #0: Harness Foundation — competitor adapters, exact tokenizer, env metadata
 
@@ -249,15 +249,15 @@ Generated: 2026-05-17T16:29:42.942Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Episode harness reports include `claimEligibility`, and the unified report documents primary evidence policy.
+  - Episode harness reports include `claimEligibility`, unified report headline enforcement exists, and full benchmark preflight/readiness gates fail closed before live promotion.
 - Blockers:
-  - Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence.
+  - No current row can be promoted without live or recorded-real evidence plus N/version/LLM gates, so strict readiness must still fail.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `ANTHROPIC_API_KEY or OPENAI_API_KEY`
 - Non-key blockers:
-  - Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence.
+  - No current row can be promoted without live or recorded-real evidence plus N/version/LLM gates, so strict readiness must still fail.
 - Next actions:
-  - Extend claim eligibility checks to every live/recorded-real runner and fail report generation on missing eligibility metadata.
+  - Use `bench:full:live -- --preflight` and strict readiness as the release gate before promoting any headline row.
 
 
 ## Result artifact freshness
