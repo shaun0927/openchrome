@@ -1,12 +1,13 @@
 # Complex Real-World Task Completion (#1305)
 
-Generated: 2026-05-17T16:18:19.567Z
+Generated: 2026-05-17T16:29:11.242Z
 Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-task-completion`).
 
 ## Claim scope
 
 - Measurement mode: `deterministic-fixture`
-- Claim scope: **scaffold-only; not a live competitive measurement**
+- Claim scope: **stress scaffold-only; faults injected inside local deterministic tasks, not a live competitive measurement**
+- Stress mode: **yes** — recovered means the final task postcondition passed after an injected fault.
 - This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.
 - Claim eligibility tier: **diagnostic-only**; eligible: **no**.
   - Blocker: measurement mode scaffold is not headline-eligible; use live or recorded-real
@@ -15,11 +16,22 @@ Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-tas
 - Headline gate: **blocked**. Use `node benchmark/generate-realworld-task-completion-section.mjs --require-headline` in release workflows to enforce this.
 - #1261 remains the DX/supporting axis; this section is the primary task-completion axis.
 
+## Fault stress rows
+
+| Library | Task | Fault | Injected step | Recovered by final postcondition | Recovery steps | Recovery ms | Chrome RSS | Zombies | Evidence |
+| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `openchrome` | `rw-001-checkout-update-address` | delayed-dom | 3 | yes | 2 | 220 | 96000000 | 0 | delayed-dom injected at step 3 |
+| `openchrome` | `rw-002-search-filter-compare` | network-stall | 4 | yes | 2 | 250 | 96512000 | 0 | network-stall injected at step 4 |
+| `openchrome` | `rw-003-return-authorization` | target-closed | 5 | yes | 2 | 280 | 97024000 | 0 | target-closed injected at step 5 |
+| `openchrome` | `rw-004-selector-drift-recovery` | selector-drift | 2 | yes | 2 | 310 | 97536000 | 0 | selector-drift injected at step 2 |
+| `openchrome` | `rw-005-long-horizon-itinerary` | cdp-disconnect | 8 | yes | 2 | 340 | 98048000 | 0 | cdp-disconnect injected at step 8 |
+| `openchrome` | `rw-006-dynamic-ui-inventory` | delayed-dom | 2 | yes | 2 | 370 | 98560000 | 0 | delayed-dom injected at step 2 |
+
 ## Metrics by library
 
 | Library | Mode | Runs | Success | First-attempt success | Recovery success | Mean tool calls | Mean wall time ms | p95 wall time ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `openchrome` | `deterministic-fixture` | 6 | 100.0% | 83.3% | 100.0% | 10.5 | 1712.5 | 2175 |
+| `openchrome` | `deterministic-fixture` | 6 | 100.0% | 0.0% | 100.0% | 12.5 | 2125 | 2600 |
 
 ## Task corpus
 

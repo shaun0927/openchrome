@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T16:26:33.455Z
+Generated: 2026-05-17T16:29:42.942Z
 
 ## Verdict
 
@@ -10,14 +10,14 @@ Generated: 2026-05-17T16:26:33.455Z
 | --- | ---: |
 | Open benchmark issues audited | 15 |
 | Ready | 0 |
-| Partial | 13 |
-| Not ready | 2 |
+| Partial | 14 |
+| Not ready | 1 |
 | Headline-measurement-ready | 0 |
-| Diagnostic/smoke only | 13 |
-| Not measurable yet | 2 |
+| Diagnostic/smoke only | 14 |
+| Not measurable yet | 1 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
-| Stale OpenChrome result artifacts | 3 |
+| Stale OpenChrome result artifacts | 2 |
 
 ## Issue matrix
 
@@ -28,14 +28,14 @@ Generated: 2026-05-17T16:26:33.455Z
 | [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | non_key_blockers | Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims. |
 | [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | partial | diagnostic_or_smoke_only | non_key_blockers | Live Claude/OpenAI WebVoyager tool-use loops and competitor-native loops remain unwired, so current rows are controlled mock evidence only. |
 | [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput | partial | diagnostic_or_smoke_only | non_key_blockers | Playwright/Puppeteer live throughput cells still require an operator-run Chrome/CDP endpoint, so the headline competitor matrix needs live evidence before promotion. |
-| [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie | partial | diagnostic_or_smoke_only | non_key_blockers | Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired. |
+| [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie | partial | diagnostic_or_smoke_only | non_key_blockers | Live fault-injection proxy/CDP cells and operator-run Chrome process sampling remain required before publishable reliability claims. |
 | [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost | partial | diagnostic_or_smoke_only | non_key_blockers | Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied. |
 | [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability | partial | diagnostic_or_smoke_only | non_key_blockers | Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix. |
 | [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | partial | diagnostic_or_smoke_only | non_key_blockers | Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not yet backed by live/recorded-real samples. |
 | [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is still a local deterministic foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy. |
 | [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate | partial | diagnostic_or_smoke_only | non_key_blockers | Real Anthropic/OpenAI Messages tool-use loops still stop at explicit adapter seams, so live/recorded-real samples are not yet headline-eligible. |
 | [#1302](https://github.com/shaun0927/openchrome/issues/1302) Benchmark #B follow-up: native/passive competitor adapter matrix | partial | diagnostic_or_smoke_only | non_key_blockers | Native competitor dry-runs and dependency skips are wired, but live/recorded-real LLM rows still require operator runtime and provider credentials before headline use. |
-| [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks | not_ready | not_measurable | non_key_blockers | Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions. |
+| [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks | partial | diagnostic_or_smoke_only | non_key_blockers | Stress rows are still local deterministic scaffold evidence; live/recorded-real fault injection is not yet publishable. |
 | [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal | partial | diagnostic_or_smoke_only | non_key_blockers | No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet. |
 | [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims | partial | diagnostic_or_smoke_only | non_key_blockers | Eligibility is not yet enforced across every real-world/live report path and cannot promote any row without live or recorded-real evidence. |
 
@@ -117,14 +117,14 @@ Generated: 2026-05-17T16:26:33.455Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Mock reliability matrix, Node-only long-run sampler, and real-world reliability methodology guardrails exist.
+  - Mock reliability matrix, Node-only long-run sampler, real-world stress rows, recovery-by-final-postcondition semantics, RSS/zombie fields, and methodology guardrails exist.
 - Blockers:
-  - Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired.
+  - Live fault-injection proxy/CDP cells and operator-run Chrome process sampling remain required before publishable reliability claims.
 - API-key-only readiness: `non_key_blockers`
 - Non-key blockers:
-  - Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired.
+  - Live fault-injection proxy/CDP cells and operator-run Chrome process sampling remain required before publishable reliability claims.
 - Next actions:
-  - Implement library-agnostic live fault injection inside real-world task episodes plus process sampling.
+  - Run live/recorded-real stress episodes with real Chrome process sampling and keep scaffold stress rows diagnostic.
 
 ### [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost
 
@@ -216,25 +216,25 @@ Generated: 2026-05-17T16:26:33.455Z
 
 ### [#1303](https://github.com/shaun0927/openchrome/issues/1303) Benchmark #D follow-up: inject reliability faults inside real-world tasks
 
-- Status: `not_ready`
-- Measurement readiness: `not_measurable`
+- Status: `partial`
+- Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Reliability fault type taxonomy exists.
+  - Stress-mode real-world task rows inject deterministic faults inside each task and mark recovered only when the final postcondition passes.
 - Blockers:
-  - Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions.
+  - Stress rows are still local deterministic scaffold evidence; live/recorded-real fault injection is not yet publishable.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `ANTHROPIC_API_KEY or OPENAI_API_KEY`
 - Non-key blockers:
-  - Faults are not injected inside real-world task episodes and recovery is not judged by final task postconditions.
+  - Stress rows are still local deterministic scaffold evidence; live/recorded-real fault injection is not yet publishable.
 - Next actions:
-  - Add stress-mode episode runner with deterministic fault checkpoints.
+  - Run the same fault checkpoints through live/recorded-real episodes with provider and version gates.
 
 ### [#1304](https://github.com/shaun0927/openchrome/issues/1304) Benchmark #D follow-up: real-world task completion as primary reliability signal
 
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - The real-world task-completion runner emits a local deterministic library × task matrix with final postcondition evidence and diagnostic-only claim eligibility.
+  - The real-world task-completion runner emits local deterministic normal and fault-stress matrices with final postcondition evidence and diagnostic-only claim eligibility.
 - Blockers:
   - No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet.
 - API-key-only readiness: `non_key_blockers`
@@ -242,7 +242,7 @@ Generated: 2026-05-17T16:26:33.455Z
 - Non-key blockers:
   - No live/recorded-real library × task × repetition matrix uses real-world task completion as the primary reliability metric yet.
 - Next actions:
-  - Add repeated live/recorded-real task-completion rows and connect reliability stress signals to these final postcondition contracts.
+  - Add repeated live/recorded-real task-completion rows over the same normal and stress postcondition contracts.
 
 ### [#1310](https://github.com/shaun0927/openchrome/issues/1310) Benchmark: enforce headline eligibility for real-world episode claims
 
@@ -268,7 +268,6 @@ These committed result artifacts contain OpenChrome version pins older than the 
 | Artifact | Expected OpenChrome version | Found OpenChrome versions |
 | --- | --- | --- |
 | `benchmark/results/longrun-stability.json` | `1.12.4` | `1.11.0` |
-| `benchmark/results/reliability.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/runtime-preflight.json` | `1.12.4` | `1.12.2` |
 
 ## Additional PR scopes to reach API-key-only readiness

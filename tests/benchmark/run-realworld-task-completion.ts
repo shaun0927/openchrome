@@ -4,7 +4,7 @@ import * as path from 'path';
 
 import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
 import { captureEnvironment } from './utils/environment';
-import { deterministicOpenChromeFixtureRuns, realWorldTaskSpecs } from './realworld-task-completion/fixtures';
+import { deterministicOpenChromeFixtureRuns, deterministicOpenChromeStressRuns, realWorldTaskSpecs } from './realworld-task-completion/fixtures';
 import { competitorPinsFromRecordings, loadRecordedSamples, recordedSamplesToRuns } from './realworld-task-completion/recordings';
 import { aggregateRealWorldMetrics, assertHonestMeasurement } from './realworld-task-completion/scoring';
 import { evaluateEpisodeClaimEligibility } from './episode-harness/claim-eligibility';
@@ -30,8 +30,9 @@ function flagValue(argv: string[], name: string): string | undefined {
 
 export function buildRealWorldTaskCompletionResult(argv: string[] = []) {
   const recordingDir = flagValue(argv, '--recording-dir');
+  const stress = argv.includes('--stress');
   const recordedSamples = recordingDir ? loadRecordedSamples(recordingDir) : [];
-  const runs = recordingDir ? recordedSamplesToRuns(recordedSamples) : deterministicOpenChromeFixtureRuns();
+  const runs = recordingDir ? recordedSamplesToRuns(recordedSamples) : stress ? deterministicOpenChromeStressRuns() : deterministicOpenChromeFixtureRuns();
   assertHonestMeasurement(runs);
   const metrics = aggregateRealWorldMetrics(runs);
   const finalPostconditionEvidence = runs
@@ -59,9 +60,15 @@ export function buildRealWorldTaskCompletionResult(argv: string[] = []) {
     results: [
       {
         suite: 'complex-real-world-task-completion',
-        issue: '#1305',
+        issue: stress ? '#1303/#1304' : '#1305',
         measurementMode: recordingDir ? 'recorded-real' : 'deterministic-fixture',
-        claimScope: recordingDir ? 'recorded-real aggregate; eligible only if sample/version/LLM gates pass' : 'scaffold-only; not a live competitive measurement',
+        claimScope: recordingDir
+          ? 'recorded-real aggregate; eligible only if sample/version/LLM gates pass'
+          : stress
+            ? 'stress scaffold-only; faults injected inside local deterministic tasks, not a live competitive measurement'
+            : 'scaffold-only; not a live competitive measurement',
+        stressMode: stress,
+        faultRows: runs.filter((run) => run.faultInjected === true),
         tasks: realWorldTaskSpecs,
         runs,
         metrics,
