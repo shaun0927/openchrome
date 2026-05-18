@@ -2,8 +2,8 @@
   "axis": "token-efficiency",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-16T03:34:22.553Z",
-    "gitSha": "217fe98d",
+    "capturedAt": "2026-05-17T16:09:56.215Z",
+    "gitSha": "1ad1b79c",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -17,7 +17,7 @@
   "competitors": [
     {
       "name": "OpenChrome",
-      "version": "1.12.2"
+      "version": "1.12.4"
     }
   ],
   "tokenizer": "cl100k_base",

@@ -8,19 +8,17 @@
  *   - LOC of each library's minimal idiomatic auth-setup script
  *     (`tests/benchmark/auth-setup-scripts/<library>.auth-setup.ts`).
  *     LOC counting rules committed up front (see loc-counter.ts).
- *   - Wall-clock minutes from "Chrome installed, creds in hand" to "first
- *     authenticated task passes" — this measurement requires live driver
- *     wiring and is reported as `wallClockMinutes: null` today with the
- *     `live-only` annotation so the table never shows a fabricated 0.
+ *   - Wall-clock minutes for the reproducible local login-wall smoke, from
+ *     fixture start to "first authenticated task passes". The default table
+ *     keeps this as `null`; `--local-smoke` records a measured local value so
+ *     the table never shows a fabricated 0.
  *   - profileAttach: boolean — true when the library can inherit a real
  *     Chrome profile's session (OpenChrome via `list_profiles`); false
  *     when it requires explicit storageState / userDataDir wiring.
  *
- * The actual logged-in-task-success measurement requires the live driver
- * to drive the fixture and run a smoke task; that lands in a follow-up.
- * Today the runner reports the LOC + profile-attach table + a clear
- * "live measurement pending" annotation so a reader cannot mistake the
- * absence for a 0.
+ * Third-party live-account setup timing remains operator-provided only; this
+ * runner records the local fixture smoke separately from any external-account
+ * workflow so no credentials or unauthorized accounts are needed.
  *
  *   npm run bench:auth
  */

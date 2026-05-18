@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-17T16:01:48.600Z",
+  "generatedAt": "2026-05-17T16:11:42.288Z",
   "summary": {
     "totalOpenBenchmarkIssues": 15,
     "ready": 0,
@@ -12,25 +12,11 @@
     "apiKeyOnlyReady": 0,
     "nonKeyBlocked": 15,
     "apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue": false,
-    "staleResultArtifactCount": 9
+    "staleResultArtifactCount": 5
   },
   "artifactFreshness": {
     "currentOpenChromeVersion": "1.12.4",
     "staleArtifacts": [
-      {
-        "file": "benchmark/results/auth-usability.json",
-        "expectedOpenChromeVersion": "1.12.4",
-        "foundVersions": [
-          "1.12.2"
-        ]
-      },
-      {
-        "file": "benchmark/results/dx.json",
-        "expectedOpenChromeVersion": "1.12.4",
-        "foundVersions": [
-          "1.12.2"
-        ]
-      },
       {
         "file": "benchmark/results/episode-token-cost.json",
         "expectedOpenChromeVersion": "1.12.4",
@@ -61,20 +47,6 @@
       },
       {
         "file": "benchmark/results/runtime-preflight.json",
-        "expectedOpenChromeVersion": "1.12.4",
-        "foundVersions": [
-          "1.12.2"
-        ]
-      },
-      {
-        "file": "benchmark/results/speed-throughput.json",
-        "expectedOpenChromeVersion": "1.12.4",
-        "foundVersions": [
-          "1.12.2"
-        ]
-      },
-      {
-        "file": "benchmark/results/token-efficiency.json",
         "expectedOpenChromeVersion": "1.12.4",
         "foundVersions": [
           "1.12.2"
@@ -132,18 +104,18 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "`npm run bench:tokens` emits deterministic-static, crawlee-cheerio, playwright-content, and playwright-innerText rows with explicit skips for remaining live-only cells."
+        "`npm run bench:tokens` emits deterministic-static, crawlee-cheerio, playwright-content, and playwright-innerText rows with explicit live-only skips for playwright-mcp and browser-use cells."
       ],
       "blockers": [
-        "OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims."
+        "Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims."
       ],
       "nextActions": [
-        "Wire remaining live extractor calls and version pins before publishing competitive token-efficiency claims."
+        "Run and pin the remaining live/recorded-real extractor cells before publishing competitive token-efficiency claims."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [],
       "nonKeyBlockers": [
-        "OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims."
+        "Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims."
       ]
     },
     {
@@ -176,18 +148,18 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Latency and throughput runners exist; CI throughput uses deterministic OpenChrome stub; throughput can run Crawlee without Chrome and Playwright/Puppeteer/OpenChrome live through the shared adapter gate."
+        "Latency and throughput runners exist; CI throughput records deterministic OpenChrome stub and no-Chrome Crawlee rows across both reuse and cold session modes."
       ],
       "blockers": [
-        "Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence."
+        "Playwright/Puppeteer live throughput cells still require an operator-run Chrome/CDP endpoint, so the headline competitor matrix needs live evidence before promotion."
       ],
       "nextActions": [
-        "Run live Chrome throughput cells for OpenChrome/Playwright/Puppeteer and add session-reuse mode."
+        "Run live Chrome throughput cells for OpenChrome/Playwright/Puppeteer and keep cold-vs-reuse rows separate in reporting."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [],
       "nonKeyBlockers": [
-        "Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence."
+        "Playwright/Puppeteer live throughput cells still require an operator-run Chrome/CDP endpoint, so the headline competitor matrix needs live evidence before promotion."
       ]
     },
     {
@@ -218,20 +190,20 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "Local auth fixture, setup scripts, LOC count, and profile-attach metadata exist."
+        "Local auth fixture, setup scripts, LOC count, profile-attach metadata, wall-clock local fixture timing, and logged-in smoke success rows exist."
       ],
       "blockers": [
-        "Wall-clock setup time and logged-in smoke success are null/pending in the current runner."
+        "Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied."
       ],
       "nextActions": [
-        "Wire live local login-wall smoke for each library and keep third-party live tier best-effort only."
+        "Keep local login-wall smoke as the default no-secret measurement and add optional operator-owned live-site rows only with explicit credentials."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [
         "operator-owned live-site credentials for optional live tier"
       ],
       "nonKeyBlockers": [
-        "Wall-clock setup time and logged-in smoke success are null/pending in the current runner."
+        "Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied."
       ]
     },
     {
@@ -241,18 +213,18 @@
       "status": "partial",
       "measurementReadiness": "diagnostic_or_smoke_only",
       "evidence": [
-        "LOC matrix runner and DX scripts exist."
+        "LOC matrix runner, DX scripts, OpenChrome schema-completeness fixtures, and induced-error actionability scoring exist with explicit measured/not-applicable/missing-fixture statuses."
       ],
       "blockers": [
-        "Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction."
+        "Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix."
       ],
       "nextActions": [
-        "Add tools/list introspection for MCP competitors and fixed induced-failure scoring."
+        "Add tools/list introspection for remaining MCP competitors and preserve explicit status fields for non-applicable framework rows."
       ],
       "apiKeyOnlyReadiness": "non_key_blockers",
       "requiredSecrets": [],
       "nonKeyBlockers": [
-        "Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction."
+        "Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix."
       ]
     },
     {

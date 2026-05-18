@@ -2,8 +2,8 @@
   "axis": "auth-usability",
   "schemaVersion": "1.0.0",
   "environment": {
-    "capturedAt": "2026-05-17T01:18:22.800Z",
-    "gitSha": "69a373f5",
+    "capturedAt": "2026-05-17T16:10:25.493Z",
+    "gitSha": "1ad1b79c",
     "gitDirty": true,
     "nodeVersion": "v20.19.6",
     "os": "darwin 25.3.0",
@@ -17,7 +17,7 @@
   "competitors": [
     {
       "name": "openchrome",
-      "version": "1.12.2"
+      "version": "1.12.4"
     },
     {
       "name": "playwright",
@@ -42,7 +42,7 @@
       "commentLines": 0,
       "totalLines": 17,
       "profileAttach": true,
-      "wallClockMinutes": 0.00035,
+      "wallClockMinutes": 0.0029666666666666665,
       "loggedInSmoked": true,
       "localFixtureSmoke": "passed",
       "note": "list_profiles + profile attach inherits a real Chrome profile's session with zero setup code. Local fixture smoke: credential login reached protected content"
@@ -55,7 +55,7 @@
       "commentLines": 0,
       "totalLines": 20,
       "profileAttach": false,
-      "wallClockMinutes": 0.00035,
+      "wallClockMinutes": 0.0029666666666666665,
       "loggedInSmoked": true,
       "localFixtureSmoke": "passed",
       "note": "storageState({path}) is the documented best practice; requires interactive login once, file persists. Local fixture smoke: credential login reached protected content"
@@ -68,7 +68,7 @@
       "commentLines": 0,
       "totalLines": 22,
       "profileAttach": false,
-      "wallClockMinutes": 0.00035,
+      "wallClockMinutes": 0.0029666666666666665,
       "loggedInSmoked": true,
       "localFixtureSmoke": "passed",
       "note": "userDataDir persists cookies via a profile dir; explicit cookie-jar API is the lower-level primitive. Local fixture smoke: credential login reached protected content"
@@ -81,7 +81,7 @@
       "commentLines": 0,
       "totalLines": 18,
       "profileAttach": false,
-      "wallClockMinutes": 0.00035,
+      "wallClockMinutes": 0.0029666666666666665,
       "loggedInSmoked": true,
       "localFixtureSmoke": "passed",
       "note": "Issues a natural-language agent instruction; planning loop resolves the selectors. Requires the Python bridge. Local fixture smoke: credential login reached protected content"

@@ -64,6 +64,7 @@ export type ThroughputLibrary =
   | "all";
 
 export type ThroughputSessionMode = 'reuse' | 'cold';
+export type RequestedThroughputSessionMode = ThroughputSessionMode | 'both';
 
 export interface ThroughputRunOptions {
   /** When true, use the deterministic stub adapter for OpenChrome unless live is set. */
@@ -81,7 +82,7 @@ export interface ThroughputRunOptions {
   /** Include Chrome/CDP competitors when `library=all` and live mode is disabled. */
   includeLiveCompetitors: boolean;
   /** Reuse one adapter setup per library, or cold-start setup/teardown for every concurrency cell. */
-  sessionMode: ThroughputSessionMode;
+  sessionMode: RequestedThroughputSessionMode;
   /** CDP endpoint for live Chrome-backed competitor adapters. */
   cdpEndpoint: string;
   /** Explicit OpenChrome MCP serve port derived from the live CDP endpoint. */
@@ -131,10 +132,10 @@ function flagValue(argv: string[], name: string): string | undefined {
   return match ? match.slice(prefix.length) : undefined;
 }
 
-function parseSessionMode(value: string | undefined): ThroughputSessionMode {
+function parseSessionMode(value: string | undefined): RequestedThroughputSessionMode {
   if (value === undefined) return 'reuse';
-  if (value === 'reuse' || value === 'cold') return value;
-  throw new Error(`--session-mode must be reuse or cold; got: ${value}`);
+  if (value === 'reuse' || value === 'cold' || value === 'both') return value;
+  throw new Error(`--session-mode must be reuse, cold, or both; got: ${value}`);
 }
 
 function parseBooleanFlag(
@@ -342,34 +343,37 @@ export async function runThroughputBenchmark(
   const rows: ThroughputRow[] = [];
   try {
     for (const entry of entries) {
-      if (options.sessionMode === 'reuse') {
-        try {
-          if (entry.adapter.setup) await entry.adapter.setup();
-          for (const concurrency of options.concurrencies) {
-            const summary = await measureThroughput(entry.adapter, {
-              urls,
-              concurrency,
-              iterations: options.iterations,
-              warmupDiscard: options.warmupDiscard,
-            });
-            rows.push(toRow(entry.library, entry.mode, options.sessionMode, summary));
-          }
-        } finally {
-          if (entry.adapter.teardown) await entry.adapter.teardown();
-        }
-      } else {
-        for (const concurrency of options.concurrencies) {
+      const sessionModes: ThroughputSessionMode[] = options.sessionMode === 'both' ? ['reuse', 'cold'] : [options.sessionMode];
+      for (const sessionMode of sessionModes) {
+        if (sessionMode === 'reuse') {
           try {
             if (entry.adapter.setup) await entry.adapter.setup();
-            const summary = await measureThroughput(entry.adapter, {
-              urls,
-              concurrency,
-              iterations: options.iterations,
-              warmupDiscard: options.warmupDiscard,
-            });
-            rows.push(toRow(entry.library, entry.mode, options.sessionMode, summary));
+            for (const concurrency of options.concurrencies) {
+              const summary = await measureThroughput(entry.adapter, {
+                urls,
+                concurrency,
+                iterations: options.iterations,
+                warmupDiscard: options.warmupDiscard,
+              });
+              rows.push(toRow(entry.library, entry.mode, sessionMode, summary));
+            }
           } finally {
             if (entry.adapter.teardown) await entry.adapter.teardown();
+          }
+        } else {
+          for (const concurrency of options.concurrencies) {
+            try {
+              if (entry.adapter.setup) await entry.adapter.setup();
+              const summary = await measureThroughput(entry.adapter, {
+                urls,
+                concurrency,
+                iterations: options.iterations,
+                warmupDiscard: options.warmupDiscard,
+              });
+              rows.push(toRow(entry.library, entry.mode, sessionMode, summary));
+            } finally {
+              if (entry.adapter.teardown) await entry.adapter.teardown();
+            }
           }
         }
       }

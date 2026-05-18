@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T16:01:48.600Z
+Generated: 2026-05-17T16:11:42.288Z
 
 ## Verdict
 
@@ -17,7 +17,7 @@ Generated: 2026-05-17T16:01:48.600Z
 | Not measurable yet | 5 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
-| Stale OpenChrome result artifacts | 9 |
+| Stale OpenChrome result artifacts | 5 |
 
 ## Issue matrix
 
@@ -25,12 +25,12 @@ Generated: 2026-05-17T16:01:48.600Z
 | --- | --- | --- | --- | --- |
 | [#1254](https://github.com/shaun0927/openchrome/issues/1254) Epic: Competitive Benchmark Suite — OpenChrome vs 2026 best-in-class open-source | not_ready | not_measurable | non_key_blockers | Multiple child axes remain partial or scaffolded; unified report still marks several sections pending. |
 | [#1255](https://github.com/shaun0927/openchrome/issues/1255) Benchmark #0: Harness Foundation — competitor adapters, exact tokenizer, env metadata | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is not yet proven with every live competitor adapter passing the same smoke task and pinned versions. |
-| [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | non_key_blockers | OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims. |
+| [#1256](https://github.com/shaun0927/openchrome/issues/1256) Benchmark #A: Token Efficiency — payload tokens vs information retention | partial | diagnostic_or_smoke_only | non_key_blockers | Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims. |
 | [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget | partial | diagnostic_or_smoke_only | non_key_blockers | Live Claude/WebVoyager and competitor-native loops remain unwired, so current rows are controlled mock evidence only. |
-| [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput | partial | diagnostic_or_smoke_only | non_key_blockers | Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence. |
+| [#1258](https://github.com/shaun0927/openchrome/issues/1258) Benchmark #C: Speed & Throughput — effective (success-weighted) throughput | partial | diagnostic_or_smoke_only | non_key_blockers | Playwright/Puppeteer live throughput cells still require an operator-run Chrome/CDP endpoint, so the headline competitor matrix needs live evidence before promotion. |
 | [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie | partial | diagnostic_or_smoke_only | non_key_blockers | Live fault-injection proxy/CDP cells, Chrome RSS/zombie sampling, and task-completion stress matrix remain unwired. |
-| [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost | partial | diagnostic_or_smoke_only | non_key_blockers | Wall-clock setup time and logged-in smoke success are null/pending in the current runner. |
-| [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability | partial | diagnostic_or_smoke_only | non_key_blockers | Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction. |
+| [#1260](https://github.com/shaun0927/openchrome/issues/1260) Benchmark #E: Auth & Real-World Usability — logged-in success + setup cost | partial | diagnostic_or_smoke_only | non_key_blockers | Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied. |
+| [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability | partial | diagnostic_or_smoke_only | non_key_blockers | Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix. |
 | [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion | partial | diagnostic_or_smoke_only | non_key_blockers | Rows are controlled mock/local evidence; live LLM token/USD accounting and competitor-native task cost are not wired. |
 | [#1300](https://github.com/shaun0927/openchrome/issues/1300) Benchmark #B follow-up: controlled realistic Agent Task Success workflow suite | partial | diagnostic_or_smoke_only | non_key_blockers | The suite is still a controlled foundation and does not yet cover live/recorded-real competitor rows across the full taxonomy. |
 | [#1301](https://github.com/shaun0927/openchrome/issues/1301) Benchmark #B follow-up: real LLM repetitions and full-task metrics gate | not_ready | not_measurable | non_key_blockers | Real Anthropic Messages loop throws intentionally; `--repetitions` is not expanded into repeated samples; full-task token/USD accounting is missing. |
@@ -74,14 +74,14 @@ Generated: 2026-05-17T16:01:48.600Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - `npm run bench:tokens` emits deterministic-static, crawlee-cheerio, playwright-content, and playwright-innerText rows with explicit skips for remaining live-only cells.
+  - `npm run bench:tokens` emits deterministic-static, crawlee-cheerio, playwright-content, and playwright-innerText rows with explicit live-only skips for playwright-mcp and browser-use cells.
 - Blockers:
-  - OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims.
+  - Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims.
 - API-key-only readiness: `non_key_blockers`
 - Non-key blockers:
-  - OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractors still require live/recorded-real wiring before headline token-efficiency claims.
+  - Live OpenChrome read_page/ax, Playwright a11y, playwright-mcp, and browser-use extractor rows still require live/recorded-real evidence before headline token-efficiency claims.
 - Next actions:
-  - Wire remaining live extractor calls and version pins before publishing competitive token-efficiency claims.
+  - Run and pin the remaining live/recorded-real extractor cells before publishing competitive token-efficiency claims.
 
 ### [#1257](https://github.com/shaun0927/openchrome/issues/1257) Benchmark #B: Agent Task Success — WebVoyager at equal LLM and equal budget
 
@@ -103,14 +103,14 @@ Generated: 2026-05-17T16:01:48.600Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Latency and throughput runners exist; CI throughput uses deterministic OpenChrome stub; throughput can run Crawlee without Chrome and Playwright/Puppeteer/OpenChrome live through the shared adapter gate.
+  - Latency and throughput runners exist; CI throughput records deterministic OpenChrome stub and no-Chrome Crawlee rows across both reuse and cold session modes.
 - Blockers:
-  - Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence.
+  - Playwright/Puppeteer live throughput cells still require an operator-run Chrome/CDP endpoint, so the headline competitor matrix needs live evidence before promotion.
 - API-key-only readiness: `non_key_blockers`
 - Non-key blockers:
-  - Playwright/Puppeteer throughput cells require a live Chrome/CDP endpoint; session-reuse delta is still missing; headline competitor matrix needs operator-run live evidence.
+  - Playwright/Puppeteer live throughput cells still require an operator-run Chrome/CDP endpoint, so the headline competitor matrix needs live evidence before promotion.
 - Next actions:
-  - Run live Chrome throughput cells for OpenChrome/Playwright/Puppeteer and add session-reuse mode.
+  - Run live Chrome throughput cells for OpenChrome/Playwright/Puppeteer and keep cold-vs-reuse rows separate in reporting.
 
 ### [#1259](https://github.com/shaun0927/openchrome/issues/1259) Benchmark #D: Reliability & Fault-Recovery — recovery rate, flaky rate, leak/zombie
 
@@ -131,29 +131,29 @@ Generated: 2026-05-17T16:01:48.600Z
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - Local auth fixture, setup scripts, LOC count, and profile-attach metadata exist.
+  - Local auth fixture, setup scripts, LOC count, profile-attach metadata, wall-clock local fixture timing, and logged-in smoke success rows exist.
 - Blockers:
-  - Wall-clock setup time and logged-in smoke success are null/pending in the current runner.
+  - Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied.
 - API-key-only readiness: `non_key_blockers`
 - Required secrets after non-key blockers clear: `operator-owned live-site credentials for optional live tier`
 - Non-key blockers:
-  - Wall-clock setup time and logged-in smoke success are null/pending in the current runner.
+  - Third-party live-site auth remains operator-provided only, so local fixture rows must stay diagnostic unless a live/recorded-real tier is supplied.
 - Next actions:
-  - Wire live local login-wall smoke for each library and keep third-party live tier best-effort only.
+  - Keep local login-wall smoke as the default no-secret measurement and add optional operator-owned live-site rows only with explicit credentials.
 
 ### [#1261](https://github.com/shaun0927/openchrome/issues/1261) Benchmark #F: Developer Experience — LOC/task, tool-schema quality, error actionability
 
 - Status: `partial`
 - Measurement readiness: `diagnostic_or_smoke_only`
 - Evidence:
-  - LOC matrix runner and DX scripts exist.
+  - LOC matrix runner, DX scripts, OpenChrome schema-completeness fixtures, and induced-error actionability scoring exist with explicit measured/not-applicable/missing-fixture statuses.
 - Blockers:
-  - Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction.
+  - Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix.
 - API-key-only readiness: `non_key_blockers`
 - Non-key blockers:
-  - Schema completeness and error actionability are emitted as null pending MCP introspection/failure induction.
+  - Additional MCP competitors still need tools/list introspection fixtures before schema completeness can be compared across the full MCP matrix.
 - Next actions:
-  - Add tools/list introspection for MCP competitors and fixed induced-failure scoring.
+  - Add tools/list introspection for remaining MCP competitors and preserve explicit status fields for non-applicable framework rows.
 
 ### [#1299](https://github.com/shaun0927/openchrome/issues/1299) Benchmark: Episode-level token cost to completion
 
@@ -267,15 +267,11 @@ These committed result artifacts contain OpenChrome version pins older than the 
 
 | Artifact | Expected OpenChrome version | Found OpenChrome versions |
 | --- | --- | --- |
-| `benchmark/results/auth-usability.json` | `1.12.4` | `1.12.2` |
-| `benchmark/results/dx.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/episode-token-cost.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/longrun-stability.json` | `1.12.4` | `1.11.0` |
 | `benchmark/results/realworld-task-completion.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/reliability.json` | `1.12.4` | `1.12.2` |
 | `benchmark/results/runtime-preflight.json` | `1.12.4` | `1.12.2` |
-| `benchmark/results/speed-throughput.json` | `1.12.4` | `1.12.2` |
-| `benchmark/results/token-efficiency.json` | `1.12.4` | `1.12.2` |
 
 ## Additional PR scopes to reach API-key-only readiness
 

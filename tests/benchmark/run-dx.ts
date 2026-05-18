@@ -27,10 +27,12 @@ export interface DxRow {
   blankLines: number;
   commentLines: number;
   totalLines: number;
-  /** Schema completeness 0..1; null when the library has no MCP/tool schema fixture. */
+  /** Schema completeness 0..1; null when not applicable or no MCP/tool schema fixture exists. */
   schemaCompleteness: number | null;
+  schemaCompletenessStatus: 'measured' | 'not_applicable' | 'missing_fixture';
   /** Error actionability 0..3; null when no induced-error fixture is available. */
   errorActionability: number | null;
+  errorActionabilityStatus: 'measured' | 'missing_fixture';
   /** True when the library ships its tools as an MCP server (gates schema/error rubrics). */
   isMcp: boolean;
 }
@@ -101,6 +103,9 @@ export function runDxBenchmark(): DxRow[] {
       const scriptPath = path.join(SCRIPTS_DIR, library, `${task}.ts`);
       const source = fs.readFileSync(scriptPath, 'utf8');
       const loc = countLoc(source);
+      const isMcp = MCP_LIBRARIES.has(library);
+      const schemaCompleteness = schemaCompletenessFor(library);
+      const errorActionability = errorActionabilityFor(library);
       rows.push({
         library,
         task,
@@ -109,9 +114,11 @@ export function runDxBenchmark(): DxRow[] {
         blankLines: loc.blankLines,
         commentLines: loc.commentLines,
         totalLines: loc.totalLines,
-        schemaCompleteness: schemaCompletenessFor(library),
-        errorActionability: errorActionabilityFor(library),
-        isMcp: MCP_LIBRARIES.has(library),
+        schemaCompleteness,
+        schemaCompletenessStatus: schemaCompleteness !== null ? 'measured' : isMcp ? 'missing_fixture' : 'not_applicable',
+        errorActionability,
+        errorActionabilityStatus: errorActionability !== null ? 'measured' : 'missing_fixture',
+        isMcp,
       });
     }
   }

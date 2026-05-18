@@ -8,7 +8,9 @@ describe('DX benchmark runner', () => {
     const openchromeRows = rows.filter((row) => row.library === 'openchrome');
     expect(openchromeRows.length).toBeGreaterThan(0);
     expect(openchromeRows.every((row) => typeof row.schemaCompleteness === 'number')).toBe(true);
+    expect(openchromeRows.every((row) => row.schemaCompletenessStatus === 'measured')).toBe(true);
     expect(openchromeRows.every((row) => typeof row.errorActionability === 'number')).toBe(true);
+    expect(openchromeRows.every((row) => row.errorActionabilityStatus === 'measured')).toBe(true);
     expect(openchromeRows[0].schemaCompleteness).toBeGreaterThan(0.5);
     expect(openchromeRows[0].errorActionability).toBeGreaterThanOrEqual(2);
   });
@@ -18,6 +20,8 @@ describe('DX benchmark runner', () => {
     const playwrightRows = rows.filter((row) => row.library === 'playwright');
     expect(playwrightRows.length).toBeGreaterThan(0);
     expect(playwrightRows.every((row) => row.schemaCompleteness === null)).toBe(true);
+    expect(playwrightRows.every((row) => row.schemaCompletenessStatus === 'not_applicable')).toBe(true);
     expect(playwrightRows.every((row) => typeof row.errorActionability === 'number')).toBe(true);
+    expect(playwrightRows.every((row) => row.errorActionabilityStatus === 'measured')).toBe(true);
   });
 });
