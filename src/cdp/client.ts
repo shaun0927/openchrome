@@ -1150,7 +1150,7 @@ export class CDPClient {
   private getChromeLifecycleMode(): 'isolated' | 'attach' {
     const launcher = getChromeLauncher(this.port) as { getInstance?: () => { launchMode?: string } | null };
     const instance = typeof launcher.getInstance === 'function' ? launcher.getInstance() : null;
-    return instance?.launchMode === 'attach' ? 'attach' : 'isolated';
+    return instance?.launchMode === 'isolated' ? 'isolated' : 'attach';
   }
 
   /**

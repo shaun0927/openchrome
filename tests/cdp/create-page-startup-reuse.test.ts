@@ -220,6 +220,24 @@ describe('CDPClient.createPage first-call NTP reuse (#1346)', () => {
     expect(page).toBe(created);
   });
 
+  it('falls back to browser.newPage() when target.page() rejects', async () => {
+    // Single untracked NTP target, but target.page() throws (e.g. target closed during race).
+    const ntpTarget = makeTarget('ntp-target', undefined, 'page', 'chrome://newtab/');
+    (ntpTarget.page as jest.Mock).mockRejectedValueOnce(new Error('target closed'));
+    const browser = makeBrowser([ntpTarget]);
+    const client = connectedClient(browser);
+
+    const ntpPage = makePage('newly-created-target', 'about:blank');
+    browser.newPage.mockResolvedValueOnce(ntpPage);
+
+    const result = await client.createPage(undefined, null, true);
+
+    // newPage was called as fallback
+    expect(browser.newPage).toHaveBeenCalledTimes(1);
+    // Returned page is the fresh one, not the NTP target's page
+    expect(result).not.toBe(await ntpTarget.page().catch(() => null));
+  });
+
   it('does NOT enter reuse branch when context argument is non-null', async () => {
     const ntpPage = makePage('ntp-target', 'chrome://newtab/');
     const ntpTarget = ntpPage.target() as ReturnType<typeof makeTarget>;
