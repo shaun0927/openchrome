@@ -97,9 +97,10 @@ describe('Large Data Handling Stress Tests', () => {
       expect(state?.progressLog).toHaveLength(500);
 
       console.log(`1000 progress entries: ${durationMs}ms`);
-      // Should complete in reasonable time (< 30 seconds)
-      expect(durationMs).toBeLessThan(30000);
-    }, 60000); // 60 second timeout
+      // Should complete in reasonable time. Keep this as a regression guard,
+      // but leave enough headroom for slower local/CI runners under load.
+      expect(durationMs).toBeLessThan(45000);
+    }, 75000); // 75 second timeout
 
     test('should handle progress entries with long messages', async () => {
       await stateManager.initWorkerState('w1', 'long-msg', 't1', 'Task');

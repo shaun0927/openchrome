@@ -73,10 +73,16 @@ export type TranscriptEntry =
 
 export interface TaskRunReport {
   name: string;
+  repetition: number;
   result: 'passed' | 'failed' | 'replay_drift' | 'pending' | 'error';
   duration_ms: number;
   tool_calls: number;
   response_bytes: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  usd: number | null;
+  budget_abort?: 'BUDGET_EXCEEDED' | 'MAX_ITERATIONS' | 'API_ERROR';
   failed_postcondition?: string;
   error?: string;
 }
@@ -96,6 +102,12 @@ export interface BenchReport {
    *  live loop has not been wired yet — readers can spot a `repetitions: 10`
    *  report with N=10 task entries vs `repetitions: 10` with N=1 entries. */
   repetitions: number;
+  provider: string;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  max_tool_iterations: number;
+  max_usd_per_task: number;
   total_tasks: number;
   pass_count: number;
   fail_count: number;

@@ -24,6 +24,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { requireHeadlineReport } from './headline-gate.mjs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -32,14 +33,16 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 const RESULTS_DIR = path.join(REPO_ROOT, 'benchmark', 'results');
 const OUTPUT_PATH = path.join(RESULTS_DIR, 'BENCHMARK-REPORT.md');
+const REALWORLD_ENVELOPE_PATH = path.join(RESULTS_DIR, 'realworld-task-completion.json');
 
 const SECTIONS = [
-  { id: '#A', axis: 'Token Efficiency', issue: '#1256', file: 'TOKEN-EFFICIENCY-REPORT.md' },
-  { id: '#B', axis: 'Agent Task Success', issue: '#1257', file: 'AGENT-SUCCESS-REPORT.md' },
-  { id: '#C', axis: 'Speed & Throughput', issue: '#1258', file: 'SPEED-THROUGHPUT-REPORT.md' },
-  { id: '#D', axis: 'Reliability & Fault-Recovery', issue: '#1259', file: null },
-  { id: '#E', axis: 'Auth & Real-World Usability', issue: '#1260', file: null },
-  { id: '#F', axis: 'Developer Experience', issue: '#1261', file: 'DEVELOPER-EXPERIENCE-REPORT.md' },
+  { id: '#G', axis: 'Complex Real-World Task Completion', issue: '#1305', file: 'REALWORLD-TASK-COMPLETION-REPORT.md', role: 'primary' },
+  { id: '#B', axis: 'Agent Task Success', issue: '#1257', file: 'AGENT-SUCCESS-REPORT.md', role: 'primary-when-live-or-recorded-real' },
+  { id: '#D', axis: 'Reliability & Fault-Recovery', issue: '#1259', file: null, role: 'primary-when-episode-stress' },
+  { id: '#E', axis: 'Auth & Real-World Usability', issue: '#1260', file: null, role: 'primary-when-episode' },
+  { id: '#A', axis: 'Token Efficiency', issue: '#1256', file: 'TOKEN-EFFICIENCY-REPORT.md', role: 'diagnostic' },
+  { id: '#C', axis: 'Speed & Throughput', issue: '#1258', file: 'SPEED-THROUGHPUT-REPORT.md', role: 'diagnostic' },
+  { id: '#F', axis: 'Developer Experience', issue: '#1261', file: 'DEVELOPER-EXPERIENCE-REPORT.md', role: 'diagnostic' },
 ];
 
 // Retired estimates that must never reappear in the unified report.
@@ -74,7 +77,21 @@ function buildSection(section) {
   return lines.join('\n');
 }
 
-function main() {
+function enforceHeadlineInputs(argv = process.argv.slice(2)) {
+  if (!argv.includes('--require-headline')) return;
+  if (!existsSync(REALWORLD_ENVELOPE_PATH)) {
+    throw new Error('Missing benchmark/results/realworld-task-completion.json for --require-headline');
+  }
+  const realworldSection = readSection('REALWORLD-TASK-COMPLETION-REPORT.md');
+  if (!realworldSection || /Headline gate:\s*\*\*blocked\*\*/i.test(realworldSection)) {
+    throw new Error('REALWORLD-TASK-COMPLETION-REPORT.md is missing or still marks the headline gate as blocked');
+  }
+  const envelope = JSON.parse(readFileSync(REALWORLD_ENVELOPE_PATH, 'utf8'));
+  requireHeadlineReport(envelope, 'unified benchmark report real-world section');
+}
+
+function main(argv = process.argv.slice(2)) {
+  enforceHeadlineInputs(argv);
   const lines = [];
   lines.push('# OpenChrome Competitive Benchmark Report');
   lines.push('');
@@ -85,12 +102,18 @@ function main() {
   lines.push('');
   lines.push('## Headline status');
   lines.push('');
-  lines.push('| Section | Axis | Issue | State |');
-  lines.push('| --- | --- | --- | --- |');
+  lines.push('| Section | Axis | Issue | Evidence role | State |');
+  lines.push('| --- | --- | --- | --- | --- |');
   for (const s of SECTIONS) {
     const hasData = s.file && existsSync(path.join(RESULTS_DIR, s.file));
-    lines.push(`| ${s.id} | ${s.axis} | [${s.issue}](https://github.com/shaun0927/openchrome/issues/${s.issue.slice(1)}) | ${hasData ? 'measured' : 'pending'} |`);
+    lines.push(`| ${s.id} | ${s.axis} | [${s.issue}](https://github.com/shaun0927/openchrome/issues/${s.issue.slice(1)}) | ${s.role} | ${hasData ? 'measured' : 'pending'} |`);
   }
+  lines.push('');
+  lines.push('## Primary evidence policy');
+  lines.push('');
+  lines.push('Complex real-world episode completion is the primary benchmark evidence. Token, speed, auth setup, reliability micro-cells, and DX axes are supporting diagnostics unless they are attached to a final task-completion episode with headline-eligible live or recorded-real rows. See `docs/benchmarks/benchmark-direction.md`.');
+  lines.push('');
+  lines.push('Mock, scaffold, dry-run, and skip rows are never reported as competitive wins; they are harness regression evidence only. A row must evaluate the final task postcondition, pin versions/environment, and meet the sample threshold before it can be headline-eligible.');
   lines.push('');
   lines.push('## Methodology principles');
   lines.push('All sections honor Epic #1254\'s ten methodology principles:');
@@ -124,7 +147,7 @@ function main() {
     process.exit(1);
   }
 
-  writeFileSync(OUTPUT_PATH, body);
+  writeFileSync(OUTPUT_PATH, body.trimEnd() + '\n');
   process.stderr.write(`Wrote ${path.relative(REPO_ROOT, OUTPUT_PATH)}\n`);
 }
 

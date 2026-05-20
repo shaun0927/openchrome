@@ -4,6 +4,69 @@ All notable changes to OpenChrome are documented here. For full release notes se
 
 ---
 
+## v1.12.4 — API-key-only benchmark readiness gate (2026-05-17)
+
+Focused benchmark release-safety patch. This release adds an explicit
+API-key-only readiness gate, removes closed #1305 from the open benchmark
+audit, codifies the remaining non-key benchmark implementation PR ladder, and
+keeps benchmark reporting fail-closed until live or recorded-real rows are
+actually headline eligible.
+
+See [`docs/releases/v1.12.4.md`](docs/releases/v1.12.4.md) for the full
+release notes.
+
+## v1.12.3 — live benchmark execution and publication gates (2026-05-17)
+
+Focused live-benchmark hardening patch. This release adds injectable LLM/tool
+use loop seams, native competitor task-loop surfaces, live Chrome/CDP throughput
+execution support, recorded-real corpus validation, and stricter headline report
+gates so mock/scaffold rows cannot be published as competitive wins.
+
+See [`docs/releases/v1.12.3.md`](docs/releases/v1.12.3.md) for the full
+release notes.
+
+## v1.12.2 — benchmark measurement readiness (2026-05-15)
+
+Focused benchmark-readiness patch for the Competitive Benchmark Suite. This
+release expands the suite from the v1.12.1 foundation into a fuller measurement
+envelope: Playwright MCP, Crawlee, and Browser Use adapters; a 5×10
+token-efficiency corpus; WebVoyager task expansion from 18 to 61 tasks; speed,
+throughput, reliability, auth, and DX runners; cross-platform bridge smoke
+coverage; unified benchmark report generation; and an Epic #1254 close gate
+that distinguishes measured evidence from mock-only or queued live cells.
+
+See [`docs/releases/v1.12.2.md`](docs/releases/v1.12.2.md) for the full
+release notes.
+
+## v1.12.1 — competitive benchmark suite (2026-05-15)
+
+Focused follow-up to v1.12.0: merges the Competitive Benchmark Suite
+(Epic #1254) under `tests/benchmark/` — harness foundation, six scoring
+axes, Playwright/Puppeteer competitor adapters, local fixtures, and a
+cross-platform benchmark CI workflow. Also adds task-scoped browser lanes
+(`oc_lane_*`) and opt-in codegen replay artifacts (`oc_skill_export`).
+Default `tools/list` now returns 115 entries (was 110). All changes are
+additive or test-only; no new mandatory runtime deps.
+
+See [`docs/releases/v1.12.1.md`](docs/releases/v1.12.1.md) for the full
+release notes.
+
+---
+
+## v1.12.0 — task harness, recovery runtime, CLI MCP driver (2026-05-14)
+
+Largest feature release in the v1.x line: 105 PRs, ~30 new MCP tools, a
+goal-level task harness, a deterministic recovery/reflection runtime, a
+CLI that drives the MCP surface directly (`oc run` / `oc playbook` /
+`oc doctor` / `oc vault`), Streamable HTTP daemon mode, and 2 new MCP
+resources. No source files removed; no new mandatory runtime deps.
+
+See [`docs/releases/v1.12.0.md`](docs/releases/v1.12.0.md) for the full
+release notes, including the six observable breaking changes and their
+migration paths.
+
+---
+
 ## v1.11.x
 
 ### Transport policy

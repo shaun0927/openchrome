@@ -17,7 +17,9 @@
         "speed-throughput",
         "reliability",
         "auth-usability",
-        "developer-experience"
+        "developer-experience",
+        "episode-token-cost",
+        "realworld-task-completion"
       ]
     },
     "schemaVersion": {

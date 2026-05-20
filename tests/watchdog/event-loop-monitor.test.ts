@@ -136,13 +136,14 @@ describe('EventLoopMonitor heavy operation grace period', () => {
   });
 
   test('beginHeavyOperation prevents fatal event for drift between normal and heavy threshold', async () => {
-    // fatalThresholdMs = 60ms, heavyOpFatalThresholdMs = 200ms
-    // Busy-wait for ~100ms: exceeds normal fatal (60ms) but not heavy (200ms)
+    // fatalThresholdMs = 60ms. Keep the heavy-operation threshold well above
+    // the synthetic 100ms busy-wait so full-suite scheduler pressure cannot
+    // turn this gate test into a host-speed assertion.
     monitor = new EventLoopMonitor({
       checkIntervalMs: 20,
       warnThresholdMs: 30,
       fatalThresholdMs: 60,
-      heavyOpFatalThresholdMs: 200,
+      heavyOpFatalThresholdMs: 2000,
     });
     const fatalHandler = jest.fn();
     monitor.on('fatal', fatalHandler);

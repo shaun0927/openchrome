@@ -23,16 +23,16 @@ they are not reproducible here. See Epic #1254 "Non-goals".
 
 ## Competitor registry
 
-> Versions below are **placeholders** — each is pinned to an exact version +
-> commit + measurement date by the sub-issue that first benchmarks against it
-> (#1256–#1261). Until a row is pinned by a real run, treat it as TBD.
+> Versions below are the benchmark registry pins used by diagnostic/smoke
+> runners. A row still needs live or recorded-real result evidence before it can
+> become a headline comparison.
 
 | Library | npm package | Pinned version | Commit | Measured at | Used by axes |
 |---|---|---|---|---|---|
-| OpenChrome | `openchrome-mcp` (this repo) | _repo HEAD_ | _per-run git SHA_ | _per run_ | all |
-| Playwright | `playwright` | TBD | — | TBD | #A #C #D #E |
-| Puppeteer | `puppeteer` | TBD | — | TBD | #C #D #E #F |
-| playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F |
+| OpenChrome | `openchrome-mcp` (this repo) | `1.12.4` | _per-run git SHA_ | _per run_ | all, #1299 |
+| Playwright | `playwright` | `1.60.0` | — | 2026-05-18 smoke runtime | #A #C #D #E |
+| Puppeteer | `puppeteer-core` / `rebrowser-puppeteer-core` | `23.10.3` | — | 2026-05-18 smoke runtime | #C #D #E #F |
+| playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F #1299-future-live |
 | browser-use | `browser-use` (PyPI) | `0.12.6` | `329c67f069427e928ff81ad52415efdca7692007` | 2026-05-15 | #A #B #D #E |
 | Crawlee | `crawlee` | `3.16.0` | `6c9cd2ff7e7d89ce7685e67f3f919f3cce0fa7a4` | 2026-05-15 | #A #C |
 
@@ -52,7 +52,7 @@ every CI OS), and stable. Reports must describe "tokens" as
 
 ## LLM pin (LLM-driven axes only)
 
-Axis #B (Agent Task Success) runs against a real Claude model. The exact model
+Axis #B (Agent Task Success) and future live #1299 episode-token runs may run against a real Claude model. The exact model
 id + temperature are pinned per run and embedded in the result JSON's
 `environment.llm` block. A mid-benchmark model update invalidates the axis and
 forces a re-run.

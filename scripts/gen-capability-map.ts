@@ -1,4 +1,3 @@
-#!/usr/bin/env ts-node
 import * as fs from 'fs';
 import * as path from 'path';
 import type { MCPToolDefinition, ToolCapability } from '../src/types/mcp';

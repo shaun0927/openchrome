@@ -16,6 +16,7 @@ const mockBrowserContext = {
 
 // Counter for unique target IDs
 let targetIdCounter = 0;
+let mockLifecycleMode: 'isolated' | 'attach' | undefined = 'isolated';
 
 // Mock CDP client instance
 const mockCdpClientInstance = {
@@ -33,6 +34,7 @@ const mockCdpClientInstance = {
   closePage: jest.fn().mockResolvedValue(undefined),
   getPageByTargetId: jest.fn().mockReturnValue(null),
   isConnected: jest.fn().mockReturnValue(true),
+  getChromeLifecycleMode: jest.fn(() => mockLifecycleMode),
   addConnectionListener: jest.fn(),
   addTargetDestroyedListener: jest.fn(),
   createBrowserContext: jest.fn().mockResolvedValue(mockBrowserContext),
@@ -107,6 +109,12 @@ describe('SessionManager TTL and Stats', () => {
     jest.clearAllMocks();
     jest.useFakeTimers();
     targetIdCounter = 0; // Reset counter
+    mockLifecycleMode = 'isolated';
+    mockCdpClientInstance.getBrowser.mockReturnValue({
+      targets: jest.fn().mockReturnValue([]),
+      on: jest.fn(),
+      removeAllListeners: jest.fn(),
+    });
 
     sessionManager = new SessionManager(undefined, {
       sessionTTL: 1000, // 1 second for testing
@@ -145,6 +153,82 @@ describe('SessionManager TTL and Stats', () => {
       sessionManager.updateConfig({ sessionTTL: 2000 });
 
       expect(sessionManager.getConfig().sessionTTL).toBe(2000);
+    });
+  });
+
+  describe('Blank startup tab cleanup', () => {
+    function makeTarget(targetId: string, url: string, close = jest.fn().mockResolvedValue(undefined)) {
+      return {
+        _targetId: targetId,
+        type: jest.fn().mockReturnValue('page'),
+        url: jest.fn().mockReturnValue(url),
+        page: jest.fn().mockResolvedValue({
+          isClosed: jest.fn().mockReturnValue(false),
+          close,
+        }),
+      };
+    }
+
+    test('closes the initial chrome://newtab page after creating the first managed target', async () => {
+      const closeStartupTab = jest.fn().mockResolvedValue(undefined);
+      const startupNewTab = makeTarget('startup-newtab', 'chrome://newtab/', closeStartupTab);
+      const createdTarget = makeTarget('mock-target-id-1', 'https://example.com/');
+
+      const targets = jest.fn()
+        .mockReturnValueOnce([startupNewTab])
+        .mockReturnValue([startupNewTab, createdTarget]);
+      mockCdpClientInstance.getBrowser.mockReturnValue({
+        targets,
+        on: jest.fn(),
+        removeAllListeners: jest.fn(),
+      });
+
+      await sessionManager.createTarget('startup-cleanup-session', 'https://example.com');
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(closeStartupTab).toHaveBeenCalledTimes(1);
+    });
+
+    test('does not close concurrently-created chrome://newtab pages when attached to user Chrome', async () => {
+      mockLifecycleMode = 'attach';
+      const closeUserTab = jest.fn().mockResolvedValue(undefined);
+      const userNewTab = makeTarget('user-newtab', 'chrome://newtab/', closeUserTab);
+      const createdTarget = makeTarget('mock-target-id-1', 'https://example.com/');
+
+      const targets = jest.fn()
+        .mockReturnValueOnce([])
+        .mockReturnValue([userNewTab, createdTarget]);
+      mockCdpClientInstance.getBrowser.mockReturnValue({
+        targets,
+        on: jest.fn(),
+        removeAllListeners: jest.fn(),
+      });
+
+      await sessionManager.createTarget('attach-concurrent-cleanup-session', 'https://example.com');
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(closeUserTab).not.toHaveBeenCalled();
+    });
+
+    test('does not close pre-existing chrome://newtab pages when attached to user Chrome', async () => {
+      mockLifecycleMode = 'attach';
+      const closeUserTab = jest.fn().mockResolvedValue(undefined);
+      const userNewTab = makeTarget('user-newtab', 'chrome://newtab/', closeUserTab);
+      const createdTarget = makeTarget('mock-target-id-1', 'https://example.com/');
+
+      const targets = jest.fn()
+        .mockReturnValueOnce([userNewTab])
+        .mockReturnValue([userNewTab, createdTarget]);
+      mockCdpClientInstance.getBrowser.mockReturnValue({
+        targets,
+        on: jest.fn(),
+        removeAllListeners: jest.fn(),
+      });
+
+      await sessionManager.createTarget('attach-cleanup-session', 'https://example.com');
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(closeUserTab).not.toHaveBeenCalled();
     });
   });
 

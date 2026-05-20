@@ -22,7 +22,6 @@ import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
 import {
-  getCachedSequence,
   cacheSequence,
   validateCachedSequence,
   ActionCacheKeyV2Parts,

@@ -1,20 +1,27 @@
 # OpenChrome Competitive Benchmark Report
 
-Generated: 2026-05-15T09:25:52.505Z
+Generated: 2026-05-17T16:32:18.402Z
 Source: per-axis section files under `benchmark/results/`.
 
 Part of [Epic #1254](https://github.com/shaun0927/openchrome/issues/1254) — the competitive benchmark suite. Each section below is generated from its axis runner's envelope; this top-level file is the union.
 
 ## Headline status
 
-| Section | Axis | Issue | State |
-| --- | --- | --- | --- |
-| #A | Token Efficiency | [#1256](https://github.com/shaun0927/openchrome/issues/1256) | measured |
-| #B | Agent Task Success | [#1257](https://github.com/shaun0927/openchrome/issues/1257) | pending |
-| #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | measured |
-| #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | pending |
-| #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | pending |
-| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | pending |
+| Section | Axis | Issue | Evidence role | State |
+| --- | --- | --- | --- | --- |
+| #G | Complex Real-World Task Completion | [#1305](https://github.com/shaun0927/openchrome/issues/1305) | primary | measured |
+| #B | Agent Task Success | [#1257](https://github.com/shaun0927/openchrome/issues/1257) | primary-when-live-or-recorded-real | pending |
+| #D | Reliability & Fault-Recovery | [#1259](https://github.com/shaun0927/openchrome/issues/1259) | primary-when-episode-stress | pending |
+| #E | Auth & Real-World Usability | [#1260](https://github.com/shaun0927/openchrome/issues/1260) | primary-when-episode | pending |
+| #A | Token Efficiency | [#1256](https://github.com/shaun0927/openchrome/issues/1256) | diagnostic | measured |
+| #C | Speed & Throughput | [#1258](https://github.com/shaun0927/openchrome/issues/1258) | diagnostic | measured |
+| #F | Developer Experience | [#1261](https://github.com/shaun0927/openchrome/issues/1261) | diagnostic | measured |
+
+## Primary evidence policy
+
+Complex real-world episode completion is the primary benchmark evidence. Token, speed, auth setup, reliability micro-cells, and DX axes are supporting diagnostics unless they are attached to a final task-completion episode with headline-eligible live or recorded-real rows. See `docs/benchmarks/benchmark-direction.md`.
+
+Mock, scaffold, dry-run, and skip rows are never reported as competitive wins; they are harness regression evidence only. A row must evaluate the final task postcondition, pin versions/environment, and meet the sample threshold before it can be headline-eligible.
 
 ## Methodology principles
 All sections honor Epic #1254's ten methodology principles:
@@ -32,9 +39,85 @@ All sections honor Epic #1254's ten methodology principles:
 ## Retired estimates
 Two legacy headline numbers were retired by Epic #1254: an unverified token-compression ratio and a similarly unverified speedup claim. Both came from estimates averaging only two real measurements. The Epic-close generator (`benchmark/generate-benchmark-report.mjs`) lints for those exact literals and fails the build if they reappear — see `RETIRED_CLAIMS` in that file for the precise list.
 
+## #G Complex Real-World Task Completion (#1305)
+
+Generated: 2026-05-17T16:29:11.242Z
+Source: `benchmark/results/realworld-task-completion.json` (axis: `realworld-task-completion`).
+
+## Claim scope
+
+- Measurement mode: `deterministic-fixture`
+- Claim scope: **stress scaffold-only; faults injected inside local deterministic tasks, not a live competitive measurement**
+- Stress mode: **yes** — recovered means the final task postcondition passed after an injected fault.
+- This report is the scaffold/local-fixture baseline for the real-world task-completion axis. It is **not** a live competitive win claim.
+- Claim eligibility tier: **diagnostic-only**; eligible: **no**.
+  - Blocker: measurement mode scaffold is not headline-eligible; use live or recorded-real
+  - Blocker: sample count 6 is below aggregate threshold N >= 10
+  - Blocker: LLM model/settings/budgets are not pinned
+- Headline gate: **blocked**. Use `node benchmark/generate-realworld-task-completion-section.mjs --require-headline` in release workflows to enforce this.
+- #1261 remains the DX/supporting axis; this section is the primary task-completion axis.
+
+## Fault stress rows
+
+| Library | Task | Fault | Injected step | Recovered by final postcondition | Recovery steps | Recovery ms | Chrome RSS | Zombies | Evidence |
+| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| `openchrome` | `rw-001-checkout-update-address` | delayed-dom | 3 | yes | 2 | 220 | 96000000 | 0 | delayed-dom injected at step 3 |
+| `openchrome` | `rw-002-search-filter-compare` | network-stall | 4 | yes | 2 | 250 | 96512000 | 0 | network-stall injected at step 4 |
+| `openchrome` | `rw-003-return-authorization` | target-closed | 5 | yes | 2 | 280 | 97024000 | 0 | target-closed injected at step 5 |
+| `openchrome` | `rw-004-selector-drift-recovery` | selector-drift | 2 | yes | 2 | 310 | 97536000 | 0 | selector-drift injected at step 2 |
+| `openchrome` | `rw-005-long-horizon-itinerary` | cdp-disconnect | 8 | yes | 2 | 340 | 98048000 | 0 | cdp-disconnect injected at step 8 |
+| `openchrome` | `rw-006-dynamic-ui-inventory` | delayed-dom | 2 | yes | 2 | 370 | 98560000 | 0 | delayed-dom injected at step 2 |
+
+## Metrics by library
+
+| Library | Mode | Runs | Success | First-attempt success | Recovery success | Mean tool calls | Mean wall time ms | p95 wall time ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `openchrome` | `deterministic-fixture` | 6 | 100.0% | 0.0% | 100.0% | 12.5 | 2125 | 2600 |
+
+## Task corpus
+
+| Task | Category | Tier | Max steps | Recovery? | Reset contract | Postcondition evidence required |
+| --- | --- | --- | ---: | --- | --- | --- |
+| `rw-001-checkout-update-address` Update a checkout shipping address and verify recalculated summary | form_fill | local-fixture | 14 | no | Reloading the local checkout fixture restores the original address and order summary. | saved city/postal text, summary destination text, recalculated shipping/tax values |
+| `rw-002-search-filter-compare` Search, filter, compare two products, and extract the cheaper eligible item | info_retrieval | local-fixture | 16 | no | Reloading the fixture clears query text, filters, comparison tray, and selected answer. | active filters, two compared item names/prices, selected cheaper eligible item |
+| `rw-003-return-authorization` Complete a mock return authorization transaction | transactional_mock | local-fixture | 18 | no | Reloading the fixture clears selected items, reason, confirmation state, and generated authorization number. | confirmation banner, authorization number, returned item name |
+| `rw-004-selector-drift-recovery` Recover from selector drift while submitting a feedback form | recovery | recovery | 20 | yes | Reloading the fixture restores the pre-drift selector state and clears submitted feedback. | selector failure/fallback note, feedback receipt text, submitted email/value |
+| `rw-005-long-horizon-itinerary` Build and verify a multi-step itinerary from constrained options | long_horizon | long-horizon | 28 | no | Reloading the fixture clears filters, selected legs, cart state, and itinerary summary. | applied constraints, selected option id, summary total and transit time |
+| `rw-006-dynamic-ui-inventory` Handle delayed dynamic inventory controls and verify saved selection | dynamic_ui | local-fixture | 18 | no | Reloading the fixture returns controls to the loading state and clears the saved variant summary. | hydration complete marker, selected variant label, saved selection summary |
+
+## Final postcondition evidence
+
+| Library | Task | Success | Final postcondition evaluated | Evidence |
+| --- | --- | --- | --- | --- |
+| `openchrome` | `rw-001-checkout-update-address` | yes | yes | rw-001-checkout-update-address: saved city/postal text + summary destination text + recalculated shipping/tax values observed after fixture-reset |
+| `openchrome` | `rw-002-search-filter-compare` | yes | yes | rw-002-search-filter-compare: active filters + two compared item names/prices + selected cheaper eligible item observed after fixture-reset |
+| `openchrome` | `rw-003-return-authorization` | yes | yes | rw-003-return-authorization: confirmation banner + authorization number + returned item name observed after fixture-reset |
+| `openchrome` | `rw-004-selector-drift-recovery` | yes | yes | rw-004-selector-drift-recovery: selector failure/fallback note + feedback receipt text + submitted email/value observed after fixture-reset |
+| `openchrome` | `rw-005-long-horizon-itinerary` | yes | yes | rw-005-long-horizon-itinerary: applied constraints + selected option id + summary total and transit time observed after fixture-reset |
+| `openchrome` | `rw-006-dynamic-ui-inventory` | yes | yes | rw-006-dynamic-ui-inventory: hydration complete marker + selected variant label + saved selection summary observed after fixture-reset |
+
+## Next measurement work
+
+- Add live OpenChrome / playwright-mcp / Puppeteer MCP / browsermcp adapter rows only after real execution.
+- Pin competitor and LLM versions before publishing live comparisons.
+- Keep local deterministic fixture rows separate from live-web rows.
+
+
+## #B Agent Task Success (#1257)
+
+*No data yet for #1257. Run the axis runner + `agent-success` generator to populate.*
+
+## #D Reliability & Fault-Recovery (#1259)
+
+*Section file pending — axis #1259 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
+
+## #E Auth & Real-World Usability (#1260)
+
+*Section file pending — axis #1260 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
+
 ## #A Token Efficiency (#1256)
 
-Generated: 2026-05-15T06:08:01.226Z
+Generated: 2026-05-16T03:34:40.106Z
 Source: `benchmark/results/token-efficiency.json` (axis: `token-efficiency`, schema 1.0.0).
 Tokenizer: `cl100k_base`.
 
@@ -54,8 +137,8 @@ Lower is better. "(skip)" = library not measured in this run.
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 6470 | 8512 | 11214 | 7999 | 11216 |
+| `playwright-innertext` | 2691 | 3571 | 4768 | 3314 | 4863 |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-library × per-archetype median retention
@@ -69,8 +152,8 @@ Higher is better. "(skip)" = library not measured in this run.
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| `playwright-innertext` | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-library × per-archetype median compression
@@ -84,8 +167,8 @@ Higher is better (× vs raw HTML tokens).
 | `openchrome-readpage-ax` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `openchrome-readpage-dom` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 | `playwright-a11y` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-content` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
-| `playwright-innertext` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
+| `playwright-content` | 1.0× | 1.0× | 1.0× | 1.0× | 1.0× |
+| `playwright-innertext` | 2.4× | 2.4× | 2.4× | 2.4× | 2.3× |
 | `playwright-mcp-snapshot` | *(skip)* | *(skip)* | *(skip)* | *(skip)* | *(skip)* |
 
 ## Per-archetype upper-left winner
@@ -100,15 +183,13 @@ Lowest tokens at the max retention measured in this run.
 | spa | `deterministic-static` | 100.0% |
 
 ## Cells skipped in this run
-350 cells did not run because they are live-only and `OPENCHROME_BENCH_LIVE=1` was not set.
+250 cells did not run because they are live-only and `OPENCHROME_BENCH_LIVE=1` was not set.
 
 Skipped libraries:
 - `browser-use-dom`
 - `openchrome-readpage-ax`
 - `openchrome-readpage-dom`
 - `playwright-a11y`
-- `playwright-content`
-- `playwright-innertext`
 - `playwright-mcp-snapshot`
 
 To run them, set `OPENCHROME_BENCH_LIVE=1` and re-run `npm run bench:tokens`. Today the live cells are scaffolded but not yet wired to their real Chrome / Python integrations — that is queued for the next session.
@@ -119,13 +200,9 @@ Across 5 archetypes with measured cells, **`deterministic-static`** sits in the 
 See `chart-tokens-scatter.svg` for the per-archetype scatter view.
 
 
-## #B Agent Task Success (#1257)
-
-*No data yet for #1257. Run the axis runner + `agent-success` generator to populate.*
-
 ## #C Speed & Throughput (#1258)
 
-Generated: 2026-05-15T06:11:26.078Z
+Generated: 2026-05-16T03:34:40.153Z
 Source: `benchmark/results/speed-throughput.json` (axis: `speed-throughput`, schema 1.0.0).
 Environment: Node v20.19.6 on darwin 25.3.0 arm64 (Apple M5, 10 cores).
 
@@ -138,10 +215,8 @@ Environment: Node v20.19.6 on darwin 25.3.0 arm64 (Apple M5, 10 cores).
 
 | Library | Mode | Concurrency | Raw pg/s (PRIMARY) | Success (PRIMARY) | Effective pg/s (secondary) | p50 wall (ms) | p95 wall (ms) | Samples kept | Warm-up discarded |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `OpenChrome` | `dom-stub` | 1 | 50000.0 | 100.0% | 50000.0 | 1.0 | 1.0 | 1 | 3 |
-| `OpenChrome` | `dom-stub` | 5 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
-| `OpenChrome` | `dom-stub` | 10 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
-| `OpenChrome` | `dom-stub` | 20 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
+| `OpenChrome` | `dom-stub` | 1 | 0.0 | 100.0% | 0.0 | 0.0 | 0.0 | 1 | 3 |
+| `Crawlee` | `cheerio-text` | 1 | 135.1 | 100.0% | 135.1 | 370.0 | 370.0 | 1 | 3 |
 
 ## Single-action latency (#1258)
 No latency results available. Run `npm run bench:latency -- --ci` to produce `benchmark/results/speed-latency.json`, then re-run this generator.
@@ -150,21 +225,42 @@ No latency results available. Run `npm run bench:latency -- --ci` to produce `be
 Issue #1258 calls for a 100-task fresh-vs-reused-session delta. That measurement requires a live Chrome instance to exercise the OpenChromeRealAdapter setup/teardown lifecycle, so it ships in the next-session follow-up alongside the live-mode throughput cells. The runner skeleton (`run-throughput.ts`) already plumbs `OPENCHROME_BENCH_LIVE=1` so the next commit only needs to add a `--session-reuse` mode without touching the result envelope shape.
 
 ## Headline
-Measured 4 cells across libraries: `OpenChrome`; concurrencies: 1 / 5 / 10 / 20.
-
-Only one library produced numbers in this run (`OpenChrome`). Competitor cells (Playwright, Puppeteer, Crawlee) plug into the same runner via the existing adapter registry; the next-session follow-up wires them through `buildAdapter()`.
+Measured 2 cells across libraries: `Crawlee`, `OpenChrome`; concurrencies: 1.
 
 See `chart-throughput.svg` and `chart-success-rate.svg` for the visual companions.
 
 
-## #D Reliability & Fault-Recovery (#1259)
-
-*Section file pending — axis #1259 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
-
-## #E Auth & Real-World Usability (#1260)
-
-*Section file pending — axis #1260 infrastructure is in place but its dedicated section generator has not yet landed. See the per-axis runner output in `benchmark/results/` for the current envelope.*
-
 ## #F Developer Experience (#1261)
 
-*No data yet for #1261. Run the axis runner + `developer-experience` generator to populate.*
+Generated: 2026-05-15T09:23:53.402Z
+Source: `benchmark/results/dx.json` (axis: `developer-experience`).
+
+## Rule of two charts
+Issue #1261 forbids a single composite radar — LOC trivially favors MCP servers, schema metrics are N/A for non-MCP libraries. The DX section therefore splits into:
+- **MCP DX** (this chart): libraries that ship an MCP server, scored across all rubrics
+- **Framework DX** (next chart): all libraries including raw frameworks, **LOC only** (the only metric every library participates in)
+
+## MCP DX
+| Library | form-fill | navigate-and-read | Schema completeness | Error actionability |
+| --- | ---: | ---: | ---: | ---: |
+| `openchrome` | 10 | 7 | *pending* | *pending* |
+
+See `chart-dx-mcp.svg` for the visual companion.
+
+## Framework DX
+LOC per task. Composites computed only over axes where every library participates — here that's LOC alone.
+
+| Library | form-fill | navigate-and-read | median LOC |
+| --- | ---: | ---: | ---: |
+| `openchrome` | 10 | 7 | 8.5 |
+| `playwright` | 12 | 10 | 11 |
+| `puppeteer` | 16 | 10 | 13 |
+
+See `chart-dx-framework.svg` for the visual companion.
+
+## Pending rubrics
+- Schema completeness: requires MCP `tools/list` introspection per library (issue #1261 mentions `lint:tool-schemas` as the OpenChrome side). Lands in the next-session follow-up.
+- Error actionability: requires running induced failures through each library and scoring the returned errors against the rubric in `dx-rubrics.ts`. Same follow-up.
+
+## Headline
+Framework DX LOC winner (lower is better): **`openchrome`** at median 8.5 LOC.

@@ -1,0 +1,632 @@
+{
+  "axis": "realworld-task-completion",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-17T16:29:11.165Z",
+    "gitSha": "5ffbe627",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.168",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "openchrome",
+      "version": "1.12.4"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "suite": "complex-real-world-task-completion",
+      "issue": "#1303/#1304",
+      "measurementMode": "deterministic-fixture",
+      "claimScope": "stress scaffold-only; faults injected inside local deterministic tasks, not a live competitive measurement",
+      "stressMode": true,
+      "faultRows": [
+        {
+          "library": "openchrome",
+          "taskId": "rw-001-checkout-update-address",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 1550,
+          "toolCalls": 7,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-001-checkout-update-address: saved city/postal text + summary destination text + recalculated shipping/tax values observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (form_fill); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "delayed-dom",
+            "injectAtStep": 3,
+            "injected": true,
+            "evidence": "delayed-dom injected at step 3",
+            "expectedRecoverySignal": "waited for recalculated summary"
+          },
+          "recoveryTimeMs": 220,
+          "recoverySteps": 2,
+          "chromeRssBytes": 96000000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-002-search-filter-compare",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 1750,
+          "toolCalls": 9,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-002-search-filter-compare: active filters + two compared item names/prices + selected cheaper eligible item observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (info_retrieval); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "network-stall",
+            "injectAtStep": 4,
+            "injected": true,
+            "evidence": "network-stall injected at step 4",
+            "expectedRecoverySignal": "retried filtered result read"
+          },
+          "recoveryTimeMs": 250,
+          "recoverySteps": 2,
+          "chromeRssBytes": 96512000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-003-return-authorization",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 1950,
+          "toolCalls": 11,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-003-return-authorization: confirmation banner + authorization number + returned item name observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (transactional_mock); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "target-closed",
+            "injectAtStep": 5,
+            "injected": true,
+            "evidence": "target-closed injected at step 5",
+            "expectedRecoverySignal": "restored mock transaction state"
+          },
+          "recoveryTimeMs": 280,
+          "recoverySteps": 2,
+          "chromeRssBytes": 97024000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-004-selector-drift-recovery",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 2600,
+          "toolCalls": 16,
+          "retries": 2,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-004-selector-drift-recovery: selector failure/fallback note + feedback receipt text + submitted email/value observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (recovery); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "selector-drift",
+            "injectAtStep": 2,
+            "injected": true,
+            "evidence": "selector-drift injected at step 2",
+            "expectedRecoverySignal": "semantic fallback submit"
+          },
+          "recoveryTimeMs": 310,
+          "recoverySteps": 2,
+          "chromeRssBytes": 97536000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-005-long-horizon-itinerary",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 2350,
+          "toolCalls": 15,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-005-long-horizon-itinerary: applied constraints + selected option id + summary total and transit time observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (long_horizon); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "cdp-disconnect",
+            "injectAtStep": 8,
+            "injected": true,
+            "evidence": "cdp-disconnect injected at step 8",
+            "expectedRecoverySignal": "reattached before final summary check"
+          },
+          "recoveryTimeMs": 340,
+          "recoverySteps": 2,
+          "chromeRssBytes": 98048000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-006-dynamic-ui-inventory",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 2550,
+          "toolCalls": 17,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-006-dynamic-ui-inventory: hydration complete marker + selected variant label + saved selection summary observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (dynamic_ui); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "delayed-dom",
+            "injectAtStep": 2,
+            "injected": true,
+            "evidence": "delayed-dom injected at step 2",
+            "expectedRecoverySignal": "waited for hydrated controls"
+          },
+          "recoveryTimeMs": 370,
+          "recoverySteps": 2,
+          "chromeRssBytes": 98560000,
+          "zombieProcessCount": 0
+        }
+      ],
+      "tasks": [
+        {
+          "id": "rw-001-checkout-update-address",
+          "title": "Update a checkout shipping address and verify recalculated summary",
+          "tier": "local-fixture",
+          "category": "form_fill",
+          "goal": "Find the checkout address form, update the shipping city/postal code, and verify the order summary reflects the new destination.",
+          "maxSteps": 14,
+          "successCriteria": [
+            "address fields saved",
+            "summary destination updated",
+            "tax/shipping recalculated"
+          ],
+          "complexityTags": [
+            "form-fill",
+            "stateful-ui",
+            "verification"
+          ],
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/checkout-address.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the local checkout fixture restores the original address and order summary.",
+            "evidence": "initial city=Springfield; initial postal=01103; order summary destination=MA"
+          },
+          "postconditionContract": {
+            "description": "The saved address and order summary must both show the requested destination after submit.",
+            "requiredEvidence": [
+              "saved city/postal text",
+              "summary destination text",
+              "recalculated shipping/tax values"
+            ]
+          }
+        },
+        {
+          "id": "rw-002-search-filter-compare",
+          "title": "Search, filter, compare two products, and extract the cheaper eligible item",
+          "tier": "local-fixture",
+          "category": "info_retrieval",
+          "goal": "Search a product catalog, apply availability and rating filters, compare two candidates, and report the cheaper eligible item.",
+          "maxSteps": 16,
+          "successCriteria": [
+            "filters applied",
+            "two candidates compared",
+            "eligible cheaper item extracted"
+          ],
+          "complexityTags": [
+            "search",
+            "filtering",
+            "extraction",
+            "decision"
+          ],
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/product-search.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture clears query text, filters, comparison tray, and selected answer.",
+            "evidence": "query empty; availability filter unset; comparison tray count=0"
+          },
+          "postconditionContract": {
+            "description": "The final answer must name the cheapest in-stock item that satisfies the rating filter.",
+            "requiredEvidence": [
+              "active filters",
+              "two compared item names/prices",
+              "selected cheaper eligible item"
+            ]
+          }
+        },
+        {
+          "id": "rw-003-return-authorization",
+          "title": "Complete a mock return authorization transaction",
+          "tier": "local-fixture",
+          "category": "transactional_mock",
+          "goal": "Find an order, select eligible items for return, choose a reason, submit the mock return request, and verify the authorization number.",
+          "maxSteps": 18,
+          "successCriteria": [
+            "eligible order found",
+            "return reason selected",
+            "mock transaction submitted",
+            "authorization number verified"
+          ],
+          "complexityTags": [
+            "transactional-mock",
+            "stateful-ui",
+            "verification"
+          ],
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/return-authorization.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture clears selected items, reason, confirmation state, and generated authorization number.",
+            "evidence": "selected return items=0; confirmation hidden; authorization number absent"
+          },
+          "postconditionContract": {
+            "description": "The final confirmation must include the expected mock return authorization number and selected item.",
+            "requiredEvidence": [
+              "confirmation banner",
+              "authorization number",
+              "returned item name"
+            ]
+          }
+        },
+        {
+          "id": "rw-004-selector-drift-recovery",
+          "title": "Recover from selector drift while submitting a feedback form",
+          "tier": "recovery",
+          "category": "recovery",
+          "goal": "Submit a feedback form after the primary submit selector changes during the run.",
+          "maxSteps": 20,
+          "successCriteria": [
+            "selector failure observed",
+            "fallback selector or semantic action used",
+            "form submitted"
+          ],
+          "complexityTags": [
+            "fault-recovery",
+            "form-fill",
+            "grounding"
+          ],
+          "requiresRecovery": true,
+          "fixturePath": "tests/benchmark/fixtures/realworld/selector-drift-feedback.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture restores the pre-drift selector state and clears submitted feedback.",
+            "evidence": "primary submit selector present before drift; submission receipt absent"
+          },
+          "postconditionContract": {
+            "description": "The feedback receipt must be visible after recovering from the drifted submit selector.",
+            "requiredEvidence": [
+              "selector failure/fallback note",
+              "feedback receipt text",
+              "submitted email/value"
+            ]
+          }
+        },
+        {
+          "id": "rw-005-long-horizon-itinerary",
+          "title": "Build and verify a multi-step itinerary from constrained options",
+          "tier": "long-horizon",
+          "category": "long_horizon",
+          "goal": "Filter itinerary options by date, budget, and transit time; add the best option; verify the final itinerary summary.",
+          "maxSteps": 28,
+          "successCriteria": [
+            "constraints applied",
+            "best option selected",
+            "itinerary added",
+            "summary verified"
+          ],
+          "complexityTags": [
+            "long-horizon",
+            "filtering",
+            "decision",
+            "stateful-ui"
+          ],
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/itinerary-builder.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture clears filters, selected legs, cart state, and itinerary summary.",
+            "evidence": "filters empty; selected legs=0; itinerary summary hidden"
+          },
+          "postconditionContract": {
+            "description": "The itinerary summary must include the selected option satisfying date, budget, and transit constraints.",
+            "requiredEvidence": [
+              "applied constraints",
+              "selected option id",
+              "summary total and transit time"
+            ]
+          }
+        },
+        {
+          "id": "rw-006-dynamic-ui-inventory",
+          "title": "Handle delayed dynamic inventory controls and verify saved selection",
+          "tier": "local-fixture",
+          "category": "dynamic_ui",
+          "goal": "Wait for inventory controls to hydrate, open the variant picker, select the only in-stock variant, and verify the saved selection.",
+          "maxSteps": 18,
+          "successCriteria": [
+            "hydrated controls observed",
+            "in-stock variant selected",
+            "selection persisted in summary"
+          ],
+          "complexityTags": [
+            "dynamic-ui",
+            "hydration",
+            "stateful-ui",
+            "verification"
+          ],
+          "requiresRecovery": false,
+          "fixturePath": "tests/benchmark/fixtures/realworld/dynamic-inventory.html",
+          "resetContract": {
+            "kind": "fixture-reset",
+            "description": "Reloading the fixture returns controls to the loading state and clears the saved variant summary.",
+            "evidence": "controls loading; selected variant empty; summary hidden"
+          },
+          "postconditionContract": {
+            "description": "The summary must show the selected in-stock variant after delayed controls hydrate.",
+            "requiredEvidence": [
+              "hydration complete marker",
+              "selected variant label",
+              "saved selection summary"
+            ]
+          }
+        }
+      ],
+      "runs": [
+        {
+          "library": "openchrome",
+          "taskId": "rw-001-checkout-update-address",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 1550,
+          "toolCalls": 7,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-001-checkout-update-address: saved city/postal text + summary destination text + recalculated shipping/tax values observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (form_fill); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "delayed-dom",
+            "injectAtStep": 3,
+            "injected": true,
+            "evidence": "delayed-dom injected at step 3",
+            "expectedRecoverySignal": "waited for recalculated summary"
+          },
+          "recoveryTimeMs": 220,
+          "recoverySteps": 2,
+          "chromeRssBytes": 96000000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-002-search-filter-compare",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 1750,
+          "toolCalls": 9,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-002-search-filter-compare: active filters + two compared item names/prices + selected cheaper eligible item observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (info_retrieval); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "network-stall",
+            "injectAtStep": 4,
+            "injected": true,
+            "evidence": "network-stall injected at step 4",
+            "expectedRecoverySignal": "retried filtered result read"
+          },
+          "recoveryTimeMs": 250,
+          "recoverySteps": 2,
+          "chromeRssBytes": 96512000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-003-return-authorization",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 1950,
+          "toolCalls": 11,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-003-return-authorization: confirmation banner + authorization number + returned item name observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (transactional_mock); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "target-closed",
+            "injectAtStep": 5,
+            "injected": true,
+            "evidence": "target-closed injected at step 5",
+            "expectedRecoverySignal": "restored mock transaction state"
+          },
+          "recoveryTimeMs": 280,
+          "recoverySteps": 2,
+          "chromeRssBytes": 97024000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-004-selector-drift-recovery",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 2600,
+          "toolCalls": 16,
+          "retries": 2,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-004-selector-drift-recovery: selector failure/fallback note + feedback receipt text + submitted email/value observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (recovery); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "selector-drift",
+            "injectAtStep": 2,
+            "injected": true,
+            "evidence": "selector-drift injected at step 2",
+            "expectedRecoverySignal": "semantic fallback submit"
+          },
+          "recoveryTimeMs": 310,
+          "recoverySteps": 2,
+          "chromeRssBytes": 97536000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-005-long-horizon-itinerary",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 2350,
+          "toolCalls": 15,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-005-long-horizon-itinerary: applied constraints + selected option id + summary total and transit time observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (long_horizon); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "cdp-disconnect",
+            "injectAtStep": 8,
+            "injected": true,
+            "evidence": "cdp-disconnect injected at step 8",
+            "expectedRecoverySignal": "reattached before final summary check"
+          },
+          "recoveryTimeMs": 340,
+          "recoverySteps": 2,
+          "chromeRssBytes": 98048000,
+          "zombieProcessCount": 0
+        },
+        {
+          "library": "openchrome",
+          "taskId": "rw-006-dynamic-ui-inventory",
+          "mode": "deterministic-fixture",
+          "success": true,
+          "firstAttempt": false,
+          "recovered": true,
+          "wallTimeMs": 2550,
+          "toolCalls": 17,
+          "retries": 1,
+          "noProgressLoops": 0,
+          "tokens": null,
+          "usd": null,
+          "failureCategory": "none",
+          "finalPostconditionEvidence": "rw-006-dynamic-ui-inventory: hydration complete marker + selected variant label + saved selection summary observed after fixture-reset",
+          "finalPostconditionEvaluated": true,
+          "notes": "deterministic scaffold row from local fixture contract (dynamic_ui); not a live competitive LLM/browser measurement; stress fault injected and recovered only because final postcondition passed",
+          "faultInjected": true,
+          "faultCheckpoint": {
+            "fault": "delayed-dom",
+            "injectAtStep": 2,
+            "injected": true,
+            "evidence": "delayed-dom injected at step 2",
+            "expectedRecoverySignal": "waited for hydrated controls"
+          },
+          "recoveryTimeMs": 370,
+          "recoverySteps": 2,
+          "chromeRssBytes": 98560000,
+          "zombieProcessCount": 0
+        }
+      ],
+      "metrics": [
+        {
+          "library": "openchrome",
+          "mode": "deterministic-fixture",
+          "totalRuns": 6,
+          "successRate": 1,
+          "firstAttemptSuccessRate": 0,
+          "recoverySuccessRate": 1,
+          "meanWallTimeMs": 2125,
+          "p50WallTimeMs": 1950,
+          "p95WallTimeMs": 2600,
+          "meanToolCalls": 12.5,
+          "meanRetries": 1.1666666666666667,
+          "meanNoProgressLoops": 0,
+          "meanTokens": null,
+          "costPerSuccessUsd": null
+        }
+      ],
+      "finalPostconditionEvidence": "rw-001-checkout-update-address: saved city/postal text + summary destination text + recalculated shipping/tax values observed after fixture-reset; rw-002-search-filter-compare: active filters + two compared item names/prices + selected cheaper eligible item observed after fixture-reset; rw-003-return-authorization: confirmation banner + authorization number + returned item name observed after fixture-reset; rw-004-selector-drift-recovery: selector failure/fallback note + feedback receipt text + submitted email/value observed after fixture-reset; rw-005-long-horizon-itinerary: applied constraints + selected option id + summary total and transit time observed after fixture-reset; rw-006-dynamic-ui-inventory: hydration complete marker + selected variant label + saved selection summary observed after fixture-reset",
+      "finalPostconditionEvaluated": true,
+      "claimEligibility": {
+        "eligible": false,
+        "tier": "diagnostic-only",
+        "reasons": [
+          "measurement mode scaffold is not headline-eligible; use live or recorded-real",
+          "sample count 6 is below aggregate threshold N >= 10",
+          "LLM model/settings/budgets are not pinned"
+        ],
+        "requiredSamples": 10
+      }
+    }
+  ]
+}

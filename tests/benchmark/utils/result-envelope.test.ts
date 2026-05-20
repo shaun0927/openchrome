@@ -6,11 +6,20 @@ import {
   validateResultEnvelope,
   assertValidResultEnvelope,
   RESULT_SCHEMA_VERSION,
+  isHeadlineEligibleResultStatus,
 } from './result-envelope';
 
 const env = captureEnvironment();
 
 describe('benchmark result envelope', () => {
+  test('classifies only measured/passed statuses as headline-capable', () => {
+    expect(isHeadlineEligibleResultStatus('measured')).toBe(true);
+    expect(isHeadlineEligibleResultStatus('passed')).toBe(true);
+    expect(isHeadlineEligibleResultStatus('skipped')).toBe(false);
+    expect(isHeadlineEligibleResultStatus('dry_run')).toBe(false);
+    expect(isHeadlineEligibleResultStatus(undefined)).toBe(false);
+  });
+
   test('builds a schema-valid envelope', () => {
     const envelope = buildResultEnvelope({
       axis: 'foundation',

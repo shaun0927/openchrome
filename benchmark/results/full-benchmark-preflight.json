@@ -1,0 +1,97 @@
+{
+  "mode": "recorded",
+  "missing": [
+    "chrome-cdp: CDP endpoint is not reachable",
+    "playwright-mcp: playwright-mcp CLI path could not be resolved",
+    "llm-api-key: No supported LLM API key found in environment"
+  ],
+  "runtimeRows": [
+    {
+      "runtime": "chrome-cdp",
+      "status": "missing",
+      "requiredFor": [
+        "live token extractors",
+        "live throughput",
+        "reliability CDP faults",
+        "real-world browser episodes"
+      ],
+      "endpoint": "http://127.0.0.1:9222",
+      "evidence": "CDP endpoint is not reachable",
+      "remediation": "Start Chrome with --remote-debugging-port=9222 and set OPENCHROME_BENCH_CDP_ENDPOINT if using a different endpoint."
+    },
+    {
+      "runtime": "playwright-mcp",
+      "status": "missing",
+      "requiredFor": [
+        "native competitor adapter matrix",
+        "playwright-mcp token payloads",
+        "real-world competitor episodes"
+      ],
+      "endpoint": "@playwright/mcp/cli.js",
+      "evidence": "playwright-mcp CLI path could not be resolved",
+      "remediation": "Install @playwright/mcp or set PLAYWRIGHT_MCP_SERVER_PATH to its cli.js path."
+    },
+    {
+      "runtime": "browser-use",
+      "status": "ready",
+      "requiredFor": [
+        "browser-use native competitor rows",
+        "browser-use real-world episodes"
+      ],
+      "endpoint": "python3 /Users/jh0927/openchrome/tests/benchmark/bridges/browser_use_bridge.py",
+      "evidence": "Python available (Python 3.12.12); bridge script exists",
+      "remediation": ""
+    },
+    {
+      "runtime": "llm-api-key",
+      "status": "missing",
+      "requiredFor": [
+        "real LLM tool-use loop",
+        "episode token/USD accounting",
+        "WebVoyager repetitions"
+      ],
+      "endpoint": "ANTHROPIC_API_KEY or OPENAI_API_KEY",
+      "evidence": "No supported LLM API key found in environment",
+      "remediation": "Export ANTHROPIC_API_KEY or OPENAI_API_KEY before running live LLM benchmark loops."
+    }
+  ],
+  "costEstimate": {
+    "taskCount": 61,
+    "librariesRun": 3,
+    "repetitions": 10,
+    "maxUsdPerTask": 0.5,
+    "worstCaseUsd": 915,
+    "perLibrary": [
+      {
+        "library": "openchrome",
+        "wired": true,
+        "cellsWouldRun": 610,
+        "note": "OpenChrome MCP server driven by Claude tool-calling. Existing claude-adapter.ts."
+      },
+      {
+        "library": "playwright-mcp",
+        "wired": true,
+        "cellsWouldRun": 610,
+        "note": "External @playwright/mcp server; benchmark rows must use PlaywrightMcpAdapter and may emit dependency-only setup errors."
+      },
+      {
+        "library": "browser-use",
+        "wired": true,
+        "cellsWouldRun": 610,
+        "note": "External browser-use Python agent/bridge; rows must use BrowserUseAdapter and keep passive-tool rows secondary."
+      }
+    ],
+    "cellsWouldRunTotal": 1830
+  },
+  "orderedAxes": [
+    "runtime-preflight",
+    "competitor-smoke",
+    "non-llm-diagnostics",
+    "realworld-recorded-or-live",
+    "llm-repetitions",
+    "native-competitors",
+    "fault-stress",
+    "unified-report",
+    "readiness-gates"
+  ]
+}
