@@ -128,6 +128,18 @@ export const isDynamicSkillsEnabled = (): boolean =>
 export const isSkillReplayEnabled = (): boolean =>
   isFamilyEnabledOptIn('OPENCHROME_SKILL_REPLAY');
 
+/**
+ * Auto-skillify: subscribe the curator's auto-extractor to
+ * `transaction:settled` and write SKILL.md candidates on every
+ * successful contract verdict. Off-by-default even when `--pilot` is
+ * set because writing to `~/.openchrome/skills/<domain>/` is a side-
+ * effect outside the request/response lifetime — operators must opt
+ * in explicitly via `OPENCHROME_AUTO_SKILLIFY=1`. See
+ * `src/pilot/curator/auto-extractor.ts` for the activation chain.
+ */
+export const isAutoSkillifyEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_AUTO_SKILLIFY');
+
 /** Pilot-tier React DevTools hook inspection (#838). Defaults on inside --pilot. */
 export const isReactPilotEnabled = (): boolean =>
   isFamilyEnabled('OPENCHROME_REACT_PILOT');
@@ -151,7 +163,8 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['dynamic_skills', isDynamicSkillsEnabled],
   ['skill_replay', isSkillReplayEnabled],
   ['react_pilot', isReactPilotEnabled],
-  ['proxy_hook', isProxyHookEnabled]
+  ['proxy_hook', isProxyHookEnabled],
+  ['auto_skillify', isAutoSkillifyEnabled],
 ];
 
 /**
@@ -190,7 +203,20 @@ export async function bootstrapPilot(): Promise<unknown | null> {
   if (!isPilotEnabled()) return null;
   // Dynamic import keeps the pilot tree out of the static dependency graph
   // until `--pilot` is explicitly enabled at runtime.
-  const mod = await import('../pilot/index.js');
+  const mod = (await import('../pilot/index.js')) as { bootstrap?: () => unknown };
+  // Invoke the optional pilot-side bootstrap so side-effecting wiring
+  // (auto-skillify subscriber, curator runner) can register without
+  // every entry point in src/ having to import pilot directly. The
+  // call is best-effort: a missing or throwing `bootstrap()` must not
+  // block server startup.
+  if (typeof mod.bootstrap === 'function') {
+    try {
+      mod.bootstrap();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[harness] pilot bootstrap failed: ${message}\n`);
+    }
+  }
   return mod;
 }
 

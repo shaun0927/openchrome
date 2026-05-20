@@ -59,3 +59,78 @@ export * as skill from './skill/index.js';
 
 // Issue #837: pilot credential vault.
 export * as credentials from './credentials/store.js';
+
+import {
+  isAutoSkillifyEnabled,
+  isContractRuntimeEnabled,
+  isSkillCuratorEnabled,
+  isStateGraphEnabled,
+} from '../harness/flags.js';
+import { defaultSkillRootDir, registerAutoExtractor, startCuratorRunner } from './curator/index.js';
+import type { AutoExtractorHandle, CuratorRunner } from './curator/index.js';
+
+/**
+ * Handle returned by `bootstrap()`. Callers (notably tests) use
+ * `stop()` to release the auto-extractor subscription and shut down
+ * the curator runner timer. Production code rarely needs this — the
+ * curator timer is `.unref()`-ed and the extractor subscription is
+ * harmless after process exit — but keeping a handle makes the
+ * lifecycle observable.
+ */
+export interface PilotBootstrapHandle {
+  stop(): void;
+}
+
+/**
+ * Pilot-side bootstrap. Invoked exactly once from
+ * `src/harness/flags.ts:bootstrapPilot()` after `isPilotEnabled()`
+ * returns true. Each side-effect is independently flag-gated so an
+ * operator can keep, say, the skill curator running while opting out
+ * of auto-skillify.
+ *
+ * Activation matrix (every condition AND-ed):
+ *   - Auto-extractor: `OPENCHROME_AUTO_SKILLIFY` (opt-in) AND
+ *     `contract_runtime` (default-on) AND `state_graph` (default-on).
+ *   - Curator runner: `OPENCHROME_SKILL_CURATOR` (default-on inside
+ *     pilot). Currently runs with `noopStatsResolver`; a follow-up
+ *     PR wires the audit-log-backed resolver.
+ *
+ * Failures during each registration are caught and routed to stderr;
+ * the runtime, MCP tool surface, and other pilot families are
+ * unaffected.
+ */
+export function bootstrap(): PilotBootstrapHandle {
+  const extractorHandles: AutoExtractorHandle[] = [];
+  const curatorHandles: CuratorRunner[] = [];
+
+  if (isAutoSkillifyEnabled() && isContractRuntimeEnabled() && isStateGraphEnabled()) {
+    try {
+      extractorHandles.push(registerAutoExtractor({ rootDir: defaultSkillRootDir() }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[pilot] auto-skillify register failed: ${message}\n`);
+    }
+  }
+
+  if (isSkillCuratorEnabled()) {
+    try {
+      curatorHandles.push(startCuratorRunner({ rootDir: defaultSkillRootDir() }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[pilot] curator runner start failed: ${message}\n`);
+    }
+  }
+
+  return {
+    stop(): void {
+      for (const h of extractorHandles) {
+        try { h.unregister(); } catch { /* */ }
+      }
+      for (const h of curatorHandles) {
+        try { h.stop(); } catch { /* */ }
+      }
+      extractorHandles.length = 0;
+      curatorHandles.length = 0;
+    },
+  };
+}

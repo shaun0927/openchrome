@@ -46,6 +46,7 @@ import { isContractRuntimeEnabled } from '../../harness/flags.js';
 import { getLifecycleBus } from '../../core/lifecycle/index.js';
 import { STATE_HASH_VERSION } from '../state-graph/node-hash.js';
 import { getBeforeIrreversibleHook } from './before-irreversible.js';
+import { contractRuntimeEvents } from './events.js';
 import { DEFAULT_CACHE_TTL_MS } from './idempotency.js';
 import type {
   AuditEmitter,
@@ -642,6 +643,18 @@ function settle(
     }
   } catch {
     // best-effort — sync audit failure must not change the verdict
+  }
+  // Fan out the settled record to the pilot event bus. This is the
+  // hook auto-extractors (skill curator) and any other consumer rely
+  // on. Wrapped in try/catch as defence-in-depth — a listener that
+  // throws synchronously through EventEmitter must not change the
+  // verdict the runtime is in the middle of returning. Subscribers
+  // are responsible for their own setImmediate / async dispatch so
+  // long-running consumer work cannot push back into this thread.
+  try {
+    contractRuntimeEvents.emit('transaction:settled', record);
+  } catch {
+    // best-effort — listener throw must not change the verdict
   }
   return record;
 }

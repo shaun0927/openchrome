@@ -70,6 +70,12 @@ export type { CuratorLockOptions } from './lock';
 export { startCuratorRunner } from './runner';
 export type { CuratorRunner, CuratorRunnerOptions } from './runner';
 
+// Auto-extractor — subscribes to `contractRuntimeEvents.transaction:settled`
+// and feeds successful runs into `recordSuccessfulRun`. Gated by
+// `OPENCHROME_AUTO_SKILLIFY` at the bootstrap call site.
+export { registerAutoExtractor } from './auto-extractor';
+export type { AutoExtractorHandle, AutoExtractorOptions } from './auto-extractor';
+
 // Recall ranking (read-only over SkillMemoryStore)
 export {
   clusterSkills,
