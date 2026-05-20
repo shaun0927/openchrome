@@ -73,8 +73,15 @@ export type { CuratorRunner, CuratorRunnerOptions } from './runner';
 // Auto-extractor — subscribes to `contractRuntimeEvents.transaction:settled`
 // and feeds successful runs into `recordSuccessfulRun`. Gated by
 // `OPENCHROME_AUTO_SKILLIFY` at the bootstrap call site.
-export { registerAutoExtractor } from './auto-extractor';
+export { defaultJournalProvider, registerAutoExtractor } from './auto-extractor';
 export type { AutoExtractorHandle, AutoExtractorOptions } from './auto-extractor';
+
+// Deterministic SKILL.md body distiller — turns a slice of journal
+// entries into a Steps section. Server-side LLM distillation is
+// blocked by portability-harness P3; this is the bytes-stable
+// substitute that ships in-process.
+export { buildSkillBody } from './body-builder';
+export type { BuildSkillBodyOptions, JournalLikeEntry } from './body-builder';
 
 // Failure-side sidecar logger — used by the auto-extractor for the
 // `postcondition_violation` verdict so the curator's prune sub-pass
