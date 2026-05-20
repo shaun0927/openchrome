@@ -88,6 +88,17 @@ export type { FailedRunInputs, FailedRunResult } from './failed-run';
 export { createSidecarStatsResolver } from './sidecar-stats';
 export type { SidecarStatsResolverOptions } from './sidecar-stats';
 
+// Auto-recall over the curator's SKILL.md tree. Surfaces promoted
+// skills back into the LLM's context (typically via
+// `oc_task_run_start`). Gated on `OPENCHROME_AUTO_RECALL=1` in
+// addition to the pilot + skill-curator family flags.
+export { hostnameForRecall, recallCuratorSkills } from './auto-recall';
+export type {
+  RecallCuratorSkillsInput,
+  RecalledCuratorSkill,
+  RecalledCuratorSkillsPayload,
+} from './auto-recall';
+
 // Recall ranking (read-only over SkillMemoryStore)
 export {
   clusterSkills,
