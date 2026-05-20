@@ -51,11 +51,48 @@ describe('createStateHasher', () => {
     expect(await hasher()).toBeNull();
   });
 
-  it('returns a 16-char hex hash when pilot + state-graph are enabled', async () => {
+  it('returns a v1 result when pilot + state-graph are enabled (URL-only legacy thunk)', async () => {
     setPilot(true);
     const hasher = createStateHasher(() => 'https://example.com/cart');
-    const hash = await hasher();
-    expect(hash).toMatch(/^[0-9a-f]{16}$/);
+    const result = await hasher();
+    expect(result).not.toBeNull();
+    expect(result?.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(result?.version).toBe('v1');
+  });
+
+  it('returns a v2 result when the probe supplies a DOM skeleton', async () => {
+    setPilot(true);
+    const hasher = createStateHasher({
+      url: () => 'https://example.com/cart',
+      skeleton: () => ({
+        tree: { tag: 'body', children: [{ tag: 'form' }] },
+        landmarks: ['main'],
+        counts: { forms: 1, buttons: 1, inputs: 1, links: 1, headings: 1 },
+      }),
+    });
+    const result = await hasher();
+    expect(result?.version).toBe('v2');
+    expect(result?.hash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('falls back to v1 when the skeleton probe yields null', async () => {
+    setPilot(true);
+    const hasher = createStateHasher({
+      url: () => 'https://example.com/cart',
+      skeleton: () => null,
+    });
+    const result = await hasher();
+    expect(result?.version).toBe('v1');
+  });
+
+  it('falls back to v1 when the skeleton probe throws', async () => {
+    setPilot(true);
+    const hasher = createStateHasher({
+      url: () => 'https://example.com/cart',
+      skeleton: () => { throw new Error('probe blew up'); },
+    });
+    const result = await hasher();
+    expect(result?.version).toBe('v1');
   });
 
   it('swallows a synchronously throwing URL provider and returns null', async () => {
@@ -90,7 +127,8 @@ describe('createStateHasher', () => {
   it('resolves a Promise-returning URL provider', async () => {
     setPilot(true);
     const hasher = createStateHasher(async () => 'https://example.com/cart');
-    const hash = await hasher();
-    expect(hash).toMatch(/^[0-9a-f]{16}$/);
+    const result = await hasher();
+    expect(result?.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(result?.version).toBe('v1');
   });
 });

@@ -1,51 +1,106 @@
 /**
  * Factory for the runtime's `computeStateHash` callback.
  *
- * The contract runtime (`src/pilot/runtime/runtime.ts`) accepts an
- * optional `computeStateHash` hook on `ContractRuntimeArgs` and calls
- * it once per run, best-effort, after the pre-check has passed. The
- * runtime intentionally knows nothing about how the hash is computed —
- * it just attaches the returned string to the emitted
- * `TransactionRecord`.
+ * Two shapes are accepted (see overloads):
  *
- * This factory is the recommended wiring: it gates the entire path
- * on `isStateGraphEnabled()` so when the family flag is off the
- * callback returns `null` without invoking the URL provider. Callers
- * pass a `getUrl()` thunk; v1 needs only the URL.
+ *   1. `createStateHasher(getUrl)` — legacy v1-only path. Callers
+ *      that only have a URL handy (e.g.
+ *      `guardIrreversibleBrowserAction`, which carries `pageUrl` as
+ *      a string label) keep using this signature; the hasher returns
+ *      a v1 hash and never crosses into v2.
  *
- * Why a thunk and not a string:
- *   - The runtime invokes the callback once per `runWithContract`,
- *     and the URL may be resolved lazily (e.g., via a snapshot that
- *     hasn't fired yet at the call site).
- *   - It keeps the factory testable with a sync constant in unit
- *     tests and a real async URL probe in production wiring.
+ *   2. `createStateHasher(probe)` — v2-capable path. Callers that
+ *      can probe both URL and DOM (e.g. CDP-attached tools) supply a
+ *      `StateGraphProbe`. The hasher tries v2 first; when the
+ *      skeleton probe is absent / returns null / throws, it falls
+ *      through to v1 so the caller always gets *some* hash if a URL
+ *      is available.
+ *
+ * In both shapes, the entire path is gated on
+ * `isStateGraphEnabled()`. When the family flag is off the returned
+ * thunk is a no-op that yields `null` without invoking the
+ * underlying providers.
  *
  * Failure handling:
- *   - A `getUrl()` rejection is swallowed and the factory returns
- *     `null` so the runtime's always-settles guarantee remains
- *     intact. The runtime logs nothing on a `null` return — that is
- *     by design (see runtime.ts comment near the call site).
+ *   - A throwing / rejecting URL provider yields `null`. The
+ *     runtime's always-settles guarantee is preserved.
+ *   - A throwing / rejecting skeleton probe falls through to v1 (no
+ *     skeleton, URL-only). It does NOT yield `null` — the caller
+ *     still wants a coarse anchor when the structural probe is
+ *     unreliable, and v1 is the conservative choice.
  */
 
 import { isStateGraphEnabled } from '../../harness/flags.js';
-import { computeNodeHash } from './node-hash.js';
+import type { DomSkeleton } from './dom-skeleton.js';
+import {
+  computeNodeHash,
+  computeNodeHashV2,
+  type StateHashVersion,
+} from './node-hash.js';
 
 export type UrlProvider = () => string | null | undefined | Promise<string | null | undefined>;
 
+export type SkeletonProvider = () => DomSkeleton | null | undefined | Promise<DomSkeleton | null | undefined>;
+
 /**
- * Build the hasher callback. Returns a no-op (`null`-returning)
- * function when the state-graph family is disabled, so wiring is
- * unconditional at the call site and the gate check happens here.
+ * Combined probe for v2 hashing. The `skeleton` member is optional —
+ * a probe without skeleton degrades cleanly to v1.
  */
-export function createStateHasher(getUrl: UrlProvider): () => Promise<string | null> {
+export interface StateGraphProbe {
+  url: UrlProvider;
+  skeleton?: SkeletonProvider;
+}
+
+/**
+ * Result type emitted by the hasher. The runtime attaches `hash` to
+ * `TransactionRecord.state_hash` and `version` to
+ * `TransactionRecord.state_hash_version`, so audit log consumers can
+ * tell which algorithm produced each anchor.
+ */
+export interface StateHashResult {
+  hash: string;
+  version: StateHashVersion;
+}
+
+function isProbe(input: UrlProvider | StateGraphProbe): input is StateGraphProbe {
+  return typeof input === 'object' && input !== null && typeof input.url === 'function';
+}
+
+export function createStateHasher(
+  input: UrlProvider | StateGraphProbe,
+): () => Promise<StateHashResult | null> {
   return async () => {
     if (!isStateGraphEnabled()) return null;
+
+    const getUrl: UrlProvider = isProbe(input) ? input.url : input;
+    const getSkeleton: SkeletonProvider | undefined = isProbe(input) ? input.skeleton : undefined;
+
     let url: string | null | undefined;
     try {
       url = await getUrl();
     } catch {
       return null;
     }
-    return computeNodeHash(url);
+
+    // Try v2 first when a skeleton provider is wired. A null /
+    // throwing skeleton falls through to v1 rather than yielding
+    // null: a coarse anchor is more useful than no anchor at all
+    // for skill correlation.
+    if (getSkeleton !== undefined) {
+      let skeleton: DomSkeleton | null | undefined;
+      try {
+        skeleton = await getSkeleton();
+      } catch {
+        skeleton = null;
+      }
+      if (skeleton) {
+        const v2 = computeNodeHashV2(url, skeleton);
+        if (v2 !== null) return { hash: v2, version: 'v2' };
+      }
+    }
+
+    const v1 = computeNodeHash(url);
+    if (v1 === null) return null;
+    return { hash: v1, version: 'v1' };
   };
 }
