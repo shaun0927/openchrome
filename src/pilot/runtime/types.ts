@@ -118,6 +118,25 @@ export interface TransactionRecord {
    * (rather than `false`) so audit consumers can grep on presence.
    */
   from_cache?: boolean;
+  /**
+   * State-graph anchor identifying the entry node this run executed
+   * against (curator skill identity is `(state_hash, contract_id)`).
+   * Computed via the optional `computeStateHash` callback on
+   * `ContractRuntimeArgs` after pre-check passes. Absent when the
+   * state-graph family is disabled, when no hasher is wired, or when
+   * the URL was unparseable — auto-extractors must treat absence as
+   * "skip" rather than synthesising a default. See
+   * `src/pilot/state-graph/node-hash.ts` for the algorithm.
+   */
+  state_hash?: string;
+  /**
+   * Algorithm version that produced `state_hash`. Persisted so a
+   * future algorithm change (e.g. folding a DOM skeleton into the
+   * canonical input) can be distinguished from v1 hashes already on
+   * disk. Always emitted together with `state_hash`; absent when
+   * `state_hash` is absent.
+   */
+  state_hash_version?: string;
 }
 
 /**
@@ -183,4 +202,18 @@ export interface ContractRuntimeArgs {
    * while still benefiting from the in-flight registry.
    */
   cache_ttl_ms?: number;
+  /**
+   * Optional state-graph anchor producer. Invoked at most once per
+   * run, after the pre-check passes, to capture the entry-node hash
+   * the curator's skill identity is keyed on. The runtime treats this
+   * as best-effort: a thrown or rejected callback is swallowed and
+   * `state_hash` simply stays absent from the emitted record — the
+   * "always settles" guarantee is never compromised by hashing.
+   *
+   * Production wiring: use
+   * `src/pilot/state-graph/factory.ts:createStateHasher()`, which
+   * folds in the `isStateGraphEnabled()` gate so the callback returns
+   * `null` when the family flag is off.
+   */
+  computeStateHash?: () => Promise<string | null>;
 }

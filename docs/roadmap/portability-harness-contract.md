@@ -248,6 +248,26 @@ need no flag — they ship inside `serve` without `--pilot`.
 When `--pilot` is unset, none of the above sub-flags or env variables have any
 effect; the pilot bootstrap module is never loaded.
 
+### Skill state graph — v1 algorithm
+
+The `state_graph` family (`OPENCHROME_STATE_GRAPH=1`, default-on inside
+`--pilot`) ships a deliberately narrow v1 hash: `sha256("v1\0" + origin +
+pathname).hex.slice(0, 16)`. Query strings, fragments, and trailing
+slashes on non-root pathnames are discarded; the host is lower-cased and
+the path stays case-sensitive. Pathname-only hashing differentiates
+pages but not states within a page — folding a coarse DOM skeleton
+(tag tree + ARIA landmarks + form/button counts) into the canonical
+input lands in a follow-up PR. When that ships, `STATE_HASH_VERSION`
+rolls to `v2`; the `state_hash_version` field emitted alongside every
+`TransactionRecord.state_hash` lets curator migrations and dashboards
+distinguish algorithm generations without re-parsing historical
+frontmatter.
+
+When the family flag is off (either `--pilot` is unset or
+`OPENCHROME_STATE_GRAPH=0` is set explicitly), `runWithContract` emits
+records without `state_hash` / `state_hash_version`, preserving 1.10.4
+audit-pipeline byte-parity.
+
 ---
 
 ## Handoff token encryption (#755 family)

@@ -44,6 +44,7 @@ import { evaluate } from '../../contracts/evaluate.js';
 import { validateAssertion, type ValidationError } from '../../contracts/validator.js';
 import { isContractRuntimeEnabled } from '../../harness/flags.js';
 import { getLifecycleBus } from '../../core/lifecycle/index.js';
+import { STATE_HASH_VERSION } from '../state-graph/node-hash.js';
 import { getBeforeIrreversibleHook } from './before-irreversible.js';
 import { DEFAULT_CACHE_TTL_MS } from './idempotency.js';
 import type {
@@ -140,11 +141,20 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const audit = args.audit ?? defaultAuditEmitter();
   const txn_id = crypto.randomUUID();
 
+  // State-graph anchor for this run. Computed once after validation
+  // passes (see the `computeStateHash` invocation below) and back-
+  // filled into every emitted record by `settle()`. Captured by
+  // reference via the closed-over `let` so the `emit` wrapper —
+  // defined here so all settle paths share the same injector — reads
+  // the current value at emit time rather than the (undefined)
+  // definition-time value.
+  let stateHash: string | undefined;
+
   // Local settle wrapper that auto-injects `contract_domain` so every
   // record this run emits carries the routing label without each call
   // site having to remember to set it. See Codex round 5 (1ee8e1d).
   const emit = (record: TransactionRecord): TransactionRecord =>
-    settle(audit, record, args.contract.domain);
+    settle(audit, record, args.contract.domain, stateHash);
 
   // --- Idempotency cache (#791) -----------------------------------
   // Cache wiring is best-effort: a misbehaving cache must never break
@@ -235,6 +245,30 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
       retries: 0,
       validation_errors: errors,
     });
+  }
+
+  // Compute the state-graph anchor before pre-check so every
+  // subsequent settle path (precondition_violation, success, retries,
+  // postcondition_violation, escalated, …) carries the same entry-
+  // node identifier. Validation-error paths above intentionally lack
+  // a hash because they never touched the live world.
+  //
+  // Best-effort by contract: a thrown / rejected hasher is swallowed
+  // and `stateHash` stays undefined so the always-settles guarantee
+  // is never compromised by hashing. The runtime logs nothing here —
+  // callers wire `computeStateHash` via
+  // `src/pilot/state-graph/factory.ts`, which already gates on
+  // `isStateGraphEnabled()` and returns `null` when the family flag
+  // is off (the common no-op path).
+  if (args.computeStateHash !== undefined) {
+    try {
+      const hashed = await args.computeStateHash();
+      if (typeof hashed === 'string' && hashed.length > 0) {
+        stateHash = hashed;
+      }
+    } catch {
+      // best-effort — hashing failure must not change the verdict
+    }
   }
 
   // 2. Pre-check (skill must not run on pre-fail). After step 1 the
@@ -585,9 +619,19 @@ function settle(
   audit: AuditEmitter,
   record: TransactionRecord,
   contractDomain?: string,
+  stateHash?: string,
 ): TransactionRecord {
   if (contractDomain !== undefined && record.contract_domain === undefined) {
     record.contract_domain = contractDomain;
+  }
+  // Back-fill the state-graph anchor identically to `contract_domain`
+  // so every emitted record carries the entry-node identifier. The
+  // pair (`state_hash`, `state_hash_version`) is emitted atomically:
+  // when the hash is present the version tag must also be present so
+  // future algorithm bumps remain distinguishable in audit history.
+  if (stateHash !== undefined && record.state_hash === undefined) {
+    record.state_hash = stateHash;
+    record.state_hash_version = STATE_HASH_VERSION;
   }
   try {
     const r = audit.emit(record);
