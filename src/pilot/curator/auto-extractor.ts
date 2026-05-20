@@ -42,6 +42,7 @@ import {
 } from '../runtime/events.js';
 import type { TransactionRecord } from '../runtime/types.js';
 import { recordSuccessfulRun, defaultSkillRootDir, type ExtractorOptions } from './extractor.js';
+import { recordFailedRun } from './failed-run.js';
 
 /**
  * Listener handle returned by `registerAutoExtractor()` so callers
@@ -79,11 +80,22 @@ export function registerAutoExtractor(opts: AutoExtractorOptions = {}): AutoExtr
   const rootDir = opts.rootDir ?? defaultSkillRootDir();
 
   const listener = (record: TransactionRecord): void => {
-    if (record.verdict !== 'success') return;
     const stateHash = record.state_hash;
     if (typeof stateHash !== 'string' || stateHash.length === 0) return;
     const domain = record.contract_domain;
     if (typeof domain !== 'string' || domain.length === 0) return;
+
+    // Success → create / promote skill. Postcondition violations are
+    // the only failure verdict we surface to the sidecar — they mean
+    // "we tried to run the skill against this state and the contract
+    // said no afterwards", which is precisely the fail-rate signal
+    // the curator's prune pass needs. Other failure verdicts
+    // (execution_error, budget_exhausted, validation_error,
+    // escalated, aborted_by_hook) are skipped because they say more
+    // about the runner than the skill itself.
+    if (record.verdict !== 'success' && record.verdict !== 'postcondition_violation') {
+      return;
+    }
 
     // Dispatch off the synchronous emit path so the runtime returns
     // before any disk I/O begins. The runtime has already settled by
@@ -91,20 +103,34 @@ export function registerAutoExtractor(opts: AutoExtractorOptions = {}): AutoExtr
     // verdict.
     setImmediate(() => {
       try {
-        recordSuccessfulRun(
-          {
-            txn_id: record.txn_id,
-            contract_id: record.contract_id,
-            // Use the contract id as the human-readable intent label
-            // when the runtime did not supply one. PR-20b (LLM
-            // distillation) will overwrite the body but the intent
-            // string is the skill's lifelong filename hint.
-            intent: record.contract_id,
-            domain,
-            graph_node_anchor: stateHash,
-          },
-          { rootDir, ...(opts.extractorOptions ?? {}) },
-        );
+        if (record.verdict === 'success') {
+          recordSuccessfulRun(
+            {
+              txn_id: record.txn_id,
+              contract_id: record.contract_id,
+              // Use the contract id as the human-readable intent
+              // label when the runtime did not supply one. PR-20b
+              // (LLM distillation) will overwrite the body but the
+              // intent string is the skill's lifelong filename hint.
+              intent: record.contract_id,
+              domain,
+              graph_node_anchor: stateHash,
+            },
+            { rootDir, ...(opts.extractorOptions ?? {}) },
+          );
+        } else {
+          // Failure path — only logs against existing skills, never
+          // creates new ones. See `failed-run.ts` for the semantics.
+          recordFailedRun(
+            {
+              txn_id: record.txn_id,
+              contract_id: record.contract_id,
+              domain,
+              graph_node_anchor: stateHash,
+            },
+            { rootDir, ...(opts.extractorOptions ?? {}) },
+          );
+        }
         opts.onProcessed?.({ ok: true });
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -112,7 +138,7 @@ export function registerAutoExtractor(opts: AutoExtractorOptions = {}): AutoExtr
         // stdout carries JSON-RPC. A noisy auto-extractor would
         // corrupt the protocol.
         console.error(
-          `[auto-skillify] recordSuccessfulRun failed (txn=${record.txn_id}, contract=${record.contract_id}): ${error.message}`,
+          `[auto-skillify] ${record.verdict} record failed (txn=${record.txn_id}, contract=${record.contract_id}): ${error.message}`,
         );
         opts.onProcessed?.({ ok: false, error });
       }

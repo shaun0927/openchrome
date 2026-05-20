@@ -66,7 +66,12 @@ import {
   isSkillCuratorEnabled,
   isStateGraphEnabled,
 } from '../harness/flags.js';
-import { defaultSkillRootDir, registerAutoExtractor, startCuratorRunner } from './curator/index.js';
+import {
+  createSidecarStatsResolver,
+  defaultSkillRootDir,
+  registerAutoExtractor,
+  startCuratorRunner,
+} from './curator/index.js';
 import type { AutoExtractorHandle, CuratorRunner } from './curator/index.js';
 
 /**
@@ -114,7 +119,16 @@ export function bootstrap(): PilotBootstrapHandle {
 
   if (isSkillCuratorEnabled()) {
     try {
-      curatorHandles.push(startCuratorRunner({ rootDir: defaultSkillRootDir() }));
+      curatorHandles.push(
+        startCuratorRunner({
+          rootDir: defaultSkillRootDir(),
+          // Sidecar-backed resolver — successes and failures live in
+          // the same per-skill `.json` rolling log, so prune's fail-
+          // rate sub-pass observes real numbers without depending on
+          // the audit-log family being enabled.
+          statsResolver: createSidecarStatsResolver(),
+        }),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[pilot] curator runner start failed: ${message}\n`);
