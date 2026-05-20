@@ -57,7 +57,7 @@ export interface CompetitorSmokeRow {
   failure: string;
 }
 
-interface AdapterSpec {
+export interface AdapterSpec {
   library: string;
   mode: string;
   liveRequired: boolean;
@@ -115,14 +115,21 @@ export function parseSmokeArgs(argv: string[]): CompetitorSmokeOptions {
 
 function specs(options: CompetitorSmokeOptions): AdapterSpec[] {
   const requested = options.library === 'all' ? LIBRARIES : [options.library];
+  // Every CDP-based adapter in the 6-way smoke attaches to the *operator's*
+  // Chrome via OPENCHROME_BENCH_CDP_ENDPOINT instead of each library
+  // launching/looking up its own default. Co-locating them on one Chrome
+  // (a) keeps the matrix comparable — same browser, same profile, same page —
+  // and (b) avoids the failure mode where two adapters race to launch their
+  // own Chromium against an identical default user-data-dir.
+  const cdpEndpoint = process.env.OPENCHROME_BENCH_CDP_ENDPOINT;
   const all: Record<Exclude<SmokeLibrary, 'all'>, AdapterSpec> = {
     openchrome: options.includeLive
-      ? { library: 'OpenChrome', mode: 'dom-live', liveRequired: true, adapterFactory: () => new OpenChromeRealAdapter({ mode: 'dom' }) }
+      ? { library: 'OpenChrome', mode: 'dom-live', liveRequired: true, adapterFactory: () => new OpenChromeRealAdapter({ mode: 'dom', cdpEndpoint }) }
       : { library: 'OpenChrome', mode: 'dom-stub', liveRequired: false, adapterFactory: () => new OpenChromeStubAdapter({ mode: 'dom' }) },
-    playwright: { library: 'Playwright', mode: 'raw-html-cdp', liveRequired: true, packageName: 'playwright', adapterFactory: () => new PlaywrightAdapter() },
-    puppeteer: { library: 'Puppeteer', mode: 'raw-html-cdp', liveRequired: true, packageName: 'puppeteer-core', adapterFactory: () => new PuppeteerAdapter() },
+    playwright: { library: 'Playwright', mode: 'raw-html-cdp', liveRequired: true, packageName: 'playwright', adapterFactory: () => new PlaywrightAdapter({ cdpEndpoint }) },
+    puppeteer: { library: 'Puppeteer', mode: 'raw-html-cdp', liveRequired: true, packageName: 'puppeteer-core', adapterFactory: () => new PuppeteerAdapter({ browserURL: cdpEndpoint }) },
     crawlee: { library: 'Crawlee', mode: 'cheerio-text', liveRequired: false, packageName: 'crawlee', adapterFactory: () => new CrawleeAdapter() },
-    'playwright-mcp': { library: 'playwright-mcp', mode: 'native-mcp', liveRequired: true, packageName: '@playwright/mcp', adapterFactory: () => new PlaywrightMcpAdapter({ serverPath: process.env.PLAYWRIGHT_MCP_SERVER_PATH, cdpEndpoint: process.env.OPENCHROME_BENCH_CDP_ENDPOINT }) },
+    'playwright-mcp': { library: 'playwright-mcp', mode: 'native-mcp', liveRequired: true, packageName: '@playwright/mcp', adapterFactory: () => new PlaywrightMcpAdapter({ serverPath: process.env.PLAYWRIGHT_MCP_SERVER_PATH, cdpEndpoint }) },
     'browser-use': { library: 'browser-use', mode: 'python-bridge', liveRequired: true, adapterFactory: () => new BrowserUseAdapter({ bridgeScriptPath: process.env.BROWSER_USE_BRIDGE_SCRIPT, python: process.env.BROWSER_USE_PYTHON }) },
   };
   return requested.map((library) => all[library]);
@@ -204,7 +211,7 @@ function parseTabId(text: string | undefined): string {
   return parsed.tabId;
 }
 
-async function runOne(spec: AdapterSpec, url: string, options: CompetitorSmokeOptions): Promise<CompetitorSmokeRow> {
+export async function runOne(spec: AdapterSpec, url: string, options: CompetitorSmokeOptions): Promise<CompetitorSmokeRow> {
   const versionInfo = versionInfoFor(spec);
   const base = {
     library: spec.library,
@@ -253,6 +260,23 @@ async function runOne(spec: AdapterSpec, url: string, options: CompetitorSmokeOp
     if (read.isError) throw new Error(read.content?.[0]?.text ?? 'read_page failed');
     await withTimeout(adapter.callTool('tabs_close', { tabId }), options.timeoutMs, `${spec.library} tabs_close`);
     const payload = read.content?.map((entry) => entry.text ?? '').join('\n') ?? '';
+    // Sanity gate: an adapter that returns the all-three-calls-succeeded shape
+    // but ships an empty payload is not actually evidence that the library can
+    // observe a page — it just means none of the three calls *threw*. The
+    // smoke's whole purpose is to prove the read step produced something for
+    // downstream axes to measure, so a zero-length payload is demoted to a
+    // failure (`empty_payload`) rather than recorded as a green row.
+    if (payload.length === 0) {
+      return {
+        ...base,
+        status: 'failed',
+        skipCategory: 'none',
+        durationMs: Date.now() - started,
+        payloadChars: 0,
+        skipReason: '',
+        failure: 'empty_payload: read_page returned no text content',
+      };
+    }
     return {
       ...base,
       status: 'passed',
