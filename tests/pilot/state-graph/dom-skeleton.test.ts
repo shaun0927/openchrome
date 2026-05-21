@@ -12,8 +12,11 @@
 import {
   bucketCount,
   canonicalizeSkeleton,
+  DOM_SKELETON_MAX_DEPTH,
+  DOM_SKELETON_MAX_NODES,
   normaliseSkeleton,
   type DomSkeleton,
+  type DomSkeletonNode,
 } from '../../../src/pilot/state-graph/dom-skeleton.js';
 
 describe('bucketCount', () => {
@@ -130,6 +133,52 @@ describe('normaliseSkeleton', () => {
       counts: { forms: 0, buttons: 0, inputs: 0, links: 0, headings: 0 },
     });
     expect((out?.tree as { children?: unknown }).children).toBeUndefined();
+  });
+
+  it('caps retained tree depth to three levels including the root', () => {
+    const out = normaliseSkeleton({
+      tree: {
+        tag: 'body',
+        children: [{
+          tag: 'main',
+          children: [{
+            tag: 'section',
+            children: [{ tag: 'button' }],
+          }],
+        }],
+      },
+      landmarks: [],
+      counts: { forms: 0, buttons: 0, inputs: 0, links: 0, headings: 0 },
+    });
+
+    expect(DOM_SKELETON_MAX_DEPTH).toBe(3);
+    expect(out?.tree).toEqual({
+      tag: 'body',
+      children: [{
+        tag: 'main',
+        children: [{ tag: 'section' }],
+      }],
+    });
+  });
+
+  it('caps retained nodes to 64 in document order without charging invalid nodes', () => {
+    const children: DomSkeletonNode[] = [];
+    for (let i = 0; i < DOM_SKELETON_MAX_NODES + 2; i += 1) {
+      children.push({ tag: i === 1 ? '<bad>' : `x-${i}` });
+    }
+
+    const out = normaliseSkeleton({
+      tree: { tag: 'body', children },
+      landmarks: [],
+      counts: { forms: 0, buttons: 0, inputs: 0, links: 0, headings: 0 },
+    });
+
+    const retained = out?.tree.children ?? [];
+    expect(retained).toHaveLength(DOM_SKELETON_MAX_NODES - 1);
+    expect(retained.map((c) => c.tag)).toEqual([
+      'x-0',
+      ...Array.from({ length: DOM_SKELETON_MAX_NODES - 2 }, (_, i) => `x-${i + 2}`),
+    ]);
   });
 });
 

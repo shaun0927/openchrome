@@ -95,6 +95,23 @@ describe('createStateHasher', () => {
     expect(result?.version).toBe('v1');
   });
 
+  it('falls back to v1 when v2 hashing throws during skeleton processing', async () => {
+    setPilot(true);
+    const hasher = createStateHasher({
+      url: () => 'https://example.com/cart',
+      skeleton: () => ({
+        tree: { tag: 'body' },
+        landmarks: [],
+        get counts(): never {
+          throw new Error('normalisation blew up');
+        },
+      }),
+    });
+    const result = await hasher();
+    expect(result?.version).toBe('v1');
+    expect(result?.hash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
   it('swallows a synchronously throwing URL provider and returns null', async () => {
     setPilot(true);
     const hasher = createStateHasher(() => {

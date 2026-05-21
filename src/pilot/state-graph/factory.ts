@@ -94,7 +94,12 @@ export function createStateHasher(
         skeleton = null;
       }
       if (skeleton) {
-        const v2 = computeNodeHashV2(url, skeleton);
+        let v2: string | null;
+        try {
+          v2 = computeNodeHashV2(url, skeleton);
+        } catch {
+          v2 = null;
+        }
         if (v2 !== null) return { hash: v2, version: 'v2' };
       }
     }

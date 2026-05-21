@@ -52,6 +52,12 @@ export interface DomSkeleton {
   readonly counts: DomSkeletonCounts;
 }
 
+/** Maximum retained structural levels, counting the root as level 1. */
+export const DOM_SKELETON_MAX_DEPTH = 3;
+
+/** Maximum retained structural nodes in document order. */
+export const DOM_SKELETON_MAX_NODES = 64;
+
 /**
  * Bucket integer counts to log-2 brackets:
  *   0      → 0
@@ -110,7 +116,8 @@ function safeRole(role: string | undefined | null): string | undefined {
  */
 export function normaliseSkeleton(raw: DomSkeleton | null | undefined): DomSkeleton | null {
   if (!raw || typeof raw !== 'object') return null;
-  const tree = normaliseNode(raw.tree);
+  const budget = { remaining: DOM_SKELETON_MAX_NODES };
+  const tree = normaliseNode(raw.tree, 1, budget);
   if (tree === null) return null;
   const landmarksRaw = Array.isArray(raw.landmarks) ? raw.landmarks : [];
   const landmarks: string[] = [];
@@ -137,16 +144,25 @@ export function normaliseSkeleton(raw: DomSkeleton | null | undefined): DomSkele
   };
 }
 
-function normaliseNode(raw: DomSkeletonNode | undefined): DomSkeletonNode | null {
+function normaliseNode(
+  raw: DomSkeletonNode | undefined,
+  depth: number,
+  budget: { remaining: number },
+): DomSkeletonNode | null {
+  if (depth > DOM_SKELETON_MAX_DEPTH || budget.remaining <= 0) return null;
   if (!raw || typeof raw !== 'object') return null;
   const tag = safeTag(raw.tag);
   if (tag === '') return null;
+  budget.remaining -= 1;
   const role = safeRole(raw.role);
   const childrenRaw = Array.isArray(raw.children) ? raw.children : [];
   const children: DomSkeletonNode[] = [];
-  for (const child of childrenRaw) {
-    const norm = normaliseNode(child);
-    if (norm !== null) children.push(norm);
+  if (depth < DOM_SKELETON_MAX_DEPTH) {
+    for (const child of childrenRaw) {
+      if (budget.remaining <= 0) break;
+      const norm = normaliseNode(child, depth + 1, budget);
+      if (norm !== null) children.push(norm);
+    }
   }
   const node: DomSkeletonNode = role !== undefined
     ? (children.length > 0 ? { tag, role, children } : { tag, role })
