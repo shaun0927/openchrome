@@ -93,8 +93,14 @@ export function registerAutoMemory(opts: AutoMemoryOptions = {}): AutoMemoryHand
           // recordings that share the (domain, selector) key.
           let decayed = 0;
           for (const selector of selectors) {
-            const existing = memory.query(domain, SELECTOR_KEY_PREFIX + selector);
+            const key = SELECTOR_KEY_PREFIX + selector;
+            const existing = memory.query(domain, key);
             for (const entry of existing) {
+              // DomainMemory.query intentionally supports prefix lookups for
+              // recall, but auto-memory decay must be exact: a failure for
+              // `a:hover` must not decay `a:hover:active` just because CSS
+              // pseudo-class selectors are colon-delimited.
+              if (entry.key !== key) continue;
               memory.validate(entry.id, false);
               decayed += 1;
             }

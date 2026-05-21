@@ -174,6 +174,29 @@ describe('registerAutoMemory', () => {
     handle.unregister();
   });
 
+  it('decays only exact selector keys, not colon-delimited prefix matches', async () => {
+    const { fake, records, validations } = makeFakeMemory();
+    fake.record('example.com', 'selector:a:hover', 'link.hover');
+    fake.record('example.com', 'selector:a:hover:active', 'link.active');
+
+    const { promise, resolve } = awaitProcessed<{ ok: boolean }>();
+    const handle = registerAutoMemory({
+      memory: fake,
+      onProcessed: (e) => resolve(e),
+    });
+    contractRuntimeEvents.emit('transaction:settled', successRecord({
+      contract_id: 'link.hover',
+      verdict: 'postcondition_violation',
+      pre_evidence: undefined,
+      post_evidence: { passed: false, assertion_kind: 'dom_text', details: { selector: 'a:hover' } },
+    }));
+    await promise;
+    expect(validations).toEqual([{ id: 'id-1', success: false }]);
+    expect(records.find((r) => r.key === 'selector:a:hover')?.confidence).toBe(0);
+    expect(records.find((r) => r.key === 'selector:a:hover:active')?.confidence).toBe(1);
+    handle.unregister();
+  });
+
   it('skips verdicts that are neither success nor postcondition_violation', async () => {
     const { fake, records } = makeFakeMemory();
     let calls = 0;
