@@ -49,6 +49,7 @@ export interface BuildSkillBodyOptions {
 const MAX_STEPS_DEFAULT = 12;
 const ARGS_PREVIEW_CHARS = 80;
 const SUMMARY_PREVIEW_CHARS = 80;
+const SENSITIVE_ARG_KEY = /password|token|secret|credential|api[_-]?key|authorization|cookie|session/i;
 
 /**
  * Tools that observe state without changing it. These get dropped
@@ -162,9 +163,14 @@ function renderStep(entry: JournalLikeEntry): string {
 function renderArgs(args: Record<string, unknown> | undefined): string {
   if (!args || typeof args !== 'object') return '';
   const keys = Object.keys(args).sort();
+  let redactedKey: string | undefined;
   for (const key of keys) {
     const value = args[key];
     if (value === null || value === undefined) continue;
+    if (SENSITIVE_ARG_KEY.test(key)) {
+      redactedKey = redactedKey ?? key;
+      continue;
+    }
     if (typeof value === 'string' && value.length > 0) {
       return `${escapeForMd(key)}=${escapeForMd(value).slice(0, ARGS_PREVIEW_CHARS)}`;
     }
@@ -172,7 +178,7 @@ function renderArgs(args: Record<string, unknown> | undefined): string {
       return `${escapeForMd(key)}=${String(value)}`;
     }
   }
-  return '';
+  return redactedKey ? `${escapeForMd(redactedKey)}=[REDACTED]` : '';
 }
 
 /**

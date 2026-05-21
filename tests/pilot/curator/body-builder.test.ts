@@ -106,4 +106,23 @@ describe('buildSkillBody', () => {
     const b = buildSkillBody([entry({ ts: 1, tool: 'navigate', args: { timeout: 5, url: 'x' } })]);
     expect(a).toBe(b);
   });
+
+  it('does not persist sensitive arg values in the SKILL.md preview', () => {
+    const body = buildSkillBody([
+      entry({
+        ts: 1,
+        tool: 'fill_form',
+        args: { password: 'super-secret', selector: '#login-password' },
+      }),
+      entry({
+        ts: 2,
+        tool: 'http_auth',
+        args: { authorization: 'Bearer token-value' },
+      }),
+    ]);
+    expect(body).toMatch(/selector=#login-password/);
+    expect(body).toMatch(/authorization=\[REDACTED\]/);
+    expect(body).not.toMatch(/super-secret/);
+    expect(body).not.toMatch(/token-value/);
+  });
 });
