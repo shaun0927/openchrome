@@ -1,6 +1,7 @@
-import { MCPServer } from '../mcp-server';
-import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
+import type { MCPServer } from '../mcp-server';
+import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { isAutoRecallEnabled, isPilotEnabled, isSkillCuratorEnabled } from '../harness/flags';
 import {
   CompleteInput,
   NeedsHelpInput,
@@ -226,6 +227,9 @@ async function maybeRecallCuratorSkills(
 ): Promise<Json | undefined> {
   const pageUrl = typeof pageUrlArg === 'string' ? pageUrlArg : '';
   if (pageUrl.length === 0) return undefined;
+  if (!isPilotEnabled()) return undefined;
+  if (!isSkillCuratorEnabled()) return undefined;
+  if (!isAutoRecallEnabled()) return undefined;
   try {
     const mod = await import('../pilot/curator/auto-recall.js');
     const domain = mod.hostnameForRecall(pageUrl);
