@@ -97,8 +97,9 @@ export interface PilotBootstrapHandle {
  *   - Auto-extractor: `OPENCHROME_AUTO_SKILLIFY` (opt-in) AND
  *     `contract_runtime` (default-on) AND `state_graph` (default-on).
  *   - Curator runner: `OPENCHROME_SKILL_CURATOR` (default-on inside
- *     pilot). Currently runs with `noopStatsResolver`; a follow-up
- *     PR wires the audit-log-backed resolver.
+ *     pilot). Uses the skill sidecar rolling log as its stats source
+ *     so prune observes real success/failure rates without requiring
+ *     the audit-log family.
  *
  * Failures during each registration are caught and routed to stderr;
  * the runtime, MCP tool surface, and other pilot families are

@@ -29,6 +29,7 @@ import * as path from 'node:path';
 
 import { parseSkillMd } from './skill-md.js';
 import {
+  assertSafeDomain,
   computeSkillId,
   defaultSkillRootDir,
   type ExtractorOptions,
@@ -69,6 +70,21 @@ function isoUtc(ms: number): string {
   )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}Z`;
 }
 
+function writeAtomic(target: string, body: string): void {
+  const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    fs.writeFileSync(tmp, body, { mode: 0o644 });
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
+}
+
 /**
  * Append a failure entry to the rolling sidecar log for an existing
  * skill identified by `(graph_node_anchor, contract_id)`. Returns
@@ -88,6 +104,7 @@ export function recordFailedRun(
 ): FailedRunResult {
   const rootDir = opts.rootDir ?? defaultSkillRootDir();
   const now = (opts.now ?? Date.now)();
+  assertSafeDomain(inputs.domain);
   const skillId = computeSkillId(inputs.graph_node_anchor, inputs.contract_id);
   const domainDir = path.join(rootDir, inputs.domain);
   const filePath = path.join(domainDir, `${skillId}.md`);
@@ -141,6 +158,6 @@ export function recordFailedRun(
       recent,
     },
   };
-  fs.writeFileSync(sidecarPath, JSON.stringify(updated, null, 2), { mode: 0o644 });
+  writeAtomic(sidecarPath, JSON.stringify(updated, null, 2));
   return { recorded: true, filePath };
 }

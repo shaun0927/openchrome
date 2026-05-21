@@ -115,4 +115,14 @@ describe('recordFailedRun', () => {
     const after = readSidecar(sidecarPath);
     expect(after.runs.count).toBe(before.runs.count);
   });
+
+  it('rejects unsafe domains before resolving paths outside the skill root', () => {
+    expect(() => {
+      recordFailedRun(
+        { txn_id: 't-fail-escape', contract_id: CONTRACT, domain: '../evil', graph_node_anchor: ANCHOR },
+        { rootDir: root },
+      );
+    }).toThrow(/parent-directory traversal|forbidden characters/);
+    expect(fs.existsSync(path.join(root, '..', 'evil'))).toBe(false);
+  });
 });
