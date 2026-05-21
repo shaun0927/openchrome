@@ -63,6 +63,38 @@ function pilotFromArgv(argv: readonly string[] = process.argv): boolean {
 
 let cachedPilot: boolean | null = null;
 
+interface PilotBootstrapModule {
+  bootstrap?: () => unknown;
+}
+
+interface PilotBootstrapHandle {
+  stop(): void;
+}
+
+let pilotBootstrapModulePromise: Promise<unknown> | null = null;
+let pilotBootstrapHandle: PilotBootstrapHandle | null = null;
+
+function isPilotBootstrapHandle(value: unknown): value is PilotBootstrapHandle {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { stop?: unknown }).stop === 'function'
+  );
+}
+
+export function stopPilotBootstrap(): void {
+  const handle = pilotBootstrapHandle;
+  pilotBootstrapHandle = null;
+  pilotBootstrapModulePromise = null;
+  if (handle === null) return;
+  try {
+    handle.stop();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[harness] pilot bootstrap cleanup failed: ${message}\n`);
+  }
+}
+
 /**
  * Returns true iff the operator enabled the pilot tier — either by passing
  * `--pilot` on the command line or by setting OPENCHROME_PILOT to a truthy
@@ -201,23 +233,34 @@ export function logActiveFlags(): void {
  */
 export async function bootstrapPilot(): Promise<unknown | null> {
   if (!isPilotEnabled()) return null;
+  if (pilotBootstrapModulePromise !== null) return pilotBootstrapModulePromise;
+
   // Dynamic import keeps the pilot tree out of the static dependency graph
   // until `--pilot` is explicitly enabled at runtime.
-  const mod = (await import('../pilot/index.js')) as { bootstrap?: () => unknown };
-  // Invoke the optional pilot-side bootstrap so side-effecting wiring
-  // (auto-skillify subscriber, curator runner) can register without
-  // every entry point in src/ having to import pilot directly. The
-  // call is best-effort: a missing or throwing `bootstrap()` must not
-  // block server startup.
-  if (typeof mod.bootstrap === 'function') {
-    try {
-      mod.bootstrap();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[harness] pilot bootstrap failed: ${message}\n`);
-    }
-  }
-  return mod;
+  pilotBootstrapModulePromise = import('../pilot/index.js')
+    .then((mod: PilotBootstrapModule) => {
+      // Invoke the optional pilot-side bootstrap once so side-effecting
+      // wiring (auto-skillify subscriber, curator runner) is idempotent
+      // across repeated entry-point initialization in one process.
+      if (pilotBootstrapHandle === null && typeof mod.bootstrap === 'function') {
+        try {
+          const handle = mod.bootstrap();
+          if (isPilotBootstrapHandle(handle)) {
+            pilotBootstrapHandle = handle;
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`[harness] pilot bootstrap failed: ${message}\n`);
+        }
+      }
+      return mod;
+    })
+    .catch((err) => {
+      pilotBootstrapModulePromise = null;
+      throw err;
+    });
+
+  return pilotBootstrapModulePromise;
 }
 
 /**
@@ -225,5 +268,6 @@ export async function bootstrapPilot(): Promise<unknown | null> {
  * exercise the parser with a different `process.argv` or env state.
  */
 export function resetFlagsCache(): void {
+  stopPilotBootstrap();
   cachedPilot = null;
 }

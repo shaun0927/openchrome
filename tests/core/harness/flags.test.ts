@@ -11,6 +11,7 @@ import {
   isTruthy,
   logActiveFlags,
   resetFlagsCache,
+  stopPilotBootstrap,
 } from '../../../src/harness/flags';
 
 describe('harness/flags', () => {
@@ -28,12 +29,17 @@ describe('harness/flags', () => {
     delete process.env.OPENCHROME_HANDOFF_PERSIST;
     delete process.env.OPENCHROME_PERCEPTION_VOTING;
     delete process.env.OPENCHROME_SKILL_CURATOR;
+    delete process.env.OPENCHROME_DYNAMIC_SKILLS;
+    delete process.env.OPENCHROME_SKILL_REPLAY;
+    delete process.env.OPENCHROME_REACT_PILOT;
+    delete process.env.OPENCHROME_PROXY_HOOK;
+    delete process.env.OPENCHROME_AUTO_SKILLIFY;
   });
 
   afterAll(() => {
+    resetFlagsCache();
     process.argv = originalArgv;
     process.env = originalEnv;
-    resetFlagsCache();
   });
 
   describe('isTruthy', () => {
@@ -236,6 +242,55 @@ describe('harness/flags', () => {
       // 1.11 cleanup until pilot families land.
       expect(result).not.toBeNull();
       expect(typeof result).toBe('object');
+    });
+
+    test('repeated calls reuse the pilot bootstrap handle without duplicate auto-extractor listeners', async () => {
+      process.argv = ['node', 'cli/index.js', 'serve', '--pilot'];
+      process.env.OPENCHROME_AUTO_SKILLIFY = '1';
+      process.env.OPENCHROME_SKILL_CURATOR = '0';
+      resetFlagsCache();
+      const { contractRuntimeEvents } = await import('../../../src/pilot/runtime/index.js');
+      contractRuntimeEvents.removeAllListeners('transaction:settled');
+
+      expect(contractRuntimeEvents.listenerCount('transaction:settled')).toBe(0);
+      await bootstrapPilot();
+      await bootstrapPilot();
+
+      expect(contractRuntimeEvents.listenerCount('transaction:settled')).toBe(1);
+    });
+
+    test('resetFlagsCache stops the cached pilot bootstrap handle and removes the auto-extractor listener', async () => {
+      process.argv = ['node', 'cli/index.js', 'serve', '--pilot'];
+      process.env.OPENCHROME_AUTO_SKILLIFY = '1';
+      process.env.OPENCHROME_SKILL_CURATOR = '0';
+      resetFlagsCache();
+      const { contractRuntimeEvents } = await import('../../../src/pilot/runtime/index.js');
+      contractRuntimeEvents.removeAllListeners('transaction:settled');
+
+      await bootstrapPilot();
+      expect(contractRuntimeEvents.listenerCount('transaction:settled')).toBe(1);
+
+      resetFlagsCache();
+
+      expect(contractRuntimeEvents.listenerCount('transaction:settled')).toBe(0);
+    });
+
+    test('stopPilotBootstrap allows a later bootstrap to register a fresh handle', async () => {
+      process.argv = ['node', 'cli/index.js', 'serve', '--pilot'];
+      process.env.OPENCHROME_AUTO_SKILLIFY = '1';
+      process.env.OPENCHROME_SKILL_CURATOR = '0';
+      resetFlagsCache();
+      const { contractRuntimeEvents } = await import('../../../src/pilot/runtime/index.js');
+      contractRuntimeEvents.removeAllListeners('transaction:settled');
+
+      await bootstrapPilot();
+      expect(contractRuntimeEvents.listenerCount('transaction:settled')).toBe(1);
+
+      stopPilotBootstrap();
+      expect(contractRuntimeEvents.listenerCount('transaction:settled')).toBe(0);
+
+      await bootstrapPilot();
+      expect(contractRuntimeEvents.listenerCount('transaction:settled')).toBe(1);
     });
   });
 });
