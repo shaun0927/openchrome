@@ -76,4 +76,3 @@ export async function extractLiveMcpPayload(options: LiveExtractorFactoryOptions
     await adapter.teardown?.();
   }
 }
-

@@ -75,7 +75,7 @@ const LIBRARIES: readonly Exclude<SmokeLibrary, 'all'>[] = ['openchrome', 'playw
 
 const REGISTRY_PINNED_VERSIONS: Readonly<Record<string, string>> = {
   OpenChrome: readRepoVersion(),
-  Playwright: '1.49.0',
+  Playwright: '1.60.0',
   Puppeteer: '23.10.3',
   Crawlee: '3.16.0',
   'playwright-mcp': '0.0.75',
