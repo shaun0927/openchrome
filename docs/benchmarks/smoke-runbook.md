@@ -57,22 +57,35 @@ a version the rest of the suite does not expect.
 
 ## 2. Per-adapter environment variables
 
-`run-competitor-smoke.ts` reads the operator's runtime exclusively through
-environment variables — the smoke never launches its own Chrome, never
-ships a Python bridge, never guesses a CDP port. Export all four before
-running the matrix:
+`run-competitor-smoke.ts` reads operator-owned runtime paths through
+environment variables — the smoke never launches its own Chrome and never
+ships a Python bridge. In the current runner revision, only
+`PlaywrightMcpAdapter` receives `OPENCHROME_BENCH_CDP_ENDPOINT` from
+`specs()`. `PlaywrightAdapter`, `PuppeteerAdapter`, and
+`OpenChromeRealAdapter` are constructed without that endpoint override, so
+they use their default `http://127.0.0.1:9222` / `CHROME_PORT` behavior.
+
+Start Chrome on `http://127.0.0.1:9222` if you need all CDP-attaching rows to
+share the same browser. Until endpoint wiring is added for the other adapters,
+setting `OPENCHROME_BENCH_CDP_ENDPOINT` to another port only redirects
+playwright-mcp.
+
+Export these variables before running the matrix:
 
 ```bash
-# Shared operator Chrome — every CDP-attaching adapter co-locates here,
+# Shared operator Chrome. For this runner revision, keep this at :9222
 # so Playwright, Puppeteer, OpenChrome live, and playwright-mcp all
-# observe the same page on the same browser.
+# attach to the same browser.
 export OPENCHROME_BENCH_CDP_ENDPOINT=http://127.0.0.1:9222
 
 # playwright-mcp — server entrypoint of the @playwright/mcp package
-export PLAYWRIGHT_MCP_SERVER_PATH="$(node -p "require.resolve('@playwright/mcp/cli.js')")"
-# If the resolve fails (older versions used a different bin name), inspect
-# node_modules/@playwright/mcp/package.json — the "bin" field names the
-# correct file.
+PLAYWRIGHT_MCP_SERVER_PATH_RESOLVED="$(node -p "require.resolve('@playwright/mcp/cli.js')" 2>/dev/null)"
+if [ -z "$PLAYWRIGHT_MCP_SERVER_PATH_RESOLVED" ] || [ ! -f "$PLAYWRIGHT_MCP_SERVER_PATH_RESOLVED" ]; then
+  echo "Could not resolve @playwright/mcp/cli.js to an existing file" >&2
+  echo "Stop and inspect node_modules/@playwright/mcp/package.json; its bin field names the correct file." >&2
+  return 1 2>/dev/null || exit 1
+fi
+export PLAYWRIGHT_MCP_SERVER_PATH="$PLAYWRIGHT_MCP_SERVER_PATH_RESOLVED"
 
 # browser-use — Python interpreter + bridge script
 export BROWSER_USE_PYTHON="$HOME/.venvs/oc-bench/bin/python3"
@@ -156,10 +169,10 @@ to attach to develop; PR ⑤ then flips the readiness-audit verdict on
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `Playwright skipped, dependency_missing` even though `playwright` is installed | `require.resolve` failed because the smoke ran from a worktree without `node_modules` | Run from a worktree that has `npm install` applied, or `ln -s ../openchrome/node_modules ./node_modules` for the smoke run only |
-| `playwright-mcp failed: spawn ENOENT` | `PLAYWRIGHT_MCP_SERVER_PATH` resolved to a path that does not exist | `node -p "require.resolve('@playwright/mcp/cli.js')"` may fail on newer versions; inspect `node_modules/@playwright/mcp/package.json` `bin` field for the right entry |
+| `playwright-mcp failed: spawn ENOENT` | `PLAYWRIGHT_MCP_SERVER_PATH` is empty or points at a path that does not exist | Re-run the fail-closed resolution snippet in §2. If it fails, stop and inspect `node_modules/@playwright/mcp/package.json`; its `bin` field names the right entry |
 | `browser-use failed: ModuleNotFoundError: browser_use` | `BROWSER_USE_PYTHON` points at a Python without the package | Activate the venv that has `browser-use==0.12.6` installed and re-export `BROWSER_USE_PYTHON` to its `bin/python3` |
-| Playwright/Puppeteer `connect ECONNREFUSED 127.0.0.1:9222` | Operator Chrome not running, or running on a different port | Re-run the Chrome launch from §1b; confirm `curl http://127.0.0.1:9222/json/version` returns JSON |
-| OpenChrome live `tabs_create returned no text payload` | The CDP port in `OPENCHROME_BENCH_CDP_ENDPOINT` does not match the Chrome you launched | Make sure the port in the URL matches `--remote-debugging-port` |
+| Playwright/Puppeteer `connect ECONNREFUSED 127.0.0.1:9222` | Operator Chrome is not running on the adapter default port | Re-run the Chrome launch from §1b on `--remote-debugging-port=9222`; confirm `curl http://127.0.0.1:9222/json/version` returns JSON |
+| OpenChrome live `tabs_create returned no text payload` | OpenChrome live is using its default port behavior, so it is not attached to the Chrome you expected | Launch the shared Chrome on `--remote-debugging-port=9222`. In this runner revision, changing `OPENCHROME_BENCH_CDP_ENDPOINT` alone does not redirect OpenChrome live, Playwright, or Puppeteer |
 | All four live rows `passed` but `payloadChars: 0` (now demoted to `failed`) | Adapter built an empty payload — usually a navigation timeout that did not throw | Raise `--timeout-ms`, or restart Chrome and retry; check whether the local fixture server is reachable |
 | `versionPinned: false` for a library that was pinned yesterday | A `pip install` / `npm install` upgraded the package past the registry pin | Re-pin in `benchmark/COMPETITORS.md` *and* `REGISTRY_PINNED_VERSIONS` in the smoke runner; do not record an unpinned run |
 
