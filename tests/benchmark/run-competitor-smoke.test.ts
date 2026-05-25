@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 
 import type { MCPAdapter, MCPToolResult } from './benchmark-runner';
+import packageJson from '../../package.json';
 import {
   AdapterSpec,
   parseSmokeArgs,
@@ -52,7 +53,7 @@ describe('competitor smoke matrix', () => {
     expect(playwright?.skipCategory).toBe('not_requested');
     expect(playwright?.version).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+/);
     expect(playwright?.versionPinned).toBe(true);
-    expect(rows.find((row) => row.library === 'OpenChrome')?.version).toBe('1.12.4');
+    expect(rows.find((row) => row.library === 'OpenChrome')?.version).toBe(packageJson.version);
     expect(rows.every((row) => row.sameTaskContract)).toBe(true);
   }, 30000);
 

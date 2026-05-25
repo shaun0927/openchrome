@@ -9,6 +9,7 @@ jest.mock('../../src/chrome/launcher', () => ({
   getChromeLauncher: jest.fn().mockReturnValue({
     ensureChrome: jest.fn(),
     invalidateInstance: jest.fn(),
+    getInstance: jest.fn(() => ({ launchMode: 'attach' })),
   }),
 }));
 
