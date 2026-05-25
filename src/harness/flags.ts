@@ -63,6 +63,38 @@ function pilotFromArgv(argv: readonly string[] = process.argv): boolean {
 
 let cachedPilot: boolean | null = null;
 
+interface PilotBootstrapModule {
+  bootstrap?: () => unknown;
+}
+
+interface PilotBootstrapHandle {
+  stop(): void;
+}
+
+let pilotBootstrapModulePromise: Promise<unknown> | null = null;
+let pilotBootstrapHandle: PilotBootstrapHandle | null = null;
+
+function isPilotBootstrapHandle(value: unknown): value is PilotBootstrapHandle {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { stop?: unknown }).stop === 'function'
+  );
+}
+
+export function stopPilotBootstrap(): void {
+  const handle = pilotBootstrapHandle;
+  pilotBootstrapHandle = null;
+  pilotBootstrapModulePromise = null;
+  if (handle === null) return;
+  try {
+    handle.stop();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[harness] pilot bootstrap cleanup failed: ${message}\n`);
+  }
+}
+
 /**
  * Returns true iff the operator enabled the pilot tier — either by passing
  * `--pilot` on the command line or by setting OPENCHROME_PILOT to a truthy
@@ -128,6 +160,28 @@ export const isDynamicSkillsEnabled = (): boolean =>
 export const isSkillReplayEnabled = (): boolean =>
   isFamilyEnabledOptIn('OPENCHROME_SKILL_REPLAY');
 
+/**
+ * Auto-skillify: subscribe the curator's auto-extractor to
+ * `transaction:settled` and write SKILL.md candidates on every
+ * successful contract verdict. Off-by-default even when `--pilot` is
+ * set because writing to `~/.openchrome/skills/<domain>/` is a side-
+ * effect outside the request/response lifetime — operators must opt
+ * in explicitly via `OPENCHROME_AUTO_SKILLIFY=1`. See
+ * `src/pilot/curator/auto-extractor.ts` for the activation chain.
+ */
+export const isAutoSkillifyEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_AUTO_SKILLIFY');
+
+/**
+ * Auto-memory: subscribe to `transaction:settled` and accrete
+ * per-domain selector confidence in the core `DomainMemory` store.
+ * Off-by-default for the same reason as auto-skillify — disk
+ * mutation outside the request/response lifetime. See
+ * `src/pilot/auto-memory/index.ts` for the activation chain.
+ */
+export const isAutoMemoryEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_AUTO_MEMORY');
+
 /** Pilot-tier React DevTools hook inspection (#838). Defaults on inside --pilot. */
 export const isReactPilotEnabled = (): boolean =>
   isFamilyEnabled('OPENCHROME_REACT_PILOT');
@@ -151,7 +205,9 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['dynamic_skills', isDynamicSkillsEnabled],
   ['skill_replay', isSkillReplayEnabled],
   ['react_pilot', isReactPilotEnabled],
-  ['proxy_hook', isProxyHookEnabled]
+  ['proxy_hook', isProxyHookEnabled],
+  ['auto_skillify', isAutoSkillifyEnabled],
+  ['auto_memory', isAutoMemoryEnabled],
 ];
 
 /**
@@ -188,10 +244,34 @@ export function logActiveFlags(): void {
  */
 export async function bootstrapPilot(): Promise<unknown | null> {
   if (!isPilotEnabled()) return null;
+  if (pilotBootstrapModulePromise !== null) return pilotBootstrapModulePromise;
+
   // Dynamic import keeps the pilot tree out of the static dependency graph
   // until `--pilot` is explicitly enabled at runtime.
-  const mod = await import('../pilot/index.js');
-  return mod;
+  pilotBootstrapModulePromise = import('../pilot/index.js')
+    .then((mod: PilotBootstrapModule) => {
+      // Invoke the optional pilot-side bootstrap once so side-effecting
+      // wiring (auto-skillify subscriber, curator runner) is idempotent
+      // across repeated entry-point initialization in one process.
+      if (pilotBootstrapHandle === null && typeof mod.bootstrap === 'function') {
+        try {
+          const handle = mod.bootstrap();
+          if (isPilotBootstrapHandle(handle)) {
+            pilotBootstrapHandle = handle;
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`[harness] pilot bootstrap failed: ${message}\n`);
+        }
+      }
+      return mod;
+    })
+    .catch((err) => {
+      pilotBootstrapModulePromise = null;
+      throw err;
+    });
+
+  return pilotBootstrapModulePromise;
 }
 
 /**
@@ -199,5 +279,6 @@ export async function bootstrapPilot(): Promise<unknown | null> {
  * exercise the parser with a different `process.argv` or env state.
  */
 export function resetFlagsCache(): void {
+  stopPilotBootstrap();
   cachedPilot = null;
 }

@@ -72,6 +72,7 @@ export async function guardIrreversibleBrowserAction<T>(
   }
 
   const { runWithContract } = await import('../pilot/runtime/runtime');
+  const { createStateHasher } = await import('../pilot/state-graph/index');
   const record = await runWithContract({
     contract: {
       id: `browser-action:${risk.actionLabel}`,
@@ -97,6 +98,12 @@ export async function guardIrreversibleBrowserAction<T>(
       async screenshotPng() { return null; },
       async hasOpenDialog() { return false; },
     }),
+    // Wire the state-graph anchor producer. The factory folds in the
+    // `isStateGraphEnabled()` gate, so when the family flag is off
+    // this resolves to a no-op `null`-returning thunk and the runtime
+    // emits records without `state_hash` — preserving 1.10.4 byte-
+    // parity on the audit pipeline when state-graph is disabled.
+    computeStateHash: createStateHasher(() => input.pageUrl ?? null),
     skill,
   });
 

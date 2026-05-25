@@ -57,6 +57,7 @@ jest.mock('../../src/config/window-bounds', () => ({
 jest.mock('../../src/harness/flags', () => ({
   logActiveFlags: jest.fn(),
   bootstrapPilot: jest.fn().mockResolvedValue(null),
+  stopPilotBootstrap: jest.fn(),
 }));
 
 jest.mock('../../src/utils/pid-manager', () => ({
