@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-17T16:32:47.118Z",
+  "generatedAt": "2026-05-25T12:53:47.652Z",
   "summary": {
     "totalOpenBenchmarkIssues": 15,
     "ready": 0,
@@ -12,23 +12,79 @@
     "apiKeyOnlyReady": 0,
     "nonKeyBlocked": 15,
     "apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue": false,
-    "staleResultArtifactCount": 2
+    "staleResultArtifactCount": 10
   },
   "artifactFreshness": {
-    "currentOpenChromeVersion": "1.12.4",
+    "currentOpenChromeVersion": "1.12.5",
     "staleArtifacts": [
       {
+        "file": "benchmark/results/auth-usability.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
+        ]
+      },
+      {
+        "file": "benchmark/results/competitor-smoke.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
+        ]
+      },
+      {
+        "file": "benchmark/results/dx.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
+        ]
+      },
+      {
+        "file": "benchmark/results/episode-token-cost.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
+        ]
+      },
+      {
         "file": "benchmark/results/longrun-stability.json",
-        "expectedOpenChromeVersion": "1.12.4",
+        "expectedOpenChromeVersion": "1.12.5",
         "foundVersions": [
           "1.11.0"
         ]
       },
       {
+        "file": "benchmark/results/realworld-task-completion.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
+        ]
+      },
+      {
+        "file": "benchmark/results/reliability.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
+        ]
+      },
+      {
         "file": "benchmark/results/runtime-preflight.json",
-        "expectedOpenChromeVersion": "1.12.4",
+        "expectedOpenChromeVersion": "1.12.5",
         "foundVersions": [
           "1.12.2"
+        ]
+      },
+      {
+        "file": "benchmark/results/speed-throughput.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
+        ]
+      },
+      {
+        "file": "benchmark/results/token-efficiency.json",
+        "expectedOpenChromeVersion": "1.12.5",
+        "foundVersions": [
+          "1.12.4"
         ]
       }
     ]
