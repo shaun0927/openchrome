@@ -73,8 +73,38 @@ export type { CuratorRunner, CuratorRunnerOptions } from './runner';
 // Auto-extractor — subscribes to `contractRuntimeEvents.transaction:settled`
 // and feeds successful runs into `recordSuccessfulRun`. Gated by
 // `OPENCHROME_AUTO_SKILLIFY` at the bootstrap call site.
-export { registerAutoExtractor } from './auto-extractor';
+export { defaultJournalProvider, registerAutoExtractor } from './auto-extractor';
 export type { AutoExtractorHandle, AutoExtractorOptions } from './auto-extractor';
+
+// Deterministic SKILL.md body distiller — turns a slice of journal
+// entries into a Steps section. Server-side LLM distillation is
+// blocked by portability-harness P3; this is the bytes-stable
+// substitute that ships in-process.
+export { buildSkillBody } from './body-builder';
+export type { BuildSkillBodyOptions, JournalLikeEntry } from './body-builder';
+
+// Failure-side sidecar logger — used by the auto-extractor for the
+// `postcondition_violation` verdict so the curator's prune sub-pass
+// observes real fail rates instead of an all-healthy noop.
+export { recordFailedRun } from './failed-run';
+export type { FailedRunInputs, FailedRunResult } from './failed-run';
+
+// Sidecar-backed `SkillStatsResolver` for `startCuratorRunner`.
+// Replaces the historical `noopStatsResolver` so prune actually
+// activates when fail-rates cross the threshold.
+export { createSidecarStatsResolver } from './sidecar-stats';
+export type { SidecarStatsResolverOptions } from './sidecar-stats';
+
+// Auto-recall over the curator's SKILL.md tree. Surfaces promoted
+// skills back into the LLM's context (typically via
+// `oc_task_run_start`). Gated on `OPENCHROME_AUTO_RECALL=1` in
+// addition to the pilot + skill-curator family flags.
+export { hostnameForRecall, recallCuratorSkills } from './auto-recall';
+export type {
+  RecallCuratorSkillsInput,
+  RecalledCuratorSkill,
+  RecalledCuratorSkillsPayload,
+} from './auto-recall';
 
 // Recall ranking (read-only over SkillMemoryStore)
 export {

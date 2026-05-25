@@ -248,20 +248,34 @@ need no flag — they ship inside `serve` without `--pilot`.
 When `--pilot` is unset, none of the above sub-flags or env variables have any
 effect; the pilot bootstrap module is never loaded.
 
-### Skill state graph — v1 algorithm
+### Skill state graph — v1 + v2 algorithms
 
 The `state_graph` family (`OPENCHROME_STATE_GRAPH=1`, default-on inside
-`--pilot`) ships a deliberately narrow v1 hash: `sha256("v1\0" + origin +
-pathname).hex.slice(0, 16)`. Query strings, fragments, and trailing
-slashes on non-root pathnames are discarded; the host is lower-cased and
-the path stays case-sensitive. Pathname-only hashing differentiates
-pages but not states within a page — folding a coarse DOM skeleton
-(tag tree + ARIA landmarks + form/button counts) into the canonical
-input lands in a follow-up PR. When that ships, `STATE_HASH_VERSION`
-rolls to `v2`; the `state_hash_version` field emitted alongside every
-`TransactionRecord.state_hash` lets curator migrations and dashboards
-distinguish algorithm generations without re-parsing historical
-frontmatter.
+`--pilot`) ships two coexisting algorithm generations, distinguished by
+the `state_hash_version` field emitted alongside every
+`TransactionRecord.state_hash`.
+
+**v1 (URL-only)**: `sha256("v1\0" + origin + pathname).hex.slice(0, 16)`.
+Query strings, fragments, and trailing slashes on non-root pathnames
+are discarded; the host is lower-cased and the path stays case-
+sensitive. Used by callers that only have a URL handy (e.g. the
+label-only `guardIrreversibleBrowserAction`).
+
+**v2 (URL + DOM skeleton)**: `sha256("v2\0" + origin + pathname + "\0"
++ canonical_skeleton).hex.slice(0, 16)`. The DOM skeleton retains the
+top-N levels of the tag tree (default depth 3, max 64 nodes), ARIA
+landmark roles, and log-2 bucketed counts of forms / buttons / inputs
+/ links / headings. Small DOM fluctuations within a bucket do not
+change the hash; structural changes (extra form, new landmark) do.
+Used by callers wiring a `StateGraphProbe` with both `url()` and
+`skeleton()` (typically CDP-attached tools).
+
+Both algorithms hard-code their version tag into the hash input so v1
+and v2 anchors can never collide on the same canonical bytes — a v1
+hash for `cart.add` remains reproducible after v2 ships, and the v2
+hash for the same logical state is a separate skill identity. The
+auto-extractor (`OPENCHROME_AUTO_SKILLIFY`) tracks both lineages
+cleanly via the version tag.
 
 When the family flag is off (either `--pilot` is unset or
 `OPENCHROME_STATE_GRAPH=0` is set explicitly), `runWithContract` emits

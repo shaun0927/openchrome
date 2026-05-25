@@ -172,6 +172,16 @@ export const isSkillReplayEnabled = (): boolean =>
 export const isAutoSkillifyEnabled = (): boolean =>
   isFamilyEnabledOptIn('OPENCHROME_AUTO_SKILLIFY');
 
+/**
+ * Auto-memory: subscribe to `transaction:settled` and accrete
+ * per-domain selector confidence in the core `DomainMemory` store.
+ * Off-by-default for the same reason as auto-skillify — disk
+ * mutation outside the request/response lifetime. See
+ * `src/pilot/auto-memory/index.ts` for the activation chain.
+ */
+export const isAutoMemoryEnabled = (): boolean =>
+  isFamilyEnabledOptIn('OPENCHROME_AUTO_MEMORY');
+
 /** Pilot-tier React DevTools hook inspection (#838). Defaults on inside --pilot. */
 export const isReactPilotEnabled = (): boolean =>
   isFamilyEnabled('OPENCHROME_REACT_PILOT');
@@ -197,6 +207,7 @@ const ALL_FAMILIES: ReadonlyArray<readonly [string, () => boolean]> = [
   ['react_pilot', isReactPilotEnabled],
   ['proxy_hook', isProxyHookEnabled],
   ['auto_skillify', isAutoSkillifyEnabled],
+  ['auto_memory', isAutoMemoryEnabled],
 ];
 
 /**

@@ -1,12 +1,20 @@
 /**
  * Pilot state-graph family — barrel export.
  *
- * v1 ships URL-only node hashing (`canonicalize(url)`), with the
- * algorithm version pinned at `STATE_HASH_VERSION = 'v1'`. DOM
- * skeleton folding lands in a follow-up PR and will bump the version
- * tag, so downstream consumers (curator migrations, dashboards) can
- * distinguish algorithm generations without re-parsing historical
- * frontmatter.
+ * Ships two coexisting algorithm generations distinguished by
+ * `STATE_HASH_VERSION`:
+ *
+ *   - v1 (URL-only): `computeNodeHash(url)`. Used by callers without
+ *     CDP access in scope (the legacy `createStateHasher(getUrl)`
+ *     overload). Stable across algorithm bumps.
+ *   - v2 (URL + DOM skeleton): `computeNodeHashV2(url, skeleton)`.
+ *     Used by callers wiring a `StateGraphProbe` with a `skeleton()`
+ *     method — typically CDP-attached tools.
+ *
+ * Both versions are emitted with their version tag on every
+ * `TransactionRecord` so curator migrations, audit dashboards, and
+ * future v3 generations can distinguish lineage without re-parsing
+ * historical frontmatter.
  *
  * Activation: this module is only loaded into the process when
  * `--pilot` is enabled and `isStateGraphEnabled()` returns true. Per
@@ -18,9 +26,27 @@ export {
   STATE_HASH_VERSION,
   canonicalizeUrl,
   computeNodeHash,
+  computeNodeHashV2,
 } from './node-hash.js';
 
 export type { StateHashVersion } from './node-hash.js';
 
+export {
+  bucketCount,
+  canonicalizeSkeleton,
+  normaliseSkeleton,
+} from './dom-skeleton.js';
+
+export type {
+  DomSkeleton,
+  DomSkeletonCounts,
+  DomSkeletonNode,
+} from './dom-skeleton.js';
+
 export { createStateHasher } from './factory.js';
-export type { UrlProvider } from './factory.js';
+export type {
+  SkeletonProvider,
+  StateGraphProbe,
+  StateHashResult,
+  UrlProvider,
+} from './factory.js';
