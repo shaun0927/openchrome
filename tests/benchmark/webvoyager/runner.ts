@@ -265,6 +265,7 @@ async function runTask(
   task: WebVoyagerTask,
   adapter: AdapterName,
   repetition: number,
+  options: Pick<CliOptions, 'library' | 'model'>,
 ): Promise<TaskRunReport> {
   const started = Date.now();
 
@@ -318,8 +319,8 @@ async function runTask(
     }
 
     const run = adapter === 'claude'
-      ? await withTimeout((await import('./llm/claude-adapter')).runClaudeTask(task, WEBVOYAGER_BUDGET), task.timeout_ms, task.name)
-      : await withTimeout((await import('./llm/openai-adapter')).runOpenAiTask(task, WEBVOYAGER_BUDGET), task.timeout_ms, task.name);
+      ? await withTimeout((await import('./llm/claude-adapter')).runClaudeTask(task, WEBVOYAGER_BUDGET, undefined, { library: options.library, model: options.model }), task.timeout_ms, task.name)
+      : await withTimeout((await import('./llm/openai-adapter')).runOpenAiTask(task, WEBVOYAGER_BUDGET, { library: options.library, model: options.model }), task.timeout_ms, task.name);
     const check = await evaluateContract(task.contract.postconditions, run.context);
     return {
       name: task.name,
@@ -450,7 +451,7 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   const taskReports: TaskRunReport[] = [];
   for (const t of tasks) {
     for (let repetition = 1; repetition <= opts.repetitions; repetition++) {
-      const r = await runTask(t, opts.adapter, repetition);
+      const r = await runTask(t, opts.adapter, repetition, { library: opts.library, model: providerMetadata?.model });
       taskReports.push(r);
       console.error(
         `[webvoyager] ${r.name}#${r.repetition}: ${r.result}` +

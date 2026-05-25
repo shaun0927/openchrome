@@ -28,6 +28,7 @@ import type { EvalContext } from '../../../../src/contracts/eval-context';
 import type { BudgetCaps } from './budget';
 import type { WebVoyagerTask } from '../types';
 import { accountLlmBudget, LlmUsageSample } from './token-budget';
+import { runLiveWebVoyagerTask } from './live-task-runner';
 
 export interface ClaudeAdapterPricing {
   input_usd_per_million: number;
@@ -76,6 +77,7 @@ export async function runClaudeTask(
   _task: WebVoyagerTask,
   _budget: BudgetCaps,
   _pricing: ClaudeAdapterPricing = DEFAULT_PRICING,
+  options: { library?: WebVoyagerLibrary; model?: string } = {},
 ): Promise<ClaudeAdapterResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY is not set; refusing to run real adapter');
@@ -84,28 +86,23 @@ export async function runClaudeTask(
     throw new Error('OPENCHROME_BENCH_REAL=1 is required to run the real adapter');
   }
 
-  // Dynamic import so the SDK isn't a hard dep at module-load time.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  let Anthropic: unknown;
+  void _pricing;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    Anthropic = require('@anthropic-ai/sdk');
+    return await runLiveWebVoyagerTask({
+      provider: 'claude',
+      library: options.library ?? 'openchrome',
+      task: _task,
+      budget: _budget,
+      model: options.model ?? process.env.OPENCHROME_BENCH_MODEL ?? 'claude-sonnet-4-5',
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `@anthropic-ai/sdk is not installed. Install it as a dev dep before ` +
-        `running the real adapter: npm i -D @anthropic-ai/sdk. Original error: ${message}`,
-    );
+    if (message.includes('@anthropic-ai/sdk')) {
+      throw new Error(
+        `@anthropic-ai/sdk is not installed. Install it as a dev dep before ` +
+          `running the real adapter: npm i -D @anthropic-ai/sdk. Original error: ${message}`,
+      );
+    }
+    throw err;
   }
-
-  // Suppress unused-variable lint until the loop is wired up.
-  void Anthropic;
-  void _pricing;
-
-  throw new Error(
-    'claude-adapter: real-API tool-use loop is a v1 follow-up. The scaffold ' +
-      'exists so the harness API surface is stable; record transcripts via ' +
-      'the standalone recorder and use --adapter mock for CI. See ' +
-      'docs/benchmarks/webvoyager.md for the recording workflow.',
-  );
 }

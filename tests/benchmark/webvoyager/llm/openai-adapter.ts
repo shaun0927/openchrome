@@ -1,6 +1,8 @@
 import type { EvalContext } from '../../../../src/contracts/eval-context';
 import type { BudgetCaps } from './budget';
 import type { WebVoyagerTask } from '../types';
+import { runLiveWebVoyagerTask } from './live-task-runner';
+import type { WebVoyagerLibrary } from './library-routing';
 
 export interface OpenAiAdapterResult {
   context: EvalContext;
@@ -16,6 +18,7 @@ export interface OpenAiAdapterResult {
 export async function runOpenAiTask(
   _task: WebVoyagerTask,
   _budget: BudgetCaps,
+  options: { library?: WebVoyagerLibrary; model?: string } = {},
 ): Promise<OpenAiAdapterResult> {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY is not set; refusing to run real adapter');
@@ -24,9 +27,11 @@ export async function runOpenAiTask(
     throw new Error('OPENCHROME_BENCH_REAL=1 is required to run the real adapter');
   }
 
-  throw new Error(
-    'openai-adapter: real-API tool-use loop seam is present but not enabled in CI. ' +
-      'Use --adapter mock for deterministic runs, or provide OPENCHROME_BENCH_REAL=1 ' +
-      'and implement the recorded-real adapter path before publishing headline rows.',
-  );
+  return await runLiveWebVoyagerTask({
+    provider: 'openai',
+    library: options.library ?? 'openchrome',
+    task: _task,
+    budget: _budget,
+    model: options.model ?? process.env.OPENCHROME_BENCH_MODEL ?? 'gpt-5.5',
+  });
 }
