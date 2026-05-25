@@ -13,6 +13,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 
 import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
+import { applyBenchmarkLiveSecretInputs } from './utils/live-secret-input';
 import { captureEnvironment } from './utils/environment';
 
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'runtime-preflight.json');
@@ -200,6 +201,7 @@ function format(rows: readonly RuntimeProbeRow[]): string {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  applyBenchmarkLiveSecretInputs(argv);
   const options = parseRuntimePreflightArgs(argv);
   const rows = await runRuntimePreflight(options);
   const envelope = buildResultEnvelope({
