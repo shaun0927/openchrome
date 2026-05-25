@@ -21,6 +21,7 @@ import type { EvalContext } from '../../../src/contracts/eval-context';
 import { runMockTask } from './llm/mock-adapter';
 import { renderMarkdown } from './report';
 import { WEBVOYAGER_BUDGET } from './llm/budget';
+import { applyBenchmarkLiveSecretInputs, redactLiveSecretArgs } from '../utils/live-secret-input';
 import { buildProviderRunMetadata, preflightProviderRun, providerForAdapter } from './llm/provider';
 import {
   WEBVOYAGER_LIBRARIES,
@@ -369,6 +370,11 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 }
 
 export async function main(argv: string[] = process.argv): Promise<number> {
+  const secretInputs = applyBenchmarkLiveSecretInputs(argv.slice(2));
+  if (secretInputs.applied.length > 0) {
+    console.error(`[webvoyager] applied benchmark-only API key input: ${secretInputs.applied.map((s) => `${s.provider}:${s.source}->${s.envName}`).join(', ')}`);
+    console.error(`[webvoyager] argv: ${redactLiveSecretArgs(argv.slice(2)).join(' ')}`);
+  }
   const opts = parseArgs(argv);
   const allTasks = await loadTasks();
   const tasks = opts.taskFilter ? allTasks.filter((t) => t.name === opts.taskFilter) : allTasks;

@@ -13,6 +13,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 
 import { runRuntimePreflight, parseRuntimePreflightArgs } from './runtime-preflight';
+import { applyBenchmarkLiveSecretInputs } from './utils/live-secret-input';
 import { projectCost, WEBVOYAGER_LIBRARIES } from './webvoyager/llm/library-routing';
 
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'full-benchmark-preflight.json');
@@ -59,6 +60,7 @@ export async function buildFullBenchmarkPreflight(argv: string[] = []): Promise<
   costEstimate: ReturnType<typeof projectCost>;
   orderedAxes: string[];
 }> {
+  applyBenchmarkLiveSecretInputs(argv);
   const options = parseFullBenchmarkArgs(argv);
   const runtimeRows = await runRuntimePreflight(parseRuntimePreflightArgs(argv));
   const missing = runtimeRows.filter((row) => row.status !== 'ready').map((row) => `${row.runtime}: ${row.evidence}`);
