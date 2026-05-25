@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { buildFullBenchmarkPreflight, parseFullBenchmarkArgs } from './run-full-benchmark';
+import { buildFullBenchmarkPreflight, parseFullBenchmarkArgs, plannedFullBenchmarkCommands } from './run-full-benchmark';
 
 describe('full benchmark orchestration', () => {
   test('parses live preflight with repetition cost input', () => {
@@ -15,5 +15,16 @@ describe('full benchmark orchestration', () => {
     expect(result.orderedAxes[0]).toBe('runtime-preflight');
     expect(result.orderedAxes).toContain('unified-report');
     expect(result.missing.every((item) => /: /.test(item))).toBe(true);
+  });
+
+  test('defines executable recorded and live command plans', () => {
+    expect(plannedFullBenchmarkCommands('recorded').map((c) => c.label)).toEqual([
+      'unified recorded benchmark report',
+      'benchmark readiness audit',
+    ]);
+    const live = plannedFullBenchmarkCommands('live');
+    expect(live[0]).toEqual({ command: 'npm', args: ['run', 'bench:runtime-preflight', '--', '--require-live'], label: 'runtime preflight' });
+    expect(live.map((c) => c.label)).toContain('recorded-real real-world task completion gate');
+    expect(live.map((c) => c.label)).toContain('api-key-only readiness gate');
   });
 });
