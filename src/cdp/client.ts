@@ -1188,16 +1188,6 @@ export class CDPClient {
   // Default viewport for consistent debugging experience
   static readonly DEFAULT_VIEWPORT = DEFAULT_VIEWPORT;
 
-  /**
-   * Lifecycle ownership of the underlying Chrome process. 'isolated' means
-   * OpenChrome spawned this Chrome (and therefore owns/produced the startup
-   * NTP); 'attach' means we connected to a user-started Chrome.
-   */
-  private getChromeLifecycleMode(): 'isolated' | 'attach' {
-    const launcher = getChromeLauncher(this.port) as { getInstance?: () => { launchMode?: string } | null };
-    const instance = typeof launcher.getInstance === 'function' ? launcher.getInstance() : null;
-    return instance?.launchMode === 'isolated' ? 'isolated' : 'attach';
-  }
 
   /**
    * Create a new isolated browser context for session isolation
