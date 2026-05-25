@@ -1189,6 +1189,17 @@ export class CDPClient {
   static readonly DEFAULT_VIEWPORT = DEFAULT_VIEWPORT;
 
   /**
+   * Lifecycle ownership of the underlying Chrome process. 'isolated' means
+   * OpenChrome spawned this Chrome (and therefore owns/produced the startup
+   * NTP); 'attach' means we connected to a user-started Chrome.
+   */
+  private getChromeLifecycleMode(): 'isolated' | 'attach' {
+    const launcher = getChromeLauncher(this.port) as { getInstance?: () => { launchMode?: string } | null };
+    const instance = typeof launcher.getInstance === 'function' ? launcher.getInstance() : null;
+    return instance?.launchMode === 'isolated' ? 'isolated' : 'attach';
+  }
+
+  /**
    * Create a new isolated browser context for session isolation
    * Each context has its own cookies, localStorage, sessionStorage
    */
@@ -1638,39 +1649,76 @@ export class CDPClient {
         }),
       ]) as Page;
     } else {
-      // Create page in Chrome's default context
-      let newPageTid2: ReturnType<typeof setTimeout>;
-      page = await Promise.race([
-        browser.newPage().finally(() => clearTimeout(newPageTid2)),
-        new Promise<never>((_, reject) => {
-          newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
-        }),
-      ]) as Page;
-
-      // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
-      // CDP session conflicts and unnecessary overhead on about:blank pages).
-      // The global skipCookieBridge flag serves as a manual override escape hatch.
-      // Overall timeout prevents cascading hangs from unresponsive source tabs.
-      if (!skipCookieBridge && !getGlobalConfig().skipCookieBridge) {
-        const cookieScan = await this.findAuthenticatedPageTarget(targetDomain);
-        if (cookieScan.status === 'partial' && !cookieScan.targetId) {
-          console.error(
-            `[CDPClient] Cookie bridge proceeding without copied cookies: ${cookieScan.warning ?? 'cookie scan incomplete'}`,
-          );
+      // First-call NTP reuse: when this CDPClient hasn't created any managed
+      // pages yet AND Chrome was OpenChrome-spawned AND there's exactly one
+      // untracked page-type target whose URL looks like the startup New Tab
+      // Page, navigate THAT tab instead of opening a second one. Avoids the
+      // "extra blank tab" race that the post-hoc prune in _createTargetImpl
+      // tries (imperfectly) to clean up.
+      let reused: Page | null = null;
+      if (this.targetIdIndex.size === 0 && this.getChromeLifecycleMode() === 'isolated') {
+        const candidates = browser.targets().filter(t => {
+          if (t.type() !== 'page') return false;
+          const tid = getTargetId(t);
+          return !!tid && !this.targetIdIndex.has(tid);
+        });
+        if (candidates.length === 1) {
+          const candidateUrl = candidates[0].url();
+          const isStartupBlank =
+            candidateUrl === '' ||
+            candidateUrl === 'about:blank' ||
+            candidateUrl === 'chrome://newtab/' ||
+            candidateUrl.startsWith('chrome://new-tab-page');
+          if (isStartupBlank) {
+            try {
+              reused = await candidates[0].page();
+            } catch {
+              reused = null;
+            }
+          }
         }
-        if (cookieScan.targetId) {
-          let cookieCopyTid: ReturnType<typeof setTimeout> | undefined;
-          await Promise.race([
-            this.copyCookiesViaCDP(cookieScan.targetId, page),
-            new Promise<void>((resolve) => {
-              cookieCopyTid = setTimeout(() => {
-                console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
-                resolve();
-              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS);
-            }),
-          ]).finally(() => {
-            if (cookieCopyTid) clearTimeout(cookieCopyTid);
-          });
+      }
+
+      if (reused) {
+        page = reused;
+        console.error(`[CDPClient] Reused startup NTP target ${getTargetId(reused.target())} for first createPage (URL: ${reused.url()})`);
+        // Skip cookie bridge on reuse: this is the very first managed page on
+        // this Chrome, so there are no authenticated source tabs to copy from.
+      } else {
+        // Create page in Chrome's default context
+        let newPageTid2: ReturnType<typeof setTimeout>;
+        page = await Promise.race([
+          browser.newPage().finally(() => clearTimeout(newPageTid2)),
+          new Promise<never>((_, reject) => {
+            newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
+          }),
+        ]) as Page;
+
+        // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
+        // CDP session conflicts and unnecessary overhead on about:blank pages).
+        // The global skipCookieBridge flag serves as a manual override escape hatch.
+        // Overall timeout prevents cascading hangs from unresponsive source tabs.
+        if (!skipCookieBridge && !getGlobalConfig().skipCookieBridge) {
+          const cookieScan = await this.findAuthenticatedPageTarget(targetDomain);
+          if (cookieScan.status === 'partial' && !cookieScan.targetId) {
+            console.error(
+              `[CDPClient] Cookie bridge proceeding without copied cookies: ${cookieScan.warning ?? 'cookie scan incomplete'}`,
+            );
+          }
+          if (cookieScan.targetId) {
+            let cookieCopyTid: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([
+              this.copyCookiesViaCDP(cookieScan.targetId, page),
+              new Promise<void>((resolve) => {
+                cookieCopyTid = setTimeout(() => {
+                  console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
+                  resolve();
+                }, DEFAULT_COOKIE_COPY_TIMEOUT_MS);
+              }),
+            ]).finally(() => {
+              if (cookieCopyTid) clearTimeout(cookieCopyTid);
+            });
+          }
         }
       }
     }
