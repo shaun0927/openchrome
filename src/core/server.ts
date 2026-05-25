@@ -23,7 +23,7 @@ import { getGlobalConfig, setGlobalConfig } from '../config/global';
 import { resolveHeadlessMode } from '../config/headless-resolver';
 import { resolveWindowBoundsConfig } from '../config/window-bounds';
 import { ToolTier } from '../config/tool-tiers';
-import { bootstrapPilot, logActiveFlags } from '../harness/flags';
+import { bootstrapPilot, logActiveFlags, stopPilotBootstrap } from '../harness/flags';
 import { getChromeLauncher, _resetChromeLauncherForTesting } from '../chrome/launcher';
 import { getSessionManager, _resetSessionManagerForTesting } from '../session-manager';
 import { resetChromePool } from '../chrome/pool';
@@ -553,6 +553,11 @@ class OpenChromeServerImpl implements OpenChromeServer {
 
   private async _stopInternal(_reason?: string): Promise<void> {
     console.error('[openchrome] OpenChromeServer stopping...');
+
+    // Stop pilot-tier side effects (auto-extractor subscriptions, curator timers)
+    // before resetting core singletons so createOpenChromeServer().start()/stop()
+    // can be repeated in the same process without duplicate background work.
+    stopPilotBootstrap();
 
     // Stop watchdogs first
     this._idleTimeoutHandle?.stop();

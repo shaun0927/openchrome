@@ -43,7 +43,7 @@ export interface CuratorRunnerOptions {
    * Stats resolver for Pass 1 prune. When omitted, a no-op resolver is
    * used — all skills are treated as healthy (0 failures in window,
    * touched recently). Callers should supply a real resolver that reads
-   * the audit log.
+   * the active skill statistics source.
    */
   statsResolver?: SkillStatsResolver;
   /** Test hook: clock. */
@@ -73,8 +73,7 @@ function defaultRootDir(): string {
 
 /**
  * No-op stats resolver: treats every skill as healthy so Pass 1 does
- * nothing when no audit-log adapter is wired. The real adapter lives
- * in a follow-up.
+ * nothing when no stats source is wired.
  */
 const noopStatsResolver: SkillStatsResolver = (_record) => ({
   successesInWindow: 1,

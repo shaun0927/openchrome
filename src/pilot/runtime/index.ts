@@ -45,3 +45,9 @@ export type {
   BeforeIrreversibleHook,
   BeforeIrreversibleHookInput,
 } from './before-irreversible.js';
+
+export { contractRuntimeEvents } from './events.js';
+export type {
+  ContractRuntimeEventMap,
+  TypedContractRuntimeEmitter,
+} from './events.js';

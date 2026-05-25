@@ -210,10 +210,26 @@ export interface ContractRuntimeArgs {
    * `state_hash` simply stays absent from the emitted record — the
    * "always settles" guarantee is never compromised by hashing.
    *
+   * Two return shapes are accepted for backwards compatibility:
+   *
+   *   - `string` — legacy v1-only path. The runtime tags the record
+   *     with `state_hash_version = 'v1'`.
+   *   - `{ hash, version }` — v2-capable path emitted by
+   *     `createStateHasher()`. The runtime preserves the supplied
+   *     version verbatim so v1 and v2 anchors coexist on the same
+   *     `TransactionRecord` schema.
+   *
+   * `null` / `undefined` in either shape means "no hash" and the
+   * record is emitted without `state_hash` / `state_hash_version`.
+   *
    * Production wiring: use
    * `src/pilot/state-graph/factory.ts:createStateHasher()`, which
-   * folds in the `isStateGraphEnabled()` gate so the callback returns
+   * folds in the `isStateGraphEnabled()` gate so the callback yields
    * `null` when the family flag is off.
    */
-  computeStateHash?: () => Promise<string | null>;
+  computeStateHash?: () => Promise<
+    | string
+    | { hash: string; version: 'v1' | 'v2' }
+    | null
+  >;
 }

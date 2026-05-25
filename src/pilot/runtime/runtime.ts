@@ -44,8 +44,9 @@ import { evaluate } from '../../contracts/evaluate.js';
 import { validateAssertion, type ValidationError } from '../../contracts/validator.js';
 import { isContractRuntimeEnabled } from '../../harness/flags.js';
 import { getLifecycleBus } from '../../core/lifecycle/index.js';
-import { STATE_HASH_VERSION } from '../state-graph/node-hash.js';
+import type { StateHashVersion } from '../state-graph/node-hash.js';
 import { getBeforeIrreversibleHook } from './before-irreversible.js';
+import { contractRuntimeEvents } from './events.js';
 import { DEFAULT_CACHE_TTL_MS } from './idempotency.js';
 import type {
   AuditEmitter,
@@ -141,20 +142,21 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
   const audit = args.audit ?? defaultAuditEmitter();
   const txn_id = crypto.randomUUID();
 
-  // State-graph anchor for this run. Computed once after validation
-  // passes (see the `computeStateHash` invocation below) and back-
-  // filled into every emitted record by `settle()`. Captured by
-  // reference via the closed-over `let` so the `emit` wrapper —
-  // defined here so all settle paths share the same injector — reads
-  // the current value at emit time rather than the (undefined)
-  // definition-time value.
+  // State-graph anchor + version for this run. Computed once after
+  // validation passes (see the `computeStateHash` invocation below)
+  // and back-filled into every emitted record by `settle()`.
+  // Captured by reference via the closed-over `let`s so the `emit`
+  // wrapper — defined here so all settle paths share the same
+  // injector — reads the current values at emit time rather than the
+  // (undefined) definition-time values.
   let stateHash: string | undefined;
+  let stateHashVersion: StateHashVersion | undefined;
 
   // Local settle wrapper that auto-injects `contract_domain` so every
   // record this run emits carries the routing label without each call
   // site having to remember to set it. See Codex round 5 (1ee8e1d).
   const emit = (record: TransactionRecord): TransactionRecord =>
-    settle(audit, record, args.contract.domain, stateHash);
+    settle(audit, record, args.contract.domain, stateHash, stateHashVersion);
 
   // --- Idempotency cache (#791) -----------------------------------
   // Cache wiring is best-effort: a misbehaving cache must never break
@@ -264,7 +266,18 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
     try {
       const hashed = await args.computeStateHash();
       if (typeof hashed === 'string' && hashed.length > 0) {
+        // Legacy v1-only callback shape — version defaults to 'v1'.
         stateHash = hashed;
+        stateHashVersion = 'v1';
+      } else if (
+        hashed !== null &&
+        typeof hashed === 'object' &&
+        typeof hashed.hash === 'string' &&
+        hashed.hash.length > 0 &&
+        (hashed.version === 'v1' || hashed.version === 'v2')
+      ) {
+        stateHash = hashed.hash;
+        stateHashVersion = hashed.version;
       }
     } catch {
       // best-effort — hashing failure must not change the verdict
@@ -620,6 +633,7 @@ function settle(
   record: TransactionRecord,
   contractDomain?: string,
   stateHash?: string,
+  stateHashVersion?: StateHashVersion,
 ): TransactionRecord {
   if (contractDomain !== undefined && record.contract_domain === undefined) {
     record.contract_domain = contractDomain;
@@ -628,10 +642,11 @@ function settle(
   // so every emitted record carries the entry-node identifier. The
   // pair (`state_hash`, `state_hash_version`) is emitted atomically:
   // when the hash is present the version tag must also be present so
-  // future algorithm bumps remain distinguishable in audit history.
+  // v1 / v2 anchors remain distinguishable in audit history without
+  // re-reading the producer's source.
   if (stateHash !== undefined && record.state_hash === undefined) {
     record.state_hash = stateHash;
-    record.state_hash_version = STATE_HASH_VERSION;
+    record.state_hash_version = stateHashVersion ?? 'v1';
   }
   try {
     const r = audit.emit(record);
@@ -642,6 +657,18 @@ function settle(
     }
   } catch {
     // best-effort — sync audit failure must not change the verdict
+  }
+  // Fan out the settled record to the pilot event bus. This is the
+  // hook auto-extractors (skill curator) and any other consumer rely
+  // on. Wrapped in try/catch as defence-in-depth — a listener that
+  // throws synchronously through EventEmitter must not change the
+  // verdict the runtime is in the middle of returning. Subscribers
+  // are responsible for their own setImmediate / async dispatch so
+  // long-running consumer work cannot push back into this thread.
+  try {
+    contractRuntimeEvents.emit('transaction:settled', record);
+  } catch {
+    // best-effort — listener throw must not change the verdict
   }
   return record;
 }
