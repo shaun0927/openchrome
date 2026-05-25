@@ -80,6 +80,18 @@ records the sample index in each row. Live/recorded-real reports must also pin:
 Rows without live or recorded-real evidence remain diagnostic, even when they
 use the same report schema.
 
+## Live loop status
+
+The live provider path now dispatches Claude/OpenAI tool-use turns through the
+selected benchmark library adapter (`openchrome`, `playwright-mcp`, or
+`browser-use`) instead of stopping at a scaffold. The path is still fail-closed
+and opt-in: preflight plus `OPENCHROME_BENCH_REAL=1` and provider credentials are
+required before any paid call.
+
+Current live rows should remain diagnostic until enough recorded-real samples,
+competitor version pins, and final-state evidence satisfy the headline gates in
+`docs/benchmarks/benchmark-direction.md`.
+
 ## Transcript determinism contract
 
 Frozen transcripts are JSONL files containing zero or more `tool_call` entries
