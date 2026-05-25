@@ -21,10 +21,11 @@ describe('WebVoyager library routing', () => {
     }
   });
 
-  test('only openchrome is wired today; the other two ship as scaffolds', () => {
-    expect(LIBRARY_ROUTING.openchrome.nativeLoopWired).toBe(true);
-    expect(LIBRARY_ROUTING['playwright-mcp'].nativeLoopWired).toBe(false);
-    expect(LIBRARY_ROUTING['browser-use'].nativeLoopWired).toBe(false);
+  test('every native library has an external execution descriptor and forbids fallback', () => {
+    expect(WEBVOYAGER_LIBRARIES.every((lib) => LIBRARY_ROUTING[lib].nativeLoopWired)).toBe(true);
+    expect(LIBRARY_ROUTING['playwright-mcp'].nativeExecution).toBe('playwright-mcp-external');
+    expect(LIBRARY_ROUTING['browser-use'].nativeExecution).toBe('browser-use-python-bridge');
+    expect(WEBVOYAGER_LIBRARIES.every((lib) => LIBRARY_ROUTING[lib].forbidsOpenChromeFallback)).toBe(true);
   });
 });
 
@@ -38,13 +39,10 @@ describe('projectCost', () => {
     expect(p.worstCaseUsd).toBe(60 * 3 * 10 * 0.5);
   });
 
-  test('reports only wired libraries as cells that would actually run', () => {
+  test('reports all selected native libraries as dry-run cells', () => {
     const p = projectCost({ taskCount: 60, libraries: WEBVOYAGER_LIBRARIES, repetitions: 10 });
-    // Only openchrome is wired today; would-run = 60 * 10 = 600 cells.
-    expect(p.cellsWouldRunTotal).toBe(600);
-    expect(p.perLibrary.filter((l) => l.wired).length).toBe(1);
-    expect(p.perLibrary.filter((l) => !l.wired).map((l) => l.library))
-      .toEqual(expect.arrayContaining(['playwright-mcp', 'browser-use']));
+    expect(p.cellsWouldRunTotal).toBe(60 * 3 * 10);
+    expect(p.perLibrary.filter((l) => l.wired).length).toBe(3);
   });
 
   test('honors a maxUsdPerTask override', () => {

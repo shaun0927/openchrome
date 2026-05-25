@@ -621,12 +621,21 @@ export class HTTPTransport implements MCPTransport {
       if (bodyTimer !== null) clearTimeout(bodyTimer);
     };
 
-    // If the socket closes (client disconnect, server socket timeout, etc.)
-    // we cannot send a response; just free the timer and bail out.
-    req.on('close', () => {
+    // IncomingMessage 'close' is part of the normal request stream lifecycle
+    // and may fire before/around 'end'. Only treat it as terminal if the body
+    // was not fully received; real disconnect abort signaling is handled by
+    // the socket close listener above.
+    const onBodyAborted = () => {
       if (finished) return;
       finished = true;
       clearBodyTimer();
+    };
+
+    req.on('aborted', onBodyAborted);
+
+    req.on('close', () => {
+      if (req.complete) return;
+      onBodyAborted();
     });
 
     req.on('error', () => {

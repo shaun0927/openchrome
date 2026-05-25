@@ -13,7 +13,7 @@ import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAS
 import type { WindowBoundsConfig } from '../config/window-bounds';
 import { getHeadedWindowArgs } from './launcher-window-args';
 import { findChromeHeadlessShell, findChromePath } from './launcher-chrome-paths';
-import { checkDebugPort, DebugPortTimeoutError, waitForDebugPort } from './launcher-debug-port';
+import { checkDebugPort, waitForDebugPort } from './launcher-debug-port';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';

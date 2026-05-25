@@ -73,7 +73,7 @@ export interface BrowserUseAdapterOptions {
 }
 
 const DEFAULT_PYTHON = process.platform === 'win32' ? 'python' : 'python3';
-const DEFAULT_CALL_TIMEOUT_MS = 30000;
+export const DEFAULT_CALL_TIMEOUT_MS = 30000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 
 function textResult(text: string): MCPToolResult {

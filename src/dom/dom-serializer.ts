@@ -5,6 +5,7 @@
 import type { Page } from 'puppeteer-core';
 import { MAX_OUTPUT_CHARS, DEFAULT_MAX_SERIALIZER_NODES } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
+import { formatAffordancePrefix } from '../utils/element-affordance';
 
 export interface DOMSerializerOptions {
   maxDepth?: number;                    // default: -1 (unlimited)
@@ -293,7 +294,14 @@ function formatElement(
   const interactiveMarker = interactive
     ? ` ★${hints ? ` [${hints}]` : ''}`
     : '';
-  const line = `${indent}[${node.backendNodeId}]<${tagName}${attrStr}/>${textContent}${interactiveMarker}`;
+  const affordancePrefix = formatAffordancePrefix({
+    tagName,
+    role: attrMap.get('role'),
+    type: attrMap.get('type'),
+    href: attrMap.get('href'),
+    contentEditable: attrMap.get('contenteditable'),
+  });
+  const line = `${indent}${affordancePrefix}[${node.backendNodeId}]<${tagName}${attrStr}/>${textContent}${interactiveMarker}`;
   return line;
 }
 

@@ -5,7 +5,9 @@ import { MockEpisodeAdapter } from './mock-adapter';
 import { MockOpenChromeClient } from './mock-client';
 import { fixtureTasks } from './fixtures/tasks';
 import { normalizeTaskSpec } from './spec';
+import { buildAgentSuccessSuiteReport } from './aggregate';
 import { countNoProgressEpisodes, runEpisode } from './runner';
+import { estimateToolRequestTokens, summarizeEpisodeTokens } from './token-accounting';
 
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'episode-harness-'));
@@ -22,6 +24,21 @@ describe('episode harness spec validation', () => {
     });
     expect(task.maxSteps).toBe(30);
     expect(task.maxDurationMs).toBe(120_000);
+    expect(task.category).toBe('info_retrieval');
+  });
+
+  it('accepts task taxonomy and expected first tool metadata', () => {
+    const task = normalizeTaskSpec({
+      id: 'meta',
+      title: 'Meta',
+      startUrl: 'mock://example',
+      goal: 'Read example',
+      category: 'form_fill',
+      expectedFirstTool: 'read_page',
+      success: { kind: 'dom_text', contains: 'Example Domain' },
+    });
+    expect(task.category).toBe('form_fill');
+    expect(task.expectedFirstTool).toBe('read_page');
   });
 
   it('rejects unknown task fields', () => {
@@ -62,6 +79,13 @@ describe('runEpisode', () => {
     expect(result.success).toBe(true);
     expect(result.toolCalls).toBeGreaterThanOrEqual(1);
     expect(result.openchromeErrors).toBe(0);
+    expect(result.category).toBe('info_retrieval');
+    expect(result.firstToolSelection).toEqual({ actual: undefined });
+    expect(result.tokenMetrics.totalTokens).toBeGreaterThan(0);
+    expect(events.some(event => typeof event.tokenCount === 'number')).toBe(true);
+    expect(result.tokenUsage.totalTokens).toBeGreaterThan(0);
+    expect(result.tokenUsage.toolRequestTokens).toBeGreaterThan(0);
+    expect(result.tokenUsage.toolResultTokens).toBeGreaterThan(0);
     expect(events.some(event => event.type === 'contract_eval')).toBe(true);
     expect(fs.existsSync(result.artifacts.eventsJsonl)).toBe(true);
     expect(fs.existsSync(result.artifacts.reportJson)).toBe(true);
@@ -85,6 +109,19 @@ describe('runEpisode', () => {
     expect(result.failedContract).toEqual(expect.objectContaining({ assertion_kind: 'dom_text' }));
   });
 
+  it('summarizes stable token accounting for episode events', () => {
+    const task = normalizeTaskSpec(fixtureTasks[0]);
+    const usage = summarizeEpisodeTokens(task, [
+      { ts: 1, type: 'tool_call', tool: 'read_page', args: {} },
+      { ts: 2, type: 'tool_result', tool: 'read_page', ok: true, text: 'Example Domain' },
+    ]);
+
+    expect(usage.promptTokens).toBeGreaterThan(0);
+    expect(usage.toolRequestTokens).toBe(estimateToolRequestTokens({ tool: 'read_page', args: {} }));
+    expect(usage.toolResultTokens).toBeGreaterThan(0);
+    expect(usage.totalTokens).toBe(usage.promptTokens + usage.toolRequestTokens + usage.toolResultTokens + usage.contractTokens + usage.responseTokens);
+  });
+
   it('counts repeated successful calls as one no-progress episode', () => {
     expect(countNoProgressEpisodes([
       { ts: 1, type: 'tool_result', tool: 'read_page', ok: true, text: 'same' },
@@ -92,5 +129,25 @@ describe('runEpisode', () => {
       { ts: 3, type: 'tool_result', tool: 'read_page', ok: true, text: 'same' },
       { ts: 4, type: 'tool_result', tool: 'read_page', ok: true, text: 'same' },
     ])).toBe(1);
+  });
+});
+
+describe('Agent Task Success aggregation', () => {
+  it('aggregates repeated samples with task-level tokens and first-tool accuracy', async () => {
+    const outDir = tmpdir();
+    const first = await runEpisode(fixtureTasks[1], new MockEpisodeAdapter(), new MockOpenChromeClient(), { outDir, runId: 'rep-1' });
+    const second = await runEpisode(fixtureTasks[1], new MockEpisodeAdapter(), new MockOpenChromeClient(), { outDir, runId: 'rep-2' });
+    const report = buildAgentSuccessSuiteReport('mock', 2, [first.result, second.result]);
+
+    expect(report.axis).toBe('agent-success');
+    expect(report.totalSamples).toBe(2);
+    expect(report.passedSamples).toBe(2);
+    expect(report.aggregates).toHaveLength(1);
+    expect(report.aggregates[0]).toEqual(expect.objectContaining({
+      taskId: 'local-form-submit',
+      samples: 2,
+      firstToolAccuracy: 1,
+    }));
+    expect(report.aggregates[0].averageTotalTokens).toBeGreaterThan(0);
   });
 });

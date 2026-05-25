@@ -1,0 +1,148 @@
+{
+  "axis": "foundation",
+  "schemaVersion": "1.0.0",
+  "environment": {
+    "capturedAt": "2026-05-17T16:26:02.366Z",
+    "gitSha": "542ab43f",
+    "gitDirty": true,
+    "nodeVersion": "v20.19.6",
+    "os": "darwin 25.3.0",
+    "arch": "arm64",
+    "cpuModel": "Apple M5",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 148.0.7778.168",
+    "networkProfile": "unthrottled"
+  },
+  "competitors": [
+    {
+      "name": "OpenChrome",
+      "version": "1.12.4"
+    },
+    {
+      "name": "Playwright",
+      "version": "1.60.0"
+    },
+    {
+      "name": "Puppeteer",
+      "version": "23.10.3"
+    },
+    {
+      "name": "Crawlee",
+      "version": "3.16.0"
+    },
+    {
+      "name": "playwright-mcp",
+      "version": "0.0.75"
+    },
+    {
+      "name": "browser-use",
+      "version": "0.12.6"
+    }
+  ],
+  "tokenizer": "cl100k_base",
+  "results": [
+    {
+      "library": "OpenChrome",
+      "mode": "dom-stub",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": false,
+      "version": "1.12.4",
+      "versionSource": "package-json",
+      "versionPinned": true,
+      "dependencyAvailable": true,
+      "sameTaskContract": true,
+      "status": "passed",
+      "skipCategory": "none",
+      "durationMs": 0,
+      "payloadChars": 13,
+      "skipReason": "",
+      "failure": ""
+    },
+    {
+      "library": "Playwright",
+      "mode": "raw-html-cdp",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "version": "1.60.0",
+      "versionSource": "node-resolution",
+      "versionPinned": true,
+      "dependencyAvailable": true,
+      "sameTaskContract": true,
+      "status": "skipped",
+      "skipCategory": "not_requested",
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    },
+    {
+      "library": "Puppeteer",
+      "mode": "raw-html-cdp",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "version": "23.10.3",
+      "versionSource": "node-resolution",
+      "versionPinned": true,
+      "dependencyAvailable": true,
+      "sameTaskContract": true,
+      "status": "skipped",
+      "skipCategory": "not_requested",
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    },
+    {
+      "library": "Crawlee",
+      "mode": "cheerio-text",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": false,
+      "version": "3.16.0",
+      "versionSource": "node-resolution",
+      "versionPinned": true,
+      "dependencyAvailable": true,
+      "sameTaskContract": true,
+      "status": "passed",
+      "skipCategory": "none",
+      "durationMs": 164,
+      "payloadChars": 3154,
+      "skipReason": "",
+      "failure": ""
+    },
+    {
+      "library": "playwright-mcp",
+      "mode": "native-mcp",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "version": "0.0.75",
+      "versionSource": "node-resolution",
+      "versionPinned": true,
+      "dependencyAvailable": true,
+      "sameTaskContract": true,
+      "status": "skipped",
+      "skipCategory": "not_requested",
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    },
+    {
+      "library": "browser-use",
+      "mode": "python-bridge",
+      "taskContract": "tabs_create/read_page/tabs_close",
+      "liveRequired": true,
+      "version": "0.12.6",
+      "versionSource": "benchmark-registry",
+      "versionPinned": true,
+      "dependencyAvailable": false,
+      "sameTaskContract": true,
+      "status": "skipped",
+      "skipCategory": "not_requested",
+      "durationMs": 0,
+      "payloadChars": 0,
+      "skipReason": "live competitor omitted; pass --include-live with required runtime/credentials",
+      "failure": ""
+    }
+  ]
+}

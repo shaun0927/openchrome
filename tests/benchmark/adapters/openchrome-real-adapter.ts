@@ -23,6 +23,10 @@ export interface RealAdapterOptions {
   callTimeoutMs?: number;
   /** Timeout for server startup in ms (default: 15000) */
   startupTimeoutMs?: number;
+  /** CDP endpoint whose port should be used by the OpenChrome MCP server. */
+  cdpEndpoint?: string;
+  /** Explicit Chrome debugging port for OpenChrome MCP serve. */
+  chromePort?: string;
 }
 
 interface MCPRequest {
@@ -43,11 +47,31 @@ interface MCPResponse {
   error?: { code: number; message: string };
 }
 
+export function cdpEndpointParts(cdpEndpoint: string | undefined): { host: string; port: string } | undefined {
+  if (!cdpEndpoint) return undefined;
+  try {
+    const url = new URL(cdpEndpoint);
+    return { host: url.hostname || '127.0.0.1', port: String(url.port || 9222) };
+  } catch {
+    return undefined;
+  }
+}
+
+export function chromePortFromCdpEndpoint(cdpEndpoint: string | undefined): string | undefined {
+  return cdpEndpointParts(cdpEndpoint)?.port;
+}
+
+export function openChromeServeEnvForCdpEndpoint(cdpEndpoint: string | undefined, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const chromePort = chromePortFromCdpEndpoint(cdpEndpoint);
+  const endpoint = cdpEndpointParts(cdpEndpoint);
+  return endpoint ? { ...baseEnv, CHROME_HOST: endpoint.host, CHROME_PORT: endpoint.port } : baseEnv;
+}
+
 export class OpenChromeRealAdapter implements MCPAdapter {
   name = 'OpenChrome';
   mode: string;
 
-  private options: Required<RealAdapterOptions>;
+  private options: Required<Omit<RealAdapterOptions, 'cdpEndpoint' | 'chromePort'>> & Pick<RealAdapterOptions, 'cdpEndpoint' | 'chromePort'>;
   private process: ChildProcess | null = null;
   private requestId = 0;
   private pending: Map<number, {
@@ -64,13 +88,19 @@ export class OpenChromeRealAdapter implements MCPAdapter {
       serverPath: options.serverPath || path.join(process.cwd(), 'dist', 'index.js'),
       callTimeoutMs: options.callTimeoutMs || 30000,
       startupTimeoutMs: options.startupTimeoutMs || 15000,
+      cdpEndpoint: options.cdpEndpoint,
+      chromePort: options.chromePort,
     };
   }
 
+
   async setup(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.process = spawn('node', [this.options.serverPath, 'serve'], {
+      const chromePort = this.options.chromePort ?? chromePortFromCdpEndpoint(this.options.cdpEndpoint);
+      const serveArgs = [this.options.serverPath, 'serve', ...(chromePort ? ['--port', chromePort] : [])];
+      this.process = spawn('node', serveArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: openChromeServeEnvForCdpEndpoint(this.options.cdpEndpoint),
       });
 
       let ready = false;

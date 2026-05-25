@@ -27,6 +27,7 @@ describe('FindTool', () => {
   let mockRefIdManager: ReturnType<typeof createMockRefIdManager>;
   let testSessionId: string;
   let testTargetId: string;
+  let mockAXMatches: unknown[];
 
   const getFindHandler = async () => {
     jest.resetModules();
@@ -35,6 +36,11 @@ describe('FindTool', () => {
     }));
     jest.doMock('../../src/utils/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
+    }));
+    jest.doMock('../../src/utils/ax-element-resolver', () => ({
+      resolveElementsByAXTree: jest.fn().mockResolvedValue(mockAXMatches),
+      invalidateAXCache: jest.fn(),
+      clearAXCache: jest.fn(),
     }));
 
     const { registerFindTool } = await import('../../src/tools/find');
@@ -55,6 +61,8 @@ describe('FindTool', () => {
     mockRefIdManager = createMockRefIdManager();
     (getSessionManager as jest.Mock).mockReturnValue(mockSessionManager);
     (getRefIdManager as jest.Mock).mockReturnValue(mockRefIdManager);
+
+    mockAXMatches = [];
 
     testSessionId = 'test-session-123';
     const { targetId, page } = await mockSessionManager.createTarget(testSessionId, 'about:blank');
@@ -98,6 +106,7 @@ describe('FindTool', () => {
 
       expect(page.evaluate).toHaveBeenCalled();
       expect(result.content[0].text).toContain('Found');
+      expect(result.content[0].text).toContain('$ [ref_');
     });
 
     test('finds link by keyword', async () => {
@@ -127,6 +136,7 @@ describe('FindTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       expect(result.content[0].text).toContain('link');
+      expect(result.content[0].text).toContain('@ [ref_');
     });
 
     test('finds input by keyword', async () => {
@@ -157,6 +167,7 @@ describe('FindTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       expect(result.content[0].text).toContain('textbox');
+      expect(result.content[0].text).toContain('# [ref_');
     });
 
     test('finds checkbox by keyword', async () => {
@@ -187,6 +198,7 @@ describe('FindTool', () => {
       }) as { content: Array<{ type: string; text: string }> };
 
       expect(result.content[0].text).toContain('checkbox');
+      expect(result.content[0].text).toContain('$ [ref_');
     });
 
     test('finds element by text content', async () => {
@@ -236,6 +248,31 @@ describe('FindTool', () => {
       });
 
       expect(page.evaluate).toHaveBeenCalled();
+    });
+  });
+
+
+  describe('AX affordance markers', () => {
+    test('places marker outside canonical ref for AX-first results', async () => {
+      mockAXMatches = [{
+        backendDOMNodeId: 88001,
+        role: 'link',
+        name: 'Docs',
+        matchLevel: 1,
+        rect: { x: 12, y: 34, width: 100, height: 20 },
+        properties: {},
+        source: 'ax',
+      }];
+
+      const handler = await getFindHandler();
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        query: 'Docs link',
+      }) as { content: Array<{ type: string; text: string }> };
+
+      expect(result.content[0].text).toContain('[via AX tree]');
+      expect(result.content[0].text).toContain('@ [ref_');
+      expect(result.content[0].text).not.toContain('[@ref_');
     });
   });
 

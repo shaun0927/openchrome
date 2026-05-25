@@ -10,9 +10,9 @@
  * agent's planning loop). This module is the small uniform abstraction over
  * the three.
  *
- * The real per-library loops swap in next session. Today the module ships
- * the routing identity and the cost projection so PR-12 can land
- * infrastructure-only — no API calls, no surprise budget hits.
+ * The per-library native execution descriptors are intentionally explicit:
+ * non-OpenChrome libraries must use their external surfaces and must never
+ * silently fall back to OpenChrome's adapter.
  */
 
 import { WEBVOYAGER_BUDGET } from './budget';
@@ -39,12 +39,19 @@ export interface LibraryRouting {
    */
   competitorPin: string;
   /**
-   * True when the library's native-mode loop is wired to a real driver. Today
-   * only `openchrome` is wired (re-uses the existing Claude tool-call loop);
-   * playwright-mcp and browser-use ship as scaffolds with a clear "not yet
-   * wired" surface that the runner displays as a skip annotation.
+   * True when the library has a native execution descriptor that can be
+   * selected by the runner. Live execution still requires provider preflight,
+   * dependency checks, and explicit OPENCHROME_BENCH_REAL opt-in.
    */
   nativeLoopWired: boolean;
+  nativeExecution:
+    | 'openchrome-mcp'
+    | 'playwright-mcp-external'
+    | 'browser-use-python-bridge';
+  /** Setup command or package expected before a live/native run can start. */
+  setupRequirement: string;
+  /** Must be true for external competitors; protects against OpenChrome fallback. */
+  forbidsOpenChromeFallback: boolean;
   /** One-line note for the report. */
   note: string;
 }
@@ -55,19 +62,28 @@ export const LIBRARY_ROUTING: Record<WebVoyagerLibrary, LibraryRouting> = {
     library: 'openchrome',
     competitorPin: 'OpenChrome (native MCP)',
     nativeLoopWired: true,
+    nativeExecution: 'openchrome-mcp',
+    setupRequirement: 'OpenChrome package built locally',
+    forbidsOpenChromeFallback: true,
     note: 'OpenChrome MCP server driven by Claude tool-calling. Existing claude-adapter.ts.',
   },
   'playwright-mcp': {
     library: 'playwright-mcp',
     competitorPin: 'playwright-mcp (native MCP)',
-    nativeLoopWired: false,
-    note: 'playwright-mcp MCP server driven by the same Claude tool-calling loop. Loop wiring lands next session.',
+    nativeLoopWired: true,
+    nativeExecution: 'playwright-mcp-external',
+    setupRequirement: '@playwright/mcp package and CDP endpoint for live browser cells',
+    forbidsOpenChromeFallback: true,
+    note: 'External @playwright/mcp server; benchmark rows must use PlaywrightMcpAdapter and may emit dependency-only setup errors.',
   },
   'browser-use': {
     library: 'browser-use',
     competitorPin: 'browser-use (native agent loop)',
-    nativeLoopWired: false,
-    note: 'browser-use Python agent loop with the pinned Claude model via the #1280 bridge. Loop wiring lands next session.',
+    nativeLoopWired: true,
+    nativeExecution: 'browser-use-python-bridge',
+    setupRequirement: 'browser-use Python package plus tests/benchmark/bridges/browser_use_bridge.py',
+    forbidsOpenChromeFallback: true,
+    note: 'External browser-use Python agent/bridge; rows must use BrowserUseAdapter and keep passive-tool rows secondary.',
   },
 };
 
@@ -155,7 +171,7 @@ export function formatProjection(p: DryRunProjection): string {
     `  reps per (task,lib)    : ${p.repetitions}`,
     `  max USD per task cap   : $${p.maxUsdPerTask.toFixed(2)}`,
     `  worst-case total USD   : $${p.worstCaseUsd.toFixed(2)}`,
-    `  cells that would run   : ${p.cellsWouldRunTotal} (rest are scaffolded, no API call)`,
+    `  native cells selected  : ${p.cellsWouldRunTotal} (no API call while --dry-run is set)`,
     '',
     'Per-library:',
   ];
@@ -163,6 +179,6 @@ export function formatProjection(p: DryRunProjection): string {
     lines.push(`  ${l.library.padEnd(15)} wired=${String(l.wired).padEnd(5)} would-run=${l.cellsWouldRun}  ${l.note}`);
   }
   lines.push('');
-  lines.push('No API calls are made in --dry-run mode. To proceed, drop --dry-run and set OPENCHROME_BENCH_REAL=1.');
+  lines.push('No API calls are made in --dry-run mode. To proceed, drop --dry-run, satisfy each native setup requirement, and set OPENCHROME_BENCH_REAL=1.');
   return lines.join('\n');
 }

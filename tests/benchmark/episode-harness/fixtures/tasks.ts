@@ -10,6 +10,7 @@ export const fixtureTasks: EpisodeTaskSpec[] = [
     maxDurationMs: 30_000,
     success: { kind: 'dom_text', selector: 'h1', contains: 'Example Domain' },
     tags: ['fixture', 'read-only'],
+    category: 'info_retrieval',
   },
   {
     id: 'local-form-submit',
@@ -21,6 +22,8 @@ export const fixtureTasks: EpisodeTaskSpec[] = [
     success: { kind: 'dom_text', selector: '.success', contains: 'Form submitted successfully' },
     setup: { clearCookies: true, viewport: { width: 1280, height: 800 } },
     tags: ['fixture', 'form'],
+    category: 'form_fill',
+    expectedFirstTool: 'read_page',
   },
   {
     id: 'local-recovery-stall',
@@ -31,5 +34,7 @@ export const fixtureTasks: EpisodeTaskSpec[] = [
     maxDurationMs: 30_000,
     success: { kind: 'dom_text', selector: '.success', contains: 'Recovered' },
     tags: ['fixture', 'stall'],
+    category: 'recovery',
+    expectedFirstTool: 'read_page',
   },
 ];

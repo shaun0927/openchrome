@@ -15,7 +15,7 @@ import {
   deterministicStringify,
   validateToolCallDigests,
 } from './transcript-digest';
-import { gitSha } from './runner';
+import { gitSha, parseRunnerArgs } from './runner';
 
 describe('gitSha', () => {
   const originalError = console.error;
@@ -78,6 +78,25 @@ describe('gitSha', () => {
     // Throw path is silent — no console.error — because "not a git repo"
     // is a legitimate dev-machine state (e.g. running from a tarball).
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebVoyager runner CLI', () => {
+  test('parses repetition matrix and live provider metadata flags', () => {
+    const opts = parseRunnerArgs([
+      'node',
+      'runner',
+      '--adapter=openai',
+      '--repetitions=10',
+      '--model=gpt-test',
+      '--temperature=0',
+      '--preflight',
+    ]);
+    expect(opts.adapter).toBe('openai');
+    expect(opts.repetitions).toBe(10);
+    expect(opts.model).toBe('gpt-test');
+    expect(opts.temperature).toBe(0);
+    expect(opts.preflight).toBe(true);
   });
 });
 

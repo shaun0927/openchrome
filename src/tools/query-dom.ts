@@ -357,9 +357,7 @@ async function handleCSS(
 
     const contentHash = hashCursorScope('css', tabId, selector, elements.length);
     let pageResult: ReturnType<typeof paginate<import('puppeteer-core').ElementHandle<Element>>>;
-    let cursorOffset = 0;
     try {
-      cursorOffset = cursor ? decodeCursor(cursor).offset : 0;
       pageResult = paginate(elements, { pageSize, cursor, contentHash });
     } catch (error) {
       return invalidCursorResult(error);

@@ -53,7 +53,6 @@ import { isClientDisconnect } from './errors/abort';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
 import { isAllowed, requiredScope } from './auth/scope-policy';
 import type { Principal } from './auth/api-key-types';
-import { PRINCIPAL_SYM } from './middleware/auth';
 import { getVersion } from './version';
 import { isTimeoutError } from './errors/timeout';
 import { OpenChromeConnectionError } from './errors/connection';
