@@ -61,12 +61,19 @@ export * as skill from './skill/index.js';
 export * as credentials from './credentials/store.js';
 
 import {
+  isAutoMemoryEnabled,
   isAutoSkillifyEnabled,
   isContractRuntimeEnabled,
   isSkillCuratorEnabled,
   isStateGraphEnabled,
 } from '../harness/flags.js';
-import { defaultSkillRootDir, registerAutoExtractor, startCuratorRunner } from './curator/index.js';
+import { registerAutoMemory, type AutoMemoryHandle } from './auto-memory/index.js';
+import {
+  createSidecarStatsResolver,
+  defaultSkillRootDir,
+  registerAutoExtractor,
+  startCuratorRunner,
+} from './curator/index.js';
 import type { AutoExtractorHandle, CuratorRunner } from './curator/index.js';
 
 /**
@@ -92,8 +99,9 @@ export interface PilotBootstrapHandle {
  *   - Auto-extractor: `OPENCHROME_AUTO_SKILLIFY` (opt-in) AND
  *     `contract_runtime` (default-on) AND `state_graph` (default-on).
  *   - Curator runner: `OPENCHROME_SKILL_CURATOR` (default-on inside
- *     pilot). Currently runs with `noopStatsResolver`; a follow-up
- *     PR wires the audit-log-backed resolver.
+ *     pilot). Uses the skill sidecar rolling log as its stats source
+ *     so prune observes real success/failure rates without requiring
+ *     the audit-log family.
  *
  * Failures during each registration are caught and routed to stderr;
  * the runtime, MCP tool surface, and other pilot families are
@@ -102,6 +110,7 @@ export interface PilotBootstrapHandle {
 export function bootstrap(): PilotBootstrapHandle {
   const extractorHandles: AutoExtractorHandle[] = [];
   const curatorHandles: CuratorRunner[] = [];
+  const memoryHandles: AutoMemoryHandle[] = [];
 
   if (isAutoSkillifyEnabled() && isContractRuntimeEnabled() && isStateGraphEnabled()) {
     try {
@@ -112,9 +121,27 @@ export function bootstrap(): PilotBootstrapHandle {
     }
   }
 
+  if (isAutoMemoryEnabled() && isContractRuntimeEnabled()) {
+    try {
+      memoryHandles.push(registerAutoMemory());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[pilot] auto-memory register failed: ${message}\n`);
+    }
+  }
+
   if (isSkillCuratorEnabled()) {
     try {
-      curatorHandles.push(startCuratorRunner({ rootDir: defaultSkillRootDir() }));
+      curatorHandles.push(
+        startCuratorRunner({
+          rootDir: defaultSkillRootDir(),
+          // Sidecar-backed resolver — successes and failures live in
+          // the same per-skill `.json` rolling log, so prune's fail-
+          // rate sub-pass observes real numbers without depending on
+          // the audit-log family being enabled.
+          statsResolver: createSidecarStatsResolver(),
+        }),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[pilot] curator runner start failed: ${message}\n`);
@@ -129,8 +156,12 @@ export function bootstrap(): PilotBootstrapHandle {
       for (const h of curatorHandles) {
         try { h.stop(); } catch { /* */ }
       }
+      for (const h of memoryHandles) {
+        try { h.unregister(); } catch { /* */ }
+      }
       extractorHandles.length = 0;
       curatorHandles.length = 0;
+      memoryHandles.length = 0;
     },
   };
 }

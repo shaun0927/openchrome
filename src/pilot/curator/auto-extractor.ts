@@ -42,6 +42,8 @@ import {
 } from '../runtime/events.js';
 import type { TransactionRecord } from '../runtime/types.js';
 import { recordSuccessfulRun, defaultSkillRootDir, type ExtractorOptions } from './extractor.js';
+import { recordFailedRun } from './failed-run.js';
+import { buildSkillBody, type JournalLikeEntry } from './body-builder.js';
 
 /**
  * Listener handle returned by `registerAutoExtractor()` so callers
@@ -66,6 +68,15 @@ export interface AutoExtractorOptions {
    */
   extractorOptions?: ExtractorOptions;
   /**
+   * Provides the journal entries the body builder consumes when
+   * distilling the SKILL.md body. Production wiring uses
+   * `defaultJournalProvider` (reads ~/.openchrome/journal). Tests
+   * supply a synthetic provider so the body output is deterministic.
+   * Returning `undefined` falls back to the placeholder body in
+   * `recordSuccessfulRun`.
+   */
+  journalProvider?: (record: TransactionRecord) => ReadonlyArray<JournalLikeEntry> | undefined;
+  /**
    * Test hook: invoked after a `recordSuccessfulRun` attempt
    * completes (success OR failure). Tests use this to await the
    * fire-and-forget `setImmediate` dispatch without resorting to
@@ -74,16 +85,53 @@ export interface AutoExtractorOptions {
   onProcessed?: (result: { ok: true } | { ok: false; error: Error }) => void;
 }
 
+/**
+ * Default journal provider — pulls recent entries (last ~500) from
+ * `~/.openchrome/journal/journal-*.jsonl` and filters them down to
+ * the transaction's wall-clock window. Returns an empty list rather
+ * than `undefined` when the journal singleton is unreachable so the
+ * body builder still produces a stable placeholder body.
+ */
+export function defaultJournalProvider(record: TransactionRecord): ReadonlyArray<JournalLikeEntry> {
+  try {
+    // Dynamic require so test environments that mock fs don't load
+    // the journal singleton at module-import time.
+    const { getTaskJournal } = require('../../journal/task-journal') as {
+      getTaskJournal: () => { getRecent: (n?: number) => JournalLikeEntry[] };
+    };
+    const journal = getTaskJournal();
+    const recent = journal.getRecent(500);
+    const start = record.started_at;
+    const end = record.ended_at;
+    return recent
+      .filter((e) => typeof e?.ts === 'number' && e.ts >= start && e.ts <= end)
+      .sort((a, b) => a.ts - b.ts);
+  } catch {
+    return [];
+  }
+}
+
 export function registerAutoExtractor(opts: AutoExtractorOptions = {}): AutoExtractorHandle {
   const bus = opts.bus ?? contractRuntimeEvents;
   const rootDir = opts.rootDir ?? defaultSkillRootDir();
 
   const listener = (record: TransactionRecord): void => {
-    if (record.verdict !== 'success') return;
     const stateHash = record.state_hash;
     if (typeof stateHash !== 'string' || stateHash.length === 0) return;
     const domain = record.contract_domain;
     if (typeof domain !== 'string' || domain.length === 0) return;
+
+    // Success → create / promote skill. Postcondition violations are
+    // the only failure verdict we surface to the sidecar — they mean
+    // "we tried to run the skill against this state and the contract
+    // said no afterwards", which is precisely the fail-rate signal
+    // the curator's prune pass needs. Other failure verdicts
+    // (execution_error, budget_exhausted, validation_error,
+    // escalated, aborted_by_hook) are skipped because they say more
+    // about the runner than the skill itself.
+    if (record.verdict !== 'success' && record.verdict !== 'postcondition_violation') {
+      return;
+    }
 
     // Dispatch off the synchronous emit path so the runtime returns
     // before any disk I/O begins. The runtime has already settled by
@@ -91,20 +139,50 @@ export function registerAutoExtractor(opts: AutoExtractorOptions = {}): AutoExtr
     // verdict.
     setImmediate(() => {
       try {
-        recordSuccessfulRun(
-          {
-            txn_id: record.txn_id,
-            contract_id: record.contract_id,
-            // Use the contract id as the human-readable intent label
-            // when the runtime did not supply one. PR-20b (LLM
-            // distillation) will overwrite the body but the intent
-            // string is the skill's lifelong filename hint.
-            intent: record.contract_id,
-            domain,
-            graph_node_anchor: stateHash,
-          },
-          { rootDir, ...(opts.extractorOptions ?? {}) },
-        );
+        if (record.verdict === 'success') {
+          // Build a deterministic Steps body from the journal slice
+          // covering this transaction's wall-clock window. When the
+          // journal yields no entries (test environment, or the
+          // contract ran before any tool calls) we omit `body` and
+          // let `recordSuccessfulRun` fall back to its placeholder.
+          const provider = opts.journalProvider ?? defaultJournalProvider;
+          let body: string | undefined;
+          try {
+            const entries = provider(record);
+            if (entries && entries.length > 0) {
+              body = buildSkillBody(entries, { intent: record.contract_id });
+            }
+          } catch {
+            // Body distillation is best-effort — never fail the
+            // recordSuccessfulRun on a body-builder hiccup.
+            body = undefined;
+          }
+          recordSuccessfulRun(
+            {
+              txn_id: record.txn_id,
+              contract_id: record.contract_id,
+              // Use the contract id as the human-readable intent
+              // label when the runtime did not supply one.
+              intent: record.contract_id,
+              domain,
+              graph_node_anchor: stateHash,
+              ...(body !== undefined ? { body } : {}),
+            },
+            { rootDir, ...(opts.extractorOptions ?? {}) },
+          );
+        } else {
+          // Failure path — only logs against existing skills, never
+          // creates new ones. See `failed-run.ts` for the semantics.
+          recordFailedRun(
+            {
+              txn_id: record.txn_id,
+              contract_id: record.contract_id,
+              domain,
+              graph_node_anchor: stateHash,
+            },
+            { rootDir, ...(opts.extractorOptions ?? {}) },
+          );
+        }
         opts.onProcessed?.({ ok: true });
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -112,7 +190,7 @@ export function registerAutoExtractor(opts: AutoExtractorOptions = {}): AutoExtr
         // stdout carries JSON-RPC. A noisy auto-extractor would
         // corrupt the protocol.
         console.error(
-          `[auto-skillify] recordSuccessfulRun failed (txn=${record.txn_id}, contract=${record.contract_id}): ${error.message}`,
+          `[auto-skillify] ${record.verdict} record failed (txn=${record.txn_id}, contract=${record.contract_id}): ${error.message}`,
         );
         opts.onProcessed?.({ ok: false, error });
       }

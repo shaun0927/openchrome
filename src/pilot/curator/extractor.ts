@@ -105,7 +105,7 @@ export function defaultSkillRootDir(): string {
  * Anything else — path separators, parent-directory tokens, null
  * bytes — is a hard error.
  */
-function assertSafeDomain(domain: string): void {
+export function assertSafeDomain(domain: string): void {
   if (typeof domain !== 'string' || domain.length === 0) {
     throw new Error('skill-memory: domain must be a non-empty string');
   }

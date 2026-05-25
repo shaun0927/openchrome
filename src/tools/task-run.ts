@@ -1,6 +1,7 @@
-import { MCPServer } from '../mcp-server';
-import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
+import type { MCPServer } from '../mcp-server';
+import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { isAutoRecallEnabled, isPilotEnabled, isSkillCuratorEnabled } from '../harness/flags';
 import {
   CompleteInput,
   NeedsHelpInput,
@@ -82,6 +83,11 @@ const startDefinition: MCPToolDefinition = {
           mode: { type: 'string', enum: ['best-effort', 'strict'] },
           max_snapshots: { type: 'number', description: 'Maximum snapshot ids to retain on the TaskRun metadata; default 10, max 100.' },
         },
+      },
+      page_url: {
+        type: 'string',
+        description:
+          'Optional current page URL. When pilot + skill-curator + OPENCHROME_AUTO_RECALL=1 are all enabled, the start response includes a `recalled_skills` field with up to 5 promoted curator skills for this URL\'s host — the host LLM uses them as priors for the goal.',
       },
     },
     required: ['goal'],
@@ -194,11 +200,47 @@ const startHandler: ToolHandler = async (_sessionId, args) => {
   try {
     const meta = await store.start(args as unknown as StartTaskRunInput);
     const snapshot = await takeTaskRunAutoSessionSnapshot(meta, 'start');
-    return jsonResult({ task_run: snapshot?.task_run || meta, ...(snapshot ? { auto_session_snapshot: snapshot.auto_session_snapshot } : {}) });
+    const recalled = await maybeRecallCuratorSkills(args.page_url);
+    return jsonResult({
+      task_run: snapshot?.task_run || meta,
+      ...(snapshot ? { auto_session_snapshot: snapshot.auto_session_snapshot } : {}),
+      ...(recalled ? { recalled_skills: recalled } : {}),
+    });
   } catch (error) {
     return errorResult(error);
   }
 };
+
+/**
+ * Best-effort curator recall lookup for `oc_task_run_start`. Returns
+ * `undefined` when any of the activation gates is closed, when no
+ * URL was supplied, or when the curator has no promoted skills for
+ * the URL's host. All errors are swallowed — TaskRun creation must
+ * not fail because an optional recall lookup blew up.
+ *
+ * Loaded dynamically so the core build never statically imports
+ * `src/pilot/**`; matches the existing pattern in
+ * `oc-skill-record.ts:240` for `dynamic-skills/events`.
+ */
+async function maybeRecallCuratorSkills(
+  pageUrlArg: unknown,
+): Promise<Json | undefined> {
+  const pageUrl = typeof pageUrlArg === 'string' ? pageUrlArg : '';
+  if (pageUrl.length === 0) return undefined;
+  if (!isPilotEnabled()) return undefined;
+  if (!isSkillCuratorEnabled()) return undefined;
+  if (!isAutoRecallEnabled()) return undefined;
+  try {
+    const mod = await import('../pilot/curator/auto-recall.js');
+    const domain = mod.hostnameForRecall(pageUrl);
+    if (domain === null) return undefined;
+    const payload = mod.recallCuratorSkills({ domain });
+    if (payload === null) return undefined;
+    return payload as unknown as Json;
+  } catch {
+    return undefined;
+  }
+}
 
 const updateHandler: ToolHandler = async (_sessionId, args) => {
   try {

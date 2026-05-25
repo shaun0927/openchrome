@@ -80,18 +80,19 @@ describe('registerAutoExtractor', () => {
     handle.unregister();
   });
 
-  test('ignores non-success verdicts', async () => {
+  test('ignores verdicts the curator cannot use', async () => {
     let calls = 0;
     const handle = registerAutoExtractor({
       rootDir,
       onProcessed: () => { calls += 1; },
     });
 
+    // Only `success` and `postcondition_violation` are routed into
+    // the sidecar — everything else (errors, escalations, hook
+    // aborts, validation failures, pre-check failures) describes the
+    // runner state, not the skill, and is skipped.
     contractRuntimeEvents.emit('transaction:settled', successRecord({
       verdict: 'precondition_violation',
-    }));
-    contractRuntimeEvents.emit('transaction:settled', successRecord({
-      verdict: 'postcondition_violation',
     }));
     contractRuntimeEvents.emit('transaction:settled', successRecord({
       verdict: 'execution_error',
@@ -99,11 +100,61 @@ describe('registerAutoExtractor', () => {
     contractRuntimeEvents.emit('transaction:settled', successRecord({
       verdict: 'validation_error',
     }));
+    contractRuntimeEvents.emit('transaction:settled', successRecord({
+      verdict: 'budget_exhausted',
+    }));
+    contractRuntimeEvents.emit('transaction:settled', successRecord({
+      verdict: 'escalated',
+    }));
+    contractRuntimeEvents.emit('transaction:settled', successRecord({
+      verdict: 'aborted_by_hook',
+    }));
     // Yield twice so any (incorrect) setImmediate callbacks would have fired.
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
     expect(calls).toBe(0);
+    expect(fs.existsSync(path.join(rootDir, 'example.com'))).toBe(false);
+    handle.unregister();
+  });
+
+  test('postcondition_violation appends ok=false to an existing skill sidecar', async () => {
+    // Seed a successful skill first.
+    const seedAwait = awaitProcessed();
+    const handle = registerAutoExtractor({ rootDir, onProcessed: seedAwait.onProcessed });
+    contractRuntimeEvents.emit('transaction:settled', successRecord({ txn_id: 't-seed' }));
+    expect((await seedAwait.promise).ok).toBe(true);
+
+    // Now emit a postcondition_violation against the same skill.
+    const failAwait = awaitProcessed();
+    handle.unregister();
+    const handle2 = registerAutoExtractor({ rootDir, onProcessed: failAwait.onProcessed });
+    contractRuntimeEvents.emit('transaction:settled', successRecord({
+      txn_id: 't-fail-1',
+      verdict: 'postcondition_violation',
+    }));
+    expect((await failAwait.promise).ok).toBe(true);
+
+    const domainDir = path.join(rootDir, 'example.com');
+    const sidecar = fs.readdirSync(domainDir).find((f) => f.endsWith('.json'))!;
+    const data = JSON.parse(fs.readFileSync(path.join(domainDir, sidecar), 'utf8'));
+    const failures = data.runs.recent.filter((e: { ok: boolean }) => e.ok === false);
+    expect(failures).toHaveLength(1);
+    handle2.unregister();
+  });
+
+  test('postcondition_violation against an unseen skill is a quiet no-op', async () => {
+    const { promise, onProcessed } = awaitProcessed();
+    const handle = registerAutoExtractor({ rootDir, onProcessed });
+    contractRuntimeEvents.emit('transaction:settled', successRecord({
+      txn_id: 't-fail-orphan',
+      verdict: 'postcondition_violation',
+    }));
+    const result = await promise;
+    // recordFailedRun returns { recorded: false } — auto-extractor
+    // treats that as success (no error path) but never writes any
+    // file.
+    expect(result.ok).toBe(true);
     expect(fs.existsSync(path.join(rootDir, 'example.com'))).toBe(false);
     handle.unregister();
   });
@@ -191,6 +242,46 @@ describe('registerAutoExtractor', () => {
     } finally {
       console.error = origConsoleError;
     }
+    handle.unregister();
+  });
+
+  test('uses the journal provider to distill the SKILL.md body when entries are supplied', async () => {
+    const { promise, onProcessed } = awaitProcessed();
+    const handle = registerAutoExtractor({
+      rootDir,
+      journalProvider: () => [
+        { ts: 100, tool: 'navigate', args: { url: 'https://example.com/cart' }, ok: true, summary: 'Cart page' },
+        { ts: 101, tool: 'click', args: { label: 'Add to cart' }, ok: true },
+      ],
+      onProcessed,
+    });
+    contractRuntimeEvents.emit('transaction:settled', successRecord());
+    expect((await promise).ok).toBe(true);
+
+    const domainDir = path.join(rootDir, 'example.com');
+    const md = fs.readdirSync(domainDir).find((f) => f.endsWith('.md'))!;
+    const body = fs.readFileSync(path.join(domainDir, md), 'utf8');
+    expect(body).toMatch(/## Steps/);
+    expect(body).toMatch(/\*\*navigate\*\*/);
+    expect(body).toMatch(/\*\*click\*\*/);
+    expect(body).not.toMatch(/PR-20b/); // placeholder body is gone
+    handle.unregister();
+  });
+
+  test('falls back to placeholder body when journal provider yields nothing', async () => {
+    const { promise, onProcessed } = awaitProcessed();
+    const handle = registerAutoExtractor({
+      rootDir,
+      journalProvider: () => [],
+      onProcessed,
+    });
+    contractRuntimeEvents.emit('transaction:settled', successRecord());
+    expect((await promise).ok).toBe(true);
+
+    const domainDir = path.join(rootDir, 'example.com');
+    const md = fs.readdirSync(domainDir).find((f) => f.endsWith('.md'))!;
+    const body = fs.readFileSync(path.join(domainDir, md), 'utf8');
+    expect(body).toMatch(/PR-20b|contract-verified|successful trajectory/);
     handle.unregister();
   });
 
