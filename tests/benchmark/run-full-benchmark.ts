@@ -21,6 +21,12 @@ const WEBVOYAGER_TASKS_PATH = path.join(__dirname, 'webvoyager', 'tasks');
 
 type FullMode = 'live' | 'recorded';
 
+export interface FullBenchmarkCommand {
+  command: string;
+  args: string[];
+  label: string;
+}
+
 interface FullBenchmarkOptions {
   mode: FullMode;
   preflight: boolean;
@@ -88,6 +94,25 @@ export async function buildFullBenchmarkPreflight(argv: string[] = []): Promise<
   };
 }
 
+export function plannedFullBenchmarkCommands(mode: FullMode): FullBenchmarkCommand[] {
+  if (mode === 'recorded') {
+    return [
+      { command: 'node', args: ['benchmark/generate-benchmark-report.mjs'], label: 'unified recorded benchmark report' },
+      { command: 'npm', args: ['run', 'bench:readiness'], label: 'benchmark readiness audit' },
+    ];
+  }
+  return [
+    { command: 'npm', args: ['run', 'bench:runtime-preflight', '--', '--require-live'], label: 'runtime preflight' },
+    { command: 'npm', args: ['run', 'bench:competitor-smoke', '--', '--include-live=true'], label: 'live competitor smoke matrix' },
+    { command: 'npm', args: ['run', 'bench:tokens'], label: 'token efficiency axis' },
+    { command: 'npm', args: ['run', 'bench:throughput'], label: 'throughput axis' },
+    { command: 'npm', args: ['run', 'bench:auth'], label: 'auth usability axis' },
+    { command: 'npm', args: ['run', 'bench:dx'], label: 'developer experience axis' },
+    { command: 'npm', args: ['run', 'bench:realworld:headline'], label: 'recorded-real real-world task completion gate' },
+    { command: 'npm', args: ['run', 'bench:api-key-readiness'], label: 'api-key-only readiness gate' },
+  ];
+}
+
 function run(command: string, args: string[]): void {
   const child = spawnSync(command, args, { stdio: 'inherit', shell: false });
   if (child.status !== 0) throw new Error(`${command} ${args.join(' ')} exited with ${child.status}`);
@@ -104,6 +129,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   for (const missing of preflight.missing) console.error(`  - ${missing}`);
   console.error(`  worst-case USD        : $${preflight.costEstimate.worstCaseUsd.toFixed(2)}`);
   console.error(`  ordered axes          : ${preflight.orderedAxes.join(' -> ')}`);
+  console.error(`  executable commands   : ${plannedFullBenchmarkCommands(options.mode).map((c) => c.label).join(' -> ')}`);
   console.error(`Saved: ${path.relative(process.cwd(), OUTPUT_PATH)}`);
 
   if (options.preflight) {
@@ -115,13 +141,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     throw new Error('Refusing live benchmark execution without --execute; run --preflight first and provide required operator credentials/runtimes.');
   }
 
-  if (options.mode === 'recorded') {
-    run('node', ['benchmark/generate-benchmark-report.mjs']);
-    run('npm', ['run', 'bench:readiness']);
-    return;
+  if (options.mode === 'live' && preflight.missing.length > 0) {
+    throw new Error(`Refusing live benchmark execution because preflight is missing: ${preflight.missing.join('; ')}`);
   }
 
-  throw new Error('Live execution wrapper is intentionally gated; axis-specific runners must be invoked by the ordered live workflow after preflight passes.');
+  for (const step of plannedFullBenchmarkCommands(options.mode)) {
+    console.error(`[full-benchmark] running ${step.label}: ${step.command} ${step.args.join(' ')}`);
+    run(step.command, step.args);
+  }
+  return;
 }
 
 if (require.main === module) {
