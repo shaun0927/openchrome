@@ -61,11 +61,13 @@ export * as skill from './skill/index.js';
 export * as credentials from './credentials/store.js';
 
 import {
+  isAutoMemoryEnabled,
   isAutoSkillifyEnabled,
   isContractRuntimeEnabled,
   isSkillCuratorEnabled,
   isStateGraphEnabled,
 } from '../harness/flags.js';
+import { registerAutoMemory, type AutoMemoryHandle } from './auto-memory/index.js';
 import {
   createSidecarStatsResolver,
   defaultSkillRootDir,
@@ -107,6 +109,7 @@ export interface PilotBootstrapHandle {
 export function bootstrap(): PilotBootstrapHandle {
   const extractorHandles: AutoExtractorHandle[] = [];
   const curatorHandles: CuratorRunner[] = [];
+  const memoryHandles: AutoMemoryHandle[] = [];
 
   if (isAutoSkillifyEnabled() && isContractRuntimeEnabled() && isStateGraphEnabled()) {
     try {
@@ -114,6 +117,15 @@ export function bootstrap(): PilotBootstrapHandle {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[pilot] auto-skillify register failed: ${message}\n`);
+    }
+  }
+
+  if (isAutoMemoryEnabled() && isContractRuntimeEnabled()) {
+    try {
+      memoryHandles.push(registerAutoMemory());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[pilot] auto-memory register failed: ${message}\n`);
     }
   }
 
@@ -143,8 +155,12 @@ export function bootstrap(): PilotBootstrapHandle {
       for (const h of curatorHandles) {
         try { h.stop(); } catch { /* */ }
       }
+      for (const h of memoryHandles) {
+        try { h.unregister(); } catch { /* */ }
+      }
       extractorHandles.length = 0;
       curatorHandles.length = 0;
+      memoryHandles.length = 0;
     },
   };
 }
