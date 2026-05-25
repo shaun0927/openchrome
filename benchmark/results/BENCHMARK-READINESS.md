@@ -1,6 +1,6 @@
 # Open benchmark issue readiness audit
 
-Generated: 2026-05-17T16:32:47.118Z
+Generated: 2026-05-25T12:53:47.652Z
 
 ## Verdict
 
@@ -17,7 +17,7 @@ Generated: 2026-05-17T16:32:47.118Z
 | Not measurable yet | 0 |
 | API-key-only ready | 0 |
 | Blocked by non-key work | 15 |
-| Stale OpenChrome result artifacts | 2 |
+| Stale OpenChrome result artifacts | 10 |
 
 ## Issue matrix
 
@@ -262,13 +262,21 @@ Generated: 2026-05-17T16:32:47.118Z
 
 ## Result artifact freshness
 
-Current OpenChrome package version: `1.12.4`.
+Current OpenChrome package version: `1.12.5`.
 These committed result artifacts contain OpenChrome version pins older than the current package version. They remain diagnostic until regenerated or explicitly superseded:
 
 | Artifact | Expected OpenChrome version | Found OpenChrome versions |
 | --- | --- | --- |
-| `benchmark/results/longrun-stability.json` | `1.12.4` | `1.11.0` |
-| `benchmark/results/runtime-preflight.json` | `1.12.4` | `1.12.2` |
+| `benchmark/results/auth-usability.json` | `1.12.5` | `1.12.4` |
+| `benchmark/results/competitor-smoke.json` | `1.12.5` | `1.12.4` |
+| `benchmark/results/dx.json` | `1.12.5` | `1.12.4` |
+| `benchmark/results/episode-token-cost.json` | `1.12.5` | `1.12.4` |
+| `benchmark/results/longrun-stability.json` | `1.12.5` | `1.11.0` |
+| `benchmark/results/realworld-task-completion.json` | `1.12.5` | `1.12.4` |
+| `benchmark/results/reliability.json` | `1.12.5` | `1.12.4` |
+| `benchmark/results/runtime-preflight.json` | `1.12.5` | `1.12.2` |
+| `benchmark/results/speed-throughput.json` | `1.12.5` | `1.12.4` |
+| `benchmark/results/token-efficiency.json` | `1.12.5` | `1.12.4` |
 
 ## Additional PR scopes to reach API-key-only readiness
 
@@ -523,3 +531,4 @@ These are the remaining non-key PRs needed before supplying API keys should be e
   - npm run bench:readiness -- --strict
   - npm run bench:api-key-readiness
   - npm run build
+

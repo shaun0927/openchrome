@@ -41,7 +41,7 @@ describe('benchmark readiness audit', () => {
     expect(report.summary.nonKeyBlocked).toBe(15);
     expect(report.summary.apiKeyOnlyCanMeasureEveryOpenBenchmarkIssue).toBe(false);
     expect(report.summary.staleResultArtifactCount).toBeGreaterThan(0);
-    expect(report.artifactFreshness.currentOpenChromeVersion).toBe('1.12.4');
+    expect(report.artifactFreshness.currentOpenChromeVersion).toBe(require('../../package.json').version);
   });
 
   it('keeps the closed #1305 real-world task runner out of the open-issue audit', () => {

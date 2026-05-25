@@ -4,6 +4,16 @@ All notable changes to OpenChrome are documented here. For full release notes se
 
 ---
 
+## v1.12.5 — host-neutral harness release gates (2026-05-25)
+
+Focused release-prep patch after the host-neutral MCP browser harness SSOT.
+This release integrates startup-tab reuse, pilot memory foundations, and
+benchmark release-gate hardening while keeping full competitive benchmark
+headline claims gated behind live or recorded-real evidence.
+
+See [`docs/releases/v1.12.5.md`](docs/releases/v1.12.5.md) for the full
+release notes.
+
 ## v1.12.4 — API-key-only benchmark readiness gate (2026-05-17)
 
 Focused benchmark release-safety patch. This release adds an explicit
