@@ -10,9 +10,17 @@ an LLM**. Eliminates the self-vs-LLM-eval gap by construction.
 # Deterministic replay over frozen transcripts (CI default).
 npm run bench:webvoyager:mock
 
-# Real Claude API run (opt-in; spends money).
-ANTHROPIC_API_KEY=sk-... OPENCHROME_BENCH_REAL=1 \
-  npm run bench:webvoyager:real -- --task task-01-example-com-title
+# Real Claude API run (opt-in; spends money). Prefer file/stdin/env-ref
+# benchmark-only secret input flags over exporting long-lived shell env.
+OPENCHROME_BENCH_REAL=1 \
+  npm run bench:webvoyager:real -- \
+  --anthropic-api-key-file ~/.config/openchrome/anthropic-benchmark.key \
+  --task task-01-example-com-title
+
+# Equivalent one-shot stdin form; the key is copied into ANTHROPIC_API_KEY only
+# for this Node process.
+printf '%s' "$ANTHROPIC_API_KEY" | OPENCHROME_BENCH_REAL=1 \
+  npm run bench:webvoyager:real -- --api-key-stdin=anthropic --preflight
 
 # Fail-closed live preflight; exits non-zero if env/model prerequisites are missing
 # and does not make an API call.
@@ -39,8 +47,23 @@ for a headline Agent Task Success claim. Stateful controlled workflows live in
 | Adapter | Env | Notes |
 | --- | --- | --- |
 | `mock` | (default) | Replays JSONL transcripts under `transcripts/`. Deterministic, no network, no API key. CI uses this. |
-| `claude` | `OPENCHROME_BENCH_ADAPTER=claude`, `ANTHROPIC_API_KEY`, `OPENCHROME_BENCH_REAL=1` | Anthropic Messages API seam. Requires `@anthropic-ai/sdk` installed locally (`npm i -D @anthropic-ai/sdk`) before live execution. Preflight reports missing prerequisites before any API call. |
-| `openai` | `OPENAI_API_KEY`, `OPENCHROME_BENCH_REAL=1` | OpenAI tool-use seam using the same metadata, budget, and preflight contract. It is opt-in only and is not run by CI. |
+| `claude` | `OPENCHROME_BENCH_ADAPTER=claude`, `ANTHROPIC_API_KEY` or `--anthropic-api-key-file` / `--api-key-stdin=anthropic`, `OPENCHROME_BENCH_REAL=1` | Anthropic Messages API seam. Requires `@anthropic-ai/sdk` installed locally (`npm i -D @anthropic-ai/sdk`) before live execution. Preflight reports missing prerequisites before any API call. |
+| `openai` | `OPENAI_API_KEY` or `--openai-api-key-file` / `--api-key-stdin=openai`, `OPENCHROME_BENCH_REAL=1` | OpenAI tool-use seam using the same metadata, budget, and preflight contract. It is opt-in only and is not run by CI. |
+
+## Benchmark-only API key input
+
+Live benchmark commands accept process-local secret input flags before provider
+preflight runs:
+
+- `--anthropic-api-key-file <path>` / `--openai-api-key-file <path>`
+- `--api-key-stdin=anthropic` / `--api-key-stdin=openai`
+- `--api-key-env <ENV_NAME> --api-key-env-provider <anthropic|openai>`
+- `--anthropic-api-key <value>` / `--openai-api-key <value>` for controlled CI only
+
+The flags are benchmark-only conveniences under `tests/benchmark`; they do not
+write a credential store. Inline key values are redacted from benchmark argv
+diagnostics, but file/stdin/env-ref forms are preferred because inline flags can
+remain in shell history.
 
 ## Repetitions and live-run metadata
 
