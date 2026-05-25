@@ -245,6 +245,46 @@ describe('registerAutoExtractor', () => {
     handle.unregister();
   });
 
+  test('uses the journal provider to distill the SKILL.md body when entries are supplied', async () => {
+    const { promise, onProcessed } = awaitProcessed();
+    const handle = registerAutoExtractor({
+      rootDir,
+      journalProvider: () => [
+        { ts: 100, tool: 'navigate', args: { url: 'https://example.com/cart' }, ok: true, summary: 'Cart page' },
+        { ts: 101, tool: 'click', args: { label: 'Add to cart' }, ok: true },
+      ],
+      onProcessed,
+    });
+    contractRuntimeEvents.emit('transaction:settled', successRecord());
+    expect((await promise).ok).toBe(true);
+
+    const domainDir = path.join(rootDir, 'example.com');
+    const md = fs.readdirSync(domainDir).find((f) => f.endsWith('.md'))!;
+    const body = fs.readFileSync(path.join(domainDir, md), 'utf8');
+    expect(body).toMatch(/## Steps/);
+    expect(body).toMatch(/\*\*navigate\*\*/);
+    expect(body).toMatch(/\*\*click\*\*/);
+    expect(body).not.toMatch(/PR-20b/); // placeholder body is gone
+    handle.unregister();
+  });
+
+  test('falls back to placeholder body when journal provider yields nothing', async () => {
+    const { promise, onProcessed } = awaitProcessed();
+    const handle = registerAutoExtractor({
+      rootDir,
+      journalProvider: () => [],
+      onProcessed,
+    });
+    contractRuntimeEvents.emit('transaction:settled', successRecord());
+    expect((await promise).ok).toBe(true);
+
+    const domainDir = path.join(rootDir, 'example.com');
+    const md = fs.readdirSync(domainDir).find((f) => f.endsWith('.md'))!;
+    const body = fs.readFileSync(path.join(domainDir, md), 'utf8');
+    expect(body).toMatch(/PR-20b|contract-verified|successful trajectory/);
+    handle.unregister();
+  });
+
   test('unregister() is idempotent and stops further deliveries', async () => {
     let calls = 0;
     const handle = registerAutoExtractor({
