@@ -224,7 +224,7 @@ Transport stability policy: [`docs/transport-lifecycle.md`](docs/transport-lifec
 | CLI & playbook | [`docs/cli.md`](docs/cli.md) · [`docs/cli/playbook.md`](docs/cli/playbook.md) |
 | HTTP daemon mode | [`docs/getting-started/http-daemon.md`](docs/getting-started/http-daemon.md) |
 | Research recipes | [`docs/recipes/README.md`](docs/recipes/README.md) |
-| Latest release notes | [`docs/releases/v1.12.4.md`](docs/releases/v1.12.4.md) |
+| Latest release notes | [`docs/releases/v1.12.5.md`](docs/releases/v1.12.5.md) |
 
 ---
 
