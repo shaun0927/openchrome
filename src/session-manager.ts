@@ -7,7 +7,7 @@ import path from 'path';
 import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
 import { TargetOwnershipRegistry } from './session/target-registry';
-import { TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
+import { TargetLeaseConflictError, TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -242,7 +242,25 @@ export class SessionManager {
     if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName })) {
       return;
     }
-    this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+    try {
+      this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+    } catch (err) {
+      // #1359 backlog item 3: a conflicting lease means a stale or rogue
+      // owner still holds the registry entry — log loudly so operators see
+      // the duplicate-controller signal, then transfer ownership to the
+      // caller. This keeps the legacy targetToWorker map (which has already
+      // recorded the new owner) consistent with the registry and prevents
+      // the conflict from killing the caller's tool invocation.
+      if (err instanceof TargetLeaseConflictError) {
+        console.error(
+          `[SessionManager] Target ${targetId.slice(0, 8)} lease conflict: previous owner session=${err.existing.sessionId} worker=${err.existing.workerId ?? 'unknown'}; transferring to session=${sessionId} worker=${workerId}`,
+        );
+        this.targetLeases.release(targetId);
+        this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+        return;
+      }
+      throw err;
+    }
   }
 
   getTargetLease(targetId: string): TargetLeaseRecord | undefined {
