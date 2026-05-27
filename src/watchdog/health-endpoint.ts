@@ -51,6 +51,14 @@ export interface HealthData {
     errorCount1m: number;
     errorCount1h: number;
   };
+  controllerTopology?: {
+    role: 'owner' | 'unsafe-secondary-attach' | 'unlocked' | 'unknown';
+    port: number;
+    userDataDir: string;
+    lockPath: string;
+    ownerPid?: number;
+    remediation?: string;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;

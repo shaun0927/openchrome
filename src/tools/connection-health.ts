@@ -7,6 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getCDPClient } from '../cdp/client';
+import { getCurrentControllerTopology } from '../utils/duplicate-controller-diagnostics';
 
 const definition: MCPToolDefinition = {
   name: 'oc_connection_health',
@@ -48,6 +49,7 @@ const handler: ToolHandler = async (
               reconnecting: metrics.reconnecting,
               reconnectAttempt: metrics.reconnectAttempt,
               reconnectNextRetryInMs: metrics.reconnectNextRetryInMs,
+              controllerTopology: getCurrentControllerTopology(),
             },
             null,
             2
