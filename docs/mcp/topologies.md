@@ -56,3 +56,68 @@ openchrome config --client claude --topology dev-profile
 ## Future broker topology
 
 The planned broker topology will allow many MCP clients to share one direct Chrome owner. Until that exists, direct shared-profile multi-client setups should be treated as unsafe because independent processes can race over CDP target lifecycle, reconnect, and cleanup.
+
+## Shared-profile broker trust model
+
+Broker mode is the only supported way for more than one MCP client to share a
+single Chrome user data directory. The broker process is the sole CDP owner for
+that `(port, userDataDir)` pair; every other client must use `--connect-broker`
+so it forwards stdio JSON-RPC over the broker's HTTP endpoint instead of opening
+its own Chrome/CDP connection.
+
+Use shared-profile broker mode only inside a **same-trust-zone**:
+
+- all connected clients are operated by the same human or automation boundary;
+- every client is allowed to see browser state that the shared Chrome profile can
+  already see, including authenticated sites and open tabs;
+- the broker HTTP endpoint remains loopback-only unless protected by an explicit
+  bearer token or per-tenant API-key/JWT configuration;
+- untrusted or third-party agents use an isolated `--user-data-dir`, separate
+  debug port, or a separate broker.
+
+Do not mix trusted and untrusted MCP clients on one shared profile. The lease and
+queue diagnostics are structural by design: they may show session, worker, lane,
+target, and queue counters, but they must not expose URL, title, cookie,
+screenshot, DOM, or extracted page payloads across tenant boundaries.
+
+### Client recipes
+
+**Claude + Codex against one trusted browser**
+
+```bash
+# Terminal 1: the single Chrome/CDP owner
+openchrome serve --broker --auto-launch --http 3100 --port 9222 \
+  --user-data-dir ~/.openchrome/shared-profile
+
+# Terminal 2+: stdio MCP clients
+OPENCHROME_BROKER_CLIENT_ID=claude \
+  openchrome serve --connect-broker --port 9222 \
+  --user-data-dir ~/.openchrome/shared-profile
+
+OPENCHROME_BROKER_CLIENT_ID=codex \
+  openchrome serve --connect-broker --port 9222 \
+  --user-data-dir ~/.openchrome/shared-profile
+```
+
+**OMX / local agent swarm**
+
+Run the broker once in a durable pane, then configure each worker/client entry to
+use `--connect-broker` with a stable `OPENCHROME_BROKER_CLIENT_ID`. Do not let
+worker panes start direct `openchrome serve --auto-launch` processes against the
+same profile.
+
+**CI**
+
+Prefer `openchrome config --client codex --topology ci-headless` or isolated
+profiles per job. Use broker mode in CI only when the job intentionally tests
+multi-client shared-profile behavior.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Duplicate-controller error on startup | A client started direct mode against the shared profile | Stop the direct client and restart it with `--connect-broker`. |
+| `No broker metadata found` | Broker owner is not running or profile/port do not match | Start the broker with the same `--port` and `--user-data-dir`. |
+| A client lost connection but Chrome stayed open | Expected proxy disconnect behavior | Reconnect the stdio proxy; do not start a second direct owner. |
+| Cross-tenant resource denial | The MCP session is bound to a different tenant | Use the matching tenant credentials or an isolated profile. |
+| Memory pressure from too many tabs | Shared profile accumulates all clients' tabs | Close unused sessions/tabs or split clients across isolated profiles. |
