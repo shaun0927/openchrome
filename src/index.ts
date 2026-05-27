@@ -298,6 +298,12 @@ program
     const unsafeSharedAttach = options.allowUnsafeSharedAttach || process.env.OPENCHROME_ALLOW_UNSAFE_SHARED_ATTACH === '1';
     if (autoLaunch) {
       if (unsafeSharedAttach) {
+        try {
+          assertSharedProfileAllowed();
+        } catch (err) {
+          console.error(`[openchrome] ${(err as Error).message}`);
+          process.exit(2);
+        }
         console.error(
           '[openchrome] Warning: unsafe shared attach guard bypassed. Multiple direct OpenChrome controllers for the same Chrome/profile can disconnect or close each other\'s targets.',
         );

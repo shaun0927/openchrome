@@ -33,7 +33,7 @@ Broker diagnostics should not expose sensitive cross-tenant details by default. 
 
 Environment flags:
 
-- `OPENCHROME_SHARED_PROFILE_UNTRUSTED=1`: declare that clients are not in one trust zone; shared-profile broker startup should be rejected and isolated profiles should be used.
+- `OPENCHROME_SHARED_PROFILE_UNTRUSTED=1`: declare that clients are not in one trust zone. Any shared-profile entry point — `openchrome serve --broker` and `openchrome serve --allow-unsafe-shared-attach` (or `OPENCHROME_ALLOW_UNSAFE_SHARED_ATTACH=1`) — is rejected; isolated profiles must be used instead.
 - `OPENCHROME_SHARED_PROFILE_CROSS_TENANT_DIAGNOSTICS=1`: allow cross-tenant lease diagnostics for trusted local debugging.
 
 ## HTTP daemon default
