@@ -1709,7 +1709,11 @@ export class CDPClient {
         await smartGoto(page, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
         assertDomainAllowed(page.url());
       } catch (err) {
-        // Close the page to prevent about:blank ghost tabs on navigation failure
+        // Close the page to prevent about:blank ghost tabs on navigation failure.
+        // When `page` came from findReusableStartupPage the closed tab is the
+        // startup NTP — that's intentional: reuse is gated to isolated-mode
+        // (OpenChrome owns Chrome), so the user does not see a stuck about:blank
+        // from a failed first navigation.
         const targetId = getTargetId(page.target());
         this.targetIdIndex.delete(targetId);
         await page.close().catch(() => {});

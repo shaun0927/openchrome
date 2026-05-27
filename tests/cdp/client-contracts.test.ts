@@ -187,4 +187,27 @@ describe('CDPClient target/page contracts (#687 Wave 4 prereq)', () => {
     expect(startupTarget.page).not.toHaveBeenCalled();
   });
 
+  // Second-call guard: once targetIdIndex is non-empty the startup target must
+  // never be reused, even if Chrome still happens to list an NTP-shaped tab.
+  // Protects the bug where a second createPage call would race and consume an
+  // unrelated about:blank-ish target that another component opened.
+  it('createPage does not reuse startup candidates after the first default-context page is created', async () => {
+    const startupPage = makePage('startup-target', 'chrome://newtab/');
+    const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');
+    const secondPage = makePage('second-target');
+    const browser = makeBrowser([], [startupTarget]);
+    browser.newPage.mockResolvedValue(secondPage);
+    const client = connectedClient(browser);
+
+    const first = await client.createPage('https://first.test/', null, true);
+    expect(first).toBe(startupPage);
+    expect(browser.newPage).not.toHaveBeenCalled();
+
+    const second = await client.createPage('https://second.test/', null, true);
+
+    expect(second).toBe(secondPage);
+    expect(browser.newPage).toHaveBeenCalledTimes(1);
+    expect(startupTarget.page).toHaveBeenCalledTimes(1);
+  });
+
 });
