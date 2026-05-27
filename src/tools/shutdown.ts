@@ -16,6 +16,7 @@ import { getCDPConnectionPool } from '../cdp/connection-pool';
 import { getCDPClient } from '../cdp/client';
 import { getChromeLauncher } from '../chrome/launcher';
 import { shutdownHeadedFallback } from '../chrome/headed-fallback';
+import { shouldOcStopKeepChromeByDefault } from '../broker/lifecycle';
 
 const definition: MCPToolDefinition = {
   name: 'oc_stop',
@@ -25,7 +26,7 @@ const definition: MCPToolDefinition = {
     properties: {
       keepChrome: {
         type: 'boolean',
-        description: 'Keep Chrome running, just disconnect. Default: false',
+        description: 'Keep Chrome running, just disconnect. Default: false in standalone mode, true when running in broker owner mode so shared clients are not impacted.',
       },
       dryRun: {
         type: 'boolean',
@@ -42,7 +43,9 @@ const handler: ToolHandler = async (
   _sessionId: string,
   args: Record<string, unknown>
 ): Promise<MCPResult> => {
-  const keepChrome = (args.keepChrome as boolean) || false;
+  const keepChrome = typeof args.keepChrome === 'boolean'
+    ? (args.keepChrome as boolean)
+    : shouldOcStopKeepChromeByDefault();
   const dryRun = args.dryRun === true;
   const steps: string[] = [];
   const startTime = Date.now();
