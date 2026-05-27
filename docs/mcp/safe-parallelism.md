@@ -4,19 +4,23 @@ OpenChrome can drive many browser tasks in parallel, but the topology matters.
 
 ## Choose one topology
 
-### 1. Broker owner with many clients
+### 1. Broker owner with many clients (early)
 
-Use one OpenChrome broker owner for a shared Chrome profile, then point MCP clients at that owner.
+Use one OpenChrome broker owner for a shared Chrome profile, then point MCP clients at that owner. The `--broker` flag publishes broker metadata that proxy clients discover by matching on `--port` and `--user-data-dir`; the `--http` port is what proxies actually connect through, so the owner must keep running while clients are attached.
+
+Step 1 — start the broker owner once (keeps running):
 
 ```bash
-# Terminal 1: owns Chrome/CDP and publishes broker metadata
 openchrome serve --broker --auto-launch --http 3100 --port 9222 --user-data-dir ~/.openchrome/profiles/shared
+```
 
-# MCP client config: stdio proxy, no direct Chrome attach
+Step 2 — register each MCP client as a stdio proxy with the same `--port` + `--user-data-dir`:
+
+```bash
 openchrome serve --connect-broker --port 9222 --user-data-dir ~/.openchrome/profiles/shared
 ```
 
-This is the long-term shared-profile design: one direct CDP owner, many MCP clients. The broker owns browser lifecycle, leases, reconnect state, and per-target queues.
+This is the long-term shared-profile design: one direct CDP owner, many MCP clients. The broker owns browser lifecycle, leases, reconnect state, and per-target queues. Broker mode is implemented but still early — read the trust policy in [`docs/security/shared-profile-trust.md`](../security/shared-profile-trust.md) before sharing a profile across clients.
 
 ### 2. Independent direct MCP processes with isolated profiles
 
@@ -68,13 +72,13 @@ openchrome setup --client codex --port 9224 --user-data-dir ~/.openchrome/profil
 
 ### Claude + Codex with shared broker
 
-Run one broker owner:
+Step 1 — run one broker owner (keep this process running while clients are attached):
 
 ```bash
 openchrome serve --broker --auto-launch --http 3100 --port 9222 --user-data-dir ~/.openchrome/profiles/shared
 ```
 
-Configure both clients to use the stdio broker proxy command:
+Step 2 — register both Claude and Codex with the stdio broker proxy command, using the same `--port` and `--user-data-dir` as the owner so they discover the same broker metadata:
 
 ```bash
 openchrome serve --connect-broker --port 9222 --user-data-dir ~/.openchrome/profiles/shared

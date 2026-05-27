@@ -2,11 +2,7 @@
 
 ## MCP disconnected or tools disappeared
 
-1. Run diagnostics:
-
-   ```bash
-   openchrome doctor --check duplicate-controllers
-   ```
+1. From an MCP client, call `oc_doctor_report` and `oc_connection_health` — these expose the duplicate-controller signal and broker lifecycle directly through the MCP contract.
 
 2. Check running OpenChrome processes:
 
@@ -29,10 +25,8 @@ Likely causes:
 
 Safe next steps:
 
-```bash
-openchrome doctor --json
-openchrome check --port 9222
-```
+- Call `oc_doctor_report` (MCP) for a structured diagnostic snapshot, or `oc_connection_health` for the live controller topology and broker lifecycle state.
+- Run `openchrome check --port 9222` to confirm Chrome is still reachable on that port (this is a bare Chrome ping, not a parallelism diagnostic).
 
 Then restart only the affected MCP client or switch it to `--connect-broker` / isolated profile mode.
 
@@ -51,9 +45,17 @@ Codex now uses `~/.codex/config.toml`. If `~/.codex/mcp.json` still contains Ope
 
 ## Broker health checks
 
-Use `oc_connection_health` and the optional `/health` endpoint to inspect:
+Use the `oc_connection_health` MCP tool, or the optional `/health` HTTP endpoint when `--http` is enabled, to inspect controller topology and broker lifecycle. Both surfaces include sibling fields shaped like:
 
-- `controllerTopology.role`
-- `brokerLifecycle.mode`
-- `brokerLifecycle.reconnectState`
-- `brokerLifecycle.activeLeases`
+```json
+{
+  "controllerTopology": { "role": "owner" },
+  "brokerLifecycle": {
+    "mode": "broker-owner",
+    "reconnectState": "idle",
+    "activeLeases": 0
+  }
+}
+```
+
+`mode` is one of `direct`, `broker-owner`, or `broker-client`; `reconnectState` is one of `idle`, `reconnecting`, or `failed`.
