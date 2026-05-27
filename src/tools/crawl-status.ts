@@ -160,6 +160,13 @@ const handler: ToolHandler = async (
   for (const [k, v] of Object.entries(response)) {
     if (v !== undefined) cleaned[k] = v;
   }
+  // A3-PR2e note: `crawl_status` reads job state from the persisted
+  // job-store; it does not route any tab through BrowserRouter. The
+  // router-decision facts for each crawled page belong inside the
+  // worker's per-page records (a future PR) rather than on the
+  // status reader's response envelope. We deliberately omit
+  // `meta.path_taken` so the field does not give a misleading "n/a"
+  // signal that would force the host to special-case the value.
   return {
     content: [{ type: 'text', text: JSON.stringify(cleaned) }],
     ...cleaned,
