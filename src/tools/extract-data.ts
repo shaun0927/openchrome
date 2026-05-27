@@ -50,7 +50,26 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description:
           'JSON Schema defining output structure. ' +
-          'Example: { "type": "object", "properties": { "title": { "type": "string" }, "price": { "type": "number" } } }',
+          'Example: { "type": "object", "properties": { "title": { "type": "string" }, "price": { "type": "number" } } }. ' +
+          'Optional when `template_id` is supplied — the template\'s ' +
+          '`targetSchema.definition` is used as the schema instead.',
+      },
+      template_id: {
+        type: 'string',
+        description:
+          'A2-PR7 of #1359: optional outcome contract template id. When ' +
+          'supplied without `schema`, the tool resolves the named template ' +
+          'from the default registry and uses its `targetSchema.definition` ' +
+          "as the extraction schema. Public-web templates are pre-registered " +
+          "(public-web.page-meta / .spa-hydrated / .link-graph / " +
+          ".authenticated-fields). When both `schema` and `template_id` " +
+          'are supplied, the inline `schema` wins.',
+      },
+      template_version: {
+        type: 'number',
+        description:
+          'Optional template version to pair with `template_id`. When ' +
+          'omitted, the registry returns the latest registered version.',
       },
       instruction: {
         type: 'string',
@@ -98,7 +117,7 @@ const definition: MCPToolDefinition = {
       },
       ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
-    required: ['tabId', 'schema'],
+    required: ['tabId'],
   },
   annotations: TOOL_ANNOTATIONS.extract_data,
 };
@@ -180,7 +199,51 @@ const handler: ToolHandler = async (
   const budget = EXTRACTION_MODE_BUDGETS[extractionMode];
 
   const tabId = args.tabId as string;
-  const schema = args.schema as ExtractionSchema;
+  // A2-PR7: resolve `template_id` against the default outcome-contract
+  // template registry when `schema` is not supplied inline. Inline
+  // `schema` always wins so existing host integrations keep working.
+  let resolvedSchema = args.schema as ExtractionSchema | undefined;
+  if (resolvedSchema === undefined && typeof args.template_id === 'string') {
+    const templateVersion =
+      typeof args.template_version === 'number' && Number.isInteger(args.template_version)
+        ? args.template_version
+        : undefined;
+    const { getDefaultTemplateRegistry } = await import('../contracts/templates');
+    const tpl = getDefaultTemplateRegistry().get(args.template_id, templateVersion);
+    if (!tpl) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: template_id "${args.template_id}"` +
+            (templateVersion !== undefined ? `@${templateVersion}` : '') +
+            ' was not found in the default template registry',
+        }],
+        isError: true,
+      };
+    }
+    if (!tpl.targetSchema) {
+      return {
+        content: [{
+          type: 'text',
+          text:
+            `Error: template "${tpl.id}@${tpl.version}" has no ` +
+            '`targetSchema`; pass an inline `schema` instead',
+        }],
+        isError: true,
+      };
+    }
+    resolvedSchema = tpl.targetSchema.definition as ExtractionSchema;
+  }
+  if (resolvedSchema === undefined) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Error: provide either `schema` (inline) or `template_id` (registry lookup)',
+      }],
+      isError: true,
+    };
+  }
+  const schema = resolvedSchema;
   const selector = args.selector as string | undefined;
   const query = args.query as string | undefined;
   const refId = args.ref_id as string | undefined;
