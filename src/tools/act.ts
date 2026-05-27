@@ -125,11 +125,18 @@ function parseSampledActions(value: unknown): ParsedAction[] | null {
     if (!action || typeof action !== 'object') return null;
     const record = action as Record<string, unknown>;
     if (typeof record.action !== 'string' || !VALID_ACTIONS.has(record.action)) return null;
+    // `url` is accepted as a synonym for `value` (e.g. navigate actions) but
+    // must not silently shadow an explicit `value` the sampler also emitted.
+    const valueField = typeof record.value === 'string'
+      ? record.value
+      : typeof record.url === 'string'
+        ? record.url
+        : undefined;
     normalized.push({
       action: record.action as ParsedAction['action'],
       ...(typeof record.target === 'string' ? { target: record.target } : {}),
-      ...(typeof record.value === 'string' ? { value: record.value } : {}),
-      ...(typeof record.url === 'string' ? { value: record.url } : {}),
+      ...(valueField !== undefined ? { value: valueField } : {}),
+      ...(typeof record.condition === 'string' ? { condition: record.condition } : {}),
     });
   }
   return normalized;
@@ -152,7 +159,7 @@ async function maybeRefineActionsWithSampling(
         role: 'user',
         content: {
           type: 'text',
-          text: `Choose the safest deterministic OpenChrome act action sequence for: ${instruction}\nReturn strict JSON only: {'actions':[{'action':'click|type|select|hover|scroll|wait|navigate|check|uncheck','target':'optional','value':'optional'}]}`,
+          text: `Choose the safest deterministic OpenChrome act action sequence for: ${instruction}\nReturn strict JSON only: {"actions":[{"action":"click|type|select|hover|scroll|wait|navigate|check|uncheck","target":"optional","value":"optional","condition":"optional"}]}`,
         },
       }],
       maxTokens: 400,
@@ -734,7 +741,12 @@ Suggestion: ${suggestion}`,
     }
   }
 
-  const samplingResult = await maybeRefineActionsWithSampling(instruction, actions, context);
+  // Cached/templated sequences are already known-good; subjecting them to a
+  // sampling round-trip would only add tokens and risk regressions per P4/P7.
+  const allowSampling = source === 'parsed';
+  const samplingResult = allowSampling
+    ? await maybeRefineActionsWithSampling(instruction, actions, context)
+    : { actions, decision: { used: false, supported: false, fallbackReason: `skipped_${source}` } as SamplingDecision };
   actions = samplingResult.actions;
   const samplingDecision = samplingResult.decision;
 
@@ -909,9 +921,12 @@ Suggestion: ${suggestion}`,
     lines.push('', `[Warning] ${parseWarning}`);
   }
 
-  if (samplingDecision) {
+  // Only surface the [Sampling] line and `_meta.sampling` when the connected
+  // client actually advertised sampling; otherwise this would pollute every
+  // act result for clients that never opted into sampling.
+  if (samplingDecision.supported) {
     const reason = samplingDecision.fallbackReason ? ` fallback=${samplingDecision.fallbackReason}` : '';
-    lines.push('', `[Sampling] supported=${samplingDecision.supported} used=${samplingDecision.used}${reason}`);
+    lines.push('', `[Sampling] used=${samplingDecision.used}${reason}`);
   }
 
   if (workflowDebug && workflowDecision) {
@@ -922,7 +937,7 @@ Suggestion: ${suggestion}`,
     content: [{ type: 'text', text: lines.join('\n') }],
     isError: !success,
   };
-  const withMeta = samplingDecision ? { ...baseResult, _meta: { sampling: samplingDecision } } : baseResult;
+  const withMeta = samplingDecision.supported ? { ...baseResult, _meta: { sampling: samplingDecision } } : baseResult;
   return actVerifyReport ? { ...withMeta, verify: actVerifyReport } : withMeta;
 };
 

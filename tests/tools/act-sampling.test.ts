@@ -37,4 +37,43 @@ describe('act client-mediated sampling (#876)', () => {
     expect(result.actions).toBe(parsedActions);
     expect(result.decision).toMatchObject({ used: false, fallbackReason: 'invalid_sampling_response' });
   });
+
+  test('falls back deterministically when sampling throws (timeout or transport error)', async () => {
+    const requestClient = jest.fn(async () => { throw new Error('s2c_timeout:sampling/createMessage'); });
+    const result = await __test__.maybeRefineActionsWithSampling('continue', parsedActions, {
+      clientCapabilities: { sampling: {} },
+      requestClient,
+    } as any);
+
+    expect(result.actions).toBe(parsedActions);
+    expect(result.decision).toMatchObject({
+      supported: true,
+      used: false,
+      fallbackReason: 's2c_timeout:sampling/createMessage',
+    });
+  });
+
+  test('treats url as a fallback for value but does not let url shadow value', () => {
+    const parsed = __test__.parseSampledActions({
+      content: [{ type: 'text', text: JSON.stringify({ actions: [
+        { action: 'navigate', value: 'https://wins.test', url: 'https://loses.test' },
+        { action: 'navigate', url: 'https://only-url.test' },
+      ] }) }],
+    });
+
+    expect(parsed).toEqual([
+      { action: 'navigate', value: 'https://wins.test' },
+      { action: 'navigate', value: 'https://only-url.test' },
+    ]);
+  });
+
+  test('preserves wait condition from sampled actions', () => {
+    const parsed = __test__.parseSampledActions({
+      content: [{ type: 'text', text: JSON.stringify({ actions: [
+        { action: 'wait', target: 'Submit', condition: 'appear' },
+      ] }) }],
+    });
+
+    expect(parsed).toEqual([{ action: 'wait', target: 'Submit', condition: 'appear' }]);
+  });
 });
