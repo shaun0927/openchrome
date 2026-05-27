@@ -31,6 +31,8 @@ import {
   parseOutputMode,
   resolveOutputMode,
 } from './_shared/output-mode';
+import { pathMetaFor, type PathMetaFields } from './_shared/path-meta';
+import { getSessionManager } from '../session-manager';
 
 interface OcEvidenceBundleOutput {
   bundle_id: string;
@@ -39,6 +41,12 @@ interface OcEvidenceBundleOutput {
   parts: string[];
   /** Filled when no snapshot was supplied; bundle is still created (empty). */
   inconclusive_reason?: string;
+  /**
+   * Most-recent BrowserRouter decision for the supplied `tab_id`, if any.
+   * Strictly additive: only present when the caller supplied `tab_id` AND
+   * the router recorded a decision for that target.
+   */
+  meta?: PathMetaFields;
 }
 
 interface SnapshotInput {
@@ -102,6 +110,15 @@ const definition: MCPToolDefinition = {
           },
         },
       },
+      tab_id: {
+        type: 'string',
+        description:
+          'Optional tabId. When supplied, the bundle response gains a ' +
+          '`meta.path_taken` field carrying the most-recent BrowserRouter ' +
+          'decision for that target — so traces always record which ' +
+          'backend served the page that produced the evidence. Omitted ' +
+          'when no routing decision is recorded for the tab.',
+      },
       ...OUTPUT_MODE_SCHEMA_PROPERTIES,
     },
     required: [],
@@ -163,6 +180,10 @@ const handler: ToolHandler = async (
     path: result.path,
     size_bytes: result.size_bytes,
     parts: result.parts,
+    ...pathMetaFor(
+      getSessionManager(),
+      typeof args.tab_id === 'string' ? args.tab_id : undefined,
+    ),
   };
   if (result.parts.length === 0) {
     output.inconclusive_reason =
