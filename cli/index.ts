@@ -24,17 +24,18 @@ import { execFileSync, spawn } from 'child_process';
 import { checkForUpdates } from './update-check';
 import { runUpdateCommand } from './update-command';
 import {
+  formatCodexMCPServerConfigSnippet,
   formatMCPServerConfigSnippet,
   getClientLabel,
   getClaudeManualServerConfig,
   getClaudeSetupCommand,
   getCodexServerConfig,
+  getCodexSetupCommand,
   getOpenCodeServerConfig,
   formatOpenCodeMCPServerConfigSnippet,
   getSupportedMCPClients,
   isSupportedMCPClient,
   upsertOpenCodeMCPServerConfig,
-  upsertMCPServerConfig,
 } from './mcp-client-config';
 import {
   addTotpSecret,
@@ -330,34 +331,28 @@ program
     }
 
     if (scope !== 'user') {
-      console.warn('⚠️  Scope is not used for Codex CLI; writing to ~/.codex/mcp.json.');
+      console.warn('⚠️  Scope is not used for Codex CLI; configuring the user-level Codex MCP registry.');
     }
 
+    const codexSetupArgs = getCodexSetupCommand(serveArgOptions);
+    console.log('Running: codex mcp add openchrome...');
+
     try {
-      const codexConfigPath = path.join(os.homedir(), '.codex', 'mcp.json');
-      fs.mkdirSync(path.dirname(codexConfigPath), { recursive: true });
-
-      let config: Record<string, unknown> = {};
-      if (fs.existsSync(codexConfigPath)) {
-        config = JSON.parse(fs.readFileSync(codexConfigPath, 'utf8'));
-      }
-
-      const updatedConfig = upsertMCPServerConfig(config, 'openchrome', getCodexServerConfig(serveArgOptions));
-      fs.writeFileSync(codexConfigPath, JSON.stringify(updatedConfig, null, 2) + '\n');
+      execFileSync('codex', codexSetupArgs, { stdio: 'inherit' });
 
       console.log('\n✅ MCP server configured successfully!\n');
-      console.log(`Config file: ${codexConfigPath}`);
+      console.log('Config file: ~/.codex/config.toml');
       console.log('Updates: run "openchrome update"\n');
       console.log('Next steps:');
       console.log('  1. Restart Codex CLI');
       console.log('  2. Verify the openchrome MCP server reconnects cleanly\n');
       console.log('Installed MCP snippet:');
-      console.log(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
+      console.log(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
     } catch (error) {
       console.error('\n❌ Failed to configure MCP server for Codex CLI.');
       console.error(`   ${error instanceof Error ? error.message : String(error)}`);
-      console.error('   You can manually add this to ~/.codex/mcp.json:');
-      console.error(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
+      console.error('   You can manually add this to ~/.codex/config.toml:');
+      console.error(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
       process.exit(1);
     }
   });
@@ -386,7 +381,7 @@ program
       return;
     }
 
-    console.log(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
+    console.log(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
   });
 
 program

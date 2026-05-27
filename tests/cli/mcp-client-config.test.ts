@@ -1,8 +1,10 @@
 import {
+  formatCodexMCPServerConfigSnippet,
   formatMCPServerConfigSnippet,
   getClaudeManualServerConfig,
   getClaudeSetupCommand,
   getCodexServerConfig,
+  getCodexSetupCommand,
   getServeArgs,
   isSupportedMCPClient,
   upsertMCPServerConfig,
@@ -26,6 +28,22 @@ describe('cli/mcp-client-config', () => {
       command: 'openchrome',
       args: ['serve', '--auto-launch'],
     });
+  });
+
+  test('getCodexSetupCommand uses the Codex MCP registry add command without a destructive remove step', () => {
+    const command = getCodexSetupCommand({ dashboard: true });
+
+    expect(command).toEqual([
+      'mcp',
+      'add',
+      'openchrome',
+      '--',
+      'openchrome',
+      'serve',
+      '--auto-launch',
+      '--dashboard',
+    ]);
+    expect(command).not.toContain('remove');
   });
 
   test('getClaudeManualServerConfig uses the installed openchrome binary', () => {
@@ -89,12 +107,23 @@ describe('cli/mcp-client-config', () => {
     });
   });
 
+  test('formatCodexMCPServerConfigSnippet serializes Codex config.toml format', () => {
+    expect(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig())).toBe(
+      [
+        '[mcp_servers.openchrome]',
+        'command = "openchrome"',
+        'args = ["serve", "--auto-launch"]',
+      ].join('\n')
+    );
+  });
+
   test('generated configs do not use transient package runners', () => {
     const serialized = [
       JSON.stringify(getCodexServerConfig()),
       JSON.stringify(getClaudeManualServerConfig()),
-      formatMCPServerConfigSnippet('openchrome', getCodexServerConfig()),
+      formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig()),
       getClaudeSetupCommand('user').join(' '),
+      getCodexSetupCommand().join(' '),
     ].join('\n');
 
     expect(serialized).not.toContain('npx');

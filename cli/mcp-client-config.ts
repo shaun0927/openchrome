@@ -69,6 +69,19 @@ export function getCodexServerConfig(options: ServeArgOptions = {}): MCPServerCo
   };
 }
 
+export function getCodexSetupCommand(options: ServeArgOptions = {}): string[] {
+  return ['mcp', 'add', 'openchrome', '--', 'openchrome', ...getServeArgs(options)];
+}
+
+export function formatCodexMCPServerConfigSnippet(serverName: string, serverConfig: MCPServerConfig): string {
+  const quotedArgs = serverConfig.args.map((arg) => JSON.stringify(arg)).join(', ');
+  return [
+    `[mcp_servers.${serverName}]`,
+    `command = ${JSON.stringify(serverConfig.command)}`,
+    `args = [${quotedArgs}]`,
+  ].join('\n');
+}
+
 export function getClaudeManualServerConfig(options: ServeArgOptions = {}): MCPServerConfig {
   return {
     command: 'openchrome',
