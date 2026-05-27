@@ -22,9 +22,12 @@
  * Known exemptions (tools that do NOT surface `meta.path_taken`):
  *
  *   - `crawl_start`: host-driven async tool that does not route through
- *     BrowserRouter. The router-decision facts for each crawled page are
- *     surfaced on `crawl_status` (per page) and on tool calls that consume
- *     the resulting pages.
+ *     BrowserRouter. The router-decision facts for each crawled page
+ *     belong inside the worker's per-page records and on tool calls that
+ *     consume the resulting pages.
+ *   - `crawl_status`: reads job state from the persisted job-store; it
+ *     does not route any tab through BrowserRouter. Per-page facts are
+ *     captured inside the worker, not surfaced on the status reader.
  */
 
 import type { SessionManager } from '../../session-manager';
