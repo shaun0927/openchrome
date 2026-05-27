@@ -1929,6 +1929,10 @@ export class SessionManager {
     const aliveTargets = browser.targets().filter(t => t.type() === 'page');
     const aliveTargetIds = new Set(aliveTargets.map(t => getTargetId(t)));
     this.targetLeases.reconcileAliveTargetIds(aliveTargetIds);
+    // #1359 backlog item 4: drop per-target queues whose targetId no longer
+    // exists post-reconnect so closed/expired targets stop holding queue
+    // state and metrics in memory.
+    this.targetQueueManager.reconcileAliveTargetIds(aliveTargetIds);
 
     // Build a map of untracked live targets by URL for re-mapping
     const untrackedByUrl = new Map<string, Target>();
