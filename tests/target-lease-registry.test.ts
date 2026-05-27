@@ -23,6 +23,7 @@ describe('TargetLeaseRegistry', () => {
     const popup = registry.inherit('popup', 'parent');
 
     expect(popup).toMatchObject({ targetId: 'popup', sessionId: 's1', workerId: 'w1', contextName: 'ctx' });
+    expect(registry.snapshot()).toHaveLength(2);
   });
 
   test('expires and reconciles orphan leases', () => {

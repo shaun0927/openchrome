@@ -253,6 +253,7 @@ export class SessionManager {
     parentTargetId?: string,
   ): void {
     if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName })) {
+      setBrokerActiveLeases(this.targetLeases.snapshot().length);
       return;
     }
     this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
