@@ -9,6 +9,12 @@ import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, Worke
 import { TargetOwnershipRegistry } from './session/target-registry';
 import { TargetLeaseConflictError, TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
 import { TargetQueueManager } from './session/target-command-queue';
+import {
+  markBrokerReconnectFailed,
+  markBrokerReconnectStart,
+  markBrokerReconnectSuccess,
+  setBrokerActiveLeases,
+} from './broker/lifecycle';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -182,11 +188,16 @@ export class SessionManager {
     // Validate stale targets after reconnection
     this.cdpClient.addConnectionListener((event) => {
       if (event.type === 'reconnected') {
+        markBrokerReconnectSuccess();
         this.validateTargetsAfterReconnect().catch((err) => {
           console.error('[SessionManager] Post-reconnect target validation failed:', err);
         });
       }
+      if (event.type === 'disconnected' || event.type === 'reconnecting') {
+        markBrokerReconnectStart();
+      }
       if (event.type === 'reconnect_failed') {
+        markBrokerReconnectFailed('CDP reconnect failed');
         // Chrome is gone — purge all stale target mappings
         console.error('[SessionManager] Reconnect failed, clearing stale target mappings');
         for (const targetId of Array.from(this.targetToWorker.keys())) {
@@ -247,10 +258,12 @@ export class SessionManager {
     parentTargetId?: string,
   ): void {
     if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName })) {
+      setBrokerActiveLeases(this.targetLeases.snapshot().length);
       return;
     }
     try {
       this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+      setBrokerActiveLeases(this.targetLeases.snapshot().length);
     } catch (err) {
       // #1359 backlog item 3: a conflicting lease means a stale or rogue
       // owner still holds the registry entry — log loudly so operators see
@@ -264,6 +277,7 @@ export class SessionManager {
         );
         this.targetLeases.release(targetId);
         this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+        setBrokerActiveLeases(this.targetLeases.snapshot().length);
         return;
       }
       throw err;
@@ -616,6 +630,7 @@ export class SessionManager {
     // Remove session
     this.sessions.delete(sessionId);
     this.targetLeases.releaseSession(sessionId);
+    setBrokerActiveLeases(this.targetLeases.snapshot().length);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
     this.emitLifecycle({ kind: 'session:destroy', sessionId, reason, ts: Date.now() });
 
@@ -1660,6 +1675,7 @@ export class SessionManager {
       // Remove from mapping
       this.targetToWorker.delete(targetId);
       this.targetLeases.release(targetId, sessionId);
+      setBrokerActiveLeases(this.targetLeases.snapshot().length);
       this.targetQueueManager.cancelTarget(targetId);
 
       // #848: drop named-context association on graceful close.
@@ -1758,6 +1774,7 @@ export class SessionManager {
 
         this.targetToWorker.delete(targetId);
         this.targetLeases.release(targetId, ownerInfo.sessionId);
+        setBrokerActiveLeases(this.targetLeases.snapshot().length);
         this.targetQueueManager.cancelTarget(targetId);
         this.stealthTargets.delete(targetId);
 
@@ -1933,6 +1950,7 @@ export class SessionManager {
     // exists post-reconnect so closed/expired targets stop holding queue
     // state and metrics in memory.
     this.targetQueueManager.reconcileAliveTargetIds(aliveTargetIds);
+    setBrokerActiveLeases(this.targetLeases.snapshot().length);
 
     // Build a map of untracked live targets by URL for re-mapping
     const untrackedByUrl = new Map<string, Target>();

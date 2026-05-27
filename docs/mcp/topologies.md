@@ -4,7 +4,7 @@ OpenChrome currently supports one safe direct-controller rule:
 
 > Run at most one direct `openchrome serve --auto-launch` process for the same Chrome debug port and user-data directory.
 
-Multiple MCP clients can still run in parallel today, but each direct OpenChrome process should use an explicit isolated Chrome topology until broker mode is available.
+Multiple MCP clients can still run in parallel today, either through isolated direct topologies or through the shared broker (early — see [Safe OpenChrome parallelism](./safe-parallelism.md) for full recipes and tradeoffs).
 
 ## Single-owner default
 
@@ -53,6 +53,11 @@ For local development, use a named development profile:
 openchrome config --client claude --topology dev-profile
 ```
 
-## Future broker topology
+## Shared broker topology (early)
 
-The planned broker topology will allow many MCP clients to share one direct Chrome owner. Until that exists, direct shared-profile multi-client setups should be treated as unsafe because independent processes can race over CDP target lifecycle, reconnect, and cleanup.
+The broker topology lets many MCP clients share one direct Chrome owner. It is implemented (`openchrome serve --broker` plus `openchrome serve --connect-broker`) but still early — exercise it with care. Direct shared-profile multi-client setups without the broker remain unsafe because independent processes race over CDP target lifecycle, reconnect, and cleanup. See [Safe OpenChrome parallelism](./safe-parallelism.md) for the full broker recipe.
+
+## See also
+
+- [Safe OpenChrome parallelism](./safe-parallelism.md)
+- [Parallelism troubleshooting](./troubleshooting-parallelism.md)
