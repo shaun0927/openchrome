@@ -38,7 +38,25 @@ export type EvidenceBundlePart =
   | 'network'
   | 'console'
   | 'phash'
+  | 'gate'
   | 'schema_diff';
+
+/**
+ * Gate fact surfaced into the bundle (B2-PR4). Mirrors the closed
+ * vocabulary of `oc_gate_inspect`'s output without depending on the tool
+ * module — the bundle writer is intentionally I/O-only.
+ */
+export interface GateFact {
+  detected: boolean;
+  kind?: string;
+  gateType?: string;
+  siteKey?: string;
+  siteKeySource?: string;
+  invisible?: boolean;
+  provider?: string;
+  selector?: string;
+  pageUrl?: string;
+}
 
 /** Default include set — cheap parts that almost every caller wants. */
 export const DEFAULT_INCLUDE: readonly EvidenceBundlePart[] = ['dom', 'screenshot'];
@@ -82,6 +100,12 @@ export interface EvidenceBundleSnapshot {
   console?: ConsoleEntry[];
   /** Optional clock used for the network window. Defaults to `Date.now()`. */
   now_ms?: number;
+  /**
+   * Caller-supplied gate fact (B2-PR4). Sourced from `oc_gate_inspect`
+   * or constructed by the host. Written to `gate.json` when the
+   * `gate` part is included.
+   */
+  gate?: GateFact;
   /**
    * Caller-supplied structured data extracted from the page. Diffed against
    * `EvidenceBundleOptions.targetSchema` (B1-PR1 schema-diff) when both
@@ -208,6 +232,14 @@ export function writeEvidenceBundle(
     parts.push(filename);
   }
 
+  // ── Gate fact ─────────────────────────────────────────────────────────
+  if (include.has('gate') && snapshot.gate !== undefined) {
+    const filename = 'gate.json';
+    const payload = JSON.stringify(snapshot.gate, null, 2);
+    totalBytes += writePart(bundleDir, filename, payload);
+    parts.push(filename);
+  }
+
   // ── Schema diff ───────────────────────────────────────────────────────
   let schemaDiff: SchemaDiff | undefined;
   if (
@@ -271,7 +303,15 @@ function normalizeInclude(
   if (!include || include.length === 0) {
     return new Set(DEFAULT_INCLUDE);
   }
-  const valid: EvidenceBundlePart[] = ['dom', 'screenshot', 'network', 'console', 'phash', 'schema_diff'];
+  const valid: EvidenceBundlePart[] = [
+    'dom',
+    'screenshot',
+    'network',
+    'console',
+    'phash',
+    'gate',
+    'schema_diff',
+  ];
   const out = new Set<EvidenceBundlePart>();
   for (const item of include) {
     if ((valid as string[]).includes(item)) out.add(item);

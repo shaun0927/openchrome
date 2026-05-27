@@ -144,6 +144,30 @@ describe('writeEvidenceBundle — individual include flags', () => {
     expect(payload.entries[49].text).toBe('line-249');
   });
 
+  test("include=['gate']: writes caller-supplied gate fact to gate.json", () => {
+    const rootDir = mkRoot();
+    const gate = {
+      detected: true,
+      kind: 'captcha',
+      gateType: 'turnstile',
+      siteKey: 'site-key-1',
+      siteKeySource: 'data-sitekey',
+      invisible: false,
+      provider: 'cloudflare',
+      selector: '#challenge',
+      pageUrl: 'https://example.test/login',
+    };
+    const result = writeEvidenceBundle({ gate }, { rootDir, include: ['gate'] });
+    expect(result.parts).toEqual(['gate.json']);
+    expect(readJson(path.join(result.path, 'gate.json'))).toEqual(gate);
+  });
+
+  test("include=['gate'] without a gate fact omits the part gracefully", () => {
+    const rootDir = mkRoot();
+    const result = writeEvidenceBundle({}, { rootDir, include: ['gate'] });
+    expect(result.parts).toEqual([]);
+  });
+
   test("include=['phash']: writes a 16-char lowercase hex digest", () => {
     const rootDir = mkRoot();
     const png = encodeRgbaPng(32, 32, gradientRgba(32, 32));

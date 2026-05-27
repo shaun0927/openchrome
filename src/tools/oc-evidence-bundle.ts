@@ -58,6 +58,8 @@ interface SnapshotInput {
   network?: NetworkEntry[];
   console?: ConsoleEntry[];
   now_ms?: number;
+  /** Caller-supplied gate fact (typically the oc_gate_inspect output). */
+  gate?: Record<string, unknown>;
   /** Structured data the caller extracted from the page; diffed against `target_schema`. */
   observed?: unknown;
 }
@@ -68,6 +70,7 @@ const VALID_PARTS: readonly EvidenceBundlePart[] = [
   'network',
   'console',
   'phash',
+  'gate',
   'schema_diff',
 ];
 
@@ -88,8 +91,9 @@ const definition: MCPToolDefinition = {
         description:
           "Which parts to capture. Default ['dom', 'screenshot']. Allowed " +
           "items: 'dom' | 'screenshot' | 'network' | 'console' | 'phash' | " +
-          "'schema_diff'. `schema_diff` requires `target_schema` and " +
-          '`evidence.snapshot.observed`; otherwise the part is omitted.',
+          "'gate' | 'schema_diff'. `gate` requires `evidence.snapshot.gate`; " +
+          '`schema_diff` requires `target_schema` and `evidence.snapshot.observed`; ' +
+          'otherwise the part is omitted.',
         items: {
           type: 'string',
           enum: VALID_PARTS as unknown as string[],
@@ -114,15 +118,16 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description:
           'Caller-supplied snapshot. Provide the subset of fields the requested ' +
-          'parts need: `dom`, `screenshot_png_base64`, `network`, `console`, `now_ms`. ' +
-          'Missing fields cause the corresponding part to be omitted gracefully.',
+          'parts need: `dom`, `screenshot_png_base64`, `network`, `console`, `now_ms`, ' +
+          '`gate`, `observed`. Missing fields cause the corresponding part to be omitted gracefully.',
         properties: {
           snapshot: {
             type: 'object',
             description:
               'Snapshot fields. `dom` (string|object), `screenshot_png_base64` (base64 PNG), ' +
               '`network` (NetworkEntry[]), `console` (ConsoleEntry[]), `now_ms` (epoch ms ' +
-              'used for the network window cutoff).',
+              'used for the network window cutoff), `gate` (oc_gate_inspect-compatible fact), ' +
+              '`observed` (structured extraction data for schema_diff).',
           },
         },
       },
@@ -153,6 +158,13 @@ function buildSnapshot(input: SnapshotInput | undefined): EvidenceBundleSnapshot
   if (Array.isArray(input.network)) out.network = input.network;
   if (Array.isArray(input.console)) out.console = input.console;
   if (typeof input.now_ms === 'number') out.now_ms = input.now_ms;
+  if (input.gate && typeof input.gate === 'object') {
+    // Shallow-copy through with `unknown` shape; the bundle writer is
+    // schema-neutral and persists the JSON verbatim. The MCP tool surface
+    // intentionally avoids re-importing oc_gate_inspect types so the
+    // bundle module stays I/O-only.
+    out.gate = input.gate as unknown as EvidenceBundleSnapshot['gate'];
+  }
   if (input.observed !== undefined) out.observed = input.observed;
   return out;
 }
@@ -234,7 +246,7 @@ const handler: ToolHandler = async (
   if (result.parts.length === 0) {
     output.inconclusive_reason =
       'no evidence parts captured — supply `evidence.snapshot` with at least one of ' +
-      "dom / screenshot_png_base64 / network / console / observed, and select matching `include` parts.";
+      "dom / screenshot_png_base64 / network / console / gate / observed, and select matching `include` parts.";
   }
   const inlineResult = jsonResult(output);
   return resolveOutputMode(mode, inlineLimit, inlineResult, output, 'oc_evidence_bundle');
