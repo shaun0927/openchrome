@@ -1,5 +1,5 @@
 ---
-status: draft
+status: rejected
 issue: 900
 created: 2026-05-12
 tier: pilot (proposed)
@@ -8,7 +8,7 @@ depends_on: portability-harness-contract.md (P1-P5)
 
 # RFC: Optional Companion Chrome Extension for chrome.* APIs
 
-> **Status**: draft — gathering alignment on the 7 open questions below. No code will be written under this RFC until it is marked `accepted` or `accepted-phased`.
+> **Status**: rejected for now — Phase 0 evidence did not justify opening implementation phases. No companion-extension code should be written until a future RFC is reopened with valid control measurements and a completed BrowserMCP arm.
 > **Tracking issue**: [#900](https://github.com/shaun0927/openchrome/issues/900)
 
 > **Target branch (when implementation phases land)**: `develop` (per `CLAUDE.md`). This RFC itself targets no branch; it lives as an issue + a docs commit if accepted.
@@ -93,17 +93,27 @@ The two existing PR-queue families that resemble this idea — the LLM merge req
 
 The closest precedent is the current pilot/handoff token: a feature that ships in the pilot tier, behind explicit consent, with byte-parity off-behavior.
 
-## What this RFC asks for
+## Decision
+
+Rejected for now. The Phase 0 memo in `docs/experiments/extension-connector-phase0.md` produced an invalid/no-go result: OpenChrome control slots C1/C2 failed, and the BrowserMCP extension arm was not completed. That means the RFC has no evidence that an optional companion extension solves a real gap better than fixing the existing OpenChrome measurement/control path first.
+
+This is not a permanent ban on a companion extension. A future RFC may reopen the topic only after:
+
+1. OpenChrome controls C1/C2 pass under the Phase 0 harness.
+2. BrowserMCP manual extension rows are completed on the same machine/session.
+3. The result satisfies the existing go rule: BrowserMCP passes at least 3 target slots where OpenChrome fails.
+
+### Decisions on the seven RFC questions
 
 A decision on the following before any implementation issue is opened:
 
-1. **Distribution model for the extension**. Web Store account ownership, signing, and unpacked-load instructions. Who maintains the extension publishing pipeline?
-2. **Permission ratchet**. The proposed permission set is `history`, `bookmarks`, `downloads`, `nativeMessaging`. Is that the floor we are willing to ship? Adding any later requires republishing.
-3. **Bridge package boundary**. The current monorepo holds only `openchrome-mcp`. Adding `packages/companion-bridge/` (and possibly `packages/companion-extension/`) requires a monorepo decision (npm workspaces? lerna?). What is acceptable?
-4. **Threat model**. The extension has read access to the user's full history. If openchrome is compromised, does the threat model assume the user's history is also compromised? What auditing surface (extension UI, log file) is required?
-5. **Cross-platform Native Messaging and IPC quirks**. mcp-chrome's open issues document recurring failures with nvm/asdf/volta/fnm-managed Node binaries (the manifest's `path` to the Node script changes with version). The local IPC hop also needs per-platform socket/pipe path handling. What is the fallback story?
-6. **Tools opt-in granularity**. Single `--companion-extension` flag, or per-tool flags (`--companion-history`, `--companion-bookmarks`)?
-7. **MV3 service-worker lifetime**. The MV3 worker terminates after inactivity, and the native host cannot wake a dormant service worker by itself. Is the documented behavior acceptable: tools fail closed with `companion_extension_disconnected` until Chrome wakes the extension and it reconnects, with retry handled by the next tool call?
+1. **Distribution model for the extension**. **Decision: no distribution pipeline now.** If reopened, start with unpacked-load dogfood only; defer Web Store ownership/signing until Phase 2 evidence exists.
+2. **Permission ratchet**. **Decision: not approved now.** The proposed permissions remain the maximum candidate set for a future RFC, but no permission request ships without renewed evidence and a Trust & Safety review.
+3. **Bridge package boundary**. **Decision: no monorepo/package change now.** If reopened, use a separate package/workspace only after the bridge skeleton has its own rollback and support plan.
+4. **Threat model**. **Decision: high-risk data surface.** A future design must assume history/bookmarks/downloads are sensitive and require explicit opt-in, local-only transport, metadata audit logs, and no default enablement.
+5. **Cross-platform Native Messaging and IPC quirks**. **Decision: blocker until dogfooded.** A future RFC must prove macOS/Linux/Windows plus at least one Node version-manager path before implementation phases are accepted.
+6. **Tools opt-in granularity**. **Decision: if reopened, dual gate plus per-tool availability.** `--pilot --companion-extension` may expose the namespace, but each tool must fail closed when unavailable.
+7. **MV3 service-worker lifetime**. **Decision: fail-closed only.** Dormant/disconnected extension states must return structured errors; no background retry loop should hide availability from the MCP host.
 
 ## Phased plan (post-RFC)
 
@@ -121,10 +131,10 @@ Each phase has its own acceptance criteria and `real verification` plan, written
 
 (Not for code merge — for the RFC document itself.)
 
-- [ ] The seven questions above each have a documented decision (link to comment thread or `docs/roadmap/companion-extension-rfc.md`).
-- [ ] At least one maintainer comment confirms alignment with `docs/roadmap/portability-harness-contract.md` P1–P5.
-- [ ] A `BACKED-OUT-IF` clause documents what observation would cause us to cancel Phase 1 (e.g., "if the Native Messaging manifest path or local IPC endpoint proves unreliable on more than two of {macOS, Windows, Linux, nvm, volta} in a 1-week dogfood, we cancel and reopen the design").
-- [ ] If accepted, the RFC is committed under `docs/roadmap/companion-extension.md` with status `accepted` or `accepted-phased`; if rejected, the RFC is committed with status `rejected` and a reason. Either way it leaves an artifact.
+- [x] The seven questions above each have a documented decision in this document.
+- [x] Alignment with `docs/roadmap/portability-harness-contract.md` P1–P5 is preserved by rejecting implementation until evidence exists; no runtime/code surface changes.
+- [x] BACKED-OUT-IF: keep rejected if a valid Phase 0 run does not show BrowserMCP passing at least 3 target slots where OpenChrome fails, or if Native Messaging setup fails on more than two of macOS/Windows/Linux/nvm/volta during dogfood.
+- [x] RFC committed with status `rejected` and reason: invalid/no-go Phase 0 evidence.
 
 ## Real verification (when implementation lands)
 
