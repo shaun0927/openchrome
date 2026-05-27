@@ -8,6 +8,7 @@ import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
 import { TargetOwnershipRegistry } from './session/target-registry';
 import { TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
+import { TargetQueueManager } from './session/target-command-queue';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -129,6 +130,7 @@ export class SessionManager {
   private chromePool: ChromePool | null = null;
   private cdpFactory: CDPClientFactory;
   private queueManager: RequestQueueManager;
+  private targetQueueManager = new TargetQueueManager();
   private eventListeners: ((event: SessionEvent) => void)[] = [];
   private browserRouter: BrowserRouter | null = null;
   private storageStateManagers = new Map<string, StorageStateManager>();
@@ -252,6 +254,10 @@ export class SessionManager {
 
   getTargetLeaseSnapshot(): TargetLeaseRecord[] {
     return this.targetLeases.snapshot();
+  }
+
+  getTargetQueueStats(): ReturnType<TargetQueueManager['getStats']> {
+    return this.targetQueueManager.getStats();
   }
 
   /**
@@ -1619,6 +1625,7 @@ export class SessionManager {
       // Remove from mapping
       this.targetToWorker.delete(targetId);
       this.targetLeases.release(targetId, sessionId);
+      this.targetQueueManager.cancelTarget(targetId);
 
       // #848: drop named-context association on graceful close.
       const ctxEntry = this.targetToContext.get(targetId);
@@ -1688,8 +1695,7 @@ export class SessionManager {
       ? this.getCDPClientForWorker(sessionId, ownerInfo.workerId)
       : this.cdpClient;
 
-    const workerQueueKey = ownerInfo ? `${sessionId}:${ownerInfo.workerId}` : sessionId;
-    return this.queueManager.enqueue(workerQueueKey, async () => {
+    return this.targetQueueManager.enqueue(targetId, async () => {
       const page = await cdpClient.getPageByTargetId(targetId);
       if (!page) {
         throw new Error(`Page not found for target ${targetId}`);
@@ -1717,6 +1723,7 @@ export class SessionManager {
 
         this.targetToWorker.delete(targetId);
         this.targetLeases.release(targetId, ownerInfo.sessionId);
+        this.targetQueueManager.cancelTarget(targetId);
         this.stealthTargets.delete(targetId);
 
         // #848: drop the named-context association and let the registry
