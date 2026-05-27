@@ -124,6 +124,9 @@
       "name": "oc_evidence_bundle"
     },
     {
+      "name": "oc_gate_inspect"
+    },
+    {
       "name": "oc_get_connection_info"
     },
     {

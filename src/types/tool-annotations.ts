@@ -83,6 +83,7 @@ export const TOOL_ANNOTATIONS = {
   oc_skill_export: READ_ONLY,
   vision_find: READ_ONLY,
   oc_assert: READ_ONLY,
+  oc_gate_inspect: READ_ONLY,
   oc_recording_list: READ_ONLY,
   oc_recording_status: READ_ONLY,
   workflow_status: READ_ONLY,
