@@ -7,6 +7,7 @@ import path from 'path';
 import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
 import { TargetOwnershipRegistry } from './session/target-registry';
+import { TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -111,6 +112,7 @@ const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'str
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private targetToWorker = new TargetOwnershipRegistry();
+  private targetLeases = new TargetLeaseRegistry();
   /**
    * Maps targetId → `{browser, name}` for the owning named context (#848).
    * Targets opened in the default Chrome context are not present here;
@@ -228,6 +230,28 @@ export class SessionManager {
       if (client) return client;
     }
     return this.cdpClient;
+  }
+
+  private acquireTargetLease(
+    targetId: string,
+    sessionId: string,
+    workerId: string,
+    contextName?: string,
+    parentTargetId?: string,
+  ): void {
+    if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName })) {
+      return;
+    }
+    this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+  }
+
+  getTargetLease(targetId: string): TargetLeaseRecord | undefined {
+    const lease = this.targetLeases.get(targetId);
+    return lease ? { ...lease } : undefined;
+  }
+
+  getTargetLeaseSnapshot(): TargetLeaseRecord[] {
+    return this.targetLeases.snapshot();
   }
 
   /**
@@ -562,6 +586,7 @@ export class SessionManager {
 
     // Remove session
     this.sessions.delete(sessionId);
+    this.targetLeases.releaseSession(sessionId);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
     this.emitLifecycle({ kind: 'session:destroy', sessionId, reason, ts: Date.now() });
 
@@ -593,6 +618,8 @@ export class SessionManager {
         this.totalSessionsCleaned++;
       }
     }
+
+    this.targetLeases.expire(now);
 
     // Trigger browser-level GC after bulk cleanup
     if (deletedSessions.length > 0) {
@@ -1117,6 +1144,7 @@ export class SessionManager {
       resolvedContextName = isolatedContext;
       resolvedIsolated = true;
     }
+    this.acquireTargetLease(targetId, sessionId, worker.id, resolvedContextName);
 
     this.emitEvent({
       type: 'session:target-added',
@@ -1198,6 +1226,7 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
+    this.acquireTargetLease(targetId, sessionId, worker.id);
 
     // Track as stealth target for human-behavior integration in tools
     this.stealthTargets.add(targetId);
@@ -1235,6 +1264,7 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId });
+    this.acquireTargetLease(targetId, sessionId, workerId);
 
     this.emitEvent({
       type: 'session:target-added',
@@ -1513,6 +1543,7 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId });
+    this.acquireTargetLease(targetId, sessionId, workerId, undefined, opts?.inheritContextFromTargetId);
 
     // #848 Codex P1: inherit named-context mapping from the opener so popup
     // tab accounting matches the parent. Skip when the parent lives in the
@@ -1587,6 +1618,7 @@ export class SessionManager {
 
       // Remove from mapping
       this.targetToWorker.delete(targetId);
+      this.targetLeases.release(targetId, sessionId);
 
       // #848: drop named-context association on graceful close.
       const ctxEntry = this.targetToContext.get(targetId);
@@ -1684,6 +1716,7 @@ export class SessionManager {
         getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
 
         this.targetToWorker.delete(targetId);
+        this.targetLeases.release(targetId, ownerInfo.sessionId);
         this.stealthTargets.delete(targetId);
 
         // #848: drop the named-context association and let the registry
@@ -1853,6 +1886,7 @@ export class SessionManager {
 
     const aliveTargets = browser.targets().filter(t => t.type() === 'page');
     const aliveTargetIds = new Set(aliveTargets.map(t => getTargetId(t)));
+    this.targetLeases.reconcileAliveTargetIds(aliveTargetIds);
 
     // Build a map of untracked live targets by URL for re-mapping
     const untrackedByUrl = new Map<string, Target>();
