@@ -138,3 +138,51 @@ describe('BrokerProxyStdioBridge', () => {
     expect(parsed.error.message).toContain('500');
   });
 });
+
+describe('BrokerProxyStdioBridge multi-client broker forwarding', () => {
+  test('keeps independent Mcp-Session-Id values per stdio proxy while targeting one broker endpoint', async () => {
+    const fetchImpl = jest.fn<Promise<Response>, [string, RequestInit]>()
+      .mockResolvedValueOnce(createMockResponse({ body: '{"jsonrpc":"2.0","id":1,"result":{}}', headers: { 'Mcp-Session-Id': 'session-a' } }))
+      .mockResolvedValueOnce(createMockResponse({ body: '{"jsonrpc":"2.0","id":1,"result":{}}', headers: { 'Mcp-Session-Id': 'session-b' } }))
+      .mockResolvedValueOnce(createMockResponse({ body: '{"jsonrpc":"2.0","id":2,"result":{}}' }))
+      .mockResolvedValueOnce(createMockResponse({ body: '{"jsonrpc":"2.0","id":2,"result":{}}' }));
+
+    const clientA = new BrokerProxyStdioBridge(broker, {
+      clientId: 'codex-a',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      write: () => undefined,
+    });
+    const clientB = new BrokerProxyStdioBridge(broker, {
+      clientId: 'claude-b',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      write: () => undefined,
+    });
+
+    await clientA.forwardLine('{"jsonrpc":"2.0","id":1,"method":"initialize"}');
+    await clientB.forwardLine('{"jsonrpc":"2.0","id":1,"method":"initialize"}');
+    await clientA.forwardLine('{"jsonrpc":"2.0","id":2,"method":"tools/list"}');
+    await clientB.forwardLine('{"jsonrpc":"2.0","id":2,"method":"tools/list"}');
+
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual(Array(4).fill(broker.endpoint));
+    const headers = fetchImpl.mock.calls.map(([, init]) => init.headers as Record<string, string>);
+    expect(headers[0]['X-OpenChrome-Broker-Client-Id']).toBe('codex-a');
+    expect(headers[1]['X-OpenChrome-Broker-Client-Id']).toBe('claude-b');
+    expect(headers[2]['Mcp-Session-Id']).toBe('session-a');
+    expect(headers[3]['Mcp-Session-Id']).toBe('session-b');
+  });
+
+  test('propagates tenant id to the broker HTTP transport when configured', async () => {
+    const fetchImpl = jest.fn<Promise<Response>, [string, RequestInit]>(async () => createMockResponse({ body: '{"jsonrpc":"2.0","id":1,"result":{}}' }));
+    const bridge = new BrokerProxyStdioBridge(broker, {
+      clientId: 'client-with-tenant',
+      tenantId: 'tenant-alpha',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      write: () => undefined,
+    });
+
+    await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"initialize"}');
+
+    const headers = (fetchImpl.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Tenant-Id']).toBe('tenant-alpha');
+  });
+});
