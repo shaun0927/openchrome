@@ -1,25 +1,29 @@
 /**
- * oc_gate_inspect — fact-only gate detection (B2-PR1 of #1359).
+ * oc_gate_inspect — fact-only gate detection.
  *
- * Inspect the current tab for a *gate* — today, one of the CAPTCHA flavors
- * understood by `src/captcha/detect.ts`. Returns a structured fact record
- * describing what is present on the page; it **never** invokes any solver,
+ * Inspect the current tab for a *gate* and return a structured fact record
+ * describing what is present on the page. It **never** invokes any solver,
  * makes any third-party HTTP call, or asserts anything beyond what the DOM
  * directly observes.
  *
- * This is the host-side counterpart of #1359 Pillar C (facts before
- * decisions). The host agent reads the fact and decides:
+ * Gate families detected (B2-PR1 + B2-PR2 of #1359):
  *
- *   - retry / back off,
- *   - ask the user to solve it interactively,
- *   - hand off to an external solver under the host's own credentials,
- *   - or give up and report the gate to the caller.
+ *   - `captcha`  — reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile, AWS WAF.
+ *   - `sso`      — redirect to a known identity provider OR a generic SSO
+ *                  path (`/sso`, `/saml`, `/oauth`, `/openid`, `/authorize`).
+ *   - `paywall`  — visible subscription/metered-content overlay.
+ *   - `2fa`      — OTP / one-time-code input is foreground.
  *
- * Future PRs in the B2 thread extend the gate vocabulary (SSO redirect,
- * basic-auth, 2FA prompt, paywall). The tool name and output shape are
- * designed to absorb those additions without a breaking change — new
- * `gateType` values are simply added to the union, and `kind` discriminates
- * whether the gate is a captcha (sitekey present) or a different family.
+ * Detection order is captcha → SSO → paywall → 2FA. The first positive
+ * signal wins. Multiple gates can be present in practice, but the host
+ * almost always reasons about them in that order anyway.
+ *
+ * Known gap: HTTP Basic auth is not detected here — it is a native browser
+ * dialog with no DOM hook. Network-layer detection (401 status +
+ * `WWW-Authenticate: Basic` header) is out of scope for this PR.
+ *
+ * Host-agent counterpart of #1359 Pillar C (facts before decisions). The
+ * host reads the fact and decides what to do next.
  */
 
 import { MCPServer } from '../mcp-server';
@@ -27,32 +31,47 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { detectCaptcha } from '../captcha/detect';
+import {
+  detectNonCaptchaGate,
+  type NonCaptchaGateKind,
+  type SsoProvider,
+} from '../gates/detect-other-gates';
 import type { CaptchaType } from '../types/captcha';
 
 /**
- * High-level family of gate. Today only `captcha` is detected; the schema is
- * stable for the SSO/basic-auth/paywall extensions that land in B2-PR2.
+ * High-level family of gate. Closed union; adding a value is a non-breaking
+ * change. Removing or renaming requires a tool version bump.
  */
-export type GateKind = 'captcha';
+export type GateKind = 'captcha' | NonCaptchaGateKind;
 
 /**
- * Closed gate-type vocabulary. Adding a value here is a non-breaking change;
- * removing or renaming requires a tool version bump.
+ * Closed gate-type vocabulary. Adding a value is non-breaking.
  */
-export type GateType = CaptchaType;
+export type GateType = CaptchaType | 'sso_redirect' | 'paywall' | 'two_factor';
 
 export interface OcGateInspectOutput {
   detected: boolean;
   /** The gate family. Absent iff `detected === false`. */
   kind?: GateKind;
-  /** Specific gate type (captcha flavor today). Absent iff `detected === false`. */
+  /** Specific gate type. Absent iff `detected === false`. */
   gateType?: GateType;
+
+  // ── captcha-only ──────────────────────────────────────────────────────
   /** Captcha site key. Only present when a site key was extractable. */
   siteKey?: string;
   /** Provenance of the site key: which signal the detector read. */
   siteKeySource?: 'attribute' | 'script' | 'iframe';
-  /** Whether the gate is invisible/background (captcha v3, invisible v2). */
+  /** Whether the captcha is invisible/background (v3, invisible v2). */
   invisible?: boolean;
+
+  // ── sso-only ──────────────────────────────────────────────────────────
+  /** Identity provider name. Only present when kind === 'sso'. */
+  provider?: SsoProvider;
+
+  // ── paywall / 2fa ─────────────────────────────────────────────────────
+  /** CSS selector that triggered the paywall or 2fa match. */
+  selector?: string;
+
   /** The page URL observed at detection time. Always present. */
   pageUrl: string;
 }
@@ -60,10 +79,10 @@ export interface OcGateInspectOutput {
 const definition: MCPToolDefinition = {
   name: 'oc_gate_inspect',
   description:
-    'Detect whether the current tab is gated (CAPTCHA today; SSO/basic-auth/' +
-    'paywall in follow-up PRs). Returns facts only — never invokes any ' +
-    'solver, never makes a third-party HTTP call. The host agent decides ' +
-    'what to do next.',
+    'Detect whether the current tab is gated (CAPTCHA, SSO redirect, ' +
+    'paywall, 2FA prompt). Returns facts only — never invokes any solver, ' +
+    'never makes a third-party HTTP call, never bypasses the gate. The ' +
+    'host agent decides what to do next.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -133,23 +152,44 @@ const handler: ToolHandler = async (
     pageUrl = 'unknown';
   }
 
-  const detection = await detectCaptcha(page);
-  if (!detection) {
-    return toResult({ detected: false, pageUrl });
+  // 1. CAPTCHA takes priority — it overlays the page even if the
+  //    user is mid-SSO or behind a paywall, and the host typically
+  //    needs to deal with it first.
+  const captcha = await detectCaptcha(page);
+  if (captcha) {
+    const out: OcGateInspectOutput = {
+      detected: true,
+      kind: 'captcha',
+      gateType: captcha.captchaType,
+      invisible: captcha.invisible,
+      pageUrl: captcha.pageUrl || pageUrl,
+    };
+    if (captcha.siteKey) {
+      out.siteKey = captcha.siteKey.key;
+      out.siteKeySource = captcha.siteKey.source;
+    }
+    return toResult(out);
   }
 
-  const out: OcGateInspectOutput = {
-    detected: true,
-    kind: 'captcha',
-    gateType: detection.captchaType,
-    invisible: detection.invisible,
-    pageUrl: detection.pageUrl || pageUrl,
-  };
-  if (detection.siteKey) {
-    out.siteKey = detection.siteKey.key;
-    out.siteKeySource = detection.siteKey.source;
+  // 2. Non-CAPTCHA gates in priority order (sso → paywall → 2fa).
+  const other = await detectNonCaptchaGate(page);
+  if (other) {
+    const base: OcGateInspectOutput = {
+      detected: true,
+      kind: other.kind,
+      gateType: other.gateType,
+      pageUrl: other.pageUrl || pageUrl,
+    };
+    if (other.kind === 'sso') {
+      base.provider = other.provider;
+    } else {
+      base.selector = other.selector;
+    }
+    return toResult(base);
   }
-  return toResult(out);
+
+  // 3. No gate observed.
+  return toResult({ detected: false, pageUrl });
 };
 
 export function registerOcGateInspectTool(server: MCPServer): void {

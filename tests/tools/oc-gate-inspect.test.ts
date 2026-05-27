@@ -50,6 +50,7 @@ function parseResult(result: MCPResult): Record<string, unknown> {
 
 const mockGetPage = jest.fn();
 const mockDetectCaptcha = jest.fn();
+const mockDetectNonCaptchaGate = jest.fn();
 
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: () => ({ getPage: mockGetPage }),
@@ -57,6 +58,10 @@ jest.mock('../../src/session-manager', () => ({
 
 jest.mock('../../src/captcha/detect', () => ({
   detectCaptcha: (...args: unknown[]) => mockDetectCaptcha(...args),
+}));
+
+jest.mock('../../src/gates/detect-other-gates', () => ({
+  detectNonCaptchaGate: (...args: unknown[]) => mockDetectNonCaptchaGate(...args),
 }));
 
 function loadHandler(): {
@@ -85,6 +90,8 @@ describe('oc_gate_inspect — registration', () => {
   beforeEach(() => {
     mockGetPage.mockReset();
     mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
   });
 
   test('registers a tool named oc_gate_inspect with tabId required and read-only annotations', () => {
@@ -103,6 +110,8 @@ describe('oc_gate_inspect — facts-only output', () => {
   beforeEach(() => {
     mockGetPage.mockReset();
     mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
   });
 
   test('no gate present → {detected: false, pageUrl}', async () => {
@@ -185,6 +194,8 @@ describe('oc_gate_inspect — input validation', () => {
   beforeEach(() => {
     mockGetPage.mockReset();
     mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
   });
 
   test('missing tabId returns an error result and never calls getPage', async () => {
@@ -223,6 +234,8 @@ describe('oc_gate_inspect — P7 invariant', () => {
   beforeEach(() => {
     mockGetPage.mockReset();
     mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
   });
 
   test('requiring the tool module does NOT statically load any solver provider', async () => {
@@ -288,5 +301,122 @@ describe('oc_gate_inspect — error propagation', () => {
     expect(out.detected).toBe(true);
     expect(out.kind).toBe('captcha');
     expect('gateType' in out).toBe(false);
+  });
+});
+
+// ─── B2-PR2: non-CAPTCHA gates ────────────────────────────────────────────
+
+describe('oc_gate_inspect — non-CAPTCHA gates', () => {
+  beforeEach(() => {
+    mockGetPage.mockReset();
+    mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectCaptcha.mockResolvedValue(null);
+  });
+
+  test('SSO redirect → kind=sso, gateType=sso_redirect, provider exposed', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://accounts.google.com/signin'));
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: 'sso',
+      gateType: 'sso_redirect',
+      provider: 'google',
+      pageUrl: 'https://accounts.google.com/signin',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: 'sso',
+      gateType: 'sso_redirect',
+      provider: 'google',
+      pageUrl: 'https://accounts.google.com/signin',
+    });
+    expect('siteKey' in out).toBe(false);
+    expect('selector' in out).toBe(false);
+  });
+
+  test('paywall → kind=paywall, selector exposed', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://news.example.com/article'));
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: 'paywall',
+      gateType: 'paywall',
+      selector: '.paywall',
+      pageUrl: 'https://news.example.com/article',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: 'paywall',
+      gateType: 'paywall',
+      selector: '.paywall',
+      pageUrl: 'https://news.example.com/article',
+    });
+    expect('provider' in out).toBe(false);
+  });
+
+  test('2fa → kind=2fa, selector exposed', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/verify'));
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: '2fa',
+      gateType: 'two_factor',
+      selector: 'input[autocomplete="one-time-code"]',
+      pageUrl: 'https://example.com/verify',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: '2fa',
+      gateType: 'two_factor',
+      selector: 'input[autocomplete="one-time-code"]',
+      pageUrl: 'https://example.com/verify',
+    });
+  });
+
+  test('CAPTCHA takes priority over non-CAPTCHA gates when both signal', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue({
+      detected: true,
+      captchaType: 'turnstile',
+      invisible: false,
+      pageUrl: 'https://example.com/',
+    });
+    // Non-CAPTCHA mock would also resolve to a signal, but should not be
+    // consulted once CAPTCHA is positive.
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: 'paywall',
+      gateType: 'paywall',
+      selector: '.paywall',
+      pageUrl: 'https://example.com/',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out.kind).toBe('captcha');
+    expect(out.gateType).toBe('turnstile');
+    expect(mockDetectNonCaptchaGate).not.toHaveBeenCalled();
+  });
+
+  test('nothing detected → {detected:false, pageUrl}', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({ detected: false, pageUrl: 'https://example.com/' });
   });
 });
