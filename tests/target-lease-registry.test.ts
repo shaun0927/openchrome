@@ -26,6 +26,16 @@ describe('TargetLeaseRegistry', () => {
     expect(registry.snapshot()).toHaveLength(2);
   });
 
+  test('release with no sessionId drops a lease so recovery can transfer ownership', () => {
+    const registry = new TargetLeaseRegistry();
+    registry.acquire({ targetId: 't1', sessionId: 's1' });
+
+    expect(registry.release('t1')).toBe(true);
+    // The recovery path (SessionManager.tryRecoverTarget) re-acquires under
+    // the new owner once the stale lease has been released.
+    expect(registry.acquire({ targetId: 't1', sessionId: 's2' })).toMatchObject({ sessionId: 's2' });
+  });
+
   test('expires and reconciles orphan leases', () => {
     const registry = new TargetLeaseRegistry();
     registry.acquire({ targetId: 'expired', sessionId: 's1', now: 0, ttlMs: 10 });

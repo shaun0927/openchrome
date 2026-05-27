@@ -256,9 +256,24 @@ program
     const useHeadlessShell = options.headlessShell || false;
     const restartChrome = options.restartChrome || false;
 
+    // #1359 broker foundation: --broker and --connect-broker are mutually
+    // exclusive because one publishes broker ownership while the other forwards
+    // stdio JSON-RPC to an existing broker. Combining them produces undefined
+    // behavior (proxy + owner in one process).
+    if (options.broker && options.connectBroker) {
+      console.error('[openchrome] Error: --broker and --connect-broker cannot be combined. Pick one role per process.');
+      process.exit(2);
+    }
+
     // Resolve transport mode before owner-lock acquisition so lock metadata
     // describes whether this process is a stdio, HTTP, or dual-transport owner.
     const validModes = ['stdio', 'http', 'both'];
+    if (options.broker && options.transport && options.transport !== 'http') {
+      // `both` is also coerced because the broker proxy speaks HTTP only;
+      // advertising a `both` daemon as the broker endpoint would silently
+      // drop the stdio leg without telling the operator.
+      console.error(`[openchrome] Warning: --broker forces HTTP transport; ignoring --transport ${options.transport}.`);
+    }
     const rawMode = options.broker
       ? 'http'
       : options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
@@ -269,6 +284,14 @@ program
     const useHttp = transportMode === 'http' || transportMode === 'both';
     const lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
 
+    // #1359 P3a: the broker is the single CDP owner for a (port, userDataDir).
+    // Refuse to publish broker metadata when this process did not take Chrome
+    // ownership via the controller lock (i.e., when --auto-launch is off).
+    if (options.broker && !autoLaunch) {
+      console.error('[openchrome] Error: --broker requires --auto-launch so this process owns Chrome lifecycle and the controller lock for the shared profile.');
+      process.exit(2);
+    }
+
     if (options.connectBroker) {
       const { readBrokerMetadata } = await import('./broker/discovery');
       const { BrokerProxyStdioBridge } = await import('./transports/broker-proxy');
@@ -277,9 +300,16 @@ program
         console.error(`[openchrome] No broker metadata found for port ${port} and profile ${lockUserDataDir}. Start one with: openchrome serve --broker --auto-launch --port ${port} --user-data-dir ${lockUserDataDir}`);
         process.exit(2);
       }
+      // #1359 P3a follow-up: the broker advertises which env var holds its
+      // bearer token via `authTokenEnv`. Honour that hint so a client that
+      // only knows the broker file (not the original launch invocation) can
+      // still authenticate without the operator restating --auth-token.
+      const resolvedAuthToken = options.authToken
+        || process.env.OPENCHROME_AUTH_TOKEN
+        || (broker.authTokenEnv ? process.env[broker.authTokenEnv] : undefined);
       console.error(`[openchrome] Proxying stdio MCP requests to broker ${broker.endpoint}`);
       setBrokerLifecycleMode('broker-client');
-      new BrokerProxyStdioBridge(broker, options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined).start();
+      new BrokerProxyStdioBridge(broker, resolvedAuthToken).start();
       return;
     }
     if (options.broker) {
@@ -607,8 +637,16 @@ program
     if (process.platform === 'win32') {
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
-    // Resolve auth token: CLI flag takes precedence over env var
-    const authToken = options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined;
+    // Resolve auth token: CLI flag takes precedence over env var.
+    // Track which source supplied the token so the broker metadata can only
+    // advertise `authTokenEnv` when the value actually lives in that env var
+    // — otherwise a `--connect-broker` client would read the wrong (or no)
+    // token from OPENCHROME_AUTH_TOKEN and silently send unauthenticated.
+    const envAuthToken = process.env.OPENCHROME_AUTH_TOKEN || undefined;
+    const authToken = options.authToken || envAuthToken;
+    const brokerAuthTokenEnv = authToken && !options.authToken && envAuthToken === authToken
+      ? 'OPENCHROME_AUTH_TOKEN'
+      : undefined;
     if (authToken) {
       console.error('[openchrome] Bearer token authentication: enabled');
     }
@@ -666,7 +704,7 @@ program
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
       if (options.broker) {
         const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
-        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: authToken ? 'OPENCHROME_AUTH_TOKEN' : undefined });
+        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: brokerAuthTokenEnv });
         process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
         console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
       }
@@ -680,7 +718,7 @@ program
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
       if (options.broker) {
         const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
-        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: authToken ? 'OPENCHROME_AUTH_TOKEN' : undefined });
+        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: brokerAuthTokenEnv });
         process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
         console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
       }

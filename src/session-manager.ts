@@ -7,7 +7,7 @@ import path from 'path';
 import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
 import { TargetOwnershipRegistry } from './session/target-registry';
-import { TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
+import { TargetLeaseConflictError, TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
 import { TargetQueueManager } from './session/target-command-queue';
 import {
   markBrokerReconnectFailed,
@@ -202,7 +202,12 @@ export class SessionManager {
         console.error('[SessionManager] Reconnect failed, clearing stale target mappings');
         for (const targetId of Array.from(this.targetToWorker.keys())) {
           this.onTargetClosed(targetId);
-          // Safety: force-delete in case session is already gone and onTargetClosed skipped it
+          // Safety: force-delete in case session is already gone and
+          // onTargetClosed skipped it. The lease release mirrors the
+          // targetToWorker.delete below so the lease registry never
+          // outlives the legacy ownership map — leases without a TTL
+          // would otherwise survive indefinitely after Chrome disappears.
+          this.targetLeases.release(targetId);
           this.targetToWorker.delete(targetId);
         }
       }
@@ -256,8 +261,27 @@ export class SessionManager {
       setBrokerActiveLeases(this.targetLeases.snapshot().length);
       return;
     }
-    this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
-    setBrokerActiveLeases(this.targetLeases.snapshot().length);
+    try {
+      this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+      setBrokerActiveLeases(this.targetLeases.snapshot().length);
+    } catch (err) {
+      // #1359 backlog item 3: a conflicting lease means a stale or rogue
+      // owner still holds the registry entry — log loudly so operators see
+      // the duplicate-controller signal, then transfer ownership to the
+      // caller. This keeps the legacy targetToWorker map (which has already
+      // recorded the new owner) consistent with the registry and prevents
+      // the conflict from killing the caller's tool invocation.
+      if (err instanceof TargetLeaseConflictError) {
+        console.error(
+          `[SessionManager] Target ${targetId.slice(0, 8)} lease conflict: previous owner session=${err.existing.sessionId} worker=${err.existing.workerId ?? 'unknown'}; transferring to session=${sessionId} worker=${workerId}`,
+        );
+        this.targetLeases.release(targetId);
+        this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+        setBrokerActiveLeases(this.targetLeases.snapshot().length);
+        return;
+      }
+      throw err;
+    }
   }
 
   getTargetLease(targetId: string): TargetLeaseRecord | undefined {
@@ -927,6 +951,11 @@ export class SessionManager {
         // Page might already be closed
       }
       this.targetToWorker.delete(targetId);
+      // #1359 backlog item 3: closePage triggers targetdestroyed → onTargetClosed
+      // asynchronously, but targetToWorker.delete above runs first, so by the
+      // time the event handler fires it cannot resolve the owner. Release the
+      // lease here so the registry stays consistent with the legacy map.
+      this.targetLeases.release(targetId, session.id);
     }
 
     // Close the browser context (only if it's an isolated context, not the default)
@@ -1410,6 +1439,13 @@ export class SessionManager {
       // Re-register the target
       worker.targets.add(targetId);
       this.targetToWorker.set(targetId, { sessionId, workerId: resolvedWorkerId });
+      // #1359 backlog item 3: keep the lease registry in sync with the
+      // recovered ownership so reconcile/expire/diagnostics observe the same
+      // session/worker the legacy targetToWorker map records. Recovery
+      // intentionally transfers ownership, so drop any stale lease the
+      // previous owner left behind before acquiring fresh.
+      this.targetLeases.release(targetId);
+      this.acquireTargetLease(targetId, sessionId, resolvedWorkerId);
       console.error(`[SessionManager] Recovered untracked target ${targetId.slice(0, 8)} (${pageUrl.slice(0, 50)}) into session ${sessionId} worker ${resolvedWorkerId}`);
 
       return page;
@@ -1910,6 +1946,11 @@ export class SessionManager {
     const aliveTargets = browser.targets().filter(t => t.type() === 'page');
     const aliveTargetIds = new Set(aliveTargets.map(t => getTargetId(t)));
     this.targetLeases.reconcileAliveTargetIds(aliveTargetIds);
+    // #1359 backlog item 4: drop per-target queues whose targetId no longer
+    // exists post-reconnect so closed/expired targets stop holding queue
+    // state and metrics in memory.
+    this.targetQueueManager.reconcileAliveTargetIds(aliveTargetIds);
+    setBrokerActiveLeases(this.targetLeases.snapshot().length);
 
     // Build a map of untracked live targets by URL for re-mapping
     const untrackedByUrl = new Map<string, Target>();
@@ -1955,6 +1996,11 @@ export class SessionManager {
         // Update targetToWorker mapping
         this.targetToWorker.delete(targetId);
         this.targetToWorker.set(newTargetId, ownerInfo);
+        // #1359 backlog item 3: reconcileAliveTargetIds above already dropped
+        // the old targetId from the lease registry. Acquire a fresh lease
+        // for the re-mapped targetId so diagnostics and cleanup observe the
+        // same ownership the legacy map records.
+        this.acquireTargetLease(newTargetId, ownerInfo.sessionId, ownerInfo.workerId);
 
         // Update worker's target set
         const session = this.sessions.get(ownerInfo.sessionId);
