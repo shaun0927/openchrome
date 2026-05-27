@@ -2189,6 +2189,10 @@ export class SessionManager {
     if (this.browserRouter) {
       await this.browserRouter.cleanup();
       this.browserRouter = null;
+      // Hybrid routing decisions are only meaningful while the router is
+      // active. Drop stale side-channel entries so later tool calls do not
+      // surface old `meta.path_taken` after hybrid mode is disabled.
+      this.lastRoutingByTarget.clear();
       console.error('[SessionManager] Hybrid mode cleaned up');
     }
   }
