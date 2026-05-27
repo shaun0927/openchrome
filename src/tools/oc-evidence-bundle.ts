@@ -77,7 +77,7 @@ const definition: MCPToolDefinition = {
         type: 'array',
         description:
           "Which parts to capture. Default ['dom', 'screenshot']. Allowed " +
-          "items: 'dom' | 'screenshot' | 'network' | 'console' | 'phash'.",
+          "items: 'dom' | 'screenshot' | 'network' | 'console' | 'phash' | 'gate'.",
         items: {
           type: 'string',
           enum: VALID_PARTS as unknown as string[],
@@ -93,7 +93,7 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description:
           'Caller-supplied snapshot. Provide the subset of fields the requested ' +
-          'parts need: `dom`, `screenshot_png_base64`, `network`, `console`, `now_ms`. ' +
+          'parts need: `dom`, `screenshot_png_base64`, `network`, `console`, `now_ms`, `gate`. ' +
           'Missing fields cause the corresponding part to be omitted gracefully.',
         properties: {
           snapshot: {
@@ -101,7 +101,7 @@ const definition: MCPToolDefinition = {
             description:
               'Snapshot fields. `dom` (string|object), `screenshot_png_base64` (base64 PNG), ' +
               '`network` (NetworkEntry[]), `console` (ConsoleEntry[]), `now_ms` (epoch ms ' +
-              'used for the network window cutoff).',
+              'used for the network window cutoff), `gate` (oc_gate_inspect-compatible fact).',
           },
         },
       },
