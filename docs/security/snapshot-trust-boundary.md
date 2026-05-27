@@ -24,8 +24,8 @@ three postures at the moment of import:
 
 - Two or more openchrome hosts share an HMAC key out of band (e.g. a
   CI orchestrator distributes it).
-- A host SHOULD require `hmacKey` on every signed-envelope import
-  (`requireHmac: true` semantics — set explicitly).
+- A host SHOULD pass `requireHmac: true` and `hmacKey` on every
+  `oc_context_import` signed-envelope import.
 - The fingerprint plus HMAC together detect tampering of both shape
   and values.
 - The shared key MUST be treated as a credential. If it leaks, every
@@ -111,7 +111,12 @@ const confirmed = await elicit(`Import auth state for ${r.envelope.origin}?`);
 if (!confirmed) return { ok: false, reason: 'user_denied' };
 
 // 4. Apply via oc_context_import with the verified envelope.
-return await applyContextEnvelope(r.envelope.payload);
+return await callOpenChrome('oc_context_import', {
+  tabId,
+  signed_envelope: r.envelope,
+  hmacKey: maybeKey,
+  requireHmac: true,
+});
 ```
 
 The openchrome core supplies steps 1 and 4. Steps 2 and 3 are the
