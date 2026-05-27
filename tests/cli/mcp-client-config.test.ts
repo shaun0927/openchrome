@@ -5,7 +5,9 @@ import {
   getClaudeSetupCommand,
   getCodexServerConfig,
   getCodexSetupCommand,
+  getOpenCodeServerConfig,
   getServeArgs,
+  getTopologyWarning,
   isSupportedMCPClient,
   upsertMCPServerConfig,
 } from '../../cli/mcp-client-config';
@@ -17,6 +19,39 @@ describe('cli/mcp-client-config', () => {
 
   test('getServeArgs includes dashboard when requested', () => {
     expect(getServeArgs({ dashboard: true })).toEqual(['serve', '--auto-launch', '--dashboard']);
+  });
+
+  test('getServeArgs preserves explicit port and profile topology', () => {
+    expect(getServeArgs({
+      port: 9333,
+      userDataDir: '/tmp/openchrome-codex',
+      profileDirectory: 'Default',
+      launchMode: 'isolated',
+    })).toEqual([
+      'serve',
+      '--auto-launch',
+      '--port',
+      '9333',
+      '--user-data-dir',
+      '/tmp/openchrome-codex',
+      '--profile-directory',
+      'Default',
+      '--launch-mode',
+      'isolated',
+    ]);
+  });
+
+  test('isolated topology preset chooses a non-default port and profile', () => {
+    expect(getServeArgs({ topology: 'isolated' })).toEqual([
+      'serve',
+      '--auto-launch',
+      '--port',
+      '9223',
+      '--user-data-dir',
+      '~/.openchrome/profiles/isolated',
+      '--launch-mode',
+      'isolated',
+    ]);
   });
 
   test('getServeArgs omits auto-launch when explicitly disabled', () => {
@@ -117,11 +152,55 @@ describe('cli/mcp-client-config', () => {
     );
   });
 
+  test('Codex and Claude generated configs preserve explicit port and user-data-dir', () => {
+    const options = { port: 9333, userDataDir: '/tmp/openchrome-codex' };
+
+    expect(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(options))).toContain(
+      'args = ["serve", "--auto-launch", "--port", "9333", "--user-data-dir", "/tmp/openchrome-codex"]'
+    );
+    expect(getClaudeSetupCommand('user', options)).toEqual([
+      'mcp',
+      'add',
+      'openchrome',
+      '-s',
+      'user',
+      '--',
+      'openchrome',
+      'serve',
+      '--auto-launch',
+      '--port',
+      '9333',
+      '--user-data-dir',
+      '/tmp/openchrome-codex',
+    ]);
+  });
+
+  test('OpenCode generated config uses installed openchrome and preserves topology args', () => {
+    expect(getOpenCodeServerConfig({ port: 9444, userDataDir: '/tmp/openchrome-opencode' })).toEqual({
+      type: 'local',
+      command: [
+        'openchrome',
+        'serve',
+        '--auto-launch',
+        '--port',
+        '9444',
+        '--user-data-dir',
+        '/tmp/openchrome-opencode',
+      ],
+    });
+  });
+
+  test('default topology warning is omitted once port/profile is explicit', () => {
+    expect(getTopologyWarning()).toContain('default single-owner');
+    expect(getTopologyWarning({ port: 9333, userDataDir: '/tmp/openchrome-codex' })).toBeNull();
+  });
+
   test('generated configs do not use transient package runners', () => {
     const serialized = [
       JSON.stringify(getCodexServerConfig()),
       JSON.stringify(getClaudeManualServerConfig()),
       formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig()),
+      JSON.stringify(getOpenCodeServerConfig()),
       getClaudeSetupCommand('user').join(' '),
       getCodexSetupCommand().join(' '),
     ].join('\n');

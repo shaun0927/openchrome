@@ -32,6 +32,11 @@ const definition: MCPToolDefinition = {
         default: false,
         description: 'Preview sessions/tabs and managed Chrome resources that oc_stop would shut down without mutating runtime state.',
       },
+      force: {
+        type: 'boolean',
+        default: false,
+        description: 'Broker safety override: allow stopping a broker owner even when active target leases remain.',
+      },
     },
     required: [],
   },
@@ -44,6 +49,7 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const keepChrome = (args.keepChrome as boolean) || false;
   const dryRun = args.dryRun === true;
+  const force = args.force === true;
   const steps: string[] = [];
   const startTime = Date.now();
 
@@ -69,6 +75,7 @@ const handler: ToolHandler = async (
           connectionPool: true,
           cdpClient: true,
           chromeProcess: !keepChrome,
+          activeLeases: typeof sessionManager.getTargetLeaseSnapshot === 'function' ? sessionManager.getTargetLeaseSnapshot().length : 0,
         },
       };
       return {
@@ -95,6 +102,17 @@ const handler: ToolHandler = async (
     // the remaining steps (pool shutdown, CDP disconnect, Chrome kill) from running.
     try {
       const sessionManager = getSessionManager();
+      const activeLeases = typeof sessionManager.getTargetLeaseSnapshot === 'function' ? sessionManager.getTargetLeaseSnapshot().length : 0;
+      if (activeLeases > 0 && !force && process.env.OPENCHROME_BROKER_OWNER === '1') {
+        return {
+          content: [{
+            type: 'text',
+            text: `Refusing to stop broker owner while ${activeLeases} active target lease(s) remain. Pass force:true to override or close/release those sessions first.`,
+          }],
+          structuredContent: { activeLeases, forceRequired: true },
+          isError: true,
+        };
+      }
       const sessionCount = await sessionManager.cleanupAllSessions();
       steps.push(`Cleaned up ${sessionCount} session(s)`);
     } catch (e) {
