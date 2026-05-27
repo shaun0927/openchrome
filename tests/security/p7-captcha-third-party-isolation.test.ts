@@ -26,11 +26,14 @@ const ENV_KEYS = [
   'OPENCHROME_CAPTCHA_DAILY_LIMIT',
 ] as const;
 
-const PROVIDER_MODULE_KEYS = [
-  '/captcha/providers/twocaptcha',
-  '/captcha/providers/anticaptcha',
-  '/captcha/providers/capsolver',
-];
+// Auto-derived from the providers directory so a future provider file is
+// guarded automatically. Hardcoding the list would silently miss a new
+// `src/captcha/providers/foo.ts` and let it escape the audit.
+const PROVIDER_DIR = require('path').join(__dirname, '..', '..', 'src', 'captcha', 'providers');
+const PROVIDER_MODULE_KEYS = require('fs')
+  .readdirSync(PROVIDER_DIR)
+  .filter((f: string) => /\.(ts|js)$/.test(f) && !f.endsWith('.d.ts'))
+  .map((f: string) => `/captcha/providers/${f.replace(/\.(ts|js)$/, '')}`);
 
 function clearCaptchaEnv(): Record<string, string | undefined> {
   const saved: Record<string, string | undefined> = {};
@@ -49,8 +52,8 @@ function restoreCaptchaEnv(saved: Record<string, string | undefined>): void {
 }
 
 function providerModulesInRequireCache(): string[] {
-  return Object.keys(require.cache).filter(k =>
-    PROVIDER_MODULE_KEYS.some(suffix => k.includes(suffix)),
+  return Object.keys(require.cache).filter((k: string) =>
+    (PROVIDER_MODULE_KEYS as string[]).some((suffix: string) => k.includes(suffix)),
   );
 }
 
@@ -64,6 +67,26 @@ describe('P7: captcha module boots without third-party credentials', () => {
 
   afterEach(() => {
     restoreCaptchaEnv(savedEnv);
+  });
+
+  // Positive control: prove the require.cache probe actually sees provider
+  // modules when they are loaded. If this test ever fails, every other test
+  // in this file is silently vacuous — so it must pass before the laziness
+  // assertions are meaningful.
+  test('probe self-check — explicitly requiring a provider IS detected in require.cache', () => {
+    jest.resetModules();
+    expect(providerModulesInRequireCache()).toEqual([]);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('../../src/captcha/providers/twocaptcha');
+    const loaded = providerModulesInRequireCache();
+    expect(loaded.length).toBeGreaterThan(0);
+  });
+
+  // Structural invariant: the auto-derived provider list must be non-empty.
+  // If `src/captcha/providers/` is ever emptied or renamed without a parallel
+  // doc update, the rest of this audit becomes vacuous — fail loudly here.
+  test('provider directory exists and at least one provider is enumerated', () => {
+    expect(PROVIDER_MODULE_KEYS.length).toBeGreaterThan(0);
   });
 
   test('SolverRegistry construction does not throw or load provider modules', async () => {

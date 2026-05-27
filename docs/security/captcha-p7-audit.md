@@ -16,13 +16,15 @@ The following four invariants are codified by the unit test
    throw.
 2. **Configured-false default.** With no env, `isConfigured()` and
    `isAutoSolveEnabled()` both return `false`.
-3. **Lazy provider modules.** None of
-   `src/captcha/providers/{twocaptcha,anticaptcha,capsolver}.ts` is
-   loaded into the require cache until both
-   `OPENCHROME_CAPTCHA_PROVIDER` and `OPENCHROME_CAPTCHA_API_KEY`
-   are set AND `initialize()` selects that provider. The dynamic
-   `import()` inside `solver-registry.ts:55-74` keeps the third-party
-   network code dormant during normal core operation.
+3. **Lazy provider modules.** No module under
+   `src/captcha/providers/*.ts` is loaded into the require cache
+   until both `OPENCHROME_CAPTCHA_PROVIDER` and
+   `OPENCHROME_CAPTCHA_API_KEY` are set AND `initialize()` selects
+   that provider. The dynamic `import()` inside the
+   `SolverRegistry.initialize()` switch keeps the third-party network
+   code dormant during normal core operation. The regression test
+   enumerates the providers directory at runtime via `fs.readdirSync`,
+   so a future provider file is guarded without changing the test.
 4. **Facts-only "no solver" response.** `handleCaptcha()` returns
    `{ solved: false, error: 'No CAPTCHA solver configured' }` when no
    solver is configured. No HTTP request is made and no provider
@@ -30,12 +32,12 @@ The following four invariants are codified by the unit test
 
 ## Auto-solve gate
 
-`isAutoSolveEnabled()` (`solver-registry.ts:87`) requires **both**:
+`isAutoSolveEnabled()` (in `solver-registry.ts`) requires **both**:
 
 - `OPENCHROME_CAPTCHA_AUTO_SOLVE === 'true'`, AND
 - a configured solver (`isConfigured() === true`).
 
-`navigate.ts:211` checks this gate before ever calling `handleCaptcha`:
+`src/tools/navigate.ts` checks this gate before ever calling `handleCaptcha`:
 
 ```ts
 if (stealthBlocked && blocking?.type === 'captcha' && getSolverRegistry().isAutoSolveEnabled()) {
@@ -76,8 +78,8 @@ already P7-clean in advance of those PRs.
 
 - `src/captcha/solver-registry.ts`, `src/captcha/handler.ts`,
   `src/captcha/index.ts`
-- `src/tools/navigate.ts:211` (auto-solve gate)
-- `src/hints/rules/blocking-page.ts:20` (hint-surface auto-solve gate)
+- `src/tools/navigate.ts` (auto-solve gate)
+- `src/hints/rules/blocking-page.ts` (hint-surface auto-solve gate)
 - `docs/roadmap/portability-harness-contract.md` §"No mandatory
   third-party credentials"
 - #1359 §P7, §Explicit non-goals
