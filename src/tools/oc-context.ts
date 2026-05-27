@@ -30,7 +30,10 @@ import { assertDomainAllowed } from '../security/domain-guard';
 import {
   captureContextEnvelopeData,
   applyContextEnvelopeData,
+  sealEnvelope,
+  verifyEnvelope,
   type EnvelopeCapture,
+  type PortableSnapshotEnvelope,
 } from '../storage-state';
 import type { StorageState } from '../storage-state/storage-state-manager';
 
@@ -303,6 +306,22 @@ const exportDefinition: MCPToolDefinition = {
         type: 'boolean',
         description: 'Capture navigator.userAgent. Default: false.',
       },
+      signedEnvelope: {
+        type: 'boolean',
+        description:
+          'When true, additionally include a `signed_envelope` field in ' +
+          'the response: a portable v1 envelope (B3-PR3 of #1359) sealed ' +
+          'over the same capture, fingerprinted, and optionally HMAC-' +
+          'signed. Strictly additive — the existing `ContextEnvelope` ' +
+          'output is unchanged. Default: false.',
+      },
+      hmacKey: {
+        type: 'string',
+        description:
+          'Optional HMAC signing key (UTF-8). Only used when ' +
+          '`signedEnvelope=true`. Host-supplied; openchrome never ' +
+          'stores or generates this key.',
+      },
     },
     required: ['tabId'],
   },
@@ -363,9 +382,23 @@ const exportHandler: ToolHandler = async (
       httpAuth: undefined,
     });
 
+    // B3-PR4 of #1359: opt-in portable signed envelope. Additive only —
+    // the existing `envelope` response shape is unchanged.
+    let signed_envelope: PortableSnapshotEnvelope | undefined;
+    if (args.signedEnvelope === true) {
+      const hmacKey = typeof args.hmacKey === 'string' && args.hmacKey.length > 0
+        ? args.hmacKey
+        : undefined;
+      signed_envelope = sealEnvelope(capture, hmacKey ? { hmacKey } : {});
+    }
+
+    const responsePayload: Record<string, unknown> = { envelope };
+    if (signed_envelope) responsePayload.signed_envelope = signed_envelope;
+
     return {
-      content: [{ type: 'text', text: JSON.stringify({ envelope }) }],
+      content: [{ type: 'text', text: JSON.stringify(responsePayload) }],
       envelope,
+      ...(signed_envelope ? { signed_envelope } : {}),
     };
   } catch (error) {
     return errorResult(
@@ -405,8 +438,26 @@ const importDefinition: MCPToolDefinition = {
           'When true, reject the import if the active tab origin does not match ' +
           '`envelope.origin`. Default: false (caller is responsible for navigating).',
       },
+      signed_envelope: {
+        type: 'object',
+        description:
+          'B3-PR4: alternative input. A portable v1 envelope (B3-PR3) ' +
+          'produced by `oc_context_export` with `signedEnvelope=true`. ' +
+          'When supplied, the import verifies the portable envelope ' +
+          'first (fingerprint + optional HMAC via `hmacKey`); on success ' +
+          'the verified payload is materialized into the same flow as ' +
+          'the legacy `envelope` input. When both are supplied, ' +
+          '`signed_envelope` wins.',
+      },
+      hmacKey: {
+        type: 'string',
+        description:
+          'Optional HMAC key (UTF-8). Only used when verifying a ' +
+          '`signed_envelope`. Host-supplied; openchrome never stores ' +
+          'or generates this key.',
+      },
     },
-    required: ['tabId', 'envelope'],
+    required: ['tabId'],
   },
 };
 
@@ -415,8 +466,41 @@ const importHandler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string | undefined;
-  const envelope = args.envelope as ContextEnvelope | undefined;
+  let envelope = args.envelope as ContextEnvelope | undefined;
   const strictOrigin = args.strictOrigin === true;
+
+  // B3-PR4 of #1359: opt-in portable-envelope input. When supplied, verify
+  // first and materialize a ContextEnvelope from the verified payload.
+  // Wins over the legacy `envelope` arg when both are present.
+  if (args.signed_envelope && typeof args.signed_envelope === 'object') {
+    const hmacKey = typeof args.hmacKey === 'string' && args.hmacKey.length > 0
+      ? args.hmacKey
+      : undefined;
+    const verified = verifyEnvelope(args.signed_envelope, hmacKey ? { hmacKey } : {});
+    if (!verified.ok) {
+      const response: ImportResponse = {
+        ok: false,
+        appliedCookies: 0,
+        appliedStorageKeys: 0,
+        integrityError: `signed_envelope verification failed: ${verified.reason}`,
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response) }],
+        ...response,
+      };
+    }
+    // Materialize a ContextEnvelope from the verified payload so the
+    // existing apply path stays the SSOT.
+    const capture: EnvelopeCapture = verified.envelope.payload;
+    envelope = buildEnvelope({
+      capture,
+      origin: capture.origin || '',
+      includeStorage: true,
+      includeHttpAuth: false,
+      captureUA: !!capture.userAgent,
+      httpAuth: undefined,
+    });
+  }
 
   if (!tabId) return errorResult('Error: tabId is required');
   if (!envelope || typeof envelope !== 'object') {
