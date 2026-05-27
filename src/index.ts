@@ -47,6 +47,7 @@ import {
   type ControllerLockHandle,
 } from './utils/controller-lock';
 import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
+import { setBrokerLifecycleMode, getBrokerLifecycleState } from './broker/lifecycle';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -277,8 +278,13 @@ program
         process.exit(2);
       }
       console.error(`[openchrome] Proxying stdio MCP requests to broker ${broker.endpoint}`);
+      setBrokerLifecycleMode('broker-client');
       new BrokerProxyStdioBridge(broker, options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined).start();
       return;
+    }
+    if (options.broker) {
+      setBrokerLifecycleMode('broker-owner');
+      process.env.OPENCHROME_BROKER_OWNER = '1';
     }
 
     let controllerLock: ControllerLockHandle | null = null;
@@ -944,6 +950,7 @@ program
         tenants: { activeContexts: sessionManager?.tenantContextCount ?? 0 },
         listeners: getListenerErrorStats(),
         controllerTopology: getCurrentControllerTopology({ port, userDataDir: resolveControllerLockUserDataDir(userDataDir, useHeadlessShell) }),
+        brokerLifecycle: getBrokerLifecycleState(),
       };
       return data;
     }, healthPort, healthBind) : null;
