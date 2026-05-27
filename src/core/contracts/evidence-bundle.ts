@@ -25,9 +25,20 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { phashFromPng, phashToHex } from '../../contracts/phash';
+import {
+  diffAgainstSchema,
+  SchemaDefinition,
+  SchemaDiff,
+} from './schema-diff';
 
 /** Parts the caller can request. Each maps to a file in the bundle dir. */
-export type EvidenceBundlePart = 'dom' | 'screenshot' | 'network' | 'console' | 'phash';
+export type EvidenceBundlePart =
+  | 'dom'
+  | 'screenshot'
+  | 'network'
+  | 'console'
+  | 'phash'
+  | 'schema_diff';
 
 /** Default include set — cheap parts that almost every caller wants. */
 export const DEFAULT_INCLUDE: readonly EvidenceBundlePart[] = ['dom', 'screenshot'];
@@ -71,6 +82,13 @@ export interface EvidenceBundleSnapshot {
   console?: ConsoleEntry[];
   /** Optional clock used for the network window. Defaults to `Date.now()`. */
   now_ms?: number;
+  /**
+   * Caller-supplied structured data extracted from the page. Diffed against
+   * `EvidenceBundleOptions.targetSchema` (B1-PR1 schema-diff) when both
+   * are present and the `schema_diff` part is included. Opaque to the
+   * bundle writer beyond the diff step.
+   */
+  observed?: unknown;
 }
 
 export interface EvidenceBundleOptions {
@@ -85,6 +103,13 @@ export interface EvidenceBundleOptions {
   networkWindowMs?: number;
   /** Cap for console entries kept. Default = 200. */
   consoleMaxEntries?: number;
+  /**
+   * Declared target schema. When supplied together with
+   * `snapshot.observed` and the `schema_diff` part is included, the
+   * bundle writer computes a structured diff and writes
+   * `schema_diff.json` to the bundle directory.
+   */
+  targetSchema?: SchemaDefinition;
 }
 
 export interface EvidenceBundleResult {
@@ -95,6 +120,12 @@ export interface EvidenceBundleResult {
   size_bytes: number;
   /** Relative filenames written, in capture order. */
   parts: string[];
+  /**
+   * Schema diff summary, present iff the bundle wrote `schema_diff.json`.
+   * Mirrors the on-disk file so single-call consumers don't have to
+   * re-read it.
+   */
+  schema_diff?: SchemaDiff;
 }
 
 const CONSOLE_MAX_DEFAULT = 200;
@@ -177,6 +208,27 @@ export function writeEvidenceBundle(
     parts.push(filename);
   }
 
+  // ── Schema diff ───────────────────────────────────────────────────────
+  let schemaDiff: SchemaDiff | undefined;
+  if (
+    include.has('schema_diff') &&
+    opts.targetSchema !== undefined &&
+    snapshot.observed !== undefined
+  ) {
+    schemaDiff = diffAgainstSchema(opts.targetSchema, snapshot.observed);
+    const filename = 'schema_diff.json';
+    const payload = JSON.stringify(
+      {
+        target_schema_version: opts.targetSchema.version,
+        diff: schemaDiff,
+      },
+      null,
+      2,
+    );
+    totalBytes += writePart(bundleDir, filename, payload);
+    parts.push(filename);
+  }
+
   // ── Perceptual hash ───────────────────────────────────────────────────
   if (include.has('phash')) {
     // If the caller didn't ask for the screenshot part but did ask for
@@ -207,6 +259,7 @@ export function writeEvidenceBundle(
     path: bundleDir,
     size_bytes: totalBytes,
     parts,
+    ...(schemaDiff !== undefined ? { schema_diff: schemaDiff } : {}),
   };
 }
 
@@ -218,7 +271,7 @@ function normalizeInclude(
   if (!include || include.length === 0) {
     return new Set(DEFAULT_INCLUDE);
   }
-  const valid: EvidenceBundlePart[] = ['dom', 'screenshot', 'network', 'console', 'phash'];
+  const valid: EvidenceBundlePart[] = ['dom', 'screenshot', 'network', 'console', 'phash', 'schema_diff'];
   const out = new Set<EvidenceBundlePart>();
   for (const item of include) {
     if ((valid as string[]).includes(item)) out.add(item);
