@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { pathMetaFor } from './_shared/path-meta';
 import { withTimeout } from '../utils/with-timeout';
 import { waitForPageReady } from '../utils/page-ready-state';
 import { formatStaleRefError, getRefIdManager } from '../utils/ref-id-manager';
@@ -367,6 +368,7 @@ const handler: ToolHandler = async (
         action: 'extract_data', url: pageUrl, multiple: true, items: validated, count: validated.length, scope,
         modeUsed: extractionMode,
         ...(readiness ? { readiness } : {}),
+        ...pathMetaFor(sessionManager, tabId),
       };
       const multipleTextWithoutMetrics = JSON.stringify(multiplePayload);
       multiplePayload.metrics = { mode: extractionMode, outputChars: multipleTextWithoutMetrics.length };
@@ -388,7 +390,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness, scope);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness, scope, tabId);
     }
 
     // Strategy 2: Microdata
@@ -405,7 +407,7 @@ const handler: ToolHandler = async (
 
     if (countFields(merged) >= fieldNames.length) {
       const { result, validation } = validateAndCoerce(merged, schema);
-      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness, scope);
+      return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness, scope, tabId);
     }
 
     // Strategy 4: CSS heuristic
@@ -429,7 +431,7 @@ const handler: ToolHandler = async (
     }
 
     const { result, validation } = validateAndCoerce(merged, schema);
-    return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness, scope);
+    return buildResponseWithMode(result, validation.errors, pageUrl, strategies, domain, fieldNames, extractionMode, outputMode, inlineLimit, readiness, scope, tabId);
   } catch (error) {
     return { content: [{ type: 'text', text: `Extraction error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
   }
@@ -439,6 +441,7 @@ function buildResponse(
   data: Record<string, unknown>, errors: string[], url: string,
   strategies: string[], domain: string, fieldNames: string[], extractionMode: ExtractionMode,
   scope?: ExtractionScope,
+  tabId?: string,
 ): { inlineResult: MCPResult; payload: Record<string, unknown> } {
   const fieldsFound = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k]) => k);
   const fieldsMissing = fieldNames.filter(f => !fieldsFound.includes(f));
@@ -454,6 +457,7 @@ function buildResponse(
     action: 'extract_data', url, data, fieldsFound: fieldsFound.length, fieldsTotal: fieldNames.length, strategies,
     modeUsed: extractionMode,
     ...(scope ? { scope } : {}),
+    ...(tabId ? pathMetaFor(getSessionManager(), tabId) : {}),
   };
   if (fieldsMissing.length > 0) payload.fieldsMissing = fieldsMissing;
   if (errors.length > 0) payload.validationErrors = errors;
@@ -473,8 +477,9 @@ async function buildResponseWithMode(
   extractionMode: ExtractionMode, outputMode: import('./_shared/output-mode').OutputMode, inlineLimit: number,
   readiness?: Awaited<ReturnType<typeof waitForPageReady>>,
   scope?: ExtractionScope,
+  tabId?: string,
 ): Promise<MCPResult> {
-  const { inlineResult, payload } = buildResponse(data, errors, url, strategies, domain, fieldNames, extractionMode, scope);
+  const { inlineResult, payload } = buildResponse(data, errors, url, strategies, domain, fieldNames, extractionMode, scope, tabId);
   if (readiness) {
     payload.readiness = readiness;
     if (inlineResult.content?.[0]?.type === 'text') {
