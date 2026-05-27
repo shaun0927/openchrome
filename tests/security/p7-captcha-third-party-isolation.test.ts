@@ -28,12 +28,15 @@ const ENV_KEYS = [
 
 // Auto-derived from the providers directory so a future provider file is
 // guarded automatically. Hardcoding the list would silently miss a new
-// `src/captcha/providers/foo.ts` and let it escape the audit.
+// `src/captcha/providers/foo.ts` and let it escape the audit. The suffix
+// is path-separator-agnostic ("captcha/providers/foo" is matched after
+// normalizing backslashes to forward slashes) so the test behaves
+// identically on POSIX and Windows runners.
 const PROVIDER_DIR = require('path').join(__dirname, '..', '..', 'src', 'captcha', 'providers');
 const PROVIDER_MODULE_KEYS = require('fs')
   .readdirSync(PROVIDER_DIR)
   .filter((f: string) => /\.(ts|js)$/.test(f) && !f.endsWith('.d.ts'))
-  .map((f: string) => `/captcha/providers/${f.replace(/\.(ts|js)$/, '')}`);
+  .map((f: string) => `captcha/providers/${f.replace(/\.(ts|js)$/, '')}`);
 
 function clearCaptchaEnv(): Record<string, string | undefined> {
   const saved: Record<string, string | undefined> = {};
@@ -52,9 +55,14 @@ function restoreCaptchaEnv(saved: Record<string, string | undefined>): void {
 }
 
 function providerModulesInRequireCache(): string[] {
-  return Object.keys(require.cache).filter((k: string) =>
-    (PROVIDER_MODULE_KEYS as string[]).some((suffix: string) => k.includes(suffix)),
-  );
+  return Object.keys(require.cache).filter((k: string) => {
+    // Windows require.cache keys use `\` separators; normalize before the
+    // substring check so the same suffix matches on POSIX and Windows.
+    const normalized = k.replace(/\\/g, '/');
+    return (PROVIDER_MODULE_KEYS as string[]).some((suffix: string) =>
+      normalized.includes(suffix),
+    );
+  });
 }
 
 describe('P7: captcha module boots without third-party credentials', () => {
