@@ -151,6 +151,9 @@
       "name": "oc_policy"
     },
     {
+      "name": "oc_profile_fingerprint"
+    },
+    {
       "name": "oc_profile_status"
     },
     {

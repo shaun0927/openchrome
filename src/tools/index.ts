@@ -116,6 +116,9 @@ import { registerTotpGenerateTool } from './totp-generate';
 // Outcome Contracts (#784) — single-call assertion verifier
 import { registerOcAssertTool } from './oc-assert';
 
+// Profile fingerprint (B3-PR2 of #1359) — secret-free profile shape hash
+import { registerOcProfileFingerprintTool } from './oc-profile-fingerprint';
+
 // Outcome Contracts (#792) — evidence bundle capture
 import { registerOcEvidenceBundleTool } from './oc-evidence-bundle';
 import { registerOcDiffTool } from './oc-diff';
@@ -220,6 +223,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   network_capture_full: 'core',
   network_capture_lite: 'core',
   oc_assert: 'core',
+  oc_profile_fingerprint: 'core',
   oc_checkpoint: 'core',
   oc_context_export: 'core',
   oc_context_import: 'core',
@@ -495,6 +499,9 @@ export function registerAllTools(server: MCPServer): void {
 
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(proxy);
+
+  // Profile fingerprint (B3-PR2 of #1359) — secret-free profile shape hash
+  registerOcProfileFingerprintTool(proxy);
 
   // Action schema normalizer (#1062) — no browser side effects.
   registerOcNormalizeActionTool(server);
