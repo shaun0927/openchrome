@@ -3,7 +3,7 @@ import path from 'node:path';
 import { MCPServer } from '../mcp-server';
 import { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { codegenPath, defaultCodegenRoot, listCodegenFiles, type CodegenMode } from '../core/codegen';
+import { codegenPath, defaultCodegenRoot, listCodegenFiles, replayCommandFor, type CodegenMode } from '../core/codegen';
 
 const definition: MCPToolDefinition = {
   name: 'oc_skill_export',
@@ -36,7 +36,7 @@ const handler: ToolHandler = async (sessionId, args): Promise<MCPResult> => {
   }
   try {
     const stat = await import('node:fs').then((fs) => fs.statSync(file));
-    const payload = { path: file, byte_count: stat.size, format };
+    const payload = { path: file, byte_count: stat.size, format, replay_command: replayCommandFor(file, format) };
     return { content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: payload };
   } catch {
     return { isError: true, content: [{ type: 'text', text: `oc_skill_export: no ${format} codegen artifact found for session ${sid}` }] };
