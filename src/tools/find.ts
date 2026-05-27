@@ -289,6 +289,15 @@ const handler: ToolHandler = async (
       };
     }
 
+    // A3-PR2f note: `find` returns a human-readable text envelope, not
+    // a structured JSON payload. The router IS recorded for this tool
+    // (sessionManager.getPage is called with toolName='find' earlier in
+    // this handler), but adding `meta.path_taken` here would require
+    // promoting the response to a `structuredContent` side-channel.
+    // That promotion is a separate, breaking-shape PR; for v1 we
+    // accept the exemption and let the host read `meta.path_taken`
+    // from a *subsequent* router-routed tool call (read_page,
+    // extract_data, navigate) that observes the same tab.
     return {
       content: [
         {

@@ -28,6 +28,12 @@
  *   - `crawl_status`: reads job state from the persisted job-store; it
  *     does not route any tab through BrowserRouter. Per-page facts are
  *     captured inside the worker, not surfaced on the status reader.
+ *   - `find`: routes through BrowserRouter (sessionManager.getPage runs
+ *     with toolName='find'), but the response shape is a human-readable
+ *     text envelope without a structured payload. Promoting `find` to
+ *     emit `structuredContent` is a separate breaking-shape PR; for v1
+ *     the host reads `meta.path_taken` from a subsequent router-routed
+ *     tool call (read_page, extract_data, navigate) on the same tab.
  */
 
 import type { SessionManager } from '../../session-manager';
