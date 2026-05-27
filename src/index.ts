@@ -115,6 +115,8 @@ program
   .option('--auth-token <token>', 'Bearer token for HTTP transport authentication (also: OPENCHROME_AUTH_TOKEN env var)')
   .option('--allow-unauthenticated-http', 'Explicitly allow unauthenticated loopback-only HTTP development mode (also: OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1)')
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
+  .option('--broker', 'Run as the shared-profile broker owner (HTTP daemon plus broker discovery metadata)')
+  .option('--connect-broker', 'Proxy stdio MCP requests to the discovered broker instead of attaching to Chrome directly')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
   .option('--slim', 'Expose only core tools (alias for --tools-only core).')
@@ -125,7 +127,7 @@ program
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
   .option('--codegen <mode>', 'Opt-in replay artifact generation: off, puppeteer, playwright, or mcp-replay. Default: off (no response shape changes). Also: OPENCHROME_CODEGEN.')
-  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
     const { normalizeCodegenMode, setCodegenMode } = await import('./core/codegen');
     const codegenMode = normalizeCodegenMode(options.codegen ?? process.env.OPENCHROME_CODEGEN);
     setCodegenMode(codegenMode);
@@ -256,17 +258,32 @@ program
     // Resolve transport mode before owner-lock acquisition so lock metadata
     // describes whether this process is a stdio, HTTP, or dual-transport owner.
     const validModes = ['stdio', 'http', 'both'];
-    const rawMode = options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
+    const rawMode = options.broker
+      ? 'http'
+      : options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
     if (!validModes.includes(rawMode)) {
       console.error(`[openchrome] Unknown transport mode "${rawMode}", falling back to stdio`);
     }
     const transportMode = validModes.includes(rawMode) ? rawMode : 'stdio';
     const useHttp = transportMode === 'http' || transportMode === 'both';
+    const lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
+
+    if (options.connectBroker) {
+      const { readBrokerMetadata } = await import('./broker/discovery');
+      const { BrokerProxyStdioBridge } = await import('./transports/broker-proxy');
+      const broker = readBrokerMetadata(port, lockUserDataDir);
+      if (!broker) {
+        console.error(`[openchrome] No broker metadata found for port ${port} and profile ${lockUserDataDir}. Start one with: openchrome serve --broker --auto-launch --port ${port} --user-data-dir ${lockUserDataDir}`);
+        process.exit(2);
+      }
+      console.error(`[openchrome] Proxying stdio MCP requests to broker ${broker.endpoint}`);
+      new BrokerProxyStdioBridge(broker, options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined).start();
+      return;
+    }
 
     let controllerLock: ControllerLockHandle | null = null;
     const unsafeSharedAttach = options.allowUnsafeSharedAttach || process.env.OPENCHROME_ALLOW_UNSAFE_SHARED_ATTACH === '1';
     if (autoLaunch) {
-      const lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
       if (unsafeSharedAttach) {
         console.error(
           '[openchrome] Warning: unsafe shared attach guard bypassed. Multiple direct OpenChrome controllers for the same Chrome/profile can disconnect or close each other\'s targets.',
@@ -641,6 +658,12 @@ program
 
       console.error(`[openchrome] Dual transport mode: stdio + HTTP on ${httpHost}:${httpPort}`);
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
+      if (options.broker) {
+        const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
+        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: authToken ? 'OPENCHROME_AUTH_TOKEN' : undefined });
+        process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
+        console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
+      }
     } else if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
@@ -649,6 +672,12 @@ program
       server.start(transport);
       console.error(`[openchrome] HTTP transport enabled on ${httpHost}:${httpPort}`);
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
+      if (options.broker) {
+        const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
+        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: authToken ? 'OPENCHROME_AUTH_TOKEN' : undefined });
+        process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
+        console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
+      }
     } else {
       server.start();
       console.error('[openchrome] STDIO transport enabled');
