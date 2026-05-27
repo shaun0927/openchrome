@@ -48,6 +48,8 @@ interface SnapshotInput {
   network?: NetworkEntry[];
   console?: ConsoleEntry[];
   now_ms?: number;
+  /** Caller-supplied gate fact (typically the oc_gate_inspect output). */
+  gate?: Record<string, unknown>;
 }
 
 const VALID_PARTS: readonly EvidenceBundlePart[] = [
@@ -56,6 +58,7 @@ const VALID_PARTS: readonly EvidenceBundlePart[] = [
   'network',
   'console',
   'phash',
+  'gate',
 ];
 
 const definition: MCPToolDefinition = {
@@ -129,6 +132,13 @@ function buildSnapshot(input: SnapshotInput | undefined): EvidenceBundleSnapshot
   if (Array.isArray(input.network)) out.network = input.network;
   if (Array.isArray(input.console)) out.console = input.console;
   if (typeof input.now_ms === 'number') out.now_ms = input.now_ms;
+  if (input.gate && typeof input.gate === 'object') {
+    // Shallow-copy through with `unknown` shape; the bundle writer is
+    // schema-neutral and persists the JSON verbatim. The MCP tool surface
+    // intentionally avoids re-importing oc_gate_inspect types so the
+    // bundle module stays I/O-only.
+    out.gate = input.gate as unknown as EvidenceBundleSnapshot['gate'];
+  }
   return out;
 }
 
