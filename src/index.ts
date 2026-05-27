@@ -296,8 +296,15 @@ program
         console.error(`[openchrome] No broker metadata found for port ${port} and profile ${lockUserDataDir}. Start one with: openchrome serve --broker --auto-launch --port ${port} --user-data-dir ${lockUserDataDir}`);
         process.exit(2);
       }
+      // #1359 P3a follow-up: the broker advertises which env var holds its
+      // bearer token via `authTokenEnv`. Honour that hint so a client that
+      // only knows the broker file (not the original launch invocation) can
+      // still authenticate without the operator restating --auth-token.
+      const resolvedAuthToken = options.authToken
+        || process.env.OPENCHROME_AUTH_TOKEN
+        || (broker.authTokenEnv ? process.env[broker.authTokenEnv] : undefined);
       console.error(`[openchrome] Proxying stdio MCP requests to broker ${broker.endpoint}`);
-      new BrokerProxyStdioBridge(broker, options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined).start();
+      new BrokerProxyStdioBridge(broker, resolvedAuthToken).start();
       return;
     }
 
