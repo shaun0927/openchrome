@@ -132,6 +132,8 @@ export function listCodegenFiles(root = defaultCodegenRoot()): string[] {
 export function replayCommandFor(file: string, format: Exclude<CodegenMode, 'off'>): string {
   const qFile = JSON.stringify(file);
   if (format === 'mcp-replay') return `openchrome replay --from ${qFile}`;
-  if (format === 'puppeteer') return `npx ts-node ${qFile}`;
+  // puppeteer and playwright artifacts are both standalone TypeScript scripts
+  // that run via ts-node (playwright uses `import { chromium } from 'playwright'`,
+  // not `playwright/test`, so `npx playwright test` is not the right invocation).
   return `npx ts-node ${qFile}`;
 }

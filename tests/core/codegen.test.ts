@@ -70,5 +70,6 @@ describe('codegen aggregator (#836)', () => {
   test('replayCommandFor returns an operator command for each artifact format', () => {
     expect(replayCommandFor('/tmp/s1.mcp-replay.jsonl', 'mcp-replay')).toContain('openchrome replay');
     expect(replayCommandFor('/tmp/s1.puppeteer.ts', 'puppeteer')).toContain('ts-node');
+    expect(replayCommandFor('/tmp/s1.playwright.ts', 'playwright')).toContain('ts-node');
   });
 });
