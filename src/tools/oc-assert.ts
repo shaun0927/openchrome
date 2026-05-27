@@ -76,9 +76,18 @@ const definition: MCPToolDefinition = {
       contract_id: {
         type: 'string',
         description:
-          'Optional identifier for a registered contract. Reserved for ' +
-          'forward compatibility — currently no registry exists, so callers ' +
-          'must supply `contract` inline.',
+          "Optional template id to look up in the default outcome contract " +
+          "template registry (A2-PR6 of #1359). When supplied without " +
+          "`contract`, the tool resolves the named template and uses its " +
+          "`assertions` field. Templates without `assertions` (e.g. the " +
+          "public-web schema-only templates) return inconclusive with a " +
+          "hint to use oc_evidence_bundle with `target_schema` instead.",
+      },
+      contract_version: {
+        type: 'number',
+        description:
+          'Optional template version to pair with `contract_id`. When ' +
+          'omitted, the registry returns the latest registered version.',
       },
       contract: {
         type: 'object',
@@ -281,25 +290,53 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   const contractInline = args.contract;
   const contractId = args.contract_id as string | undefined;
+  const contractVersion =
+    typeof args.contract_version === 'number' && Number.isInteger(args.contract_version)
+      ? args.contract_version
+      : undefined;
 
-  if (contractInline === undefined) {
-    if (contractId !== undefined) {
+  // A2-PR6: resolve `contract_id` against the default template registry
+  // when no inline contract is supplied. The host names a template by
+  // (id, version?); we look it up and feed `template.assertions` into
+  // the same evaluation pipeline.
+  let resolvedContract: unknown = contractInline;
+  if (contractInline === undefined && contractId !== undefined) {
+    const { getDefaultTemplateRegistry } = await import('../contracts/templates');
+    const tpl = getDefaultTemplateRegistry().get(contractId, contractVersion);
+    if (!tpl) {
       const output: OcAssertOutput = {
         verdict: 'inconclusive',
         inconclusive_reason:
-          'contract_id lookup is not yet implemented; pass the assertion ' +
-          'inline via `contract`.',
+          `contract_id "${contractId}"` +
+          (contractVersion !== undefined ? `@${contractVersion}` : '') +
+          ' was not found in the default template registry',
       };
       return jsonResult(output);
     }
+    if (tpl.assertions === undefined) {
+      const output: OcAssertOutput = {
+        verdict: 'inconclusive',
+        inconclusive_reason:
+          `template "${tpl.id}@${tpl.version}" has no \`assertions\`; ` +
+          'use oc_evidence_bundle with `target_schema` for schema-diff ' +
+          'verification of this template instead.',
+      };
+      return jsonResult(output);
+    }
+    resolvedContract = tpl.assertions;
+  }
+
+  if (resolvedContract === undefined) {
     const output: OcAssertOutput = {
       verdict: 'inconclusive',
-      inconclusive_reason: 'missing required field: `contract`',
+      inconclusive_reason:
+        'missing required field: provide either `contract` (inline) or ' +
+        '`contract_id` (looked up in the default template registry)',
     };
     return jsonResult(output);
   }
 
-  const validation = validateAssertion(contractInline);
+  const validation = validateAssertion(resolvedContract);
   if (!validation.ok) {
     const output: OcAssertOutput = {
       verdict: 'inconclusive',
@@ -367,7 +404,7 @@ const handler: ToolHandler = async (
   const recorder = getActiveActionRecorder(sessionId);
   if (recorder) {
     recorder.appendContractResult({
-      assertion: contractInline,
+      assertion: resolvedContract,
       verdict,
       details: result.evidence.details as Record<string, unknown> | undefined,
     }).catch((err: unknown) => {
