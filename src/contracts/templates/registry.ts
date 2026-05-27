@@ -35,6 +35,28 @@ export interface TemplateListing {
 
 const ID_PATTERN = /^[a-z0-9]+(?:[-.][a-z0-9]+)*$/;
 
+/**
+ * Recursively freeze a plain object or array so that the registry's stored
+ * record is truly immutable. `Object.freeze` is shallow — it would leave
+ * nested `Assertion` trees (whose `children`/`operands` are arrays of further
+ * `Assertion` nodes) and `targetSchema.definition` (typed `unknown`) live
+ * and mutable, breaking the "frozen output" invariant for any template that
+ * carries either field.
+ *
+ * Only plain objects, arrays, and primitives appear inside templates (they
+ * must be JSON-serializable per P4), so this helper does not need to handle
+ * Maps, Sets, Dates, class instances, or cyclic references.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const key of Object.keys(value as object)) {
+    deepFreeze((value as Record<string, unknown>)[key]);
+  }
+  return value;
+}
+
 function validateTemplate(template: OutcomeTemplate): void {
   if (typeof template.id !== 'string' || template.id.length === 0) {
     throw new InvalidTemplateError('id must be a non-empty string');
@@ -75,7 +97,12 @@ export class TemplateRegistry {
     if (versions.has(template.version)) {
       throw new DuplicateTemplateError(template.id, template.version);
     }
-    versions.set(template.version, Object.freeze({ ...template }) as OutcomeTemplate);
+    // Structured-clone so the registry owns its copy (callers cannot mutate
+    // arrays they handed in), then deep-freeze the clone so consumers cannot
+    // mutate either. Templates are JSON-serializable by contract, so
+    // structuredClone is safe and preserves nested Assertion / targetSchema
+    // structure without us hand-rolling a deep-copy walker.
+    versions.set(template.version, deepFreeze(structuredClone(template)));
   }
 
   /**

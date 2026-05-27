@@ -156,6 +156,58 @@ describe('TemplateRegistry', () => {
     expect(r.get(t.id)?.description).toBe('page-level meta extraction');
   });
 
+  test('nested assertions tree is deep-frozen and cannot be mutated via registry output', () => {
+    const r = new TemplateRegistry();
+    const t: OutcomeTemplate = {
+      id: 'public-web.deep-freeze',
+      version: 1,
+      description: 'deep freeze probe',
+      assertions: {
+        kind: 'and',
+        children: [{ kind: 'no_dialog' }],
+      } as unknown as OutcomeTemplate['assertions'],
+      targetSchema: { format: 'schema-diff.v1', definition: { fields: ['a'] } },
+      tags: ['public-web'],
+    };
+    r.register(t);
+
+    const got = r.get(t.id)!;
+    expect(Object.isFrozen(got)).toBe(true);
+    expect(Object.isFrozen(got.assertions)).toBe(true);
+    // The Assertion DSL nests via `children` / `operands`; both must be
+    // deep-frozen so callers cannot reach in and mutate the tree.
+    const assertions = got.assertions as { children: unknown[] };
+    expect(Object.isFrozen(assertions.children)).toBe(true);
+    expect(() => assertions.children.push({} as never)).toThrow();
+    expect(Object.isFrozen(got.targetSchema)).toBe(true);
+    expect(Object.isFrozen(got.targetSchema!.definition as object)).toBe(true);
+    expect(Object.isFrozen(got.tags)).toBe(true);
+    expect(() => (got.tags as string[]).push('mutated')).toThrow();
+  });
+
+  test('mutating the caller-side input after register() does not affect the stored template', () => {
+    const r = new TemplateRegistry();
+    const tags = ['a'];
+    const definition = { fields: ['initial'] };
+    const t: OutcomeTemplate = {
+      id: 'public-web.aliasing-probe',
+      version: 1,
+      description: 'aliasing probe',
+      targetSchema: { format: 'schema-diff.v1', definition },
+      tags,
+    };
+    r.register(t);
+
+    // Mutate the caller's references; the registry copy is a structured clone
+    // so neither change should be observable through get().
+    tags.push('b');
+    definition.fields.push('mutated');
+
+    const got = r.get(t.id)!;
+    expect(got.tags).toEqual(['a']);
+    expect((got.targetSchema!.definition as { fields: string[] }).fields).toEqual(['initial']);
+  });
+
   test('template targetSchema and assertions pass through unchanged', () => {
     const r = new TemplateRegistry();
     const t: OutcomeTemplate = {
