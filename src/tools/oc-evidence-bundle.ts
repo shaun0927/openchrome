@@ -26,6 +26,11 @@ import {
   type ConsoleEntry,
   type NetworkEntry,
 } from '../core/contracts/evidence-bundle';
+import type {
+  SchemaDefinition,
+  SchemaDiff,
+  SchemaFieldType,
+} from '../core/contracts/schema-diff';
 import {
   OUTPUT_MODE_SCHEMA_PROPERTIES,
   parseOutputMode,
@@ -39,6 +44,11 @@ interface OcEvidenceBundleOutput {
   parts: string[];
   /** Filled when no snapshot was supplied; bundle is still created (empty). */
   inconclusive_reason?: string;
+  /**
+   * Present iff the bundle wrote `schema_diff.json`. Mirrors the on-disk
+   * diff so the caller does not need a second read to inspect coverage.
+   */
+  schema_diff?: SchemaDiff;
 }
 
 interface SnapshotInput {
@@ -48,6 +58,8 @@ interface SnapshotInput {
   network?: NetworkEntry[];
   console?: ConsoleEntry[];
   now_ms?: number;
+  /** Structured data the caller extracted from the page; diffed against `target_schema`. */
+  observed?: unknown;
 }
 
 const VALID_PARTS: readonly EvidenceBundlePart[] = [
@@ -56,6 +68,7 @@ const VALID_PARTS: readonly EvidenceBundlePart[] = [
   'network',
   'console',
   'phash',
+  'schema_diff',
 ];
 
 const definition: MCPToolDefinition = {
@@ -74,11 +87,22 @@ const definition: MCPToolDefinition = {
         type: 'array',
         description:
           "Which parts to capture. Default ['dom', 'screenshot']. Allowed " +
-          "items: 'dom' | 'screenshot' | 'network' | 'console' | 'phash'.",
+          "items: 'dom' | 'screenshot' | 'network' | 'console' | 'phash' | " +
+          "'schema_diff'. `schema_diff` requires `target_schema` and " +
+          '`evidence.snapshot.observed`; otherwise the part is omitted.',
         items: {
           type: 'string',
           enum: VALID_PARTS as unknown as string[],
         },
+      },
+      target_schema: {
+        type: 'object',
+        description:
+          'Declared target schema (see src/core/contracts/schema-diff.ts: ' +
+          '{ version: 1, fields: [ { name, type, required? } ] }). When ' +
+          "supplied together with `evidence.snapshot.observed` and the " +
+          "'schema_diff' part is included, the bundle writes " +
+          "`schema_diff.json` containing the structured field-match diff.",
       },
       network_window_ms: {
         type: 'number',
@@ -129,7 +153,42 @@ function buildSnapshot(input: SnapshotInput | undefined): EvidenceBundleSnapshot
   if (Array.isArray(input.network)) out.network = input.network;
   if (Array.isArray(input.console)) out.console = input.console;
   if (typeof input.now_ms === 'number') out.now_ms = input.now_ms;
+  if (input.observed !== undefined) out.observed = input.observed;
   return out;
+}
+
+/**
+ * Narrow validation of the caller-supplied `target_schema` input.
+ *
+ * Returns the schema when shape-correct, otherwise `undefined`. The diff
+ * step is then silently skipped — consistent with the rest of the bundle
+ * writer, which treats missing/malformed inputs as "omit gracefully".
+ */
+const VALID_SCHEMA_FIELD_TYPES = new Set<SchemaFieldType>([
+  'string',
+  'number',
+  'boolean',
+  'object',
+  'array',
+  'null',
+]);
+
+function isSchemaFieldType(value: unknown): value is SchemaFieldType {
+  return typeof value === 'string' && VALID_SCHEMA_FIELD_TYPES.has(value as SchemaFieldType);
+}
+
+function parseTargetSchema(raw: unknown): SchemaDefinition | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const candidate = raw as { version?: unknown; fields?: unknown };
+  if (candidate.version !== 1) return undefined;
+  if (!Array.isArray(candidate.fields)) return undefined;
+  for (const f of candidate.fields) {
+    if (!f || typeof f !== 'object') return undefined;
+    const field = f as { name?: unknown; type?: unknown };
+    if (typeof field.name !== 'string') return undefined;
+    if (!isSchemaFieldType(field.type)) return undefined;
+  }
+  return candidate as unknown as SchemaDefinition;
 }
 
 const handler: ToolHandler = async (
@@ -141,11 +200,16 @@ const handler: ToolHandler = async (
     typeof args.network_window_ms === 'number' ? args.network_window_ms : undefined;
   const evidenceArg = args.evidence as { snapshot?: SnapshotInput } | undefined;
   const snapshot = buildSnapshot(evidenceArg?.snapshot);
+  const targetSchema = parseTargetSchema(args.target_schema);
   const { mode, inlineLimit } = parseOutputMode(args);
 
   let result;
   try {
-    result = writeEvidenceBundle(snapshot, { include, networkWindowMs });
+    result = writeEvidenceBundle(snapshot, {
+      include,
+      networkWindowMs,
+      ...(targetSchema !== undefined ? { targetSchema } : {}),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const failure: OcEvidenceBundleOutput = {
@@ -164,10 +228,13 @@ const handler: ToolHandler = async (
     size_bytes: result.size_bytes,
     parts: result.parts,
   };
+  if (result.schema_diff !== undefined) {
+    output.schema_diff = result.schema_diff;
+  }
   if (result.parts.length === 0) {
     output.inconclusive_reason =
       'no evidence parts captured — supply `evidence.snapshot` with at least one of ' +
-      "dom / screenshot_png_base64 / network / console, and select matching `include` parts.";
+      "dom / screenshot_png_base64 / network / console / observed, and select matching `include` parts.";
   }
   const inlineResult = jsonResult(output);
   return resolveOutputMode(mode, inlineLimit, inlineResult, output, 'oc_evidence_bundle');
