@@ -56,3 +56,8 @@ openchrome config --client claude --topology dev-profile
 ## Future broker topology
 
 The planned broker topology will allow many MCP clients to share one direct Chrome owner. Until that exists, direct shared-profile multi-client setups should be treated as unsafe because independent processes can race over CDP target lifecycle, reconnect, and cleanup.
+
+## See also
+
+- [Safe OpenChrome parallelism](./safe-parallelism.md)
+- [Parallelism troubleshooting](./troubleshooting-parallelism.md)
