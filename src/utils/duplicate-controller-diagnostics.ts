@@ -150,7 +150,7 @@ export function scanMcpConfigRegistrations(pathsToScan?: Array<{ client: McpConf
     }
     const commands = exists ? extractOpenChromeCommands(content) : [];
     const hasNpx = commands.some((cmd) => /npm exec|npx|openchrome-mcp@|_npx/.test(cmd));
-    const hasGlobal = commands.some((cmd) => /openchrome(\s|[\"']|$)|node_modules\/openchrome-mcp/.test(cmd));
+    const hasGlobal = commands.some((cmd) => /openchrome(\s|["']|$)|node_modules\/openchrome-mcp/.test(cmd));
     const risk: McpConfigRegistration['risk'] = commands.length === 0
       ? 'none'
       : candidate.stale
@@ -180,7 +180,7 @@ export function summarizeDuplicateControllerDiagnostics(options: {
   const processSources = new Set(processes.map((proc) => proc.source).filter((source) => source !== 'unknown'));
   const configMixed = configs.some((config) => config.risk === 'mixed-installation')
     || configs.filter((config) => config.registrationCount > 0).some((config) => config.commands.some((cmd) => /npm exec|npx|openchrome-mcp@|_npx/.test(cmd)))
-      && configs.filter((config) => config.registrationCount > 0).some((config) => config.commands.some((cmd) => /openchrome(\s|[\"']|$)|node_modules\/openchrome-mcp/.test(cmd)));
+      && configs.filter((config) => config.registrationCount > 0).some((config) => config.commands.some((cmd) => /openchrome(\s|["']|$)|node_modules\/openchrome-mcp/.test(cmd)));
   const mixedInstallations = processSources.has('npx') && (processSources.has('global') || processSources.has('local')) || configMixed;
   const staleConfigs = configs.filter((config) => config.stale && config.registrationCount > 0);
 
