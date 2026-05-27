@@ -59,6 +59,14 @@ export interface HealthData {
     ownerPid?: number;
     remediation?: string;
   };
+  brokerLifecycle?: {
+    mode: 'direct' | 'broker-owner' | 'broker-client';
+    reconnectState: 'idle' | 'reconnecting' | 'failed';
+    activeLeases: number;
+    lastReconnectAt?: number;
+    lastDisconnectAt?: number;
+    lastError?: string;
+  };
 }
 
 export type HealthDataProvider = () => HealthData;
