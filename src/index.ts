@@ -48,6 +48,7 @@ import {
 } from './utils/controller-lock';
 import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
 import { setBrokerLifecycleMode, getBrokerLifecycleState } from './broker/lifecycle';
+import { assertSharedProfileAllowed } from './security/shared-profile-policy';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -313,6 +314,12 @@ program
       return;
     }
     if (options.broker) {
+      try {
+        assertSharedProfileAllowed();
+      } catch (err) {
+        console.error(`[openchrome] ${(err as Error).message}`);
+        process.exit(2);
+      }
       setBrokerLifecycleMode('broker-owner');
       process.env.OPENCHROME_BROKER_OWNER = '1';
     }
@@ -321,6 +328,12 @@ program
     const unsafeSharedAttach = options.allowUnsafeSharedAttach || process.env.OPENCHROME_ALLOW_UNSAFE_SHARED_ATTACH === '1';
     if (autoLaunch) {
       if (unsafeSharedAttach) {
+        try {
+          assertSharedProfileAllowed();
+        } catch (err) {
+          console.error(`[openchrome] ${(err as Error).message}`);
+          process.exit(2);
+        }
         console.error(
           '[openchrome] Warning: unsafe shared attach guard bypassed. Multiple direct OpenChrome controllers for the same Chrome/profile can disconnect or close each other\'s targets.',
         );

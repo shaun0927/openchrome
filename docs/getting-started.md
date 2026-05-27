@@ -46,6 +46,10 @@ are optional.
 For manual Codex CLI setup, run `openchrome config --client codex` and add
 the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
 
+Running multiple MCP clients? Read
+[`docs/mcp/safe-parallelism.md`](./mcp/safe-parallelism.md) before installing
+the same default direct config in more than one client.
+
 ## 2. Confirm core tier is live
 
 Open a fresh chat in your MCP client and ask it to navigate somewhere:
