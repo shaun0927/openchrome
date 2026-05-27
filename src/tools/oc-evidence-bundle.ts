@@ -29,6 +29,7 @@ import {
 import type {
   SchemaDefinition,
   SchemaDiff,
+  SchemaFieldType,
 } from '../core/contracts/schema-diff';
 import {
   OUTPUT_MODE_SCHEMA_PROPERTIES,
@@ -163,6 +164,19 @@ function buildSnapshot(input: SnapshotInput | undefined): EvidenceBundleSnapshot
  * step is then silently skipped — consistent with the rest of the bundle
  * writer, which treats missing/malformed inputs as "omit gracefully".
  */
+const VALID_SCHEMA_FIELD_TYPES = new Set<SchemaFieldType>([
+  'string',
+  'number',
+  'boolean',
+  'object',
+  'array',
+  'null',
+]);
+
+function isSchemaFieldType(value: unknown): value is SchemaFieldType {
+  return typeof value === 'string' && VALID_SCHEMA_FIELD_TYPES.has(value as SchemaFieldType);
+}
+
 function parseTargetSchema(raw: unknown): SchemaDefinition | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const candidate = raw as { version?: unknown; fields?: unknown };
@@ -172,7 +186,7 @@ function parseTargetSchema(raw: unknown): SchemaDefinition | undefined {
     if (!f || typeof f !== 'object') return undefined;
     const field = f as { name?: unknown; type?: unknown };
     if (typeof field.name !== 'string') return undefined;
-    if (typeof field.type !== 'string') return undefined;
+    if (!isSchemaFieldType(field.type)) return undefined;
   }
   return candidate as unknown as SchemaDefinition;
 }

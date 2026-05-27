@@ -101,6 +101,19 @@ describe('oc_evidence_bundle — target_schema diff wiring', () => {
     expect(out.schema_diff).toBeUndefined();
   });
 
+  test('target_schema with an unknown field type is silently dropped', async () => {
+    const handler = setup();
+    const result = await handler('sess', {
+      include: ['schema_diff'],
+      target_schema: { version: 1, fields: [{ name: 'publishedAt', type: 'date' }] },
+      evidence: { snapshot: { observed: { publishedAt: '2026-05-27' } } },
+    });
+
+    const out = parseResult(result);
+    expect(out.parts).not.toEqual(expect.arrayContaining(['schema_diff.json']));
+    expect(out.schema_diff).toBeUndefined();
+  });
+
   test('absent observed yields no schema_diff even when target_schema is valid', async () => {
     const handler = setup();
     const result = await handler('sess', {
