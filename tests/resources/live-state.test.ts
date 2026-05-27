@@ -18,12 +18,13 @@ jest.mock('../../src/journal/task-journal', () => ({
 }));
 
 describe('live MCP resources (#872)', () => {
-  test('advertises the five live URI templates', () => {
+  test('advertises the six live URI templates', () => {
     expect(LIVE_RESOURCE_TEMPLATES.map((t) => t.uriTemplate)).toEqual([
       'oc://session/{sessionId}/tabs',
       'oc://session/{sessionId}/state',
       'oc://journal/{taskId}',
       'oc://recording/{recordingId}',
+      'oc://diagnostics/targets',
       'oc://dashboard/state',
     ]);
   });
@@ -34,6 +35,7 @@ describe('live MCP resources (#872)', () => {
     expect(parseLiveResourceUri('oc://journal/task-1')).toEqual({ kind: 'journal', id: 'task-1' });
     expect(parseLiveResourceUri('oc://recording/rec-1')).toEqual({ kind: 'recording', id: 'rec-1' });
     expect(parseLiveResourceUri('oc://dashboard/state')).toEqual({ kind: 'dashboard-state' });
+    expect(parseLiveResourceUri('oc://diagnostics/targets')).toEqual({ kind: 'target-diagnostics' });
   });
 
   test('enforces same-tenant access for session resources', () => {
@@ -62,6 +64,25 @@ describe('live MCP resources (#872)', () => {
       mimeType: 'application/json',
       text: JSON.stringify({ taskId: 'missing-session', entries: [], count: 0 }),
     });
+  });
+
+
+  test('reads tenant-scoped redacted target diagnostics without page payloads', async () => {
+    const sessionManager = {
+      getTargetDiagnostics: jest.fn(() => ({
+        leases: [{ targetId: 'target-1', sessionId: 'owned-session', cleanupPolicy: 'expire' }],
+        queues: [{ targetId: 'target-1', pending: 1, processing: false, averageWaitMs: 3 }],
+      })),
+    } as any;
+
+    const result = await readLiveResource(sessionManager, 'oc://diagnostics/targets');
+    const body = JSON.parse(result.text);
+
+    expect(result.mimeType).toBe('application/json');
+    expect(body.redaction).toMatchObject({ url: 'omitted', title: 'omitted', cookies: 'omitted', screenshot: 'omitted' });
+    expect(body.leases).toHaveLength(1);
+    expect(JSON.stringify(body)).not.toContain('https://');
+    expect(sessionManager.getTargetDiagnostics).toHaveBeenCalledWith('default');
   });
 
   test('bounds subscription limit env parsing', () => {

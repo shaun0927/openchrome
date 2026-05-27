@@ -283,6 +283,45 @@ export class SessionManager {
     return this.targetQueueManager.getStats();
   }
 
+  getTargetDiagnostics(tenantId: TenantId = DEFAULT_TENANT_ID): { leases: Array<Record<string, unknown>>; queues: Array<Record<string, unknown>> } {
+    const visibleSessionIds = new Set<string>();
+    for (const [sessionId, session] of this.sessions) {
+      if ((session.tenantId ?? DEFAULT_TENANT_ID) === tenantId) visibleSessionIds.add(sessionId);
+    }
+    const visibleTargetIds = new Set<string>();
+    const leases = this.targetLeases.snapshot()
+      .filter((lease) => visibleSessionIds.has(lease.sessionId))
+      .map((lease) => {
+        visibleTargetIds.add(lease.targetId);
+        return {
+          targetId: lease.targetId,
+          sessionId: lease.sessionId,
+          workerId: lease.workerId,
+          laneId: lease.laneId,
+          contextName: lease.contextName,
+          cleanupPolicy: lease.cleanupPolicy,
+          createdAt: lease.createdAt,
+          lastActivityAt: lease.lastActivityAt,
+          leaseExpiresAt: lease.leaseExpiresAt,
+        };
+      });
+    const queues = this.targetQueueManager.getStats()
+      .filter((queue) => visibleTargetIds.has(queue.targetId))
+      .map((queue) => ({
+        targetId: queue.targetId,
+        pending: queue.pending,
+        processing: queue.processing,
+        closed: queue.closed,
+        enqueued: queue.enqueued,
+        completed: queue.completed,
+        rejected: queue.rejected,
+        cancelled: queue.cancelled,
+        averageWaitMs: queue.completed > 0 ? Math.round(queue.totalWaitMs / queue.completed) : 0,
+        averageExecutionMs: queue.completed > 0 ? Math.round(queue.totalExecutionMs / queue.completed) : 0,
+      }));
+    return { leases, queues };
+  }
+
   /**
    * Start automatic cleanup interval
    */
@@ -648,7 +687,10 @@ export class SessionManager {
       }
     }
 
-    this.targetLeases.expire(now);
+    const expiredLeases = this.targetLeases.expire(now);
+    for (const lease of expiredLeases) {
+      this.targetQueueManager.cancelTarget(lease.targetId);
+    }
 
     // Trigger browser-level GC after bulk cleanup
     if (deletedSessions.length > 0) {

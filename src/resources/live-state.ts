@@ -50,6 +50,12 @@ export const LIVE_RESOURCE_TEMPLATES: MCPResourceTemplateDefinition[] = [
     mimeType: 'application/json',
   },
   {
+    uriTemplate: 'oc://diagnostics/targets',
+    name: 'openchrome-target-diagnostics',
+    description: 'Tenant-scoped target lease and command queue diagnostics with no URL, title, cookie, or screenshot payloads.',
+    mimeType: 'application/json',
+  },
+  {
     uriTemplate: 'oc://dashboard/state',
     name: 'openchrome-dashboard-state',
     description: 'Aggregate dashboard snapshot filtered to the caller tenant.',
@@ -59,6 +65,12 @@ export const LIVE_RESOURCE_TEMPLATES: MCPResourceTemplateDefinition[] = [
 
 export function liveResourceDefinitions(sessionManager: SessionManager): MCPResourceDefinition[] {
   const resources: MCPResourceDefinition[] = [
+    {
+      uri: 'oc://diagnostics/targets',
+      name: 'openchrome-target-diagnostics',
+      description: 'Tenant-scoped target lease and command queue diagnostics with no URL, title, cookie, or screenshot payloads.',
+      mimeType: 'application/json',
+    },
     {
       uri: 'oc://dashboard/state',
       name: 'openchrome-dashboard-state',
@@ -99,7 +111,7 @@ export function recordingUri(recordingId: string): string {
   return `oc://recording/${encodeURIComponent(recordingId)}`;
 }
 
-export type LiveResourceKind = 'session-tabs' | 'session-state' | 'journal' | 'recording' | 'dashboard-state';
+export type LiveResourceKind = 'session-tabs' | 'session-state' | 'journal' | 'recording' | 'dashboard-state' | 'target-diagnostics';
 
 export interface ParsedLiveResourceUri {
   kind: LiveResourceKind;
@@ -129,6 +141,9 @@ export function parseLiveResourceUri(uri: string): ParsedLiveResourceUri | null 
   }
   if (parsed.hostname === 'dashboard' && parts.length === 1 && parts[0] === 'state') {
     return { kind: 'dashboard-state' };
+  }
+  if (parsed.hostname === 'diagnostics' && parts.length === 1 && parts[0] === 'targets') {
+    return { kind: 'target-diagnostics' };
   }
   return null;
 }
@@ -170,6 +185,8 @@ export async function readLiveResource(sessionManager: SessionManager, uri: stri
       return json(await readRecording(sessionManager, parsed.id!));
     case 'dashboard-state':
       return json(readDashboard(sessionManager));
+    case 'target-diagnostics':
+      return json(readTargetDiagnostics(sessionManager));
     default:
       throw new Error(`No content handler for resource: ${uri}`);
   }
@@ -275,4 +292,12 @@ export function parseResourceSubscriptionLimit(raw = process.env.OPENCHROME_RESO
   const parsed = Number.parseInt(raw || '', 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return 50;
   return Math.max(1, Math.min(1000, parsed));
+}
+
+function readTargetDiagnostics(sessionManager: SessionManager): Record<string, unknown> {
+  return {
+    tenantId: currentTenantId(),
+    redaction: { url: 'omitted', title: 'omitted', cookies: 'omitted', screenshot: 'omitted' },
+    ...sessionManager.getTargetDiagnostics(currentTenantId()),
+  };
 }
