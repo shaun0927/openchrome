@@ -1,0 +1,14 @@
+{
+  "slot": "C2",
+  "url": "https://news.ycombinator.com/",
+  "arm": "browsermcp",
+  "pass": null,
+  "httpStatus": null,
+  "challengeFound": null,
+  "headingFound": null,
+  "screenshotPath": null,
+  "error": "pending — fill in manually per instructions printed to stderr",
+  "skipped": false,
+  "pendingManual": true,
+  "measuredAt": null
+}
