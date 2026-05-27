@@ -255,9 +255,21 @@ program
     const useHeadlessShell = options.headlessShell || false;
     const restartChrome = options.restartChrome || false;
 
+    // #1359 broker foundation: --broker and --connect-broker are mutually
+    // exclusive because one publishes broker ownership while the other forwards
+    // stdio JSON-RPC to an existing broker. Combining them produces undefined
+    // behavior (proxy + owner in one process).
+    if (options.broker && options.connectBroker) {
+      console.error('[openchrome] Error: --broker and --connect-broker cannot be combined. Pick one role per process.');
+      process.exit(2);
+    }
+
     // Resolve transport mode before owner-lock acquisition so lock metadata
     // describes whether this process is a stdio, HTTP, or dual-transport owner.
     const validModes = ['stdio', 'http', 'both'];
+    if (options.broker && options.transport && options.transport !== 'http' && options.transport !== 'both') {
+      console.error(`[openchrome] Warning: --broker forces HTTP transport; ignoring --transport ${options.transport}.`);
+    }
     const rawMode = options.broker
       ? 'http'
       : options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
@@ -267,6 +279,14 @@ program
     const transportMode = validModes.includes(rawMode) ? rawMode : 'stdio';
     const useHttp = transportMode === 'http' || transportMode === 'both';
     const lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
+
+    // #1359 P3a: the broker is the single CDP owner for a (port, userDataDir).
+    // Refuse to publish broker metadata when this process did not take Chrome
+    // ownership via the controller lock (i.e., when --auto-launch is off).
+    if (options.broker && !autoLaunch) {
+      console.error('[openchrome] Error: --broker requires --auto-launch so this process owns Chrome lifecycle and the controller lock for the shared profile.');
+      process.exit(2);
+    }
 
     if (options.connectBroker) {
       const { readBrokerMetadata } = await import('./broker/discovery');
