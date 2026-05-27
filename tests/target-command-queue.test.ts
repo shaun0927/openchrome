@@ -51,4 +51,17 @@ describe('TargetQueueManager', () => {
     await first;
     await expect(second).rejects.toBeInstanceOf(TargetQueueCancelledError);
   });
+
+  test('reconcile drops queues whose targetId is no longer alive', async () => {
+    const queue = new TargetQueueManager();
+    const aliveDone = queue.enqueue('alive', async () => 1);
+    const orphanWork = queue.enqueue('orphan', async () => undefined);
+    await aliveDone;
+
+    const cancelled = queue.reconcileAliveTargetIds(new Set(['alive']));
+
+    expect(cancelled).toEqual(['orphan']);
+    await expect(orphanWork).resolves.toBeUndefined();
+    expect(queue.getStats().map((s) => s.targetId)).toEqual(['alive']);
+  });
 });

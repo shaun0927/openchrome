@@ -108,6 +108,22 @@ export class TargetQueueManager {
     }
   }
 
+  /**
+   * Cancel queues for any targetId not in the alive set. Mirrors the lease
+   * registry reconcile path so a Chrome reconnect that loses targetIds does
+   * not leave per-target queues orphaned in memory.
+   */
+  reconcileAliveTargetIds(aliveTargetIds: Set<string>): string[] {
+    const cancelled: string[] = [];
+    for (const targetId of Array.from(this.queues.keys())) {
+      if (!aliveTargetIds.has(targetId)) {
+        this.cancelTarget(targetId);
+        cancelled.push(targetId);
+      }
+    }
+    return cancelled;
+  }
+
   getStats(): Array<ReturnType<TargetCommandQueue['snapshot']>> {
     return Array.from(this.queues.values()).map((queue) => queue.snapshot());
   }
