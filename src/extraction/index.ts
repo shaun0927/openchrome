@@ -13,3 +13,6 @@ export { EXTRACTION_MODES, EXTRACTION_MODE_BUDGETS, parseExtractionMode } from '
 export type { ExtractionMode, ExtractionModeBudget } from './mode';
 export { SEMANTIC_DEFAULT_MAX_CHARS, SEMANTIC_HARD_MAX_CHARS, buildSemanticHostExtractionPayload } from './semantic';
 export type { SemanticExtractionPayload } from './semantic';
+
+export { buildExtractionPlan, buildFieldPlan } from './plan';
+export type { ExtractionFieldPlan, ExtractionPlan } from './plan';

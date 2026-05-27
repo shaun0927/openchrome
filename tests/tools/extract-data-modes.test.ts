@@ -91,4 +91,65 @@ describe('extract_data modes', () => {
     expect((body.metrics as Record<string, unknown>).outputChars).toBeGreaterThan(0);
     expect(evaluate).toHaveBeenCalledTimes(5);
   });
+
+  it('resolves template_id into an extract_data-compatible schema before validation', async () => {
+    const evaluate = jest.fn(async (script: string) => {
+      if (script.includes('application/ld+json')) {
+        return {
+          title: 'Template title',
+          url: 'https://example.test/template',
+          statusCode: 200,
+        };
+      }
+      return {};
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      getPage: jest.fn(async () => ({ url: () => 'https://example.test/template', evaluate })),
+    });
+
+    const result = await extractDataHandler('s1', {
+      tabId: 't1',
+      template_id: 'public-web.page-meta',
+    });
+    const body = responseJson(result);
+
+    expect(result.isError).toBeUndefined();
+    expect(body.modeUsed).toBe('fast');
+    expect((body.data as Record<string, unknown>).title).toBe('Template title');
+    expect((body.data as Record<string, unknown>).url).toBe('https://example.test/template');
+    expect((body.data as Record<string, unknown>).statusCode).toBe(200);
+    expect(body.fieldsTotal).toBeGreaterThan(3);
+    expect(body.validationErrors).toBeUndefined();
+    expect(evaluate).toHaveBeenCalled();
+  });
+
+  it('requires either inline schema or template_id before touching the browser', async () => {
+    const result = await extractDataHandler('s1', { tabId: 't1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toContain('provide either `schema`');
+    expect(getSessionManager).not.toHaveBeenCalled();
+  });
+
+  it('keeps inline schema precedence when schema and template_id are both supplied', async () => {
+    const evaluate = jest.fn(async (script: string) => {
+      if (script.includes('application/ld+json')) return { title: 'Inline title' };
+      return {};
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      getPage: jest.fn(async () => ({ url: () => 'https://example.test/product', evaluate })),
+    });
+
+    const result = await extractDataHandler('s1', {
+      tabId: 't1',
+      schema,
+      template_id: 'public-web.page-meta',
+    });
+    const body = responseJson(result);
+
+    expect(body.fieldsTotal).toBe(2);
+    expect((body.data as Record<string, unknown>).title).toBe('Inline title');
+    expect((body.data as Record<string, unknown>)).toHaveProperty('price');
+  });
+
 });
