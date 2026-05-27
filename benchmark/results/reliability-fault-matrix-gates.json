@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "status": "not_ready",
+  "issues": [1259, 1303, 1304],
+  "fault_axis": ["none", "cdp_disconnect", "browser_crash", "network_stall", "tab_eviction", "slow_dom", "custom"],
+  "required_fields": [
+    "task_id",
+    "adapter",
+    "fault",
+    "injection_point",
+    "final_postcondition",
+    "recovered",
+    "chrome_process",
+    "artifacts"
+  ],
+  "minimum_repetitions_per_cell": 3,
+  "promotion_rule": "Baseline passes, fault cell has >=3 repetitions, RSS/zombie sampling exists for browser-backed adapters, and final postcondition decides success."
+}
