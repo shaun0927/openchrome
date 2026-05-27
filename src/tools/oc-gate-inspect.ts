@@ -101,7 +101,24 @@ const handler: ToolHandler = async (
   }
 
   const sessionManager = getSessionManager();
-  const page = await sessionManager.getPage(sessionId, tabId, undefined, 'oc_gate_inspect');
+  let page;
+  try {
+    // getPage may throw on ownership mismatch or stale targets in addition
+    // to returning null when the tab is not found at all. Surface either
+    // failure mode as a structured isError result rather than letting it
+    // escape as an unhandled rejection.
+    page = await sessionManager.getPage(sessionId, tabId, undefined, 'oc_gate_inspect');
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      ],
+      isError: true,
+    };
+  }
   if (!page) {
     return {
       content: [{ type: 'text', text: `Error: Tab ${tabId} not found` }],
