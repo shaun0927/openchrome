@@ -20,3 +20,4 @@ export { TemplateRegistry } from './registry';
 export { PAGE_META_TEMPLATE } from './public-web/page-meta';
 export { SPA_HYDRATED_TEMPLATE } from './public-web/spa-hydrated';
 export { LINK_GRAPH_TEMPLATE } from './public-web/link-graph';
+export { AUTHENTICATED_FIELDS_TEMPLATE } from './public-web/authenticated-fields';
