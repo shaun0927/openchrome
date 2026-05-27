@@ -47,8 +47,9 @@ Three openchrome tool surfaces consume templates today.
 }
 ```
 
-`extract_data` resolves the template, uses
-`template.targetSchema.definition` as the extraction schema, and
+`extract_data` resolves the template, converts its
+`schema-diff.v1` field list into the JSON Schema shape used by the
+extractor while preserving the template's observed field names, and
 returns the structured result. Inline `schema` still works — when
 both are supplied, inline wins.
 
