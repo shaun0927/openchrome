@@ -907,6 +907,11 @@ export class SessionManager {
         // Page might already be closed
       }
       this.targetToWorker.delete(targetId);
+      // #1359 backlog item 3: closePage triggers targetdestroyed → onTargetClosed
+      // asynchronously, but targetToWorker.delete above runs first, so by the
+      // time the event handler fires it cannot resolve the owner. Release the
+      // lease here so the registry stays consistent with the legacy map.
+      this.targetLeases.release(targetId, session.id);
     }
 
     // Close the browser context (only if it's an isolated context, not the default)
@@ -1390,6 +1395,13 @@ export class SessionManager {
       // Re-register the target
       worker.targets.add(targetId);
       this.targetToWorker.set(targetId, { sessionId, workerId: resolvedWorkerId });
+      // #1359 backlog item 3: keep the lease registry in sync with the
+      // recovered ownership so reconcile/expire/diagnostics observe the same
+      // session/worker the legacy targetToWorker map records. Recovery
+      // intentionally transfers ownership, so drop any stale lease the
+      // previous owner left behind before acquiring fresh.
+      this.targetLeases.release(targetId);
+      this.acquireTargetLease(targetId, sessionId, resolvedWorkerId);
       console.error(`[SessionManager] Recovered untracked target ${targetId.slice(0, 8)} (${pageUrl.slice(0, 50)}) into session ${sessionId} worker ${resolvedWorkerId}`);
 
       return page;
@@ -1932,6 +1944,11 @@ export class SessionManager {
         // Update targetToWorker mapping
         this.targetToWorker.delete(targetId);
         this.targetToWorker.set(newTargetId, ownerInfo);
+        // #1359 backlog item 3: reconcileAliveTargetIds above already dropped
+        // the old targetId from the lease registry. Acquire a fresh lease
+        // for the re-mapped targetId so diagnostics and cleanup observe the
+        // same ownership the legacy map records.
+        this.acquireTargetLease(newTargetId, ownerInfo.sessionId, ownerInfo.workerId);
 
         // Update worker's target set
         const session = this.sessions.get(ownerInfo.sessionId);
