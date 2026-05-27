@@ -4,7 +4,7 @@ OpenChrome currently supports one safe direct-controller rule:
 
 > Run at most one direct `openchrome serve --auto-launch` process for the same Chrome debug port and user-data directory.
 
-Multiple MCP clients can still run in parallel today, but each direct OpenChrome process should use an explicit isolated Chrome topology until broker mode is available.
+Multiple MCP clients can still run in parallel today. When they need to share one Chrome user data directory, run a single broker owner (`openchrome serve --broker --auto-launch`) and point the other clients at it with `--connect-broker`; otherwise give each client its own isolated port and user-data directory.
 
 ## Single-owner default
 
@@ -53,10 +53,6 @@ For local development, use a named development profile:
 openchrome config --client claude --topology dev-profile
 ```
 
-## Future broker topology
-
-The planned broker topology will allow many MCP clients to share one direct Chrome owner. Until that exists, direct shared-profile multi-client setups should be treated as unsafe because independent processes can race over CDP target lifecycle, reconnect, and cleanup.
-
 ## Shared-profile broker trust model
 
 Broker mode is the only supported way for more than one MCP client to share a
@@ -89,22 +85,22 @@ screenshot, DOM, or extracted page payloads across tenant boundaries.
 openchrome serve --broker --auto-launch --http 3100 --port 9222 \
   --user-data-dir ~/.openchrome/shared-profile
 
-# Terminal 2+: stdio MCP clients
-OPENCHROME_BROKER_CLIENT_ID=claude \
-  openchrome serve --connect-broker --port 9222 \
+# Terminal 2+: stdio MCP clients. When the broker has an auth token, share it
+# via OPENCHROME_AUTH_TOKEN (the proxy auto-discovers the broker's authTokenEnv
+# hint and uses that bearer for every forwarded JSON-RPC request).
+openchrome serve --connect-broker --port 9222 \
   --user-data-dir ~/.openchrome/shared-profile
 
-OPENCHROME_BROKER_CLIENT_ID=codex \
-  openchrome serve --connect-broker --port 9222 \
+openchrome serve --connect-broker --port 9222 \
   --user-data-dir ~/.openchrome/shared-profile
 ```
 
 **OMX / local agent swarm**
 
 Run the broker once in a durable pane, then configure each worker/client entry to
-use `--connect-broker` with a stable `OPENCHROME_BROKER_CLIENT_ID`. Do not let
-worker panes start direct `openchrome serve --auto-launch` processes against the
-same profile.
+use `--connect-broker --port <broker-port> --user-data-dir <broker-profile>`. Do
+not let worker panes start direct `openchrome serve --auto-launch` processes
+against the same profile.
 
 **CI**
 
