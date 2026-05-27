@@ -189,7 +189,12 @@ export class SessionManager {
         console.error('[SessionManager] Reconnect failed, clearing stale target mappings');
         for (const targetId of Array.from(this.targetToWorker.keys())) {
           this.onTargetClosed(targetId);
-          // Safety: force-delete in case session is already gone and onTargetClosed skipped it
+          // Safety: force-delete in case session is already gone and
+          // onTargetClosed skipped it. The lease release mirrors the
+          // targetToWorker.delete below so the lease registry never
+          // outlives the legacy ownership map — leases without a TTL
+          // would otherwise survive indefinitely after Chrome disappears.
+          this.targetLeases.release(targetId);
           this.targetToWorker.delete(targetId);
         }
       }
