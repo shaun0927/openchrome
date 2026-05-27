@@ -8,6 +8,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getCDPClient } from '../cdp/client';
 import { getCurrentControllerTopology } from '../utils/duplicate-controller-diagnostics';
+import { getBrokerLifecycleSnapshot } from '../broker/lifecycle';
 
 const definition: MCPToolDefinition = {
   name: 'oc_connection_health',
@@ -50,6 +51,7 @@ const handler: ToolHandler = async (
               reconnectAttempt: metrics.reconnectAttempt,
               reconnectNextRetryInMs: metrics.reconnectNextRetryInMs,
               controllerTopology: getCurrentControllerTopology(),
+              brokerLifecycle: getBrokerLifecycleSnapshot(),
             },
             null,
             2
