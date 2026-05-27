@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { applyLaneTarget, getBrowserLane, recordLaneToolCall } from '../../src/core/browser-lanes';
+import { applyLaneTarget, getBrowserLane, reconcileBrowserLaneTargets, recordLaneToolCall } from '../../src/core/browser-lanes';
 import { TaskStore } from '../../src/core/task-ledger/store';
 import type { TaskMeta } from '../../src/core/task-ledger/types';
 import { setTaskStoreForTests } from '../../src/tools/oc-task-start';
@@ -53,6 +53,18 @@ describe('browser lanes (#1037)', () => {
 
   test('applyLaneTarget rejects cross-lane tabId', () => {
     expect(() => applyLaneTarget({ taskId, laneId: 'lane_alpha', tabId: 'tab-b' })).toThrow(/does not belong/);
+  });
+
+
+  test('reconcileBrowserLaneTargets marks missing restored targets as recoverable failures', async () => {
+    const lanes = await reconcileBrowserLaneTargets(taskId, new Set<string>());
+
+    expect(lanes[0]).toMatchObject({
+      status: 'failed',
+      recovery: 'target_missing',
+      targetStatuses: [{ targetId: 'tab-a', status: 'target_missing' }],
+    });
+    expect(getBrowserLane(taskId, 'lane_alpha')).toMatchObject({ status: 'failed', recovery: 'target_missing' });
   });
 
   test('recordLaneToolCall increments lane counters and appends new target', async () => {

@@ -32,7 +32,25 @@ export function laneWorkerId(taskId: string, laneId: string): string {
 }
 
 function cloneLane(lane: BrowserLane): BrowserLane {
-  return { ...lane, targetIds: [...lane.targetIds], counters: { ...lane.counters } };
+  return {
+    ...lane,
+    targetIds: [...lane.targetIds],
+    ...(lane.targetStatuses ? { targetStatuses: lane.targetStatuses.map((target) => ({ ...target })) } : {}),
+    counters: { ...lane.counters },
+  };
+}
+
+function laneWithStatuses(lane: BrowserLane, liveTargetIds?: Set<string>): BrowserLane {
+  const statuses = lane.targetIds.map((targetId) => ({
+    targetId,
+    status: liveTargetIds && !liveTargetIds.has(targetId) ? 'target_missing' as const : 'open' as const,
+  }));
+  const missing = statuses.some((target) => target.status === 'target_missing');
+  return {
+    ...lane,
+    ...(statuses.length ? { targetStatuses: statuses } : {}),
+    ...(missing ? { status: 'failed' as const, recovery: 'target_missing' as const } : {}),
+  };
 }
 
 export function getTaskLanes(meta: TaskMeta): BrowserLane[] {
@@ -124,6 +142,17 @@ export async function closeBrowserLane(taskId: string, laneId: string, sessionId
   }));
   getTaskStore().appendEvent(taskId, { ts: now, kind: 'log', data: { event: 'lane_closed', laneId } });
   return cloneLane(closed);
+}
+
+
+export async function reconcileBrowserLaneTargets(taskId: string, liveTargetIds: Set<string>): Promise<BrowserLane[]> {
+  const store = getTaskStore();
+  const meta = store.readMetaSync(taskId);
+  if (!meta) throw new Error(`unknown task ${taskId}`);
+  const now = Date.now();
+  const lanes = getTaskLanes(meta).map((lane) => laneWithStatuses(lane, liveTargetIds));
+  await store.update(taskId, (cur) => ({ ...cur, lanes, last_activity_at: now }));
+  return lanes.map(cloneLane);
 }
 
 export function resolveLaneForTool(args: Record<string, unknown>): { taskId?: string; laneId?: string } {
