@@ -60,7 +60,8 @@ export async function runAirenaRound(
   // 1. Extract structured data using one of the public-web templates.
   const extracted = (await mcp.call('extract_data', {
     tabId: round.tabId,
-    schema: round.template.targetSchema.definition,
+    template_id: round.template.id,
+    template_version: round.template.version,
     waitForReady: true,
   })) as Record<string, unknown> | undefined;
   const observed =

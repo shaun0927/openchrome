@@ -18,8 +18,8 @@ host-neutrality (#1359 §P1) holds in practice.
 
 This file lists *registered* external workloads — adapters whose pure
 mapping logic (the openchrome → workload-shape transform) lives in
-`examples/external/<name>/` and whose mapper tests pass under
-`npx jest examples/external/<name>/`.
+`tests/external/<name>/` and whose mapper tests pass under
+`npx jest tests/external/<name>/`.
 
 ## Registered workloads
 
@@ -28,8 +28,8 @@ mapping logic (the openchrome → workload-shape transform) lives in
 - **Scope:** crawler-arena style benchmark scoring (round-based).
 - **Adapter:** `examples/external/airena-adapter/`
 - **Status:** sample.
-- **Mapping logic:** `examples/external/airena-adapter/map-to-airena.mjs`
-- **Tests:** `examples/external/airena-adapter/map-to-airena.test.mjs`
+- **Mapping logic:** `tests/external/airena-adapter/map-to-airena.ts`
+- **Tests:** `tests/external/airena-adapter/map-to-airena.test.ts`
 - **MCP surfaces consumed:**
   - `extract_data` (with public-web templates from
     `src/contracts/templates/public-web/`)
@@ -45,12 +45,14 @@ mapping logic (the openchrome → workload-shape transform) lives in
 2. Add a directory under `examples/external/<name>/`:
    - `README.md` — what the workload does, what MCP surfaces it
      consumes, how to run it (out of scope here).
-   - `map-to-<workload>.mjs` — **pure mapping function** from
+   - Runtime source may live wherever the host wants; in-repo
+     samples keep TypeScript mapper tests under `tests/external/<name>/`
+     so repo tooling can typecheck them.
+   - `map-to-<workload>.ts` — **pure mapping function** from
      openchrome facts to the workload's score envelope.
-   - `map-to-<workload>.test.mjs` — Jest tests on the mapper alone
+   - `map-to-<workload>.test.ts` — Jest tests on the mapper alone
      (no MCP transport, no network).
-   - `adapter.mjs` — sample wire-up (untested transport, host runs it
-     themselves).
+   - `adapter.ts` — sample wire-up (transport is host-owned).
 3. Append an entry above with the same fields.
 
 ## #1359 alignment

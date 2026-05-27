@@ -53,9 +53,9 @@ separate test scaffold; this `examples/` directory is README-only.
 
 ## Running (out of scope here)
 
-`adapter.mjs` is a stub showing the wire-up. Actually executing it
+`adapter.ts` is a stub showing the wire-up. Actually executing it
 requires an openchrome MCP server, a tab with content, and an
-airena.lol REST endpoint. The mapping logic in `map-to-airena.mjs` is
+airena.lol REST endpoint. The mapping logic in `map-to-airena.ts` is
 fully testable in isolation — that's where the load-bearing surface
 lives.
 
