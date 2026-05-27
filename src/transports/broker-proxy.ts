@@ -84,9 +84,10 @@ export class BrokerProxyStdioBridge {
       const rawBody = await response.text();
       if (!rawBody) return;
 
-      const payload = unwrapBody(rawBody, response.headers);
-      if (!payload) return;
-      this.writeOut(payload.trimEnd() + '\n');
+      const payloads = unwrapBody(rawBody, response.headers);
+      for (const payload of payloads) {
+        this.writeOut(payload.trimEnd() + '\n');
+      }
     } catch (err) {
       this.writeResponse({
         jsonrpc: '2.0',
@@ -113,16 +114,17 @@ function extractId(parsed: Record<string, unknown>): string | number | null {
   return (typeof id === 'string' || typeof id === 'number' || id === null) ? id : 0;
 }
 
-function unwrapBody(rawBody: string, headers: Headers | Record<string, string> | undefined): string | null {
+function unwrapBody(rawBody: string, headers: Headers | Record<string, string> | undefined): string[] {
   const contentType = readHeader(headers, 'Content-Type') ?? readHeader(headers, 'content-type') ?? '';
-  if (!contentType.includes('text/event-stream')) return rawBody;
+  if (!contentType.includes('text/event-stream')) return rawBody ? [rawBody] : [];
 
-  // Streamable HTTP single-response framing: one `event:` line followed by
-  // one or more `data:` lines. Concatenate `data:` payloads and drop the rest.
+  // Streamable HTTP framing: one or more `event:`/`data:` pairs separated by
+  // blank lines. Each `data:` payload is a complete JSON-RPC response, so
+  // emit them as separate lines instead of concatenating (which would
+  // produce invalid JSON for batched responses).
   const dataLines: string[] = [];
   for (const line of rawBody.split(/\r?\n/)) {
     if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^\s/, ''));
   }
-  if (dataLines.length === 0) return null;
-  return dataLines.join('');
+  return dataLines;
 }

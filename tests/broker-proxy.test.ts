@@ -103,6 +103,26 @@ describe('BrokerProxyStdioBridge', () => {
     expect(output.join('')).not.toContain('data:');
   });
 
+  test('emits one stdout line per data frame in a batched SSE response', async () => {
+    const sseBody = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\nevent: message\ndata: {"jsonrpc":"2.0","id":2,"result":{}}\n\n';
+    const fetchImpl = jest.fn(async () => createMockResponse({
+      body: sseBody,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }));
+    const output: string[] = [];
+    const bridge = new BrokerProxyStdioBridge(broker, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      write: (chunk) => { output.push(chunk); },
+    });
+
+    await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+
+    // Each data frame is its own JSON-RPC line — concatenating them would
+    // produce invalid JSON for downstream stdio clients.
+    expect(output.filter((line) => line.includes('"id":1')).length).toBeGreaterThan(0);
+    expect(output.filter((line) => line.includes('"id":2')).length).toBeGreaterThan(0);
+  });
+
   test('emits a JSON-RPC error response when the broker returns an HTTP error', async () => {
     const fetchImpl = jest.fn(async () => createMockResponse({ status: 500, body: 'oops' }));
     const output: string[] = [];
