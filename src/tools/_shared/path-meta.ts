@@ -42,7 +42,9 @@ export function pathMetaFor(
   targetId: string | undefined,
 ): { meta: PathMetaFields } | Record<string, never> {
   if (!targetId) return {};
-  const routing = sessionManager.getLastRouting(targetId);
+  const getLastRouting = (sessionManager as { getLastRouting?: unknown }).getLastRouting;
+  if (typeof getLastRouting !== 'function') return {};
+  const routing = getLastRouting.call(sessionManager, targetId) as ReturnType<SessionManager['getLastRouting']>;
   if (!routing) return {};
   const meta: PathMetaFields = {
     path_taken: routing.path_taken,
