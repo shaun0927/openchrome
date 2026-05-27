@@ -48,6 +48,16 @@ export class TargetCommandQueue {
     });
   }
 
+  /**
+   * Cancel queued commands and mark the queue closed.
+   *
+   * In-flight work is intentionally NOT aborted: once `drain` has popped an
+   * item and awaits its `fn()`, that promise runs to completion so callers
+   * who already issued a CDP command see its result (or its native error)
+   * rather than a phantom cancellation. Only items still pending in the
+   * queue at cancellation time are rejected with `TargetQueueCancelledError`.
+   * After `cancel()`, future `enqueue` calls reject immediately.
+   */
   cancel(): void {
     this.closed = true;
     const error = new TargetQueueCancelledError(this.targetId);
@@ -100,24 +110,35 @@ export class TargetQueueManager {
     return queue.enqueue(fn);
   }
 
+  /**
+   * Cancel a target's queue but keep the closed instance in the map. Any
+   * caller that races a concurrent target-close (e.g. reads `targetToWorker`
+   * before `onTargetClosed` clears it, then calls `enqueue` after) will hit
+   * the already-closed instance and receive `TargetQueueCancelledError`
+   * instead of silently resurrecting a fresh queue on a dead target. The
+   * tombstone is removed by `reconcileAliveTargetIds` when Chrome confirms
+   * the targetId is truly gone.
+   */
   cancelTarget(targetId: string): void {
     const queue = this.queues.get(targetId);
     if (queue) {
       queue.cancel();
-      this.queues.delete(targetId);
     }
   }
 
   /**
-   * Cancel queues for any targetId not in the alive set. Mirrors the lease
-   * registry reconcile path so a Chrome reconnect that loses targetIds does
-   * not leave per-target queues orphaned in memory.
+   * Cancel queues for any targetId not in the alive set and remove their
+   * tombstones from the map. Mirrors the lease registry reconcile path so a
+   * Chrome reconnect that loses targetIds does not leave per-target queues
+   * (or their post-cancel tombstones) orphaned in memory.
    */
   reconcileAliveTargetIds(aliveTargetIds: Set<string>): string[] {
     const cancelled: string[] = [];
     for (const targetId of Array.from(this.queues.keys())) {
       if (!aliveTargetIds.has(targetId)) {
-        this.cancelTarget(targetId);
+        const queue = this.queues.get(targetId);
+        if (queue) queue.cancel();
+        this.queues.delete(targetId);
         cancelled.push(targetId);
       }
     }
