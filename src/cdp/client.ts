@@ -1638,14 +1638,21 @@ export class CDPClient {
         }),
       ]) as Page;
     } else {
-      // Create page in Chrome's default context
-      let newPageTid2: ReturnType<typeof setTimeout>;
-      page = await Promise.race([
-        browser.newPage().finally(() => clearTimeout(newPageTid2)),
-        new Promise<never>((_, reject) => {
-          newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
-        }),
-      ]) as Page;
+      const startupPage = await this.findReusableStartupPage(browser);
+      if (startupPage) {
+        page = startupPage;
+        skipCookieBridge = true;
+        console.error(`[CDPClient] Reused startup tab ${getTargetId(page.target())} for first default-context page`);
+      } else {
+        // Create page in Chrome's default context
+        let newPageTid2: ReturnType<typeof setTimeout>;
+        page = await Promise.race([
+          browser.newPage().finally(() => clearTimeout(newPageTid2)),
+          new Promise<never>((_, reject) => {
+            newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
+          }),
+        ]) as Page;
+      }
 
       // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
       // CDP session conflicts and unnecessary overhead on about:blank pages).
@@ -1711,6 +1718,27 @@ export class CDPClient {
     }
 
     return page;
+  }
+
+
+  private async findReusableStartupPage(browser: Browser): Promise<Page | null> {
+    if (this.targetIdIndex.size !== 0 || this.getChromeLifecycleMode() !== 'isolated') return null;
+    const candidates = browser.targets().filter((target) => {
+      if (target.type() !== 'page') return false;
+      const targetId = getTargetId(target);
+      if (!targetId || this.targetIdIndex.has(targetId)) return false;
+      const targetUrl = target.url();
+      return targetUrl === ''
+        || targetUrl === 'about:blank'
+        || targetUrl === 'chrome://newtab/'
+        || targetUrl.startsWith('chrome://new-tab-page');
+    });
+    if (candidates.length !== 1) return null;
+    try {
+      return await candidates[0].page();
+    } catch {
+      return null;
+    }
   }
 
   /**
