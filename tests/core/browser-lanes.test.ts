@@ -67,6 +67,31 @@ describe('browser lanes (#1037)', () => {
     expect(getBrowserLane(taskId, 'lane_alpha')).toMatchObject({ status: 'failed', recovery: 'target_missing' });
   });
 
+  test('reconcileBrowserLaneTargets keeps lane open when every restored target is live', async () => {
+    const lanes = await reconcileBrowserLaneTargets(taskId, new Set(['tab-a']));
+
+    expect(lanes[0]).toMatchObject({
+      status: 'open',
+      targetStatuses: [{ targetId: 'tab-a', status: 'open' }],
+    });
+    expect(lanes[0].recovery).toBeUndefined();
+  });
+
+  test('reconcileBrowserLaneTargets reports per-target status when some targets are missing', async () => {
+    await recordLaneToolCall({ taskId, laneId: 'lane_alpha' }, true, 'tab-b');
+
+    const lanes = await reconcileBrowserLaneTargets(taskId, new Set(['tab-a']));
+
+    expect(lanes[0]).toMatchObject({
+      status: 'failed',
+      recovery: 'target_missing',
+      targetStatuses: [
+        { targetId: 'tab-a', status: 'open' },
+        { targetId: 'tab-b', status: 'target_missing' },
+      ],
+    });
+  });
+
   test('recordLaneToolCall increments lane counters and appends new target', async () => {
     await recordLaneToolCall({ taskId, laneId: 'lane_alpha' }, false, 'tab-b');
     const lane = getBrowserLane(taskId, 'lane_alpha');

@@ -46,10 +46,14 @@ function laneWithStatuses(lane: BrowserLane, liveTargetIds?: Set<string>): Brows
     status: liveTargetIds && !liveTargetIds.has(targetId) ? 'target_missing' as const : 'open' as const,
   }));
   const missing = statuses.some((target) => target.status === 'target_missing');
+  // A reconciled lane with zero targets is treated as recoverable failure too:
+  // hosts need to see "lane has no live targets" rather than a silent open status.
+  const emptyAfterReconcile = liveTargetIds !== undefined && statuses.length === 0;
+  const degraded = missing || emptyAfterReconcile;
   return {
     ...lane,
-    ...(statuses.length ? { targetStatuses: statuses } : {}),
-    ...(missing ? { status: 'failed' as const, recovery: 'target_missing' as const } : {}),
+    targetStatuses: statuses,
+    ...(degraded ? { status: 'failed' as const, recovery: 'target_missing' as const } : {}),
   };
 }
 
@@ -145,14 +149,21 @@ export async function closeBrowserLane(taskId: string, laneId: string, sessionId
 }
 
 
+/**
+ * Reconcile persisted lane target ids against the live CDP target set.
+ * Intended to be called by the task-restore / session-resume path after a
+ * host restart (#1037) so hosts can see which lanes lost their targets and
+ * recover them explicitly instead of silently dropping the isolation facts.
+ */
 export async function reconcileBrowserLaneTargets(taskId: string, liveTargetIds: Set<string>): Promise<BrowserLane[]> {
   const store = getTaskStore();
-  const meta = store.readMetaSync(taskId);
-  if (!meta) throw new Error(`unknown task ${taskId}`);
   const now = Date.now();
-  const lanes = getTaskLanes(meta).map((lane) => laneWithStatuses(lane, liveTargetIds));
-  await store.update(taskId, (cur) => ({ ...cur, lanes, last_activity_at: now }));
-  return lanes.map(cloneLane);
+  let reconciled: BrowserLane[] = [];
+  await store.update(taskId, (cur) => {
+    reconciled = getTaskLanes(cur).map((lane) => laneWithStatuses(lane, liveTargetIds));
+    return { ...cur, lanes: reconciled, last_activity_at: now };
+  });
+  return reconciled.map(cloneLane);
 }
 
 export function resolveLaneForTool(args: Record<string, unknown>): { taskId?: string; laneId?: string } {
