@@ -22,6 +22,11 @@ describe('pathMetaFor', () => {
     expect(sm.getLastRouting).not.toHaveBeenCalled();
   });
 
+
+  test('returns {} when a lightweight session-manager mock has no getLastRouting method', () => {
+    expect(pathMetaFor({} as any, 'tab-1')).toEqual({});
+  });
+
   test('returns {} when no routing decision is recorded', () => {
     const sm = fakeManager(null);
     expect(pathMetaFor(sm, 'tab-1')).toEqual({});
