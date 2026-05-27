@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "status": "not_ready",
+  "global_required_fields": [
+    "evidence_tier",
+    "runner_command",
+    "measured_at",
+    "host",
+    "subject.version",
+    "task.id",
+    "fixture.version",
+    "repetitions.n",
+    "raw_artifacts",
+    "promotion_decision"
+  ],
+  "eligible_evidence_tiers": ["live", "recorded-real"],
+  "minimum_repetitions": 3,
+  "issue_gates": {
+    "1254": "full headline matrix with no stale promoted rows",
+    "1255": "live smoke for all listed competitors with pinned versions or explicit skip reasons",
+    "1256": "live/recorded-real extractor rows for OpenChrome, Playwright a11y, playwright-mcp, and browser-use",
+    "1258": "live Chrome/CDP throughput rows for OpenChrome, Playwright, and Puppeteer split by cold/reuse",
+    "1260": "operator-owned live auth rows required for non-diagnostic third-party claims",
+    "1261": "tools/list fixtures for all MCP competitors in the comparison",
+    "1310": "strict headline promotion gate passes for every claimed row"
+  }
+}
