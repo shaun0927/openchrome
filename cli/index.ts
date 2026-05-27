@@ -338,12 +338,6 @@ program
     console.log('Running: codex mcp add openchrome...');
 
     try {
-      execFileSync('codex', ['mcp', 'remove', 'openchrome'], { stdio: 'ignore' });
-    } catch {
-      // Ignore if the server is not configured yet.
-    }
-
-    try {
       execFileSync('codex', codexSetupArgs, { stdio: 'inherit' });
 
       console.log('\n✅ MCP server configured successfully!\n');

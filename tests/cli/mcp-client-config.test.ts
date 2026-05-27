@@ -30,8 +30,10 @@ describe('cli/mcp-client-config', () => {
     });
   });
 
-  test('getCodexSetupCommand uses the Codex MCP registry command', () => {
-    expect(getCodexSetupCommand({ dashboard: true })).toEqual([
+  test('getCodexSetupCommand uses the Codex MCP registry add command without a destructive remove step', () => {
+    const command = getCodexSetupCommand({ dashboard: true });
+
+    expect(command).toEqual([
       'mcp',
       'add',
       'openchrome',
@@ -41,6 +43,7 @@ describe('cli/mcp-client-config', () => {
       '--auto-launch',
       '--dashboard',
     ]);
+    expect(command).not.toContain('remove');
   });
 
   test('getClaudeManualServerConfig uses the installed openchrome binary', () => {
@@ -110,7 +113,6 @@ describe('cli/mcp-client-config', () => {
         '[mcp_servers.openchrome]',
         'command = "openchrome"',
         'args = ["serve", "--auto-launch"]',
-        'type = "stdio"',
       ].join('\n')
     );
   });

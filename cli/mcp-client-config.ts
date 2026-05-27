@@ -79,7 +79,6 @@ export function formatCodexMCPServerConfigSnippet(serverName: string, serverConf
     `[mcp_servers.${serverName}]`,
     `command = ${JSON.stringify(serverConfig.command)}`,
     `args = [${quotedArgs}]`,
-    'type = "stdio"',
   ].join('\n');
 }
 
