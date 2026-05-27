@@ -46,6 +46,7 @@ import {
   formatDuplicateControllerMessage,
   type ControllerLockHandle,
 } from './utils/controller-lock';
+import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -913,6 +914,7 @@ program
         sessions: { active: sessionManager?.sessionCount ?? 0 },
         tenants: { activeContexts: sessionManager?.tenantContextCount ?? 0 },
         listeners: getListenerErrorStats(),
+        controllerTopology: getCurrentControllerTopology({ port, userDataDir: resolveControllerLockUserDataDir(userDataDir, useHeadlessShell) }),
       };
       return data;
     }, healthPort, healthBind) : null;
