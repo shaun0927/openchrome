@@ -18,6 +18,13 @@
  * `meta.path_taken` to learn which backend served the call and decides
  * what to do with it (token-cost optimization, retry policy, evidence
  * enrichment). No threshold is encoded in the helper.
+ *
+ * Known exemptions (tools that do NOT surface `meta.path_taken`):
+ *
+ *   - `crawl_start`: host-driven async tool that does not route through
+ *     BrowserRouter. The router-decision facts for each crawled page are
+ *     surfaced on `crawl_status` (per page) and on tool calls that consume
+ *     the resulting pages.
  */
 
 import type { SessionManager } from '../../session-manager';

@@ -115,6 +115,12 @@ const handler: ToolHandler = async (
   const createdAt = Date.now();
   await emitCrawlTrace(sessionId, 'crawl_start', { jobId, plannedMax: config.max_pages });
 
+  // A3-PR2d note: `crawl_start` is host-driven async — it does not
+  // route through BrowserRouter. The router-decision fact for each
+  // crawled page is surfaced on `crawl_status` (per page) and on tool
+  // calls that consume the resulting pages, not here. We deliberately
+  // omit `meta.path_taken` so the field does not give a misleading
+  // "n/a" signal that would force the host to special-case the value.
   const payload = {
     jobId,
     status: 'pending' as const,
