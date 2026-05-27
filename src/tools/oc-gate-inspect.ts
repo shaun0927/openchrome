@@ -88,7 +88,7 @@ const definition: MCPToolDefinition = {
     properties: {
       tabId: {
         type: 'string',
-        description: 'Tab ID to inspect. Required.',
+        description: 'REQUIRED Tab ID to inspect.',
       },
     },
     required: ['tabId'],
