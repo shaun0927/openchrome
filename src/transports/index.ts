@@ -9,6 +9,8 @@ import type { ApiKeyStore } from '../auth/api-key-store';
 export interface TransportMessageContext {
   mcpSessionId?: string;
   tenantId?: string;
+  /** Broker stdio-proxy identity propagated through HTTP for audit/diagnostics. */
+  brokerClientId?: string;
 }
 
 /**

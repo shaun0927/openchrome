@@ -3,9 +3,14 @@ import type { BrokerMetadata } from '../broker/discovery';
 import { MCPErrorCodes, MCPResponse } from '../types/mcp';
 
 const MCP_SESSION_ID_HEADER = 'Mcp-Session-Id';
+export const BROKER_CLIENT_ID_HEADER = 'X-OpenChrome-Broker-Client-Id';
 
 export interface BrokerProxyOptions {
   authToken?: string;
+  /** Stable client identity propagated to the broker for diagnostics/audit. */
+  clientId?: string;
+  /** Optional tenant id forwarded to the broker HTTP transport. */
+  tenantId?: string;
   /** Override fetch implementation (tests). */
   fetchImpl?: typeof fetch;
   /** Override stdout writer (tests). */
@@ -16,6 +21,8 @@ export class BrokerProxyStdioBridge {
   private readonly broker: BrokerMetadata;
   private readonly authToken?: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly clientId: string;
+  private readonly tenantId?: string;
   private readonly writeOut: (chunk: string) => void;
   private mcpSessionId?: string;
 
@@ -25,6 +32,8 @@ export class BrokerProxyStdioBridge {
       ? { authToken: authTokenOrOptions }
       : authTokenOrOptions ?? {};
     this.authToken = options.authToken;
+    this.clientId = options.clientId ?? process.env.OPENCHROME_BROKER_CLIENT_ID ?? `stdio-proxy-${process.pid}`;
+    this.tenantId = options.tenantId ?? process.env.OPENCHROME_TENANT_ID;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.writeOut = options.write ?? ((chunk) => { process.stdout.write(chunk); });
   }
@@ -55,7 +64,9 @@ export class BrokerProxyStdioBridge {
         // response framing. The proxy unwraps SSE below so stdio clients keep
         // receiving plain JSON-RPC lines.
         Accept: 'application/json, text/event-stream',
+        [BROKER_CLIENT_ID_HEADER]: this.clientId,
       };
+      if (this.tenantId) headers['X-Tenant-Id'] = this.tenantId;
       if (this.authToken) headers.Authorization = `Bearer ${this.authToken}`;
       if (this.mcpSessionId) headers[MCP_SESSION_ID_HEADER] = this.mcpSessionId;
 

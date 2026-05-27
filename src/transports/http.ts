@@ -15,6 +15,7 @@ import * as crypto from 'node:crypto';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport, TransportMessageContext } from './index';
+import { BROKER_CLIENT_ID_HEADER } from './broker-proxy';
 import type { SessionManager } from '../session-manager';
 import {
   REQUEST_ID_HEADER,
@@ -721,6 +722,7 @@ export class HTTPTransport implements MCPTransport {
       const requestId = (req as http.IncomingMessage & { requestId?: string }).requestId
         || resolveRequestId(req.headers[REQUEST_ID_HEADER_LOWER]);
       const principal = requestPrincipals.get(req);
+      const brokerClientId = normalizeBrokerClientId(req.headers[BROKER_CLIENT_ID_HEADER.toLowerCase()]);
 
       // Handle JSON-RPC batch (array of requests)
       if (Array.isArray(parsed)) {
@@ -732,8 +734,9 @@ export class HTTPTransport implements MCPTransport {
               : tenantId,
             keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
             mcpSessionId: sessionId,
+            brokerClientId,
           },
-          () => this.processBatch(parsed, sessionId, tenantId, signal, principal),
+          () => this.processBatch(parsed, sessionId, tenantId, signal, principal, brokerClientId),
         );
         // Filter out null results (notifications don't produce responses)
         const responses = results.filter((r): r is MCPResponse => r !== null);
@@ -786,8 +789,9 @@ export class HTTPTransport implements MCPTransport {
               : tenantId,
             keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
             mcpSessionId: sessionId,
+            brokerClientId,
           },
-          () => this.messageHandler!(msg, signal, { mcpSessionId: sessionId, tenantId }),
+          () => this.messageHandler!(msg, signal, { mcpSessionId: sessionId, tenantId, brokerClientId }),
         );
 
         if (sessionId) {
@@ -921,6 +925,7 @@ export class HTTPTransport implements MCPTransport {
     tenantId: TenantId,
     signal?: AbortSignal,
     principal?: Principal,
+    brokerClientId?: string,
   ): Promise<(MCPResponse | null)[]> {
     const handler = this.messageHandler!;
 
@@ -977,7 +982,7 @@ export class HTTPTransport implements MCPTransport {
           (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
         }
 
-        return await handler(record, signal, { mcpSessionId: sessionId, tenantId });
+        return await handler(record, signal, { mcpSessionId: sessionId, tenantId, brokerClientId });
       } catch (error) {
         const id = record !== null
           ? ((record.id as string | number | undefined) ?? 0)
@@ -1005,4 +1010,12 @@ export class HTTPTransport implements MCPTransport {
   ): Promise<R[]> {
     return mapBatchWithConcurrency(items, concurrency, fn);
   }
+}
+
+function normalizeBrokerClientId(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return undefined;
+  const normalized = raw.trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, 128);
 }

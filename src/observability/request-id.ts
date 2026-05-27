@@ -83,6 +83,8 @@ export interface RequestContext {
   keyId?: string;
   /** HTTP MCP session id when the transport provides one. */
   mcpSessionId?: string;
+  /** Broker stdio-proxy identity when this request arrived via --connect-broker. */
+  brokerClientId?: string;
 }
 
 const requestStore = new AsyncLocalStorage<RequestContext>();
