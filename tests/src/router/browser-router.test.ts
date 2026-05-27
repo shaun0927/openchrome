@@ -316,4 +316,98 @@ describe('BrowserRouter', () => {
       expect(ratio).toBeCloseTo(0.75);
     });
   });
+
+  // ─── A3-PR1: reason discriminator ─────────────────────────────────────────
+  describe('reason discriminator', () => {
+    it('returns reason="hybrid-disabled" when hybrid is off', async () => {
+      const disabledRouter = new BrowserRouter({ ...mockConfig, enabled: false });
+      const chromePage = createMockPage();
+      const lightpandaPage = createMockPage();
+
+      const result = await disabledRouter.route(
+        'navigate',
+        chromePage as any,
+        lightpandaPage as any,
+      );
+      expect(result.reason).toBe('hybrid-disabled');
+      expect(result.backend).toBe(BrowserBackend.CHROME);
+      expect(result.fallback).toBe(false);
+    });
+
+    it('returns reason="visual-tool" for visual tools', async () => {
+      MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(true);
+      const chromePage = createMockPage();
+      const lightpandaPage = createMockPage();
+
+      const result = await router.route(
+        'computer',
+        chromePage as any,
+        lightpandaPage as any,
+      );
+      expect(result.reason).toBe('visual-tool');
+      expect(result.backend).toBe(BrowserBackend.CHROME);
+    });
+
+    it('returns reason="lp-served" when LP page is healthy', async () => {
+      MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(false);
+      const chromePage = createMockPage();
+      const lightpandaPage = createMockPage();
+
+      const result = await router.route(
+        'navigate',
+        chromePage as any,
+        lightpandaPage as any,
+      );
+      expect(result.reason).toBe('lp-served');
+      expect(result.backend).toBe(BrowserBackend.LIGHTPANDA);
+      expect(result.fallback).toBe(false);
+    });
+
+    it('returns reason="lp-unhealthy" with fallback=true when LP is missing', async () => {
+      MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(false);
+      const chromePage = createMockPage();
+
+      const result = await router.route('navigate', chromePage as any, null);
+      expect(result.reason).toBe('lp-unhealthy');
+      expect(result.backend).toBe(BrowserBackend.CHROME);
+      expect(result.fallback).toBe(true);
+    });
+
+    it('returns reason="lp-unhealthy" when LP page is closed', async () => {
+      MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(false);
+      const chromePage = createMockPage();
+      const closedPage = createMockPage();
+      closedPage.isClosed = jest.fn().mockReturnValue(true);
+
+      const result = await router.route(
+        'navigate',
+        chromePage as any,
+        closedPage as any,
+      );
+      expect(result.reason).toBe('lp-unhealthy');
+      expect(result.fallback).toBe(true);
+    });
+
+    it('returns reason="circuit-open" while the circuit breaker is cooling down', async () => {
+      MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(false);
+      const chromePage = createMockPage();
+
+      // Trip the circuit by failing maxFailures times.
+      for (let i = 0; i < mockConfig.circuitBreaker.maxFailures; i++) {
+        await router.route('navigate', chromePage as any, null);
+      }
+
+      // Now circuit is open. The next call must report circuit-open before
+      // attempting LP.
+      const healthyPage = createMockPage();
+      const result = await router.route(
+        'navigate',
+        chromePage as any,
+        healthyPage as any,
+      );
+      expect(result.reason).toBe('circuit-open');
+      expect(result.backend).toBe(BrowserBackend.CHROME);
+      expect(result.fallback).toBe(false);
+    });
+  });
 });
