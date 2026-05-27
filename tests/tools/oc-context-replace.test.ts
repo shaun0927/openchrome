@@ -32,6 +32,7 @@ import {
   applyContextEnvelopeData,
   type EnvelopeCapture,
 } from '../../src/storage-state/storage-state-manager';
+import { sealEnvelope } from '../../src/storage-state/envelope';
 import { setGlobalConfig } from '../../src/config/global';
 import * as sessionManagerModule from '../../src/session-manager';
 import type { Page } from 'puppeteer-core';
@@ -520,6 +521,70 @@ describe('applyContextEnvelopeData strict-replace', () => {
       jest.restoreAllMocks();
     }
   });
+
+  test('signed_envelope import with requireHmac rejects unsigned payload before applying state', async () => {
+    const signedEnvelope = sealEnvelope({
+      origin: 'https://httpbin.org',
+      cookies: [{
+        name: 'sid',
+        value: 'secret',
+        domain: 'httpbin.org',
+        path: '/',
+        expires: 1_900_000_000,
+        size: 6,
+        httpOnly: true,
+        secure: true,
+        session: false,
+      }],
+      localStorage: { fresh: 'value' },
+      sessionStorage: {},
+    }, { now: 1000 });
+
+    const dest = makeHarness({
+      origin: 'https://httpbin.org',
+      cookies: [{
+        name: 'stale',
+        value: 'keep',
+        domain: 'httpbin.org',
+        path: '/',
+        expires: 1_900_000_000,
+        size: 4,
+        httpOnly: false,
+        secure: true,
+        session: false,
+      }],
+      localStorage: { stale: 'keep' },
+      sessionStorage: {},
+    });
+
+    jest.spyOn(sessionManagerModule, 'getSessionManager').mockReturnValue({
+      getPage: async () => dest.page,
+      getCDPClient: () => dest.cdpClient,
+    } as unknown as ReturnType<typeof sessionManagerModule.getSessionManager>);
+
+    const handlers: Record<string, (sessionId: string, args: Record<string, unknown>) => Promise<unknown>> = {};
+    registerOcContextTools({
+      registerTool: (name: string, handler: (sessionId: string, args: Record<string, unknown>) => Promise<unknown>) => {
+        handlers[name] = handler;
+      },
+    } as never);
+
+    try {
+      const result = await handlers.oc_context_import('session', {
+        tabId: 'tab',
+        signed_envelope: signedEnvelope,
+        requireHmac: true,
+      }) as { ok: boolean; integrityError?: string };
+
+      expect(result.ok).toBe(false);
+      expect(result.integrityError).toContain('signed_envelope verification failed');
+      expect(dest.state.cookies.map((c) => c.name)).toEqual(['stale']);
+      expect(dest.state.localStorage).toEqual({ stale: 'keep' });
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
 });
 
 describe('oc_context_import security policy', () => {

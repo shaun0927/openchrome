@@ -456,6 +456,13 @@ const importDefinition: MCPToolDefinition = {
           '`signed_envelope`. Host-supplied; openchrome never stores ' +
           'or generates this key.',
       },
+      requireHmac: {
+        type: 'boolean',
+        description:
+          'When true, signed_envelope import requires a valid HMAC and ' +
+          'fails before applying state if the envelope is unsigned or no ' +
+          'hmacKey is provided. Default false.',
+      },
     },
     required: ['tabId'],
   },
@@ -476,7 +483,11 @@ const importHandler: ToolHandler = async (
     const hmacKey = typeof args.hmacKey === 'string' && args.hmacKey.length > 0
       ? args.hmacKey
       : undefined;
-    const verified = verifyEnvelope(args.signed_envelope, hmacKey ? { hmacKey } : {});
+    const verifyOptions = {
+      ...(hmacKey ? { hmacKey } : {}),
+      ...(args.requireHmac === true ? { requireHmac: true } : {}),
+    };
+    const verified = verifyEnvelope(args.signed_envelope, verifyOptions);
     if (!verified.ok) {
       const response: ImportResponse = {
         ok: false,
