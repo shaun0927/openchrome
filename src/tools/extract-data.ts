@@ -13,6 +13,7 @@ import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import {
+  buildExtractionPlan,
   validateSchema,
   validateAndCoerce,
   buildJsonLdExtractor,
@@ -34,6 +35,47 @@ import {
   parseOutputMode,
   resolveOutputMode,
 } from './_shared/output-mode';
+
+
+interface SchemaDiffFieldDefinition {
+  name: string;
+  type?: string;
+  required?: boolean;
+}
+
+interface SchemaDiffDefinition {
+  fields?: SchemaDiffFieldDefinition[];
+}
+
+function schemaDiffTypeToJsonSchemaType(type: string | undefined): SchemaProperty['type'] {
+  if (type === 'integer') return 'number';
+  if (type === 'string' || type === 'number' || type === 'boolean' || type === 'object' || type === 'array' || type === 'null') {
+    return type;
+  }
+  return 'string';
+}
+
+function templateTargetSchemaToExtractionSchema(definition: unknown): ExtractionSchema | undefined {
+  if (!definition || typeof definition !== 'object') return undefined;
+  const fields = (definition as SchemaDiffDefinition).fields;
+  if (!Array.isArray(fields) || fields.length === 0) return undefined;
+
+  const properties: Record<string, SchemaProperty> = {};
+  const required: string[] = [];
+  for (const field of fields) {
+    if (!field || typeof field.name !== 'string' || field.name.length === 0) continue;
+    properties[field.name] = {
+      type: schemaDiffTypeToJsonSchemaType(field.type),
+      // Keep enough lexical context for the existing extraction planner to
+      // derive safe selector/meta aliases from dotted schema-diff names such
+      // as `og.title` and `twitter.card` without changing the observed keys.
+      description: field.name.replace(/[._:-]+/g, ' '),
+    };
+    if (field.required !== false) required.push(field.name);
+  }
+  if (Object.keys(properties).length === 0) return undefined;
+  return { type: 'object', properties, required };
+}
 
 const definition: MCPToolDefinition = {
   name: 'extract_data',
@@ -232,7 +274,18 @@ const handler: ToolHandler = async (
         isError: true,
       };
     }
-    resolvedSchema = tpl.targetSchema.definition as ExtractionSchema;
+    resolvedSchema = templateTargetSchemaToExtractionSchema(tpl.targetSchema.definition);
+    if (!resolvedSchema) {
+      return {
+        content: [{
+          type: 'text',
+          text:
+            `Error: template "${tpl.id}@${tpl.version}" targetSchema is not convertible ` +
+            'to an extract_data schema; pass an inline `schema` instead',
+        }],
+        isError: true,
+      };
+    }
   }
   if (resolvedSchema === undefined) {
     return {
@@ -285,11 +338,10 @@ const handler: ToolHandler = async (
     const schemaProps: Record<string, SchemaProperty> = multiple
       ? (schema.items?.properties || schema.properties || {})
       : (schema.properties || {});
-    // Sanitize field names to prevent CSS selector injection in strategy builders
-    const safeFieldPattern = /^[a-zA-Z0-9_-]+$/;
-    const fieldNames = Object.keys(schemaProps).filter(f => safeFieldPattern.test(f));
+    const fieldPlans = buildExtractionPlan(schemaProps).fields;
+    const fieldNames = fieldPlans.map((f) => f.field);
 
-    if (fieldNames.length === 0) {
+    if (fieldPlans.length === 0) {
       return { content: [{ type: 'text', text: 'Error: Schema must define at least one property' }], isError: true };
     }
 
@@ -406,7 +458,7 @@ const handler: ToolHandler = async (
 
     // Multiple items mode
     if (multiple) {
-      const multiScript = buildMultipleItemExtractor(fieldNames, schemaProps, scopeSelector);
+      const multiScript = buildMultipleItemExtractor(fieldPlans, schemaProps, scopeSelector);
       const rawItems = await withTimeout(page.evaluate(multiScript) as Promise<Record<string, unknown>[]>, 15000, 'extract_data');
 
       if (!Array.isArray(rawItems) || rawItems.length === 0) {
@@ -445,7 +497,7 @@ const handler: ToolHandler = async (
 
     // Strategy 1: JSON-LD
     if (!hasElementScope) try {
-      const r = await withTimeout(page.evaluate(buildJsonLdExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.jsonLdTimeoutMs, 'extract_data:jsonld');
+      const r = await withTimeout(page.evaluate(buildJsonLdExtractor(fieldPlans)) as Promise<Record<string, unknown>>, budget.jsonLdTimeoutMs, 'extract_data:jsonld');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('json-ld'); }
     } catch { /* non-fatal */ }
 
@@ -456,13 +508,13 @@ const handler: ToolHandler = async (
 
     // Strategy 2: Microdata
     if (!hasElementScope) try {
-      const r = await withTimeout(page.evaluate(buildMicrodataExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.microdataTimeoutMs, 'extract_data:microdata');
+      const r = await withTimeout(page.evaluate(buildMicrodataExtractor(fieldPlans)) as Promise<Record<string, unknown>>, budget.microdataTimeoutMs, 'extract_data:microdata');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('microdata'); }
     } catch { /* non-fatal */ }
 
     // Strategy 3: OpenGraph
     if (!hasElementScope) try {
-      const r = await withTimeout(page.evaluate(buildOpenGraphExtractor(fieldNames)) as Promise<Record<string, unknown>>, budget.openGraphTimeoutMs, 'extract_data:opengraph');
+      const r = await withTimeout(page.evaluate(buildOpenGraphExtractor(fieldPlans)) as Promise<Record<string, unknown>>, budget.openGraphTimeoutMs, 'extract_data:opengraph');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('opengraph'); }
     } catch { /* non-fatal */ }
 
@@ -473,7 +525,7 @@ const handler: ToolHandler = async (
 
     // Strategy 4: CSS heuristic
     try {
-      const r = await withTimeout(page.evaluate(buildCssHeuristicExtractor(fieldNames, schemaProps, scopeSelector)) as Promise<Record<string, unknown>>, budget.cssTimeoutMs, 'extract_data:css');
+      const r = await withTimeout(page.evaluate(buildCssHeuristicExtractor(fieldPlans, schemaProps, scopeSelector)) as Promise<Record<string, unknown>>, budget.cssTimeoutMs, 'extract_data:css');
       if (r && typeof r === 'object') { merged = mergeResults(merged, r); if (countFields(r) > 0) strategies.push('css-heuristic'); }
     } catch { /* non-fatal */ }
 
