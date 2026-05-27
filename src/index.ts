@@ -698,8 +698,10 @@ program
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
       if (options.broker) {
         const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
+        const { setBrokerOwnerMode, recordBrokerStopped } = await import('./broker/lifecycle');
+        setBrokerOwnerMode(true);
         const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: brokerAuthTokenEnv });
-        process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
+        process.on('exit', () => { recordBrokerStopped(); removeBrokerMetadata(port, lockUserDataDir); });
         console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
       }
     } else if (useHttp) {
@@ -712,8 +714,10 @@ program
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
       if (options.broker) {
         const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
+        const { setBrokerOwnerMode, recordBrokerStopped } = await import('./broker/lifecycle');
+        setBrokerOwnerMode(true);
         const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: brokerAuthTokenEnv });
-        process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
+        process.on('exit', () => { recordBrokerStopped(); removeBrokerMetadata(port, lockUserDataDir); });
         console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
       }
     } else {
