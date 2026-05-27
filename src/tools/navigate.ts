@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { pathMetaFor } from './_shared/path-meta';
 import { smartGoto } from '../utils/smart-goto';
 import { safeTitle } from '../utils/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
@@ -768,6 +769,7 @@ const handler: ToolHandler = async (
         ...blockingDetectionErrorFields(newTabBlockingDetection),
         ...(newTabAuthGuidance ?? {}),
         ...(newTabDomainSkills !== undefined && { domain_skills: newTabDomainSkills }),
+        ...pathMetaFor(sessionManager, targetId),
       });
       return {
         content: [{ type: 'text', text: newTabResultText }],
@@ -850,6 +852,7 @@ const handler: ToolHandler = async (
         ...blockingDetectionErrorFields(backBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
         ...(backDomainSkills !== undefined && { domain_skills: backDomainSkills }),
+        ...pathMetaFor(sessionManager, tabId),
       });
       return {
         content: [{ type: 'text', text: backResultText }],
@@ -887,6 +890,7 @@ const handler: ToolHandler = async (
         ...blockingDetectionErrorFields(fwdBlockingDetection),
         ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
         ...(fwdDomainSkills !== undefined && { domain_skills: fwdDomainSkills }),
+        ...pathMetaFor(sessionManager, tabId),
       });
       return {
         content: [{ type: 'text', text: fwdResultText }],
@@ -1016,6 +1020,7 @@ const handler: ToolHandler = async (
       ...blockingDetectionErrorFields(navBlockingDetection),
       ...(stealthIgnoredWarning && { warning: stealthIgnoredWarning }),
       ...(navDomainSkills !== undefined && { domain_skills: navDomainSkills }),
+      ...pathMetaFor(sessionManager, tabId),
     });
     return {
       content: [{ type: 'text', text: navResultText }],
