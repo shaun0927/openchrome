@@ -32,6 +32,7 @@ import {
   getCodexServerConfig,
   getCodexSetupCommand,
   getOpenCodeServerConfig,
+  getTopologyWarning,
   formatOpenCodeMCPServerConfigSnippet,
   getSupportedMCPClients,
   isSupportedMCPClient,
@@ -190,8 +191,13 @@ program
   .option('--client <client>', 'Client to configure: "claude" (default), "codex", or "opencode"', 'claude')
   .option('--dashboard', 'Enable terminal dashboard')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
+  .option('--port <port>', 'Chrome remote debugging port for generated serve args')
+  .option('--user-data-dir <dir>', 'Chrome user data directory for generated serve args')
+  .option('--profile-directory <name>', 'Chrome profile directory name for generated serve args')
+  .option('--launch-mode <mode>', 'Chrome launch mode: auto, attach, or isolated')
+  .option('--topology <preset>', 'Topology preset: single-owner, isolated, ci-headless, or dev-profile')
   .option('-s, --scope <scope>', 'Installation scope: "user" (global, default) or "project" (current project only)', 'user')
-  .action(async (options: { client?: string; dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
+  .action(async (options: { client?: string; dashboard?: boolean; autoLaunch?: boolean; port?: string; userDataDir?: string; profileDirectory?: string; launchMode?: string; topology?: string; scope?: string }) => {
     const requestedClient = options.client || 'claude';
     if (!isSupportedMCPClient(requestedClient)) {
       console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
@@ -208,7 +214,20 @@ program
       process.exit(1);
     }
 
-    const serveArgOptions = { autoLaunch: options.autoLaunch, dashboard: options.dashboard };
+    const serveArgOptions = {
+      autoLaunch: options.autoLaunch,
+      dashboard: options.dashboard,
+      port: options.port,
+      userDataDir: options.userDataDir,
+      profileDirectory: options.profileDirectory,
+      launchMode: options.launchMode,
+      topology: options.topology as undefined | 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile',
+    };
+    const topologyWarning = getTopologyWarning(serveArgOptions);
+    if (topologyWarning) {
+      console.warn(`⚠️  ${topologyWarning}`);
+      console.warn('   See docs/mcp/topologies.md for safe parallel setup examples.');
+    }
 
     if (client === 'claude') {
       const claudeCmd = getClaudeCliCommand();
@@ -363,13 +382,31 @@ program
   .requiredOption('--client <client>', 'Client to generate config for: "claude", "codex", or "opencode"')
   .option('--dashboard', 'Enable terminal dashboard')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
-  .action((options: { client: string; dashboard?: boolean; autoLaunch?: boolean }) => {
+  .option('--port <port>', 'Chrome remote debugging port for generated serve args')
+  .option('--user-data-dir <dir>', 'Chrome user data directory for generated serve args')
+  .option('--profile-directory <name>', 'Chrome profile directory name for generated serve args')
+  .option('--launch-mode <mode>', 'Chrome launch mode: auto, attach, or isolated')
+  .option('--topology <preset>', 'Topology preset: single-owner, isolated, ci-headless, or dev-profile')
+  .action((options: { client: string; dashboard?: boolean; autoLaunch?: boolean; port?: string; userDataDir?: string; profileDirectory?: string; launchMode?: string; topology?: string }) => {
     if (!isSupportedMCPClient(options.client)) {
       console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
       process.exit(1);
     }
 
-    const serveArgOptions = { autoLaunch: options.autoLaunch, dashboard: options.dashboard };
+    const serveArgOptions = {
+      autoLaunch: options.autoLaunch,
+      dashboard: options.dashboard,
+      port: options.port,
+      userDataDir: options.userDataDir,
+      profileDirectory: options.profileDirectory,
+      launchMode: options.launchMode,
+      topology: options.topology as undefined | 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile',
+    };
+    const topologyWarning = getTopologyWarning(serveArgOptions);
+    if (topologyWarning) {
+      console.error(`⚠️  ${topologyWarning}`);
+      console.error('   See docs/mcp/topologies.md for safe parallel setup examples.');
+    }
 
     if (options.client === 'claude') {
       console.log(['claude', ...getClaudeSetupCommand('user', serveArgOptions)].join(' '));

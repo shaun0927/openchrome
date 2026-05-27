@@ -1,9 +1,16 @@
 export type SupportedMCPClient = 'claude' | 'codex' | 'opencode';
 export type SetupScope = 'user' | 'project';
 
+export type TopologyPreset = 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile';
+
 export interface ServeArgOptions {
   autoLaunch?: boolean;
   dashboard?: boolean;
+  port?: string | number;
+  userDataDir?: string;
+  profileDirectory?: string;
+  launchMode?: string;
+  topology?: TopologyPreset;
 }
 
 export interface MCPServerConfig {
@@ -49,17 +56,65 @@ export function getClientLabel(client: SupportedMCPClient): string {
 }
 
 export function getServeArgs(options: ServeArgOptions = {}): string[] {
+  const resolved = resolveTopologyOptions(options);
   const serveArgs = ['serve'];
 
-  if (options.autoLaunch !== false) {
+  if (resolved.autoLaunch !== false) {
     serveArgs.push('--auto-launch');
   }
 
-  if (options.dashboard) {
+  if (resolved.port !== undefined) {
+    serveArgs.push('--port', String(resolved.port));
+  }
+
+  if (resolved.userDataDir) {
+    serveArgs.push('--user-data-dir', resolved.userDataDir);
+  }
+
+  if (resolved.profileDirectory) {
+    serveArgs.push('--profile-directory', resolved.profileDirectory);
+  }
+
+  if (resolved.launchMode) {
+    serveArgs.push('--launch-mode', resolved.launchMode);
+  }
+
+  if (resolved.dashboard) {
     serveArgs.push('--dashboard');
   }
 
   return serveArgs;
+}
+
+export function resolveTopologyOptions(options: ServeArgOptions = {}): ServeArgOptions {
+  const next: ServeArgOptions = { ...options };
+  switch (options.topology) {
+    case 'isolated':
+      next.port ??= 9223;
+      next.userDataDir ??= '~/.openchrome/profiles/isolated';
+      next.launchMode ??= 'isolated';
+      break;
+    case 'ci-headless':
+      next.port ??= 9224;
+      next.userDataDir ??= '~/.openchrome/profiles/ci';
+      next.launchMode ??= 'isolated';
+      break;
+    case 'dev-profile':
+      next.port ??= 9225;
+      next.userDataDir ??= '~/.openchrome/profiles/dev';
+      break;
+    case 'single-owner':
+    case undefined:
+      break;
+  }
+  return next;
+}
+
+export function getTopologyWarning(options: ServeArgOptions = {}): string | null {
+  const resolved = resolveTopologyOptions(options);
+  const usingDefaultPortProfile = resolved.port === undefined && !resolved.userDataDir;
+  if (!usingDefaultPortProfile) return null;
+  return 'Topology note: this config uses the default single-owner Chrome port/profile. Do not install the same direct config in multiple MCP clients at once; choose --topology isolated or explicit --port + --user-data-dir until broker mode is available.';
 }
 
 export function getCodexServerConfig(options: ServeArgOptions = {}): MCPServerConfig {
@@ -92,7 +147,7 @@ export function getClaudeManualServerConfig(options: ServeArgOptions = {}): MCPS
 export function getOpenCodeServerConfig(options: ServeArgOptions = {}): OpenCodeLocalMCPServerConfig {
   return {
     type: 'local',
-    command: ['npx', '--prefer-online', '-y', 'openchrome-mcp@latest', ...getServeArgs(options)],
+    command: ['openchrome', ...getServeArgs(options)],
   };
 }
 
