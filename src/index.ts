@@ -267,7 +267,10 @@ program
     // Resolve transport mode before owner-lock acquisition so lock metadata
     // describes whether this process is a stdio, HTTP, or dual-transport owner.
     const validModes = ['stdio', 'http', 'both'];
-    if (options.broker && options.transport && options.transport !== 'http' && options.transport !== 'both') {
+    if (options.broker && options.transport && options.transport !== 'http') {
+      // `both` is also coerced because the broker proxy speaks HTTP only;
+      // advertising a `both` daemon as the broker endpoint would silently
+      // drop the stdio leg without telling the operator.
       console.error(`[openchrome] Warning: --broker forces HTTP transport; ignoring --transport ${options.transport}.`);
     }
     const rawMode = options.broker
@@ -628,8 +631,16 @@ program
     if (process.platform === 'win32') {
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
-    // Resolve auth token: CLI flag takes precedence over env var
-    const authToken = options.authToken || process.env.OPENCHROME_AUTH_TOKEN || undefined;
+    // Resolve auth token: CLI flag takes precedence over env var.
+    // Track which source supplied the token so the broker metadata can only
+    // advertise `authTokenEnv` when the value actually lives in that env var
+    // — otherwise a `--connect-broker` client would read the wrong (or no)
+    // token from OPENCHROME_AUTH_TOKEN and silently send unauthenticated.
+    const envAuthToken = process.env.OPENCHROME_AUTH_TOKEN || undefined;
+    const authToken = options.authToken || envAuthToken;
+    const brokerAuthTokenEnv = authToken && !options.authToken && envAuthToken === authToken
+      ? 'OPENCHROME_AUTH_TOKEN'
+      : undefined;
     if (authToken) {
       console.error('[openchrome] Bearer token authentication: enabled');
     }
@@ -687,7 +698,7 @@ program
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
       if (options.broker) {
         const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
-        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: authToken ? 'OPENCHROME_AUTH_TOKEN' : undefined });
+        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: brokerAuthTokenEnv });
         process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
         console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
       }
@@ -701,7 +712,7 @@ program
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
       if (options.broker) {
         const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
-        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: authToken ? 'OPENCHROME_AUTH_TOKEN' : undefined });
+        const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: brokerAuthTokenEnv });
         process.on('exit', () => removeBrokerMetadata(port, lockUserDataDir));
         console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
       }
