@@ -18,6 +18,7 @@ const REQUIRED_CHECK_IDS = [
   'pid-lock',
   'orphan-chrome',
   'profile-lock',
+  'duplicate-controllers',
   'disk-space',
   'macos-perms',
   'network-local',
