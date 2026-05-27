@@ -106,8 +106,7 @@ describe('verifyEnvelope — failure modes', () => {
     const tampered = { ...env, version: 99 as unknown as 1 };
     const r = verifyEnvelope(tampered);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe('malformed');
-    // malformed because isPortableEnvelope rejects mismatched version
+    if (!r.ok) expect(r.reason).toBe('unsupported_version');
   });
 
   test('payload tampering → fingerprint_mismatch', () => {

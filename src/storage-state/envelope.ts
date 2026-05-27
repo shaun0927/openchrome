@@ -160,7 +160,7 @@ function isPortableEnvelope(value: unknown): value is PortableSnapshotEnvelope {
   if (!value || typeof value !== 'object') return false;
   const v = value as Partial<PortableSnapshotEnvelope>;
   return (
-    v.version === ENVELOPE_VERSION &&
+    typeof v.version === 'number' &&
     typeof v.captured_at === 'number' &&
     typeof v.origin === 'string' &&
     !!v.fingerprint &&
