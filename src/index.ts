@@ -8,6 +8,8 @@
  */
 
 import { Command } from 'commander';
+import * as os from 'os';
+import * as path from 'path';
 import { getMCPServer, setMCPServerOptions } from './mcp-server';
 import { registerAllTools } from './tools';
 import { createTransport } from './transports/index';
@@ -33,10 +35,17 @@ import { SessionStatePersistence } from './session-state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
+import { ProfileManager } from './chrome/profile-manager';
 import { getBrowserStateManager } from './browser-state';
 import { getListenerErrorStats, installUnhandledRejectionSafetyNet } from './utils/safe-listener';
 import { setComponent, resetReadinessMachine } from './watchdog/readiness';
 import { wireChromeReadiness } from './watchdog/chrome-readiness';
+import {
+  DuplicateControllerError,
+  acquireControllerLock,
+  formatDuplicateControllerMessage,
+  type ControllerLockHandle,
+} from './utils/controller-lock';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -69,11 +78,18 @@ program
   .description('MCP server for parallel Claude Code browser sessions')
   .version(getVersion());
 
+function resolveControllerLockUserDataDir(userDataDir: string | undefined, useHeadlessShell: boolean): string {
+  if (userDataDir) return userDataDir;
+  if (useHeadlessShell) return path.join(os.homedir(), '.openchrome', 'headless-shell-profile');
+  return ProfileManager.PERSISTENT_PROFILE_DIR;
+}
+
 program
   .command('serve')
   .description('Start the MCP server')
   .option('-p, --port <port>', 'Chrome remote debugging port', process.env.CHROME_PORT || '9222')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: false)')
+  .option('--allow-unsafe-shared-attach', 'Debug escape hatch: allow a second direct controller for the same Chrome port/profile')
   .option('--user-data-dir <dir>', 'Chrome user data directory (default: real Chrome profile on macOS)')
   .option('--profile-directory <name>', 'Chrome profile directory name (e.g., "Profile 1", "Default")')
   .option('--chrome-binary <path>', 'Path to Chrome binary (e.g., chrome-headless-shell)')
@@ -108,7 +124,7 @@ program
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
   .option('--codegen <mode>', 'Opt-in replay artifact generation: off, puppeteer, playwright, or mcp-replay. Default: off (no response shape changes). Also: OPENCHROME_CODEGEN.')
-  .action(async (options: { port: string; autoLaunch?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
     const { normalizeCodegenMode, setCodegenMode } = await import('./core/codegen');
     const codegenMode = normalizeCodegenMode(options.codegen ?? process.env.OPENCHROME_CODEGEN);
     setCodegenMode(codegenMode);
@@ -235,6 +251,46 @@ program
     const chromeBinary = options.chromeBinary || process.env.CHROME_BINARY || undefined;
     const useHeadlessShell = options.headlessShell || false;
     const restartChrome = options.restartChrome || false;
+
+    // Resolve transport mode before owner-lock acquisition so lock metadata
+    // describes whether this process is a stdio, HTTP, or dual-transport owner.
+    const validModes = ['stdio', 'http', 'both'];
+    const rawMode = options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
+    if (!validModes.includes(rawMode)) {
+      console.error(`[openchrome] Unknown transport mode "${rawMode}", falling back to stdio`);
+    }
+    const transportMode = validModes.includes(rawMode) ? rawMode : 'stdio';
+    const useHttp = transportMode === 'http' || transportMode === 'both';
+
+    let controllerLock: ControllerLockHandle | null = null;
+    const unsafeSharedAttach = options.allowUnsafeSharedAttach || process.env.OPENCHROME_ALLOW_UNSAFE_SHARED_ATTACH === '1';
+    if (autoLaunch) {
+      const lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
+      if (unsafeSharedAttach) {
+        console.error(
+          '[openchrome] Warning: unsafe shared attach guard bypassed. Multiple direct OpenChrome controllers for the same Chrome/profile can disconnect or close each other\'s targets.',
+        );
+      } else {
+        try {
+          controllerLock = acquireControllerLock({
+            port,
+            userDataDir: lockUserDataDir,
+            lifecycleMode: options.launchMode || 'auto',
+            transportMode,
+          });
+        } catch (err) {
+          if (err instanceof DuplicateControllerError) {
+            console.error(formatDuplicateControllerMessage(err));
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
+    }
+
+    process.on('exit', () => {
+      try { controllerLock?.release(); } catch { /* best-effort */ }
+    });
 
     console.error(`[openchrome] Starting MCP server`);
 
@@ -427,14 +483,6 @@ program
 
     // Set infinite reconnection for HTTP daemon mode BEFORE creating CDPClient singleton.
     // getMCPServer() → SessionManager → getCDPClient() reads this env var at construction.
-    // Resolve transport mode: --transport flag takes precedence over --http flag
-    const validModes = ['stdio', 'http', 'both'];
-    const rawMode = options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
-    if (!validModes.includes(rawMode)) {
-      console.error(`[openchrome] Unknown transport mode "${rawMode}", falling back to stdio`);
-    }
-    const transportMode = validModes.includes(rawMode) ? rawMode : 'stdio';
-    const useHttp = transportMode === 'http' || transportMode === 'both';
     if (useHttp && !process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS) {
       process.env.OPENCHROME_MAX_RECONNECT_ATTEMPTS = '0';
     }
