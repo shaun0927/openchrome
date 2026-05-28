@@ -93,7 +93,11 @@ const definition: MCPToolDefinition = {
         description:
           'When true, also surface skills in promotionState=quarantined. ' +
           'Default false. Diagnostic use only — quarantined skills failed ' +
-          'a fresh-lane re-verification and should not be replayed.',
+          'a fresh-lane re-verification and should not be replayed. ' +
+          'This flag is independent of the recorded-vs-promoted filter: on a ' +
+          'domain with no promoted skills, recall is in v1.x auto-fallback ' +
+          '(recorded skills surface), so passing only include_quarantined ' +
+          'yields recorded + quarantined skills.',
       },
     },
     required: ['domain'],

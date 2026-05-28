@@ -209,4 +209,26 @@ describe('skill promotion state (#1431 Part 2)', () => {
     expect(parsed.skills).toHaveLength(1);
     expect(parsed.skills[0].promotionState).toBe('recallable');
   });
+
+  it('include_quarantined on an unpromoted domain surfaces recorded + quarantined (auto-fallback)', async () => {
+    // No skill is promoted, so recall is in v1.x auto-fallback and recorded
+    // skills surface. include_quarantined is an independent diagnostic flag, so
+    // passing it alone yields recorded + quarantined together — and the filter
+    // stays inactive because nothing is promoted.
+    const a = await record('recorded-one');
+    const q = await record('quarantined-one');
+    await store.setPromotionState(q, 'quarantined', 1, 'contract failed');
+    const tool = getRegisteredTool(server, 'oc_skill_recall');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await (tool.handler as any)('test-session', {
+      domain: 'amazon.com',
+      include_quarantined: true,
+    });
+    const parsed = parseResult(res);
+    expect(parsed.promotion_filter_active).toBe(false);
+    const states = parsed.skills
+      .map((s: { skillId: string; promotionState?: string }) => s.skillId)
+      .sort();
+    expect(states).toEqual([a, q].sort());
+  });
 });
