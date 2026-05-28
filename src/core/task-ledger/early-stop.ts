@@ -34,7 +34,10 @@ export interface EarlyStopPolicy {
    * them must accumulate.
    */
   plateau_steps?: number;
-  /** Only recommend stop when last_p meets this minimum. */
+  /**
+   * Only recommend stop when last_p meets this minimum. Pass `0` to
+   * disable the p_success gate entirely (plateau alone then suffices).
+   */
   min_p_for_stop?: number;
 }
 
@@ -84,6 +87,14 @@ export function recommendEarlyStop(
   policy?: EarlyStopPolicy,
 ): EarlyStopRecommendation {
   const r = resolved(policy);
+
+  if (!Number.isFinite(summary.last_p)) {
+    return {
+      should_stop: false,
+      reason: `last_p is not finite (${summary.last_p}); refusing to recommend stop`,
+      policy: r,
+    };
+  }
 
   if (summary.last_p < r.min_p_for_stop) {
     return {

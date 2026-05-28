@@ -59,6 +59,16 @@ describe('recommendEarlyStop', () => {
     expect(r.policy.plateau_steps).toBe(DEFAULT_PLATEAU_STEPS);
   });
 
+  it('refuses to recommend stop on a non-finite last_p', () => {
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const r = recommendEarlyStop(
+        summary({ last_p: bad, consecutive_low_delta: 999 }),
+      );
+      expect(r.should_stop).toBe(false);
+      expect(r.reason).toMatch(/not finite/);
+    }
+  });
+
   it('is pure — same input yields the same output', () => {
     const input = summary({ last_p: 0.9, consecutive_low_delta: 11 });
     const a = recommendEarlyStop(input);
