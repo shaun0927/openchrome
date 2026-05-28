@@ -91,6 +91,23 @@ export interface SkillRecord {
    */
   lastReplayError?: string;
 
+  /**
+   * Promotion state (#1431 Part 2). Skills move
+   *   `recorded` → `re_verified` → `recallable`
+   * and `quarantined` is a terminal exclusion state. `oc_skill_recall`
+   * filters to `re_verified` + `recallable` by default; pass
+   * `include_unpromoted: true` to see `recorded` ones, and
+   * `include_quarantined: true` to see quarantined ones.
+   *
+   * Records persisted before #1431 normalise to `recorded` on read so
+   * recall keeps its v1.x semantics unchanged unless promotion is
+   * actively in use.
+   */
+  promotionState?: 'recorded' | 're_verified' | 'recallable' | 'quarantined';
+  /** Wall-clock ms epoch of the last promotion-state transition. */
+  promotionStateAt?: number;
+  /** Truncated reason string when promotionState === 'quarantined'. */
+  promotionQuarantineReason?: string;
 }
 
 /** On-disk shape for `<rootDir>/<encodedDomain>/skills.json` (v2). */

@@ -71,6 +71,20 @@ const definition: MCPToolDefinition = {
           `Maximum number of skills to return. Default ${DEFAULT_LIMIT}. ` +
           'Pass 0 to return an empty list. Values below 0 are treated as 0.',
       },
+      include_unpromoted: {
+        type: 'boolean',
+        description:
+          'When true, also surface skills still in promotionState=recorded. ' +
+          'Default false — recall returns only re_verified + recallable so ' +
+          'the LLM-free fast path never picks an unverified skill (#1431).',
+      },
+      include_quarantined: {
+        type: 'boolean',
+        description:
+          'When true, also surface skills in promotionState=quarantined. ' +
+          'Default false. Diagnostic use only — quarantined skills failed ' +
+          'a fresh-lane re-verification and should not be replayed.',
+      },
     },
     required: ['domain'],
   },
@@ -132,6 +146,18 @@ const handler: ToolHandler = async (
     };
     return jsonResult(output);
   }
+
+  // Promotion-state filter (#1431 Part 2). Default keeps the LLM-free
+  // fast path safe: only `re_verified` and `recallable` skills surface.
+  // Legacy records (no promotionState) normalise to `recorded` on read.
+  const includeUnpromoted = args.include_unpromoted === true;
+  const includeQuarantined = args.include_quarantined === true;
+  skills = skills.filter((s) => {
+    const state = s.promotionState ?? 'recorded';
+    if (state === 'quarantined') return includeQuarantined;
+    if (state === 'recorded') return includeUnpromoted;
+    return true;
+  });
 
   const ordered = rankedRecall
     ? rankSkillsForTask(skills, { task, contractId })
