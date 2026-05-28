@@ -135,8 +135,11 @@ const definition: MCPToolDefinition = {
       session_id: {
         type: 'string',
         description:
-          'Optional MCP session id filter. When omitted, all recent ' +
-          'entries are considered.',
+          'Optional MCP session id filter. The `recent_steps` window is ' +
+          'taken across all sessions first, then filtered by this id — so ' +
+          'a busy multi-session journal may yield fewer than `recent_steps` ' +
+          'entries for one session; raise `recent_steps` to compensate. ' +
+          'When omitted, all recent entries are considered.',
       },
       recent_steps: {
         type: 'number',
@@ -235,7 +238,11 @@ const handler: ToolHandler = async (
     `Preserve failed assertions and the last successful checkpoint. ` +
     `Do not invent facts.\n\n${rawWindow}`;
 
-  type SamplingResponse = { content?: { type?: string; text?: string }; model?: string };
+  type SamplingContentBlock = { type?: string; text?: string };
+  type SamplingResponse = {
+    content?: SamplingContentBlock | SamplingContentBlock[];
+    model?: string;
+  };
 
   try {
     const response = await context.requestClient<SamplingResponse>(
@@ -251,8 +258,13 @@ const handler: ToolHandler = async (
       },
       { timeoutMs: 30_000 },
     );
-    const summaryText =
-      typeof response?.content?.text === 'string' ? response.content.text : '';
+    // MCP `sampling/createMessage` may return `content` as a single block or
+    // an array of blocks; handle both and take the first text block.
+    const content = response?.content;
+    const block = Array.isArray(content)
+      ? content.find((c) => typeof c?.text === 'string')
+      : content;
+    const summaryText = typeof block?.text === 'string' ? block.text : '';
     return jsonResult({
       status: 'ok',
       summary: summaryText,
