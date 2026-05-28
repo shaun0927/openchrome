@@ -99,4 +99,41 @@ describe('OM2W headline-eligibility adapter (#1427 Part 3)', () => {
     });
     expect(row.notes).toMatch(/recorded final-postcondition/);
   });
+
+  it('rejects a row whose runner reason (postcondition evidence) is empty', () => {
+    const blank: RunnerResult = { ...passResult(), reason: '   ' };
+    const row = toHeadlineRow(blank, {
+      llm: 'gpt-5.4',
+      step_budget: OM2W_REFERENCE_STEP_BUDGET,
+    });
+    expect(row.claimEligibility.eligible).toBe(false);
+    expect(row.claimEligibility.reasons.join(' ')).toMatch(/no final-postcondition evidence/);
+    expect(row.measurementMode).toBe('diagnostic');
+  });
+
+  it('trims a whitespace-only llm out of claimEligibility.llm', () => {
+    const row = toHeadlineRow(passResult(), {
+      llm: '   ',
+      step_budget: OM2W_REFERENCE_STEP_BUDGET,
+    });
+    expect(row.claimEligibility.eligible).toBe(false);
+    expect(row.claimEligibility.llm).toBeUndefined();
+  });
+
+  it('eligible rows satisfy every invariant the headline gate reads', () => {
+    // Mirrors benchmark/headline-gate.mjs partitionHeadlineResults: an
+    // eligible row must resolve to a headline mode and carry non-empty
+    // string postcondition evidence. Locks the adapter output to the gate
+    // contract from the producer side (the .mjs gate cannot be imported
+    // from ts-jest's CJS runtime, so the end-to-end run lives in the
+    // sibling om2w-headline-gate.smoke.mjs).
+    const row = toHeadlineRow(passResult(), {
+      llm: 'gpt-5.4',
+      step_budget: OM2W_REFERENCE_STEP_BUDGET,
+    });
+    expect(row.claimEligibility.eligible).toBe(true);
+    expect(['live-llm', 'recorded-real']).toContain(row.measurementMode);
+    expect(typeof row.finalPostconditionEvidence).toBe('string');
+    expect(row.finalPostconditionEvidence.trim().length).toBeGreaterThan(0);
+  });
 });

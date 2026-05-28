@@ -47,18 +47,34 @@ export const OM2W_REFERENCE_STEP_BUDGET = 100;
 
 export function toHeadlineRow(result: RunnerResult, meta: OmTaskMeta): HeadlineRow {
   const reasons: string[] = [];
+  const llm = (meta.llm ?? '').trim();
   const budgetMatches = meta.step_budget === OM2W_REFERENCE_STEP_BUDGET;
   if (!budgetMatches) {
     reasons.push(
       `step_budget ${meta.step_budget} != published reference ${OM2W_REFERENCE_STEP_BUDGET}`,
     );
   }
-  if (!meta.llm || meta.llm.trim().length === 0) {
+  if (llm.length === 0) {
     reasons.push('llm id is required for OM2W headline eligibility');
   }
   if (result.evidence.length === 0) {
     reasons.push('runner produced no evidence');
   }
+  // The headline gate (benchmark/headline-gate.mjs) requires a non-empty
+  // finalPostconditionEvidence. RunnerResult.reason is typed string with no
+  // non-empty constraint, so guard here — otherwise a blank judge reason
+  // would mark the row eligible by our rules yet silently fail the upstream
+  // gate (eligible=true but partitioned to the diagnostic bucket).
+  if (result.reason.trim().length === 0) {
+    reasons.push('runner produced no final-postcondition evidence (reason is empty)');
+  }
+  // Trust boundary (SSOT P5): `meta.llm` is supplied by the caller, not
+  // derived from the run. The caller (the live-CI integration that drives
+  // the runner) is responsible for passing the model that actually backed
+  // `result.judge_id`. This adapter does not enforce a match — equal-LLM
+  // cross-checking belongs in the production wiring PR, where both the
+  // runner judge and the meta come from one pinned config. Recorded here so
+  // the assumption is explicit rather than silent.
   const eligible = reasons.length === 0;
 
   return {
@@ -69,7 +85,7 @@ export function toHeadlineRow(result: RunnerResult, meta: OmTaskMeta): HeadlineR
     claimEligibility: {
       eligible,
       reasons,
-      llm: meta.llm,
+      llm: llm.length > 0 ? llm : undefined,
       step_budget: meta.step_budget,
     },
     ...(meta.note ? { notes: meta.note } : {}),
