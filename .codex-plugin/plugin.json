@@ -1,0 +1,20 @@
+{
+  "name": "openchrome",
+  "version": "1.12.5",
+  "description": "Harness-engineered browser automation. Control your real Chrome from any AI agent via MCP — parallel lanes, auto-recovery, verifiable contracts.",
+  "author": {
+    "name": "OpenChrome contributors",
+    "url": "https://github.com/shaun0927/openchrome"
+  },
+  "homepage": "https://github.com/shaun0927/openchrome",
+  "repository": "https://github.com/shaun0927/openchrome",
+  "license": "MIT",
+  "keywords": ["browser", "automation", "mcp", "chrome", "cdp"],
+  "mcpServers": {
+    "openchrome": {
+      "command": "openchrome",
+      "args": ["serve", "--auto-launch"]
+    }
+  },
+  "skills": "./skills/"
+}
