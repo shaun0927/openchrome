@@ -137,4 +137,18 @@ describe('oc_journal_compact — round-trip stability (#1434 Part 2)', () => {
     expect(a.last_checkpoint).toEqual(b.last_checkpoint);
     expect(a.open_assertions.length).toBe(1);
   });
+
+  it('sampling strategy is inconclusive (never server-side) when the host lacks the capability (#1359)', async () => {
+    // A context with no clientCapabilities.sampling and no requestClient
+    // is the unknown-MCP-client baseline. The tool must refuse to
+    // summarise rather than call a model itself.
+    withJournal([entry({ ts: 1, tool: 'read_page', summary: 'read 1' })]);
+
+    const res = parseResult(await compact({ strategy: 'sampling' }));
+
+    expect(res.status).toBe('unsupported_by_host');
+    expect(typeof res.reason).toBe('string');
+    // No summary is fabricated on the deterministic fallback path.
+    expect(res.summary).toBeUndefined();
+  });
 });

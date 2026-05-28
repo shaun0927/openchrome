@@ -12,8 +12,12 @@ within tens of tool calls.
 
 ## When to compact
 
-The empirically validated cadence from Webwright's blog post is
-**every 20 steps**. OpenChrome generalises this to a range:
+The cadence reported in Webwright's blog post is **every 20 steps**.
+The table below is a *suggested* cadence derived from that report —
+`oc_journal_compact` enforces nothing, so these are host-side
+guidelines, not tool behaviour. OpenChrome has not independently
+re-measured these numbers (per #1359 P5 they stay attributed to
+Webwright rather than presented as OpenChrome benchmark claims):
 
 | Trajectory length      | Recommended cadence | Strategy           |
 |------------------------|---------------------|--------------------|
@@ -22,11 +26,12 @@ The empirically validated cadence from Webwright's blog post is
 | 100+ tool calls        | Every 50 steps      | `recent_k` + `checkpoint_only` snapshot |
 | Multi-session resume   | At resume           | `checkpoint_only`  |
 
-The lower bound (20) matches Webwright. The upper bound (50) matches
-their reported empirical observation that "the next 50 steps deliver
-only 3–4 additional accuracy points" on Online-Mind2Web — beyond that,
-the marginal cost of carrying the raw trajectory exceeds the marginal
-benefit, so compaction pays off more often.
+The lower bound (20) matches Webwright. The upper bound (50) is also
+theirs — the reported observation that "the next 50 steps deliver only
+3–4 additional accuracy points" on Online-Mind2Web — suggesting that
+beyond that point the marginal cost of carrying the raw trajectory
+tends to exceed the marginal benefit, so compaction pays off more
+often. These remain Webwright's figures, not OpenChrome measurements.
 
 ## Picking a strategy
 
