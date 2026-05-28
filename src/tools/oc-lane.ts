@@ -23,17 +23,11 @@ function laneId(args: Record<string, unknown>): string { return String(args.lane
 const createDefinition: MCPToolDefinition = {
   name: 'oc_lane_create',
   description: [
-    'Create a task-scoped browser lane backed by existing SessionManager worker/target primitives.',
-    'Lanes isolate refs, tabs, and trace metadata for host-driven parallel work without spawning LLM subagents.',
-    '',
-    'Profile isolation modes (optional `profile` field):',
-    '  • `"inherit"` (default) — the lane shares the server\'s existing Chrome user-data-dir.',
-    '    No extra resource management required; this is the original behaviour.',
-    '  • `"scratch"` — a fresh temporary Chrome user-data-dir is provisioned at lane creation',
-    '    and removed when the lane is closed via oc_lane_close. Use this when you need a',
-    '    clean browser state (no cookies, no history) isolated from the main session.',
-    '    This is the foundation for the fresh-lane re-verification gate (Part 3 of #1431).',
-  ].join('\n'),
+    'Create a task-scoped browser lane on existing SessionManager worker/target primitives.',
+    'Lanes isolate refs, tabs, and trace metadata for host-driven parallel work.',
+    'Optional `profile`: `"inherit"` (default) shares the server Chrome user-data-dir;',
+    '`"scratch"` provisions a fresh temp user-data-dir at creation and removes it on oc_lane_close.',
+  ].join(' '),
   annotations: TOOL_ANNOTATIONS.oc_lane_create,
   inputSchema: {
     type: 'object',
