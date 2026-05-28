@@ -85,7 +85,7 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description:
           'Assertion DSL object (see src/contracts/types.ts: kind ∈ ' +
-          'url|dom_text|dom_count|network|screenshot_class|no_dialog|and|or|not). ' +
+          'url|dom_text|dom_count|network|screenshot_class|no_dialog|image_qa|and|or|not). ' +
           'Validated via validateAssertion() before evaluation.',
       },
       args: {

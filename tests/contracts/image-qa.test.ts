@@ -48,6 +48,17 @@ describe('image_qa contract DSL (#1432 Part 2)', () => {
       }
     });
 
+    it('rejects when expected_pattern is missing', () => {
+      const result = validateAssertion({
+        kind: 'image_qa',
+        question: 'q',
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.errors.some((e) => /expected_pattern/.test(e.path))).toBe(true);
+      }
+    });
+
     it('rejects an unsafe expected_pattern', () => {
       const result = validateAssertion({
         kind: 'image_qa',
