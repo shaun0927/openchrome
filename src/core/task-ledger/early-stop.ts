@@ -5,8 +5,13 @@
  * whether the host should stop work even before the hard step budget
  * is exhausted. The policy targets Webwright's empirical observation
  * that "the next 50 steps deliver only 3–4 additional accuracy points"
- * — once Δp/Δstep stays below a small threshold for N consecutive
- * steps, additional spend is unlikely to move the needle.
+ * — once p_success has plateaued for N consecutive steps, additional
+ * spend is unlikely to move the needle.
+ *
+ * The plateau is detected upstream by the marginal-utility tracker
+ * (`consecutive_low_delta`, gated by the tracker's own
+ * `LOW_DELTA_THRESHOLD`); this policy only thresholds that count, so it
+ * deliberately does not re-expose a per-step delta knob it cannot honor.
  *
  * Crucially this module ONLY recommends. It does not raise, does not
  * mutate anything, and never decides on behalf of the host. The host
@@ -16,17 +21,18 @@
 
 import type { MarginalUtilitySummary } from './marginal-utility';
 
-/** Default plateau threshold: 0.02 of p_success change per step. */
-export const DEFAULT_PLATEAU_DELTA = 0.02;
 /** Default plateau length: 10 consecutive low-Δ steps. */
 export const DEFAULT_PLATEAU_STEPS = 10;
 /** Minimum p_success that must be reached before any stop recommendation. */
 export const DEFAULT_MIN_P_FOR_STOP = 0.7;
 
 export interface EarlyStopPolicy {
-  /** |delta| per step must remain below this to count as a plateau step. */
-  plateau_delta?: number;
-  /** Number of consecutive plateau steps required to recommend stop. */
+  /**
+   * Number of consecutive plateau steps required to recommend stop.
+   * A "plateau step" is decided upstream by the marginal-utility
+   * tracker (`consecutive_low_delta`); this knob only sets how many of
+   * them must accumulate.
+   */
   plateau_steps?: number;
   /** Only recommend stop when last_p meets this minimum. */
   min_p_for_stop?: number;
@@ -47,10 +53,6 @@ export interface EarlyStopRecommendation {
 
 function resolved(policy?: EarlyStopPolicy): Required<EarlyStopPolicy> {
   return {
-    plateau_delta:
-      typeof policy?.plateau_delta === 'number' && policy.plateau_delta > 0
-        ? policy.plateau_delta
-        : DEFAULT_PLATEAU_DELTA,
     plateau_steps:
       typeof policy?.plateau_steps === 'number' && policy.plateau_steps > 0
         ? Math.floor(policy.plateau_steps)

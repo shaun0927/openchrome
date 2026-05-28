@@ -2,7 +2,6 @@
  * Tests for the early-stop policy (#1428 Part 2).
  */
 import {
-  DEFAULT_PLATEAU_DELTA,
   DEFAULT_PLATEAU_STEPS,
   DEFAULT_MIN_P_FOR_STOP,
   recommendEarlyStop,
@@ -54,11 +53,10 @@ describe('recommendEarlyStop', () => {
   it('falls back to defaults on invalid policy fields', () => {
     const r = recommendEarlyStop(
       summary({ last_p: 1, consecutive_low_delta: DEFAULT_PLATEAU_STEPS }),
-      { min_p_for_stop: -1, plateau_steps: 0, plateau_delta: -2 },
+      { min_p_for_stop: -1, plateau_steps: 0 },
     );
     expect(r.policy.min_p_for_stop).toBe(DEFAULT_MIN_P_FOR_STOP);
     expect(r.policy.plateau_steps).toBe(DEFAULT_PLATEAU_STEPS);
-    expect(r.policy.plateau_delta).toBe(DEFAULT_PLATEAU_DELTA);
   });
 
   it('is pure — same input yields the same output', () => {
