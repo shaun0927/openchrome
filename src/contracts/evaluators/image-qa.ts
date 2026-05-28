@@ -10,6 +10,7 @@
  */
 import type { EvalContext } from '../eval-context';
 import type { EvaluationResult, ImageQaAssertion } from '../types';
+import { compileSafeRegex } from '../safe-regex';
 
 export async function evaluateImageQa(
   assertion: ImageQaAssertion,
@@ -22,6 +23,10 @@ export async function evaluateImageQa(
         passed: false,
         assertion_kind: 'image_qa',
         details: {
+          // `error` flips oc_assert verdict translation to inconclusive
+          // (not fail) — runtime wiring problems are not contract
+          // failures, they prevent evaluation entirely.
+          error: 'host_runtime_did_not_wire_imageQaSample',
           reason: 'host_runtime_did_not_wire_imageQaSample',
           question: assertion.question,
         },
@@ -37,6 +42,7 @@ export async function evaluateImageQa(
         passed: false,
         assertion_kind: 'image_qa',
         details: {
+          error: 'no_screenshot_available',
           reason: 'no_screenshot_available',
           question: assertion.question,
         },
@@ -56,6 +62,7 @@ export async function evaluateImageQa(
         passed: false,
         assertion_kind: 'image_qa',
         details: {
+          error: 'unsupported_by_host',
           reason: 'unsupported_by_host',
           host_reason: reply.reason,
           question: assertion.question,
@@ -64,9 +71,13 @@ export async function evaluateImageQa(
     };
   }
 
+  // Defense-in-depth: the DSL validator already ReDoS-guards
+  // expected_pattern at parse time, but the answer string is host-LLM
+  // output and the assertion may also be constructed programmatically,
+  // so re-guard here before running it against untrusted text.
   let regex: RegExp;
   try {
-    regex = new RegExp(assertion.expected_pattern);
+    regex = compileSafeRegex(assertion.expected_pattern);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -75,6 +86,7 @@ export async function evaluateImageQa(
         passed: false,
         assertion_kind: 'image_qa',
         details: {
+          error: 'invalid_expected_pattern',
           reason: 'invalid_expected_pattern',
           message,
           expected_pattern: assertion.expected_pattern,
