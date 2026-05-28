@@ -136,6 +136,9 @@
       "name": "oc_journal"
     },
     {
+      "name": "oc_journal_compact"
+    },
+    {
       "name": "oc_normalize_action"
     },
     {

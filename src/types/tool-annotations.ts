@@ -173,6 +173,7 @@ export const TOOL_ANNOTATIONS = {
   memory: DESTRUCTIVE,
   oc_skill_record: MUTATES,
   oc_journal: MUTATES,
+  oc_journal_compact: READ_ONLY,
   oc_session_snapshot: MUTATES,
   oc_session_resume: MUTATES,
   oc_checkpoint: MUTATES,

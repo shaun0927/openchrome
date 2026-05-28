@@ -115,6 +115,7 @@ import { registerTotpGenerateTool } from './totp-generate';
 
 // Outcome Contracts (#784) — single-call assertion verifier
 import { registerOcAssertTool } from './oc-assert';
+import { registerOcJournalCompactTool } from './oc-journal-compact';
 import { registerImageQaTool } from './image-qa';
 
 // Gate detection (B2-PR1 of #1359) — fact-only CAPTCHA/auth gate detection
@@ -238,6 +239,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_get_connection_info: 'core',
   image_qa: 'core',
   oc_journal: 'core',
+  oc_journal_compact: 'core',
   oc_observe: 'core',
   element_pick: 'core',
   oc_open_host_settings: 'core',
@@ -501,6 +503,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(proxy);
+  registerOcJournalCompactTool(proxy);
   registerImageQaTool(proxy);
 
   // Gate detection (B2-PR1 of #1359) — fact-only CAPTCHA/auth gate detection
