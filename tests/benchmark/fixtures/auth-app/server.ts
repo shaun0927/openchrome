@@ -113,7 +113,7 @@ export async function startAuthApp(): Promise<AuthApp> {
         const sid = crypto.randomBytes(16).toString('hex');
         sessions.set(sid, username);
         res.writeHead(302, {
-          'set-cookie': `${SESSION_COOKIE}=${sid}; HttpOnly; Path=/`,
+          'set-cookie': `${SESSION_COOKIE}=${sid}; HttpOnly; Path=/; Max-Age=86400`,
           location: '/',
         });
         res.end();
@@ -167,6 +167,10 @@ export async function startAuthApp(): Promise<AuthApp> {
     close(): Promise<void> {
       if (closed) return Promise.resolve();
       closed = true;
+      // Browser drivers keep HTTP/1.1 sockets alive; force-close them so the
+      // benchmark runner can terminate promptly after each measured run.
+      server.closeIdleConnections?.();
+      server.closeAllConnections?.();
       return new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };

@@ -214,6 +214,54 @@ Transport stability policy: [`docs/transport-lifecycle.md`](docs/transport-lifec
 
 ---
 
+## Host plugins
+
+OpenChrome ships plugin manifests for Claude Code and Codex CLI so both hosts
+load the MCP server and skill body from the **same shared source** — no
+per-host duplication.
+
+### Claude Code
+
+Load from the repo for local development:
+
+```bash
+claude --plugin-dir /path/to/openchrome
+```
+
+Or install from npm after the package is published to a marketplace:
+
+```bash
+/plugin install openchrome   # once listed in a marketplace
+```
+
+The skill is namespaced as `/openchrome:connect`. Run `/reload-plugins` after
+updating to pick up new skill content.
+
+Manifest: `.claude-plugin/plugin.json` — registers the `openchrome` MCP server
+(`openchrome serve --auto-launch`) and points to `skills/`.
+
+### Codex CLI
+
+Load from the repo for local development:
+
+```bash
+codex --plugin-dir /path/to/openchrome
+```
+
+Or follow the Codex plugin installation instructions once the package is listed
+in the Codex plugin registry.
+
+Manifest: `.codex-plugin/plugin.json` — identical MCP server entry point and
+skill path; the two manifests share the same `skills/openchrome/` body.
+
+### Shared skill body
+
+Both manifests point to `skills/openchrome/SKILL.md` as the single source of
+truth. The slash command stub at `skills/openchrome/commands/connect.md`
+registers `/openchrome:connect` in both hosts.
+
+---
+
 ## Documentation
 
 | Topic | Link |
