@@ -23,6 +23,16 @@
  * orchestrates the deterministic replay + contract check that already
  * lives in oc_skill_replay (#856), in a clean profile guaranteed by
  * Part 1 of this issue.
+ *
+ * Concurrency: this routine is NOT safe to run concurrently for the same
+ * `skillId`. It snapshots the skill's state, then awaits lane-open + replay
+ * (seconds), then writes the final state — `setPromotionState` performs no
+ * compare-and-swap, so a second in-flight promotion of the same skill could
+ * overwrite the first's terminal state (e.g. clobber a `quarantined` write
+ * with `recallable`). The host must serialize promotion per skill, which is
+ * the natural fit for the SSOT #1359 single-owner / per-target-queue model
+ * where one broker orchestrates promotion. Concurrent promotion of *different*
+ * skillIds is fine.
  */
 import type { SkillMemoryStore } from './store';
 
@@ -46,12 +56,16 @@ export interface PromoteSkillDeps {
 }
 
 export type PromotionOutcome =
-  // `from` is the actual prior state the skill was in. Narrow the two
-  // failure variants with `r.quarantined === true`, NOT `'quarantined' in r`
-  // — both carry the field, so an `in` check is always true.
+  // `from` is the actual prior state the skill was in.
   | { promoted: true; from: 'recorded' | 're_verified' | 'recallable'; to: 'recallable' }
-  | { promoted: false; quarantined: true; reason: string }
-  | { promoted: false; quarantined: false; reason: string };
+  // Single failure shape — `quarantined` is the discriminant, not a structural
+  // variant. true = the skill failed re-verification (STEP/CONTRACT/PRECONDITION
+  // fail) and is now quarantined; false = an infra fault (lane-open throw, replay
+  // throw, unknown skill_id) that left the skill's promotion state untouched.
+  // Narrow with `r.quarantined === true`, never `'quarantined' in r` (the field
+  // is always present). Kept as one member because two structurally identical
+  // union entries collapse to this anyway and only convey false precision.
+  | { promoted: false; quarantined: boolean; reason: string };
 
 /** Quarantine reasons are capped to match the store's own on-disk limit. */
 const MAX_REASON_LEN = 512;
