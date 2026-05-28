@@ -64,6 +64,9 @@
       "name": "http_auth"
     },
     {
+      "name": "image_qa"
+    },
+    {
       "name": "inspect"
     },
     {

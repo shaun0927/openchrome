@@ -236,6 +236,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_evidence_bundle: 'core',
   oc_gate_inspect: 'core',
   oc_get_connection_info: 'core',
+  image_qa: 'core',
   oc_journal: 'core',
   oc_observe: 'core',
   element_pick: 'core',

@@ -72,7 +72,7 @@ const definition: MCPToolDefinition = {
       screenshot: {
         type: 'object',
         description:
-          'Exactly one of `ref`, `path`, or `base64` must be supplied. ' +
+          'REQUIRED Exactly one of `ref`, `path`, or `base64` must be supplied. ' +
           'Optional `mime_type` defaults to `image/png`.',
         properties: {
           ref: {
@@ -95,7 +95,7 @@ const definition: MCPToolDefinition = {
       },
       question: {
         type: 'string',
-        description: 'Vision Q&A prompt for the host LLM.',
+        description: 'REQUIRED Vision Q&A prompt for the host LLM.',
       },
       max_tokens: {
         type: 'number',
