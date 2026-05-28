@@ -112,6 +112,25 @@ export interface BrowserLane {
   name?: string;
   purpose?: string;
   status: 'open' | 'closing' | 'closed' | 'failed';
+  /**
+   * Profile isolation mode for this lane.
+   *
+   * - `'inherit'` (default) — the lane shares the server's existing Chrome
+   *   profile / user-data-dir. This is the original behaviour and requires no
+   *   extra resource management.
+   * - `'scratch'` — a fresh temporary Chrome user-data-dir is provisioned when
+   *   the lane is created and removed (rm -rf) when the lane is closed. The
+   *   path is stored in `scratchDir` so `closeBrowserLane` can clean it up.
+   *   This is the foundation for the fresh-lane re-verification gate (Part 3
+   *   of #1431) but the gate itself is not shipped in Part 1.
+   */
+  profile?: 'scratch' | 'inherit';
+  /**
+   * Absolute path of the temporary Chrome user-data-dir created for a
+   * `profile: 'scratch'` lane. Undefined for `'inherit'` lanes. Removed
+   * (rm -rf) by `closeBrowserLane`.
+   */
+  scratchDir?: string;
   sessionId: string;
   workerId: string;
   targetIds: string[];

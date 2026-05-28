@@ -22,7 +22,18 @@ function laneId(args: Record<string, unknown>): string { return String(args.lane
 
 const createDefinition: MCPToolDefinition = {
   name: 'oc_lane_create',
-  description: 'Create a task-scoped browser lane backed by existing SessionManager worker/target primitives. Lanes isolate refs, tabs, and trace metadata for host-driven parallel work without spawning LLM subagents.',
+  description: [
+    'Create a task-scoped browser lane backed by existing SessionManager worker/target primitives.',
+    'Lanes isolate refs, tabs, and trace metadata for host-driven parallel work without spawning LLM subagents.',
+    '',
+    'Profile isolation modes (optional `profile` field):',
+    '  • `"inherit"` (default) — the lane shares the server\'s existing Chrome user-data-dir.',
+    '    No extra resource management required; this is the original behaviour.',
+    '  • `"scratch"` — a fresh temporary Chrome user-data-dir is provisioned at lane creation',
+    '    and removed when the lane is closed via oc_lane_close. Use this when you need a',
+    '    clean browser state (no cookies, no history) isolated from the main session.',
+    '    This is the foundation for the fresh-lane re-verification gate (Part 3 of #1431).',
+  ].join('\n'),
   annotations: TOOL_ANNOTATIONS.oc_lane_create,
   inputSchema: {
     type: 'object',
@@ -33,6 +44,15 @@ const createDefinition: MCPToolDefinition = {
       purpose: { type: 'string', description: 'Optional bounded purpose for audit/debugging.' },
       initialUrl: { type: 'string', description: 'Optional URL to open as the first lane target.' },
       budget: { type: 'object', description: 'Optional host-owned lane budget metadata; recorded only.' },
+      profile: {
+        type: 'string',
+        enum: ['inherit', 'scratch'],
+        description: [
+          'Profile isolation mode. `"inherit"` (default) shares the existing Chrome user-data-dir.',
+          '`"scratch"` provisions a clean temporary Chrome user-data-dir for the lane and',
+          'removes it automatically when the lane is closed via oc_lane_close.',
+        ].join(' '),
+      },
     },
   },
 };
@@ -44,6 +64,8 @@ const createHandler: ToolHandler = async (sessionId, args) => {
   try {
     const tid = taskId(args);
     if (!tid) return err('oc_lane_create: taskId is required');
+    const rawProfile = args.profile;
+    const profile = rawProfile === 'scratch' || rawProfile === 'inherit' ? rawProfile : undefined;
     const lane = await createBrowserLane({
       sessionId,
       taskId: tid,
@@ -51,6 +73,7 @@ const createHandler: ToolHandler = async (sessionId, args) => {
       purpose: typeof args.purpose === 'string' ? args.purpose : undefined,
       initialUrl: typeof args.initialUrl === 'string' ? args.initialUrl : undefined,
       budget: args.budget,
+      profile,
     });
     return jsonResult({ ok: true, lane });
   } catch (e) { return err(`oc_lane_create: ${e instanceof Error ? e.message : String(e)}`); }
