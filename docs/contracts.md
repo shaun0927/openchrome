@@ -47,6 +47,7 @@ type Assertion =
       class_id: string,
       distance_max: number /* Hamming distance over 64-bit pHash */ }
   | { kind: "no_dialog" }
+  | { kind: "image_qa",   question: string, expected_pattern: string }
   | { kind: "and", children: Assertion[] }
   | { kind: "or",  children: Assertion[] }
   | { kind: "not", child:    Assertion   }
@@ -164,6 +165,28 @@ you can re-derive the threshold later.
   open. Useful as a postcondition guard against phishing-style overlays
   that block subsequent actions.
 - Evidence: `{ dialog_open }`.
+
+### `image_qa`
+
+```jsonc
+{ "kind": "image_qa", "question": "is the page in dark mode?", "expected_pattern": "^yes" }
+```
+
+- Asks the **host LLM** a free-form `question` about the most recent
+  screenshot and matches the answer against `expected_pattern` (JS
+  RegExp source, vetted by the same safe-regex guard as `url` /
+  `network`).
+- The answer is produced host-side via MCP `sampling/createMessage`
+  (the runtime's optional `imageQaSample` hook). OpenChrome never calls
+  a model itself (SSOT [#1359]) — when the host does not wire the hook,
+  or replies `unsupported_by_host`, the assertion is **inconclusive**
+  (`passed: false`) rather than failing hard. The single-call
+  `oc_assert` surface does not wire the hook, so `image_qa` is only
+  decidable inside a sampling-capable host runtime.
+- Evidence: `{ question, answer, expected_pattern }` on a decided
+  result, or `{ reason, question }` when inconclusive.
+
+[#1359]: https://github.com/shaun0927/openchrome/issues/1359
 
 ### `and` / `or` / `not`
 
