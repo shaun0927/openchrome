@@ -35,6 +35,7 @@ they are not reproducible here. See Epic #1254 "Non-goals".
 | playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F #1299-future-live |
 | browser-use | `browser-use` (PyPI) | `0.12.6` | `329c67f069427e928ff81ad52415efdca7692007` | 2026-05-15 | #A #B #D #E |
 | Crawlee | `crawlee` | `3.16.0` | `6c9cd2ff7e7d89ce7685e67f3f919f3cce0fa7a4` | 2026-05-15 | #A #C |
+| Online-Mind2Web | HuggingFace dataset `osunlp/Online-Mind2Web` (CC-BY 4.0) | dataset commit `7ab0fc3b5e0420f6a74c4e0f0faebc1f3eddb0c1` | `7ab0fc3b5e0420f6a74c4e0f0faebc1f3eddb0c1` | TBD-by-runner-PR | #B (future — Part 2 of #1427) |
 
 ## Tokenizer
 

@@ -4,6 +4,7 @@ import {
   HybridConfig,
   RouterStats,
   EscalationResult,
+  RouteReason,
 } from '../types/browser-backend';
 import { ToolRoutingRegistry } from './tool-routing-registry';
 import { LightpandaLauncher } from '../lightpanda/launcher';
@@ -14,6 +15,12 @@ export interface RouteResult {
   backend: BrowserBackend;
   page: Page;
   fallback: boolean;
+  /**
+   * Why the router selected this backend. Always present from this PR
+   * forward — downstream tools can rely on the discriminator being a
+   * fact, not derived from request shape. See `RouteReason`.
+   */
+  reason: RouteReason;
 }
 
 export class BrowserRouter {
@@ -57,13 +64,23 @@ export class BrowserRouter {
     // 1. Hybrid disabled
     if (!this.config.enabled) {
       this.stats.chromeRequests++;
-      return { backend: BrowserBackend.CHROME, page: chromePage, fallback: false };
+      return {
+        backend: BrowserBackend.CHROME,
+        page: chromePage,
+        fallback: false,
+        reason: 'hybrid-disabled',
+      };
     }
 
     // 2. Visual tool always goes to Chrome
     if (ToolRoutingRegistry.isVisualTool(toolName)) {
       this.stats.chromeRequests++;
-      return { backend: BrowserBackend.CHROME, page: chromePage, fallback: false };
+      return {
+        backend: BrowserBackend.CHROME,
+        page: chromePage,
+        fallback: false,
+        reason: 'visual-tool',
+      };
     }
 
     // 3 & 4. Check circuit breaker
@@ -75,7 +92,12 @@ export class BrowserRouter {
         // Circuit still open → serve from Chrome
         this.stats.chromeRequests++;
         this.stats.circuitBreakerTrips++;
-        return { backend: BrowserBackend.CHROME, page: chromePage, fallback: false };
+        return {
+          backend: BrowserBackend.CHROME,
+          page: chromePage,
+          fallback: false,
+          reason: 'circuit-open',
+        };
       }
 
       // Cooldown expired → reset circuit and allow LP attempt
@@ -96,7 +118,12 @@ export class BrowserRouter {
       if (pageHealthy) {
         this.stats.lightpandaRequests++;
         this.recordSuccess();
-        return { backend: BrowserBackend.LIGHTPANDA, page: lightpandaPage, fallback: false };
+        return {
+          backend: BrowserBackend.LIGHTPANDA,
+          page: lightpandaPage,
+          fallback: false,
+          reason: 'lp-served',
+        };
       }
     }
 
@@ -104,7 +131,12 @@ export class BrowserRouter {
     this.stats.chromeRequests++;
     this.stats.fallbacks++;
     this.recordFailure();
-    return { backend: BrowserBackend.CHROME, page: chromePage, fallback: true };
+    return {
+      backend: BrowserBackend.CHROME,
+      page: chromePage,
+      fallback: true,
+      reason: 'lp-unhealthy',
+    };
   }
 
   /**

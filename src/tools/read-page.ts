@@ -7,6 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { pathMetaFor } from './_shared/path-meta';
 import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
@@ -509,6 +510,7 @@ const handler: ToolHandler = async (
           total: pageResult.total,
           hasMore: pageResult.hasMore,
           ...(pageResult.nextCursor ? { nextCursor: pageResult.nextCursor } : {}),
+          ...pathMetaFor(sessionManager, tabId),
         };
         return {
           content: [{ type: 'text', text: JSON.stringify(payload) }],
@@ -558,6 +560,7 @@ const handler: ToolHandler = async (
           total: firstPage.total,
           hasMore: firstPage.hasMore,
           ...(firstPage.nextCursor ? { nextCursor: firstPage.nextCursor } : {}),
+          ...pathMetaFor(sessionManager, tabId),
         };
         return {
           content: [{ type: 'text', text: wrappedMarkdown }],
