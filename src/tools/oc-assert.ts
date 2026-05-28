@@ -22,7 +22,8 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types/mcp';
+import { runImageQaSampling } from './image-qa';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { evaluate } from '../contracts/evaluate';
 import { validateAssertion } from '../contracts/validator';
@@ -114,7 +115,10 @@ const definition: MCPToolDefinition = {
   annotations: TOOL_ANNOTATIONS.oc_assert,
 };
 
-function buildEvalContext(snapshot: SnapshotInput | undefined): EvalContext {
+function buildEvalContext(
+  snapshot: SnapshotInput | undefined,
+  toolContext?: ToolContext,
+): EvalContext {
   const domTextMap =
     snapshot && typeof snapshot.dom_text === 'object' && snapshot.dom_text !== null
       ? (snapshot.dom_text as Record<string, string | null>)
@@ -159,6 +163,38 @@ function buildEvalContext(snapshot: SnapshotInput | undefined): EvalContext {
     async hasOpenDialog() {
       return snapshot?.has_open_dialog ?? false;
     },
+    // image_qa contract evaluator hook (#1432 Part 2 runtime wire-up).
+    // Forwards to the host LLM via MCP sampling when the connected
+    // client advertises the capability. When ToolContext is absent
+    // (older callers) or sampling is not available, the hook is
+    // omitted and the evaluator falls back to inconclusive.
+    ...(toolContext
+      ? {
+          imageQaSample: async ({
+            question,
+            screenshot,
+          }: {
+            question: string;
+            screenshot: Buffer;
+          }) => {
+            const reply = await runImageQaSampling(toolContext, {
+              question,
+              base64: screenshot.toString('base64'),
+              mime: 'image/png',
+            });
+            if (reply.status === 'ok') {
+              return { status: 'ok' as const, answer: reply.answer };
+            }
+            if (reply.status === 'unsupported_by_host') {
+              return { status: 'unsupported_by_host' as const, reason: reply.reason };
+            }
+            // status === 'error' — surface as unsupported_by_host so
+            // the evaluator returns inconclusive with the original
+            // error reason preserved for diagnostics.
+            return { status: 'unsupported_by_host' as const, reason: reply.reason };
+          },
+        }
+      : {}),
   };
 }
 
@@ -286,6 +322,7 @@ function isInconclusive(evidence: Evidence): boolean {
 const handler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const contractInline = args.contract;
   const contractId = args.contract_id as string | undefined;
@@ -333,7 +370,7 @@ const handler: ToolHandler = async (
     return jsonResult(output);
   }
 
-  const ctx = buildEvalContext(snapshot);
+  const ctx = buildEvalContext(snapshot, context);
   let result: EvaluationResult;
   try {
     result = await evaluate(validation.value, ctx);

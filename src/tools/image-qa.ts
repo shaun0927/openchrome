@@ -220,3 +220,79 @@ const handler: ToolHandler = async (
 export function registerImageQaTool(server: MCPServer): void {
   server.registerTool('image_qa', handler, definition);
 }
+
+/**
+ * Internal helper exposed for runtime wiring (e.g. the oc_assert
+ * contract evaluator's `imageQaSample` hook, #1432 Part 2 runtime
+ * follow-up). Takes a pre-decoded base64 screenshot, forwards to the
+ * host via MCP sampling when available, and returns a structured
+ * `{ status: 'ok', answer }` or `{ status: 'unsupported_by_host', reason }`.
+ *
+ * Does NOT register a tool — call it directly from another tool's
+ * handler, threading through the caller's ToolContext so the host
+ * capability lookup and requestClient bridge are honoured.
+ */
+export async function runImageQaSampling(
+  ctx: ToolContext | undefined,
+  params: { question: string; base64: string; mime?: string; maxTokens?: number },
+): Promise<
+  | { status: 'ok'; answer: string; model?: string; usage?: Record<string, unknown> }
+  | { status: 'unsupported_by_host'; reason: string }
+  | { status: 'error'; reason: string }
+> {
+  const samplingCap = ctx?.clientCapabilities?.sampling;
+  if (!samplingCap) {
+    return {
+      status: 'unsupported_by_host',
+      reason: 'sampling capability not advertised by client',
+    };
+  }
+  if (!ctx?.requestClient) {
+    return {
+      status: 'unsupported_by_host',
+      reason: 'requestClient bridge not available on this transport',
+    };
+  }
+
+  type SamplingResponse = {
+    content?: { type?: string; text?: string };
+    model?: string;
+    usage?: Record<string, unknown>;
+  };
+
+  try {
+    const response = await ctx.requestClient<SamplingResponse>(
+      'sampling/createMessage',
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'image', data: params.base64, mimeType: params.mime ?? 'image/png' },
+              { type: 'text', text: params.question },
+            ],
+          },
+        ],
+        maxTokens: params.maxTokens ?? 512,
+      },
+      { timeoutMs: 30_000 },
+    );
+    // A non-text content block (e.g. the host echoes back an image) has
+    // no answer to match. Treat it as a transport-level error so the
+    // caller degrades to inconclusive rather than matching the regex
+    // against an empty string (which a permissive pattern would pass).
+    if (response?.content?.type !== 'text' || typeof response.content.text !== 'string') {
+      return { status: 'error', reason: 'sampling response was not a text content block' };
+    }
+    const answer = response.content.text;
+    return {
+      status: 'ok',
+      answer,
+      ...(response?.model ? { model: response.model } : {}),
+      ...(response?.usage ? { usage: response.usage } : {}),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { status: 'error', reason: `sampling request failed: ${message}` };
+  }
+}
