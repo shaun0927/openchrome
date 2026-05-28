@@ -423,6 +423,17 @@ export class SkillMemoryStore {
       if (existing?.lastReplayError !== undefined) {
         next.lastReplayError = existing.lastReplayError;
       }
+      // Preserve promotion-lifecycle fields across idempotent re-record
+      // (#1431 Part 2). The recorder owns `steps`/`contractId`; the
+      // promotion procedure (Part 3) owns the state machine. Mixing them
+      // would silently demote a `recallable` skill back to invisible.
+      if (existing?.promotionState !== undefined) {
+        next.promotionState = existing.promotionState;
+        next.promotionStateAt = existing.promotionStateAt;
+        if (existing.promotionQuarantineReason !== undefined) {
+          next.promotionQuarantineReason = existing.promotionQuarantineReason;
+        }
+      }
       file.skills[skillId] = next;
       await this.writeFile(file);
       return { skill_id: skillId, stored_at: Date.now() };
@@ -602,12 +613,17 @@ export class SkillMemoryStore {
         ...existing,
         promotionState: nextState,
         promotionStateAt: at,
-        ...(nextState === 'quarantined' && quarantineReason
-          ? { promotionQuarantineReason: quarantineReason.slice(0, 512) }
-          : nextState === 'quarantined'
-            ? {}
-            : { promotionQuarantineReason: undefined }),
       };
+      if (nextState === 'quarantined') {
+        if (quarantineReason) {
+          next.promotionQuarantineReason = quarantineReason.slice(0, 512);
+        }
+      } else {
+        // Explicit delete keeps the in-memory object consistent with the
+        // on-disk JSON; relying on `JSON.stringify` to drop an `undefined`
+        // value would survive a future serializer change.
+        delete next.promotionQuarantineReason;
+      }
       file.skills[skillId] = next;
       await this.writeFile(file);
     } finally {

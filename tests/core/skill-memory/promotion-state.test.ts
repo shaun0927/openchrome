@@ -17,6 +17,15 @@ import {
   type SkillRecord,
 } from '../../../src/core/skill-memory';
 
+// Redirect os.homedir() to a per-test temp root. The recall tool builds its
+// own SkillMemoryStore from the default root, so a constructor rootDir on the
+// test store alone is not enough; mocking homedir covers both stores and is
+// portable (HOME on POSIX, USERPROFILE on Windows would otherwise diverge).
+jest.mock('node:os', () => {
+  const actual = jest.requireActual('node:os');
+  return { ...actual, homedir: jest.fn(() => actual.homedir()) };
+});
+
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'oc-skill-promotion-'));
 }
@@ -40,7 +49,6 @@ function parseResult(res: { content: Array<{ type: string; text?: string }> }) {
 
 describe('skill promotion state (#1431 Part 2)', () => {
   let root: string;
-  let prevHome: string | undefined;
   let store: SkillMemoryStore;
   let server: MCPServer;
 
@@ -51,14 +59,11 @@ describe('skill promotion state (#1431 Part 2)', () => {
 
   beforeEach(() => {
     root = tempRoot();
-    prevHome = process.env.HOME;
-    process.env.HOME = root;
+    (os.homedir as jest.Mock).mockReturnValue(root);
     store = new SkillMemoryStore({ domain: 'amazon.com' });
   });
 
   afterEach(() => {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -158,5 +163,50 @@ describe('skill promotion state (#1431 Part 2)', () => {
       }),
     );
     expect(r2.skills.length).toBe(2);
+  });
+
+  it('clears promotionQuarantineReason when transitioning out of quarantine', async () => {
+    const skillId = await record('a');
+    await store.setPromotionState(skillId, 'quarantined', 1000, 'bad replay');
+    expect(store.get(skillId)?.promotionQuarantineReason).toBeDefined();
+    await store.setPromotionState(skillId, 're_verified', 2000);
+    const fetched = store.get(skillId);
+    expect(fetched?.promotionState).toBe('re_verified');
+    expect(fetched?.promotionQuarantineReason).toBeUndefined();
+  });
+
+  it('preserves promotionState across idempotent re-record', async () => {
+    const skillId = await record('a');
+    await store.setPromotionState(skillId, 'recallable', 1000);
+    await record('a'); // same domain + name → re-record
+    const fetched = store.get(skillId);
+    expect(fetched?.promotionState).toBe('recallable');
+    expect(fetched?.promotionStateAt).toBe(1000);
+  });
+
+  it('auto-fallback: surfaces unpromoted records when no skill in domain is promoted', async () => {
+    // Domain has only legacy / unpromoted records → recall keeps v1.x
+    // semantics so existing deployments do not silently lose skills.
+    await record('legacy-a');
+    await record('legacy-b');
+    const tool = getRegisteredTool(server, 'oc_skill_recall');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await (tool.handler as any)('test-session', { domain: 'amazon.com' });
+    const parsed = parseResult(res);
+    expect(parsed.skills.length).toBe(2);
+    expect(parsed.promotion_filter_active).toBe(false);
+  });
+
+  it('promotion_filter_active reports true once any skill is promoted', async () => {
+    await record('legacy');
+    const promoted = await record('shiny');
+    await store.setPromotionState(promoted, 'recallable', 1);
+    const tool = getRegisteredTool(server, 'oc_skill_recall');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await (tool.handler as any)('test-session', { domain: 'amazon.com' });
+    const parsed = parseResult(res);
+    expect(parsed.promotion_filter_active).toBe(true);
+    expect(parsed.skills).toHaveLength(1);
+    expect(parsed.skills[0].promotionState).toBe('recallable');
   });
 });
