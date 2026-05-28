@@ -14,6 +14,8 @@ import { getSessionManager } from '../session-manager';
 import { CHECKPOINT_DIR, CHECKPOINT_FILE } from './checkpoint';
 import { TaskRunStore } from '../core/task-run';
 import type { TaskRunCheckpoint, TaskRunEvent, TaskRunMeta } from '../core/task-run';
+import { reconcileBrowserLaneTargets } from '../core/browser-lanes';
+import type { BrowserLane } from '../core/task-ledger/types';
 
 // ─── Shared Types (same as session-snapshot.ts) ────────────────────────────
 
@@ -98,6 +100,7 @@ export interface ResumeGuideContext {
   recentJournal?: RecentJournalEntry[];
   evidenceBundles?: Array<{ id?: string; path: string }>;
   taskRun?: TaskRunResumeContext | null;
+  lanes?: BrowserLane[];
 }
 
 // ─── Tab Status Analysis ───────────────────────────────────────────────────
@@ -493,6 +496,22 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
     lines.push(`  Next host action class: ${task.nextHostAction}`);
   }
 
+  if (context.lanes && context.lanes.length > 0) {
+    lines.push('');
+    lines.push('Browser lanes:');
+    for (const lane of context.lanes) {
+      const missingCount = (lane.targetStatuses ?? []).filter((t) => t.status === 'target_missing').length;
+      const summary = lane.recovery === 'target_missing'
+        ? `${lane.status} recovery=target_missing missing=${missingCount}/${lane.targetIds.length}`
+        : `${lane.status}`;
+      const label = lane.name ? `${lane.lane_id} "${lane.name}"` : lane.lane_id;
+      lines.push(`  - ${label}: ${summary}`);
+    }
+    if (context.lanes.some((lane) => lane.recovery === 'target_missing')) {
+      lines.push('  Recovery: failed lanes need a fresh tab via oc_lane_create (or recreate the lane) before they can be reused.');
+    }
+  }
+
   if (context.evidenceBundles && context.evidenceBundles.length > 0) {
     lines.push('');
     lines.push('Evidence bundles:');
@@ -515,6 +534,50 @@ export function generateResumeGuide(snapshot: SessionSnapshot, tabAnalysis: TabA
   lines.push('Recommended next safe action: verify the live tab state with read_page or tabs_context before mutating the page.');
 
   return lines.join('\n');
+}
+
+// ─── Live target ID collection (for browser-lane reconciliation, #1037) ────
+
+export function collectLiveTargetIds(tabAnalysis: TabAnalysis[]): Set<string> {
+  const live = new Set<string>();
+  // Trust the tab analysis we already ran: LIVE/REMAPPED carry a verified
+  // currentTargetId, which is enough to keep lanes "open" after restart.
+  for (const tab of tabAnalysis) {
+    if (tab.currentTargetId && (tab.status === 'LIVE' || tab.status === 'REMAPPED')) {
+      live.add(tab.currentTargetId);
+    }
+  }
+  // Fall back to enumerating session-manager targets so lanes whose targets
+  // were not part of this snapshot still resolve as alive when present.
+  try {
+    const sessionManager = getSessionManager();
+    for (const sessionInfo of sessionManager.getAllSessionInfos()) {
+      for (const workerInfo of sessionInfo.workers) {
+        for (const id of sessionManager.getWorkerTargetIds(sessionInfo.id, workerInfo.id)) {
+          live.add(id);
+        }
+      }
+    }
+  } catch {
+    // SessionManager unavailable (e.g. Chrome disconnected) — fall back to
+    // snapshot-derived ids only; lanes whose targets are not in the snapshot
+    // will be reconciled as target_missing, which is the correct fact.
+  }
+  return live;
+}
+
+export async function reconcileLanesForResume(
+  taskId: string | undefined,
+  tabAnalysis: TabAnalysis[],
+): Promise<BrowserLane[] | undefined> {
+  if (!taskId) return undefined;
+  try {
+    return await reconcileBrowserLaneTargets(taskId, collectLiveTargetIds(tabAnalysis));
+  } catch {
+    // Task ledger unavailable or task has no lanes — silently skip; the rest
+    // of the resume guide remains useful.
+    return undefined;
+  }
 }
 
 // ─── Handler ───────────────────────────────────────────────────────────────
@@ -553,6 +616,7 @@ const handler: ToolHandler = async (
     checkpoint: loadCheckpoint(),
     recentJournal: loadRecentJournalEntries(),
     taskRun: await loadTaskRunResumeContext(taskId),
+    lanes: await reconcileLanesForResume(taskId, tabAnalysis),
   });
 
   return {

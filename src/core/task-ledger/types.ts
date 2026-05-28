@@ -115,6 +115,7 @@ export interface BrowserLane {
   sessionId: string;
   workerId: string;
   targetIds: string[];
+  targetStatuses?: Array<{ targetId: string; status: 'open' | 'target_missing' }>;
   created_at: number;
   last_activity_at: number;
   counters: { toolCalls: number; failures: number };
