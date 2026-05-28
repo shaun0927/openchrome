@@ -160,10 +160,13 @@ function assertSafeSnapshotId(snapshotId: string): void {
  *   - non-array `steps` (we leave replayArtifacts undefined; callers handle).
  */
 function normaliseRecordForRead(rec: SkillRecord): SkillRecord {
-  // Always ensure codegenArtifacts is an array (migration from v1/v2).
-  const normalised: SkillRecord = Array.isArray(rec.codegenArtifacts)
-    ? { ...rec }
-    : { ...rec, codegenArtifacts: [] };
+  // Default promotion state for legacy records (#1431 Part 2) and ensure
+  // codegenArtifacts is always an array (migration from v1/v2, #1430).
+  const normalised: SkillRecord = {
+    ...rec,
+    promotionState: rec.promotionState ?? 'recorded',
+    codegenArtifacts: Array.isArray(rec.codegenArtifacts) ? rec.codegenArtifacts : [],
+  };
 
   if (!Array.isArray(normalised.steps)) return normalised;
   const stepCount = normalised.steps.length;
@@ -444,6 +447,17 @@ export class SkillMemoryStore {
       if (existing?.lastReplayError !== undefined) {
         next.lastReplayError = existing.lastReplayError;
       }
+      // Preserve promotion-lifecycle fields across idempotent re-record
+      // (#1431 Part 2). The recorder owns `steps`/`contractId`; the
+      // promotion procedure (Part 3) owns the state machine. Mixing them
+      // would silently demote a `recallable` skill back to invisible.
+      if (existing?.promotionState !== undefined) {
+        next.promotionState = existing.promotionState;
+        next.promotionStateAt = existing.promotionStateAt;
+        if (existing.promotionQuarantineReason !== undefined) {
+          next.promotionQuarantineReason = existing.promotionQuarantineReason;
+        }
+      }
       file.skills[skillId] = next;
       await this.writeFile(file);
       return { skill_id: skillId, stored_at: Date.now() };
@@ -579,6 +593,61 @@ export class SkillMemoryStore {
         lastUsedAt: ts,
         successCount: success ? existing.successCount + 1 : existing.successCount,
       };
+      file.skills[skillId] = next;
+      await this.writeFile(file);
+    } finally {
+      await release();
+    }
+  }
+
+  /**
+   * Move a skill through the promotion lifecycle (#1431 Part 2).
+   *
+   *   recorded → re_verified → recallable
+   *   * → quarantined (terminal)
+   *
+   * The store enforces only the structural transitions; the host (or
+   * the Part 3 promotion procedure) decides when each transition is
+   * earned. Caller supplies `at` so the function stays deterministic
+   * under test.
+   */
+  async setPromotionState(
+    skillId: string,
+    nextState: 'recorded' | 're_verified' | 'recallable' | 'quarantined',
+    at: number,
+    quarantineReason?: string,
+  ): Promise<void> {
+    if (typeof skillId !== 'string' || skillId.length === 0) {
+      throw new Error('SkillMemoryStore.setPromotionState: skillId is required');
+    }
+    if (!Number.isFinite(at)) {
+      throw new Error('SkillMemoryStore.setPromotionState: at must be a finite number');
+    }
+    this.ensureDomainDir();
+    const release = await acquireLock(this.lockFile());
+    try {
+      const file = this.readFileSync();
+      const existing = file.skills[skillId];
+      if (!existing) {
+        throw new Error(
+          `SkillMemoryStore.setPromotionState: unknown skill_id=${skillId}`,
+        );
+      }
+      const next: SkillRecord = {
+        ...existing,
+        promotionState: nextState,
+        promotionStateAt: at,
+      };
+      if (nextState === 'quarantined') {
+        if (quarantineReason) {
+          next.promotionQuarantineReason = quarantineReason.slice(0, 512);
+        }
+      } else {
+        // Explicit delete keeps the in-memory object consistent with the
+        // on-disk JSON; relying on `JSON.stringify` to drop an `undefined`
+        // value would survive a future serializer change.
+        delete next.promotionQuarantineReason;
+      }
       file.skills[skillId] = next;
       await this.writeFile(file);
     } finally {

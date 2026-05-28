@@ -24,6 +24,14 @@ export interface RankedSkillRecord extends SkillRecord {
 
 interface OcSkillRecallOutput {
   skills: RankedSkillRecord[];
+  /**
+   * True when the domain has at least one `re_verified` or `recallable` skill
+   * and the default filter applied (legacy `recorded` records were hidden).
+   * False when no promoted skills exist yet — recall falls back to v1.x
+   * semantics and surfaces all non-quarantined records so legacy callers and
+   * pre-promotion stores keep working unchanged.
+   */
+  promotion_filter_active?: boolean;
   error?: string;
 }
 
@@ -70,6 +78,24 @@ const definition: MCPToolDefinition = {
         description:
           `Maximum number of skills to return. Default ${DEFAULT_LIMIT}. ` +
           'Pass 0 to return an empty list. Values below 0 are treated as 0.',
+      },
+      include_unpromoted: {
+        type: 'boolean',
+        description:
+          'When true, also surface promotionState=recorded skills. Default ' +
+          'false: once a domain has any re_verified/recallable skill, recall ' +
+          'hides recorded ones to keep the LLM-free fast path safe. Domains ' +
+          'with no promoted skill auto-fallback to v1.x (all non-quarantined ' +
+          'surface). (#1431)',
+      },
+      include_quarantined: {
+        type: 'boolean',
+        description:
+          'When true, also surface promotionState=quarantined skills. Default ' +
+          'false; diagnostic only — they failed re-verification and should not ' +
+          'be replayed. Independent of the recorded/promoted filter, so on an ' +
+          'unpromoted domain (v1.x auto-fallback) it yields recorded + ' +
+          'quarantined. (#1431)',
       },
     },
     required: ['domain'],
@@ -133,12 +159,35 @@ const handler: ToolHandler = async (
     return jsonResult(output);
   }
 
+  // Promotion-state filter (#1431 Part 2). Quarantined records are hidden
+  // unless `include_quarantined` is set. The `recorded` vs promoted filter
+  // auto-falls-back to v1.x semantics when no promoted skill exists in the
+  // domain — without this, every v1.x deployment that upgrades silently
+  // loses all recall results because legacy records normalise to `recorded`
+  // on read. Once at least one skill is promoted to `re_verified` or
+  // `recallable`, the filter activates and hides `recorded` ones unless
+  // `include_unpromoted` is set.
+  const includeUnpromoted = args.include_unpromoted === true;
+  const includeQuarantined = args.include_quarantined === true;
+  const hasPromoted = skills.some((s) => {
+    const state = s.promotionState ?? 'recorded';
+    return state === 're_verified' || state === 'recallable';
+  });
+  const promotionFilterActive = hasPromoted && !includeUnpromoted;
+  skills = skills.filter((s) => {
+    const state = s.promotionState ?? 'recorded';
+    if (state === 'quarantined') return includeQuarantined;
+    if (state === 'recorded') return !promotionFilterActive;
+    // re_verified or recallable: always surface.
+    return true;
+  });
+
   const ordered = rankedRecall
     ? rankSkillsForTask(skills, { task, contractId })
     : applyRecallRanking(skills);
 
   const capped = limit === 0 ? [] : ordered.slice(0, limit);
-  return jsonResult({ skills: capped });
+  return jsonResult({ skills: capped, promotion_filter_active: promotionFilterActive });
 };
 
 export function applyRecallRanking(skills: SkillRecord[]): SkillRecord[] {
