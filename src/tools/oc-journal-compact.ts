@@ -99,7 +99,7 @@ function joinEntries(entries: JournalEntry[]): string {
 function pickOpenAssertions(entries: JournalEntry[]): CompactFact[] {
   // Heuristic: oc_assert calls that failed or returned an inconclusive
   // verdict are "open" — they have not yet been retired by a later pass.
-  // We keep only the latest per assertion tool call name.
+  // All failed oc_assert entries in the window are surfaced, in order.
   const opens: CompactFact[] = [];
   for (const e of entries) {
     if (e.tool === 'oc_assert' && !e.ok) {
