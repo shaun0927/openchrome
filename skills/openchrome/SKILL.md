@@ -22,8 +22,7 @@ auto-recovery runtime, and token-efficient page serialization.
   serialization of the page. Use `ref_N` handles in follow-up actions.
 - **Interact** — `interact`, `fill_form`, `form_input`, `act` for clicking,
   typing, and high-level actions.
-- **Screenshot** — `mcp__openchrome__computer` returns a screenshot of the
-  current viewport.
+- **Screenshot** — `computer` returns a screenshot of the current viewport.
 - **Parallel lanes** — open multiple tabs with `oc_lane_create`; work them
   concurrently with the same Chrome session and existing cookies.
 - **Outcome contracts** — `oc_assert` checks page state against a JSON contract
