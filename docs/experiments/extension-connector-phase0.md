@@ -41,7 +41,7 @@ of the verdict.
 | Slot | URL | HTTP | Challenge | Heading | Pass? | Screenshot |
 |------|-----|------|-----------|---------|-------|------------|
 | C1 | `https://example.com/` | n/a | Promise diagnostic | no | FAIL | [C1-openchrome.png](B1-phase0-evidence/C1-openchrome.png) |
-| C2 | `https://news.ycombinator.com/` | n/a | Promise diagnostic | no | FAIL | [C2-openchrome.png](B1-phase0-evidence/C2-openchrome.png) |
+| C2 | `https://news.ycombinator.com/` | n/a | Promise diagnostic | no | FAIL | n/a (RPC timeout — no screenshot saved) |
 | T1 | `https://nowsecure.nl/` | n/a | Promise diagnostic | no | FAIL | [T1-openchrome.png](B1-phase0-evidence/T1-openchrome.png) |
 | T2 | `https://www.amazon.com/dp/B07XJ8C8F5` | n/a | Promise diagnostic | no | FAIL | [T2-openchrome.png](B1-phase0-evidence/T2-openchrome.png) |
 | T3 | `https://www.zillow.com/homes/Seattle-WA_rb/` | n/a | Promise diagnostic | no | FAIL | [T3-openchrome.png](B1-phase0-evidence/T3-openchrome.png) |
@@ -94,6 +94,8 @@ Verdict: **NO-GO / invalid measurement** — OpenChrome controls C1 and C2 faile
 ## Recommendation
 
 `Do not file Phase 1 from this run. First fix or re-run the OpenChrome control measurement so C1/C2 pass, then complete the BrowserMCP manual arm on the same machine.`
+
+**Root cause to fix before re-measurement**: every OpenChrome-arm record fails with the same `Promise` remote-object diagnostic from `javascript_tool`. This is a defect in the measurement script's CDP `Runtime.evaluate` / `awaitPromise` handling (the IIFE wrapper returns an unresolved Promise that the MCP layer surfaces as text), not a runtime regression in OpenChrome. The measurement is invalid until the script is hardened to resolve the Promise before evaluating the challenge-selector check, or to route Promise diagnostics into the `error` field rather than `challengeFound`.
 
 (Example if go: "BrowserMCP passed T1/T2/T3 while OpenChrome failed all three.
 File Phase 1 follow-up to implement the extension connector.")
