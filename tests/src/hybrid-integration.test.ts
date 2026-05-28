@@ -62,6 +62,7 @@ const mockRouterInstance = {
       backend: isVisual ? 'chrome' : 'lightpanda',
       page: chromePage, // In mock, both return the same page object
       fallback: false,
+      reason: isVisual ? 'visual-tool' : 'lp-served',
     });
   }),
   initialize: jest.fn().mockResolvedValue(undefined),
@@ -225,6 +226,7 @@ describe('Hybrid Integration', () => {
           backend: 'chrome',
           page: null, // will be replaced with chromePage
           fallback: true,
+          reason: 'lp-unhealthy',
         }),
         initialize: jest.fn().mockResolvedValue(undefined),
         cleanup: jest.fn().mockResolvedValue(undefined),
@@ -360,6 +362,23 @@ describe('Hybrid Integration', () => {
       expect(mockRouterInstance.route).toHaveBeenNthCalledWith(2, 'read_page', expect.anything());
 
       expect(mockRouterInstance.route).toHaveBeenCalledTimes(2);
+    });
+
+    test('should clear recorded path meta when hybrid mode is cleaned up', async () => {
+      await manager.initHybrid(makeHybridConfig());
+      await manager.createSession({ id: 'cleanup-routing-session' });
+      const { targetId } = await manager.createTarget('cleanup-routing-session');
+
+      await manager.getPage('cleanup-routing-session', targetId, undefined, 'navigate');
+      expect(manager.getLastRouting(targetId)).toEqual({
+        path_taken: 'lp-served',
+        backend: 'lightpanda',
+        fallback: false,
+      });
+
+      await manager.cleanupHybrid();
+
+      expect(manager.getLastRouting(targetId)).toBeNull();
     });
 
     test('should handle BrowserRouter cleanup on session cleanup', async () => {

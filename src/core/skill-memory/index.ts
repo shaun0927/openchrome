@@ -19,11 +19,14 @@ export type {
 export {
   SKILL_MEMORY_SCHEMA_VERSION,
   SKILL_MEMORY_SCHEMA_VERSION_V1,
+  SKILL_MEMORY_SCHEMA_VERSION_V2,
 } from './types';
 export type {
+  CodegenArtifactPointer,
   FrozenSnapshot,
   SkillMemoryFile,
   SkillMemoryFileV1,
+  SkillMemoryFileV2,
   SkillRecord,
 } from './types';
 

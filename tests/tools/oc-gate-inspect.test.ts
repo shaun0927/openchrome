@@ -1,0 +1,422 @@
+/// <reference types="jest" />
+
+/**
+ * Unit tests for the oc_gate_inspect MCP tool (B2-PR1 of #1359).
+ *
+ * Covers:
+ *  - registration shape (name, annotations, required input)
+ *  - facts-only output when no gate is present
+ *  - facts-only output when a captcha gate IS present (each captcha type)
+ *  - tabId validation and missing-page error path
+ *  - P7 invariant: no CAPTCHA solver provider module is loaded
+ */
+
+import type { MCPToolDefinition, MCPResult, ToolHandler } from '../../src/types/mcp';
+
+const PROVIDER_MODULE_KEYS = [
+  '/captcha/providers/twocaptcha',
+  '/captcha/providers/anticaptcha',
+  '/captcha/providers/capsolver',
+];
+
+function providerModulesInRequireCache(): string[] {
+  return Object.keys(require.cache).filter(k =>
+    PROVIDER_MODULE_KEYS.some(suffix => k.includes(suffix)),
+  );
+}
+
+// ─── Test harness ──────────────────────────────────────────────────────────
+
+interface RegisteredTool {
+  name: string;
+  handler: ToolHandler;
+  definition: MCPToolDefinition;
+}
+
+class MockServer {
+  public tools = new Map<string, RegisteredTool>();
+  registerTool(name: string, handler: ToolHandler, definition: MCPToolDefinition): void {
+    this.tools.set(name, { name, handler, definition });
+  }
+}
+
+function parseResult(result: MCPResult): Record<string, unknown> {
+  const text = result.content?.[0]?.text;
+  expect(typeof text).toBe('string');
+  return JSON.parse(text as string) as Record<string, unknown>;
+}
+
+// ─── Module mocks ──────────────────────────────────────────────────────────
+
+const mockGetPage = jest.fn();
+const mockDetectCaptcha = jest.fn();
+const mockDetectNonCaptchaGate = jest.fn();
+
+jest.mock('../../src/session-manager', () => ({
+  getSessionManager: () => ({ getPage: mockGetPage }),
+}));
+
+jest.mock('../../src/captcha/detect', () => ({
+  detectCaptcha: (...args: unknown[]) => mockDetectCaptcha(...args),
+}));
+
+jest.mock('../../src/gates/detect-other-gates', () => ({
+  detectNonCaptchaGate: (...args: unknown[]) => mockDetectNonCaptchaGate(...args),
+}));
+
+function loadHandler(): {
+  handler: ToolHandler;
+  definition: MCPToolDefinition;
+} {
+  jest.isolateModules(() => {
+    /* nothing — required to ensure the mocks above are in scope when the tool is loaded */
+  });
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { registerOcGateInspectTool } = require('../../src/tools/oc-gate-inspect');
+  const server = new MockServer();
+  registerOcGateInspectTool(server as unknown as Parameters<typeof registerOcGateInspectTool>[0]);
+  const registered = server.tools.get('oc_gate_inspect');
+  if (!registered) throw new Error('tool was not registered');
+  return { handler: registered.handler, definition: registered.definition };
+}
+
+function makeFakePage(url: string) {
+  return { url: () => url };
+}
+
+// ─── Tests ─────────────────────────────────────────────────────────────────
+
+describe('oc_gate_inspect — registration', () => {
+  beforeEach(() => {
+    mockGetPage.mockReset();
+    mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
+  });
+
+  test('registers a tool named oc_gate_inspect with tabId required and read-only annotations', () => {
+    const { definition } = loadHandler();
+    expect(definition.name).toBe('oc_gate_inspect');
+    expect(definition.inputSchema.type).toBe('object');
+    expect(definition.inputSchema.required).toEqual(['tabId']);
+    // READ_ONLY: not destructive, not open-world, idempotent or readOnlyHint true.
+    expect(definition.annotations?.readOnlyHint).toBe(true);
+    expect(definition.annotations?.destructiveHint).toBe(false);
+    expect(definition.annotations?.openWorldHint).toBe(false);
+  });
+});
+
+describe('oc_gate_inspect — facts-only output', () => {
+  beforeEach(() => {
+    mockGetPage.mockReset();
+    mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
+  });
+
+  test('no gate present → {detected: false, pageUrl}', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue(null);
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({ detected: false, pageUrl: 'https://example.com/' });
+  });
+
+  test('captcha present → kind + gateType + invisible + siteKey + source', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue({
+      detected: true,
+      captchaType: 'recaptcha_v2',
+      siteKey: { key: 'site-key-abc', source: 'attribute' },
+      invisible: false,
+      pageUrl: 'https://example.com/',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: 'captcha',
+      gateType: 'recaptcha_v2',
+      siteKey: 'site-key-abc',
+      siteKeySource: 'attribute',
+      invisible: false,
+      pageUrl: 'https://example.com/',
+    });
+  });
+
+  test('captcha v3 (invisible, no site key) is reported without siteKey fields', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue({
+      detected: true,
+      captchaType: 'recaptcha_v3',
+      invisible: true,
+      pageUrl: 'https://example.com/',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out.detected).toBe(true);
+    expect(out.kind).toBe('captcha');
+    expect(out.gateType).toBe('recaptcha_v3');
+    expect(out.invisible).toBe(true);
+    expect('siteKey' in out).toBe(false);
+    expect('siteKeySource' in out).toBe(false);
+  });
+
+  test('aws_waf with no extractable site key is still reported', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue({
+      detected: true,
+      captchaType: 'aws_waf',
+      invisible: false,
+      pageUrl: 'https://example.com/',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out.detected).toBe(true);
+    expect(out.gateType).toBe('aws_waf');
+    expect('siteKey' in out).toBe(false);
+  });
+});
+
+describe('oc_gate_inspect — input validation', () => {
+  beforeEach(() => {
+    mockGetPage.mockReset();
+    mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
+  });
+
+  test('missing tabId returns an error result and never calls getPage', async () => {
+    const { handler } = loadHandler();
+
+    const result = await handler('sess-1', {});
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toMatch(/tabId is required/i);
+    expect(mockGetPage).not.toHaveBeenCalled();
+    expect(mockDetectCaptcha).not.toHaveBeenCalled();
+  });
+
+  test('tabId of wrong type returns an error', async () => {
+    const { handler } = loadHandler();
+
+    const result = await handler('sess-1', { tabId: 123 as unknown as string });
+
+    expect(result.isError).toBe(true);
+    expect(mockDetectCaptcha).not.toHaveBeenCalled();
+  });
+
+  test('page-not-found returns an error result', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(null);
+
+    const result = await handler('sess-1', { tabId: 'tab-missing' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toMatch(/not found/i);
+    expect(mockDetectCaptcha).not.toHaveBeenCalled();
+  });
+});
+
+describe('oc_gate_inspect — P7 invariant', () => {
+  beforeEach(() => {
+    mockGetPage.mockReset();
+    mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
+  });
+
+  test('requiring the tool module does NOT statically load any solver provider', async () => {
+    // Snapshot the cache BEFORE loadHandler() so a hypothetical top-level
+    // `import ... from '../captcha/providers/foo'` in oc-gate-inspect.ts
+    // would land in `require.cache` between `before` and `afterLoad` and
+    // fail this assertion. Sampling only around handler() (as in the
+    // call-time assertion below) would let static imports escape.
+    const before = providerModulesInRequireCache();
+    loadHandler();
+    const afterLoad = providerModulesInRequireCache();
+    expect(afterLoad).toEqual(before);
+  });
+
+  test('inspecting a captcha-gated page does NOT load any solver provider module at call time', async () => {
+    const { handler } = loadHandler();
+    const beforeCall = providerModulesInRequireCache();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue({
+      detected: true,
+      captchaType: 'hcaptcha',
+      siteKey: { key: 'k', source: 'attribute' },
+      invisible: false,
+      pageUrl: 'https://example.com/',
+    });
+
+    await handler('sess-1', { tabId: 'tab-1' });
+
+    const afterCall = providerModulesInRequireCache();
+    expect(afterCall).toEqual(beforeCall);
+  });
+});
+
+describe('oc_gate_inspect — error propagation', () => {
+  beforeEach(() => {
+    mockGetPage.mockReset();
+    mockDetectCaptcha.mockReset();
+  });
+
+  test('getPage throwing (ownership/stale-target) is surfaced as isError, not unhandled', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockRejectedValue(new Error('Tab tab-1 belongs to a different session'));
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toMatch(/different session/);
+    expect(mockDetectCaptcha).not.toHaveBeenCalled();
+  });
+
+  test('detection without captchaType is reported as detected with kind=captcha but no gateType', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue({
+      detected: true,
+      captchaType: undefined as unknown as 'unknown',
+      invisible: false,
+      pageUrl: 'https://example.com/',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = JSON.parse(result.content?.[0]?.text as string) as Record<string, unknown>;
+    expect(out.detected).toBe(true);
+    expect(out.kind).toBe('captcha');
+    expect('gateType' in out).toBe(false);
+  });
+});
+
+// ─── B2-PR2: non-CAPTCHA gates ────────────────────────────────────────────
+
+describe('oc_gate_inspect — non-CAPTCHA gates', () => {
+  beforeEach(() => {
+    mockGetPage.mockReset();
+    mockDetectCaptcha.mockReset();
+    mockDetectNonCaptchaGate.mockReset();
+    mockDetectCaptcha.mockResolvedValue(null);
+  });
+
+  test('SSO redirect → kind=sso, gateType=sso_redirect, provider exposed', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://accounts.google.com/signin'));
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: 'sso',
+      gateType: 'sso_redirect',
+      provider: 'google',
+      pageUrl: 'https://accounts.google.com/signin',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: 'sso',
+      gateType: 'sso_redirect',
+      provider: 'google',
+      pageUrl: 'https://accounts.google.com/signin',
+    });
+    expect('siteKey' in out).toBe(false);
+    expect('selector' in out).toBe(false);
+  });
+
+  test('paywall → kind=paywall, selector exposed', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://news.example.com/article'));
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: 'paywall',
+      gateType: 'paywall',
+      selector: '.paywall',
+      pageUrl: 'https://news.example.com/article',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: 'paywall',
+      gateType: 'paywall',
+      selector: '.paywall',
+      pageUrl: 'https://news.example.com/article',
+    });
+    expect('provider' in out).toBe(false);
+  });
+
+  test('2fa → kind=2fa, selector exposed', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/verify'));
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: '2fa',
+      gateType: 'two_factor',
+      selector: 'input[autocomplete="one-time-code"]',
+      pageUrl: 'https://example.com/verify',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: '2fa',
+      gateType: 'two_factor',
+      selector: 'input[autocomplete="one-time-code"]',
+      pageUrl: 'https://example.com/verify',
+    });
+  });
+
+  test('CAPTCHA takes priority over non-CAPTCHA gates when both signal', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectCaptcha.mockResolvedValue({
+      detected: true,
+      captchaType: 'turnstile',
+      invisible: false,
+      pageUrl: 'https://example.com/',
+    });
+    // Non-CAPTCHA mock would also resolve to a signal, but should not be
+    // consulted once CAPTCHA is positive.
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: 'paywall',
+      gateType: 'paywall',
+      selector: '.paywall',
+      pageUrl: 'https://example.com/',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out.kind).toBe('captcha');
+    expect(out.gateType).toBe('turnstile');
+    expect(mockDetectNonCaptchaGate).not.toHaveBeenCalled();
+  });
+
+  test('nothing detected → {detected:false, pageUrl}', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://example.com/'));
+    mockDetectNonCaptchaGate.mockResolvedValue(null);
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({ detected: false, pageUrl: 'https://example.com/' });
+  });
+});

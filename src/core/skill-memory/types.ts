@@ -8,11 +8,13 @@
  *
  * with the structure:
  *
- *   { schema_version: 2, skills: { [skill_id]: SkillRecord } }
+ *   { schema_version: 3, skills: { [skill_id]: SkillRecord } }
  *
- * `schema_version` is mandatory. The store reads both v1 and v2 records
- * (v1 records are upgraded in memory with `replay_artifact = null` per
- * step; the file is rewritten as v2 on the next idempotent re-record).
+ * `schema_version` is mandatory. The store reads v1, v2, and v3 records:
+ *   - v1 records are upgraded in memory with `replay_artifact = null` per
+ *     step and `codegen_artifacts = []`; the file is rewritten as v3 on
+ *     the next idempotent re-record.
+ *   - v2 records are upgraded in memory with `codegen_artifacts = []`.
  *
  * The recall *ranking* logic (relevance score, recency weighting,
  * LLM-facing payload sizing) is pilot-tier work and intentionally lives
@@ -22,15 +24,17 @@
 import type { ReplayArtifact } from './replay-artifact';
 
 /**
- * v2 = v1 + optional `replay_artifact` per step (#875). Reads are
- * back-compatible: v1 files load and surface `replay_artifact: null`
- * for every step. Writes always produce v2 so freshly-recorded skills
- * carry the latest schema even when no artifact is attached.
+ * v3 = v2 + optional `codegen_artifacts` at the skill level (#1430).
+ * Reads are back-compatible: v1/v2 files load cleanly; the missing field
+ * normalises to `[]` in memory. Writes always produce v3.
  */
-export const SKILL_MEMORY_SCHEMA_VERSION = 2;
+export const SKILL_MEMORY_SCHEMA_VERSION = 3;
 
-/** Pre-#875 schema version. Still readable; promoted to v2 on next write. */
+/** Pre-#875 schema version. Still readable; promoted to v3 on next write. */
 export const SKILL_MEMORY_SCHEMA_VERSION_V1 = 1;
+
+/** Pre-#1430 schema version. Still readable; promoted to v3 on next write. */
+export const SKILL_MEMORY_SCHEMA_VERSION_V2 = 2;
 
 /**
  * A single stored skill.
@@ -108,9 +112,37 @@ export interface SkillRecord {
   promotionStateAt?: number;
   /** Truncated reason string when promotionState === 'quarantined'. */
   promotionQuarantineReason?: string;
+
+  /**
+   * Codegen artifact pointers persisted at record time (#1430). Each entry
+   * points to a file written by the opt-in codegen pipeline
+   * (`OPENCHROME_CODEGEN` / `--codegen`). Paths are stored relative to the
+   * skill store rootDir so the record is portable across machines (per SSOT
+   * #1359 "portable local artifacts").
+   *
+   * When omitted on read (v1/v2 records), the store normalises to `[]`.
+   * When codegen is disabled at record time the field is written as `[]`.
+   */
+  codegenArtifacts?: CodegenArtifactPointer[];
 }
 
-/** On-disk shape for `<rootDir>/<encodedDomain>/skills.json` (v2). */
+/**
+ * A pointer to one codegen output file produced by the `--codegen` pipeline.
+ * Stored relative to the skill store rootDir for portability (#1359).
+ */
+export interface CodegenArtifactPointer {
+  /** Codegen output format. Matches the `CodegenMode` values (never 'off'). */
+  kind: 'puppeteer' | 'playwright' | 'mcp-replay';
+  /**
+   * Path to the artifact file, relative to the SkillMemoryStore rootDir.
+   * Use `path.join(rootDir, pointer.path)` to resolve to an absolute path.
+   */
+  path: string;
+  /** Wall-clock ms epoch when the artifact file was created. */
+  created_at: number;
+}
+
+/** On-disk shape for `<rootDir>/<encodedDomain>/skills.json` (v3). */
 export interface SkillMemoryFile {
   schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION;
   skills: Record<string, SkillRecord>;
@@ -118,12 +150,23 @@ export interface SkillMemoryFile {
 
 /**
  * v1 file shape — read-only. Persisted before #875; the store accepts it
- * on read, normalises every record to v2 by setting `replayArtifacts` to
- * an array of nulls, and the next `record()` write promotes the file.
+ * on read, normalises every record to v3 by setting `replayArtifacts` to
+ * an array of nulls and `codegenArtifacts` to `[]`, and the next
+ * `record()` write promotes the file.
  */
 export interface SkillMemoryFileV1 {
   schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION_V1;
-  skills: Record<string, Omit<SkillRecord, 'replayArtifacts'>>;
+  skills: Record<string, Omit<SkillRecord, 'replayArtifacts' | 'codegenArtifacts'>>;
+}
+
+/**
+ * v2 file shape — read-only. Persisted before #1430; the store accepts it
+ * on read, normalises every record to v3 by setting `codegenArtifacts` to
+ * `[]`, and the next `record()` write promotes the file.
+ */
+export interface SkillMemoryFileV2 {
+  schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION_V2;
+  skills: Record<string, Omit<SkillRecord, 'codegenArtifacts'>>;
 }
 
 /**

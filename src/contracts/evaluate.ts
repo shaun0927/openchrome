@@ -14,6 +14,7 @@ import { evaluateDomCount } from './evaluators/dom-count';
 import { evaluateNetwork } from './evaluators/network';
 import { evaluateNoDialog } from './evaluators/no-dialog';
 import { evaluateScreenshotClass } from './evaluators/screenshot-class';
+import { evaluateImageQa } from './evaluators/image-qa';
 import {
   evaluateAnd,
   evaluateNot,
@@ -38,6 +39,8 @@ export async function evaluate(
         return await evaluateScreenshotClass(assertion, ctx);
       case 'no_dialog':
         return await evaluateNoDialog(assertion, ctx);
+      case 'image_qa':
+        return await evaluateImageQa(assertion, ctx);
       case 'and':
         return await evaluateAnd(assertion, ctx, evaluate);
       case 'or':

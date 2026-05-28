@@ -175,6 +175,21 @@ export interface TaskMeta {
   lanes?: BrowserLane[];
   last_tool_name?: string;
   last_activity_at?: number;
+  /**
+   * Per-step success-probability curve (issue #1428, Part 1).
+   * Appended by the marginal-utility tracker on every tool call.
+   * Optional and additive — absent on tasks that pre-date the tracker.
+   */
+  cost_curve?: Array<{ step: number; p: number; delta: number }>;
+  /**
+   * Internal tracker state persisted between tool calls so the sliding
+   * window survives across process restarts (stored in meta.json).
+   */
+  _mu_state?: {
+    totalSteps: number;
+    window: Array<{ step: number; ts: number; p: number; delta: number }>;
+    lastP: number;
+  };
 }
 
 

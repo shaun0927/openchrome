@@ -64,6 +64,9 @@
       "name": "http_auth"
     },
     {
+      "name": "image_qa"
+    },
+    {
       "name": "inspect"
     },
     {
@@ -124,10 +127,16 @@
       "name": "oc_evidence_bundle"
     },
     {
+      "name": "oc_gate_inspect"
+    },
+    {
       "name": "oc_get_connection_info"
     },
     {
       "name": "oc_journal"
+    },
+    {
+      "name": "oc_journal_compact"
     },
     {
       "name": "oc_normalize_action"

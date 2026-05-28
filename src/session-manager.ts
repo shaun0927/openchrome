@@ -23,7 +23,7 @@ import { smartGoto } from './utils/smart-goto';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS, DEFAULT_WATCHDOG_INTERVAL_MS } from './config/defaults';
 import * as os from 'os';
 import { BrowserRouter } from './router';
-import { HybridConfig } from './types/browser-backend';
+import { BrowserBackend, HybridConfig, RouteReason } from './types/browser-backend';
 import { StorageStateManager } from './storage-state';
 import { StorageStateConfig } from './config';
 import { assertDomainAllowed } from './security/domain-guard';
@@ -129,6 +129,20 @@ export class SessionManager {
   private queueManager: RequestQueueManager;
   private eventListeners: ((event: SessionEvent) => void)[] = [];
   private browserRouter: BrowserRouter | null = null;
+  /**
+   * Side-channel for the most-recent BrowserRouter decision keyed by
+   * targetId. Filled inside `getPage()` whenever the router runs; read by
+   * tool result builders (via `getLastRouting`) to surface
+   * `meta.path_taken` without changing the hot `getPage()` signature.
+   *
+   * Per #1359 §Pillar C (facts before decisions): the path the router took
+   * is a fact the host should be able to read directly. Cleared when the
+   * target closes.
+   */
+  private lastRoutingByTarget = new Map<
+    string,
+    { path_taken: RouteReason; backend: BrowserBackend; fallback: boolean; at: number }
+  >();
   private storageStateManagers = new Map<string, StorageStateManager>();
   private storageStateConfig: StorageStateConfig | null = null;
   private pendingCreations = new Map<string, Promise<Session>>();
@@ -1307,6 +1321,15 @@ export class SessionManager {
       // Route through BrowserRouter if hybrid mode is active and toolName provided
       if (this.browserRouter && toolName) {
         const result = await this.browserRouter.route(toolName, page);
+        // Stash the routing decision so tool result builders can surface
+        // `meta.path_taken` without changing the hot `getPage()` signature
+        // (A3-PR2a of #1359 §Pillar C facts-before-decisions).
+        this.lastRoutingByTarget.set(targetId, {
+          path_taken: result.reason,
+          backend: result.backend,
+          fallback: result.fallback,
+          at: Date.now(),
+        });
         return result.page;
       }
 
@@ -1685,6 +1708,7 @@ export class SessionManager {
 
         this.targetToWorker.delete(targetId);
         this.stealthTargets.delete(targetId);
+        this.lastRoutingByTarget.delete(targetId);
 
         // #848: drop the named-context association and let the registry
         // GC the BrowserContext when the last tab closes AND no
@@ -2136,6 +2160,24 @@ export class SessionManager {
   /**
    * Get the BrowserRouter (for stats/escalation)
    */
+  /**
+   * Most-recent BrowserRouter decision for a given target, or `null` if
+   * either the router never ran for this target or the entry has been
+   * evicted (target closed). Pure read; never throws.
+   *
+   * Returned shape mirrors `meta.path_taken` / `meta.fallback_reason` that
+   * tool result builders attach to their JSON payloads.
+   */
+  getLastRouting(targetId: string): {
+    path_taken: RouteReason;
+    backend: BrowserBackend;
+    fallback: boolean;
+  } | null {
+    const entry = this.lastRoutingByTarget.get(targetId);
+    if (!entry) return null;
+    return { path_taken: entry.path_taken, backend: entry.backend, fallback: entry.fallback };
+  }
+
   getBrowserRouter(): BrowserRouter | null {
     return this.browserRouter;
   }
@@ -2147,6 +2189,10 @@ export class SessionManager {
     if (this.browserRouter) {
       await this.browserRouter.cleanup();
       this.browserRouter = null;
+      // Hybrid routing decisions are only meaningful while the router is
+      // active. Drop stale side-channel entries so later tool calls do not
+      // surface old `meta.path_taken` after hybrid mode is disabled.
+      this.lastRoutingByTarget.clear();
       console.error('[SessionManager] Hybrid mode cleaned up');
     }
   }
