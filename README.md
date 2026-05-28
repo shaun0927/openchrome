@@ -234,11 +234,13 @@ Or install from npm after the package is published to a marketplace:
 /plugin install openchrome   # once listed in a marketplace
 ```
 
-The skill is namespaced as `/openchrome:connect`. Run `/reload-plugins` after
-updating to pick up new skill content.
+The skill body lives under `skills/openchrome/` and the `/openchrome:connect`
+slash command is registered from the top-level `commands/` directory. Run
+`/reload-plugins` after updating to pick up new content.
 
 Manifest: `.claude-plugin/plugin.json` — registers the `openchrome` MCP server
-(`openchrome serve --auto-launch`) and points to `skills/`.
+(`openchrome serve --auto-launch`). Skills and commands are auto-discovered
+from `skills/` and `commands/`.
 
 ### Codex CLI
 
@@ -256,9 +258,10 @@ skill path; the two manifests share the same `skills/openchrome/` body.
 
 ### Shared skill body
 
-Both manifests point to `skills/openchrome/SKILL.md` as the single source of
-truth. The slash command stub at `skills/openchrome/commands/connect.md`
-registers `/openchrome:connect` in both hosts.
+Both manifests share `skills/openchrome/SKILL.md` as the single source of
+truth for skill content, and the slash command stub at `commands/connect.md`
+registers `/openchrome:connect`. The `commands/` directory sits at the plugin
+root so both hosts auto-discover it.
 
 ---
 
