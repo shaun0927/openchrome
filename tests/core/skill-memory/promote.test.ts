@@ -51,19 +51,17 @@ function makeDeps(
 
 describe('promoteSkill (#1431 Part 3)', () => {
   let root: string;
-  let prevHome: string | undefined;
   let store: SkillMemoryStore;
 
   beforeEach(() => {
     root = tempRoot();
-    prevHome = process.env.HOME;
-    process.env.HOME = root;
-    store = new SkillMemoryStore({ domain: 'amazon.com' });
+    // Inject rootDir explicitly rather than mutating process.env.HOME:
+    // os.homedir() reads USERPROFILE (not HOME) on Windows, so the env
+    // trick would write to the real home there. The store accepts rootDir.
+    store = new SkillMemoryStore({ domain: 'amazon.com', rootDir: root });
   });
 
   afterEach(() => {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -84,12 +82,14 @@ describe('promoteSkill (#1431 Part 3)', () => {
     const id = await recordSkill('a');
     const deps = makeDeps({ outcome: 'PASS' });
     const r = await promoteSkill(store, id, deps);
-    expect(r).toEqual({ promoted: true, from: 're_verified', to: 'recallable' });
+    expect(r).toEqual({ promoted: true, from: 'recorded', to: 'recallable' });
     expect(store.get(id)?.promotionState).toBe('recallable');
-    // Observers see the open + replay + recallable stages.
+    // Observers see open + replay + the re_verified checkpoint (log-only,
+    // not persisted) + recallable.
     expect(deps.events.map((e) => e.stage)).toEqual([
       'open_scratch_lane',
       'replay_in_scratch_lane',
+      're_verified',
       'recallable',
     ]);
   });
@@ -98,7 +98,7 @@ describe('promoteSkill (#1431 Part 3)', () => {
     const id = await recordSkill('a');
     const r = await promoteSkill(store, id, makeDeps({ outcome: 'STEP_FAIL' }));
     expect(r.promoted).toBe(false);
-    expect('quarantined' in r && r.quarantined).toBe(true);
+    if (!r.promoted) expect(r.quarantined).toBe(true);
     expect(store.get(id)?.promotionState).toBe('quarantined');
     expect(store.get(id)?.promotionQuarantineReason).toMatch(/STEP_FAIL/);
   });
@@ -114,7 +114,7 @@ describe('promoteSkill (#1431 Part 3)', () => {
     const id = await recordSkill('a');
     const r = await promoteSkill(store, id, makeDeps({ failOpen: true }));
     expect(r.promoted).toBe(false);
-    expect('quarantined' in r && r.quarantined).toBe(false);
+    if (!r.promoted) expect(r.quarantined).toBe(false);
     expect(store.get(id)?.promotionState).toBe('recorded');
   });
 
@@ -122,7 +122,7 @@ describe('promoteSkill (#1431 Part 3)', () => {
     const id = await recordSkill('a');
     const r = await promoteSkill(store, id, makeDeps({ throwOnReplay: true }));
     expect(r.promoted).toBe(false);
-    expect('quarantined' in r && r.quarantined).toBe(false);
+    if (!r.promoted) expect(r.quarantined).toBe(false);
     expect(store.get(id)?.promotionState).toBe('recorded');
   });
 
@@ -141,7 +141,7 @@ describe('promoteSkill (#1431 Part 3)', () => {
     await store.setPromotionState(id, 'quarantined', 100, 'previous run');
     const r = await promoteSkill(store, id, makeDeps({ outcome: 'PASS' }));
     expect(r.promoted).toBe(false);
-    if (!r.promoted && 'quarantined' in r) {
+    if (!r.promoted) {
       expect(r.quarantined).toBe(true);
       expect(r.reason).toMatch(/previous run/);
     }
@@ -150,9 +150,31 @@ describe('promoteSkill (#1431 Part 3)', () => {
   it('returns a structured error for unknown skill_id', async () => {
     const r = await promoteSkill(store, 'deadbeefdeadbeef', makeDeps());
     expect(r.promoted).toBe(false);
-    if (!r.promoted && 'quarantined' in r) {
+    if (!r.promoted) {
       expect(r.quarantined).toBe(false);
       expect(r.reason).toMatch(/unknown skill_id/);
     }
+  });
+
+  it('caps an overlong quarantine reason in the returned outcome', async () => {
+    const id = await recordSkill('a');
+    const deps = makeDeps();
+    deps.replayInLane = async () => ({ outcome: 'CONTRACT_FAIL', reason: 'x'.repeat(900) });
+    const r = await promoteSkill(store, id, deps);
+    expect(r.promoted).toBe(false);
+    if (!r.promoted) expect(r.reason.length).toBeLessThanOrEqual(512);
+    expect(store.get(id)?.promotionQuarantineReason?.length).toBeLessThanOrEqual(512);
+  });
+
+  it('logs close_scratch_lane_failed without changing the outcome', async () => {
+    const id = await recordSkill('a');
+    const deps = makeDeps({ outcome: 'PASS' });
+    deps.closeScratchLane = async () => {
+      throw new Error('rm -rf failed');
+    };
+    const r = await promoteSkill(store, id, deps);
+    expect(r.promoted).toBe(true);
+    expect(store.get(id)?.promotionState).toBe('recallable');
+    expect(deps.events.find((e) => e.stage === 'close_scratch_lane_failed')).toBeDefined();
   });
 });

@@ -46,9 +46,15 @@ export interface PromoteSkillDeps {
 }
 
 export type PromotionOutcome =
-  | { promoted: true; from: 'recorded' | 're_verified'; to: 'recallable' }
+  // `from` is the actual prior state the skill was in. Narrow the two
+  // failure variants with `r.quarantined === true`, NOT `'quarantined' in r`
+  // — both carry the field, so an `in` check is always true.
+  | { promoted: true; from: 'recorded' | 're_verified' | 'recallable'; to: 'recallable' }
   | { promoted: false; quarantined: true; reason: string }
   | { promoted: false; quarantined: false; reason: string };
+
+/** Quarantine reasons are capped to match the store's own on-disk limit. */
+const MAX_REASON_LEN = 512;
 
 export async function promoteSkill(
   store: SkillMemoryStore,
@@ -68,7 +74,7 @@ export async function promoteSkill(
   // Idempotency: already promoted skills are a no-op success.
   if (existing.promotionState === 'recallable') {
     log({ stage: 'noop_already_recallable', skillId });
-    return { promoted: true, from: 're_verified', to: 'recallable' };
+    return { promoted: true, from: 'recallable', to: 'recallable' };
   }
 
   if (existing.promotionState === 'quarantined') {
@@ -98,25 +104,48 @@ export async function promoteSkill(
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     log({ stage: 'replay_threw', skillId, details: reason });
-    await deps.closeScratchLane(lane).catch(() => {});
+    await closeLane(deps, lane, skillId, log);
     return { promoted: false, quarantined: false, reason: `replay_threw: ${reason}` };
   }
 
   // Always close the scratch lane.
-  await deps.closeScratchLane(lane).catch(() => {});
+  await closeLane(deps, lane, skillId, log);
 
   if (outcome.outcome !== 'PASS') {
-    const reason = `${outcome.outcome}: ${outcome.reason ?? 'no reason'}`;
+    const reason = capReason(`${outcome.outcome}: ${outcome.reason ?? 'no reason'}`);
     log({ stage: 'quarantine', skillId, details: reason });
     await store.setPromotionState(skillId, 'quarantined', deps.now(), reason);
     return { promoted: false, quarantined: true, reason };
   }
 
-  // PASS path: rotate through re_verified → recallable in the same call
-  // so observers always see the intermediate checkpoint at least once.
-  const ts = deps.now();
-  await store.setPromotionState(skillId, 're_verified', ts);
-  await store.setPromotionState(skillId, 'recallable', ts);
+  // PASS path: write the durable record straight to `recallable` in a single
+  // store write. The `re_verified` checkpoint is emitted as a log event for
+  // observers, not persisted — a two-write rotation could strand the skill at
+  // `re_verified` permanently if the process died between the writes.
+  const from = existing.promotionState ?? 'recorded';
+  log({ stage: 're_verified', skillId });
+  await store.setPromotionState(skillId, 'recallable', deps.now());
   log({ stage: 'recallable', skillId });
-  return { promoted: true, from: 're_verified', to: 'recallable' };
+  return { promoted: true, from, to: 'recallable' };
+}
+
+function capReason(reason: string): string {
+  return reason.length > MAX_REASON_LEN ? reason.slice(0, MAX_REASON_LEN) : reason;
+}
+
+async function closeLane(
+  deps: PromoteSkillDeps,
+  lane: { laneId: string; taskId: string },
+  skillId: string,
+  log: NonNullable<PromoteSkillDeps['log']>,
+): Promise<void> {
+  // A failed close must not change the promotion outcome, but a silent
+  // swallow hides scratch-profile/disk leaks. Surface it on the log stream.
+  await deps.closeScratchLane(lane).catch((err: unknown) => {
+    log({
+      stage: 'close_scratch_lane_failed',
+      skillId,
+      details: err instanceof Error ? err.message : String(err),
+    });
+  });
 }
