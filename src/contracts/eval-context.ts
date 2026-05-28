@@ -58,4 +58,16 @@ export interface EvalContext {
     threshold: number;
     score: (candidate: bigint) => { distance: number; exemplar: string };
   }>;
+
+  /**
+   * Image Q&A hook (#1432). When wired, the runtime forwards a question
+   * + a screenshot reference to the host LLM via the `image_qa` tool
+   * (which in turn uses MCP `sampling/createMessage`). When absent, the
+   * `image_qa` evaluator returns inconclusive with `passed: false` —
+   * OpenChrome never falls back to a server-side model.
+   */
+  imageQaSample?(input: {
+    question: string;
+    screenshot: Buffer;
+  }): Promise<{ status: 'ok'; answer: string } | { status: 'unsupported_by_host'; reason: string }>;
 }

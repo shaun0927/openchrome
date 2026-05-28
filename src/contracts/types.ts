@@ -57,6 +57,21 @@ export interface NoDialogAssertion {
   kind: 'no_dialog';
 }
 
+/**
+ * Vision Q&A assertion (#1432). Asks the host LLM (via the runtime's
+ * sampling-backed `imageQa` hook) a question about the most recent
+ * screenshot and matches the answer against `expected_pattern` (JS
+ * RegExp source). Inconclusive when the runtime does not wire an
+ * `imageQa` hook — OpenChrome never calls a model itself.
+ */
+export interface ImageQaAssertion {
+  kind: 'image_qa';
+  /** Free-form prompt for the host LLM. */
+  question: string;
+  /** JS RegExp source matched against the answer text. */
+  expected_pattern: string;
+}
+
 export interface AndAssertion {
   kind: 'and';
   /** At least one child required. */
@@ -81,7 +96,8 @@ export type LeafAssertion =
   | DomCountAssertion
   | NetworkAssertion
   | ScreenshotClassAssertion
-  | NoDialogAssertion;
+  | NoDialogAssertion
+  | ImageQaAssertion;
 
 export type Assertion = LeafAssertion | AndAssertion | OrAssertion | NotAssertion;
 
