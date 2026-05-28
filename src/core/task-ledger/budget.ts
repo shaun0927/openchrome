@@ -8,6 +8,12 @@ import type {
   TaskPhase,
   TaskRecentEvent,
 } from './types';
+import {
+  initialMarginalUtilityState,
+  recordStep,
+  type MarginalUtilityState,
+  type StepSignals,
+} from './marginal-utility';
 
 const DEFAULT_MAX_CONSECUTIVE_SAME_TOOL = 5;
 const DEFAULT_MAX_OBSERVATION_STREAK = 6;
@@ -80,6 +86,9 @@ export function initialCounters(): TaskCounters {
   };
 }
 
+/** Hard cap on cost_curve entries to bound TaskMeta growth. */
+const COST_CURVE_MAX_ENTRIES = 500;
+
 export function applyToolCallToTask(meta: TaskMeta, call: RecordedToolCall): TaskMeta {
   const policy = normalizeTaskPolicy(meta.policy);
   const current = meta.counters ?? initialCounters();
@@ -117,6 +126,35 @@ export function applyToolCallToTask(meta: TaskMeta, call: RecordedToolCall): Tas
   };
   const recent_events = [...(meta.recent_events ?? []), recentEvent].slice(-RECENT_EVENT_LIMIT);
 
+  // Marginal-utility tracker (#1428 Parts 1+2 wire-up). Each tool call
+  // becomes one tracker step. Signals are derived from the recorded
+  // call: oc_assert pass/fail counts come straight from the assertion
+  // tool's ok bit, checkpointAdvanced from oc_checkpoint, toolOk from
+  // the call itself. We never read the assert verdict body — the
+  // budget ledger does not see tool result payloads.
+  const muSignals: StepSignals = {
+    ts: call.ts,
+    toolOk: call.ok,
+    assertPasses: call.tool === 'oc_assert' && call.ok ? 1 : 0,
+    assertFails: call.tool === 'oc_assert' && !call.ok ? 1 : 0,
+    assertInconclusives: 0,
+    checkpointAdvanced: call.tool === 'oc_checkpoint' && call.ok,
+  };
+  const prevMuState: MarginalUtilityState =
+    meta._mu_state !== undefined
+      ? {
+          totalSteps: meta._mu_state.totalSteps,
+          window: meta._mu_state.window.map((w) => ({ ...w })),
+          lastP: meta._mu_state.lastP,
+        }
+      : initialMarginalUtilityState();
+  const nextMuState = recordStep(prevMuState, muSignals);
+  const latestStep = nextMuState.window[nextMuState.window.length - 1];
+  const cost_curve = [
+    ...(meta.cost_curve ?? []),
+    { step: latestStep.step, p: latestStep.p, delta: latestStep.delta },
+  ].slice(-COST_CURVE_MAX_ENTRIES);
+
   return {
     ...meta,
     phase: normalizeTaskPhase(meta.phase),
@@ -128,6 +166,8 @@ export function applyToolCallToTask(meta: TaskMeta, call: RecordedToolCall): Tas
     recent_events,
     last_tool_name: call.tool,
     last_activity_at: call.ts,
+    cost_curve,
+    _mu_state: nextMuState,
   };
 }
 
