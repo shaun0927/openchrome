@@ -22,7 +22,7 @@ describe('act client-mediated sampling (#876)', () => {
       requestClient,
     } as any);
 
-    expect(requestClient).toHaveBeenCalledWith('sampling/createMessage', expect.any(Object), expect.objectContaining({ timeoutMs: 5000 }));
+    expect(requestClient).toHaveBeenCalledWith('sampling/createMessage', expect.any(Object), expect.objectContaining({ timeoutMs: 8000 }));
     expect(result.actions).toEqual([{ action: 'click', target: 'Continue' }]);
     expect(result.decision).toMatchObject({ supported: true, used: true });
   });
@@ -38,7 +38,7 @@ describe('act client-mediated sampling (#876)', () => {
     expect(result.decision).toMatchObject({ used: false, fallbackReason: 'invalid_sampling_response' });
   });
 
-  test('falls back deterministically when sampling throws (timeout or transport error)', async () => {
+  test('maps sampling timeout errors to the closed-set "timeout" fallback reason', async () => {
     const requestClient = jest.fn(async () => { throw new Error('s2c_timeout:sampling/createMessage'); });
     const result = await __test__.maybeRefineActionsWithSampling('continue', parsedActions, {
       clientCapabilities: { sampling: {} },
@@ -46,11 +46,29 @@ describe('act client-mediated sampling (#876)', () => {
     } as any);
 
     expect(result.actions).toBe(parsedActions);
-    expect(result.decision).toMatchObject({
-      supported: true,
-      used: false,
-      fallbackReason: 's2c_timeout:sampling/createMessage',
-    });
+    expect(result.decision).toMatchObject({ supported: true, used: false, fallbackReason: 'timeout' });
+  });
+
+  test('maps host-side cancellation to the closed-set "cancelled" fallback reason', async () => {
+    const requestClient = jest.fn(async () => { throw new Error('AbortError: cancelled by host'); });
+    const result = await __test__.maybeRefineActionsWithSampling('continue', parsedActions, {
+      clientCapabilities: { sampling: {} },
+      requestClient,
+    } as any);
+
+    expect(result.actions).toBe(parsedActions);
+    expect(result.decision).toMatchObject({ used: false, fallbackReason: 'cancelled' });
+  });
+
+  test('falls back to the closed-set "transport_error" reason on opaque transport failures', async () => {
+    const requestClient = jest.fn(async () => { throw new Error('connection reset'); });
+    const result = await __test__.maybeRefineActionsWithSampling('continue', parsedActions, {
+      clientCapabilities: { sampling: {} },
+      requestClient,
+    } as any);
+
+    expect(result.actions).toBe(parsedActions);
+    expect(result.decision).toMatchObject({ used: false, fallbackReason: 'transport_error' });
   });
 
   test('treats url as a fallback for value but does not let url shadow value', () => {

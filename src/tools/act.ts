@@ -163,12 +163,20 @@ async function maybeRefineActionsWithSampling(
         },
       }],
       maxTokens: 400,
-    }, { timeoutMs: 5000, signal: context.signal });
+    }, { timeoutMs: 8000, signal: context.signal });
     const sampled = parseSampledActions(response);
     if (!sampled) return { actions, decision: { used: false, supported: true, fallbackReason: 'invalid_sampling_response' } };
     return { actions: sampled, decision: { used: true, supported: true } };
   } catch (err) {
-    return { actions, decision: { used: false, supported: true, fallbackReason: err instanceof Error ? err.message : String(err) } };
+    // Map known transport/cancel signatures to closed-set reasons so we don't
+    // leak raw transport text to clients in `_meta.sampling.fallbackReason`.
+    const message = err instanceof Error ? err.message : String(err);
+    const fallbackReason = /timeout/i.test(message)
+      ? 'timeout'
+      : /abort|cancel/i.test(message)
+        ? 'cancelled'
+        : 'transport_error';
+    return { actions, decision: { used: false, supported: true, fallbackReason } };
   }
 }
 
