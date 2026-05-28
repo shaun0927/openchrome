@@ -82,22 +82,20 @@ const definition: MCPToolDefinition = {
       include_unpromoted: {
         type: 'boolean',
         description:
-          'When true, also surface skills still in promotionState=recorded. ' +
-          'Default false — once a domain has any re_verified/recallable skill ' +
-          'recall hides unpromoted ones so the LLM-free fast path stays safe. ' +
-          'Domains with no promoted skills auto-fallback to v1.x semantics ' +
-          '(all non-quarantined surface) (#1431).',
+          'When true, also surface promotionState=recorded skills. Default ' +
+          'false: once a domain has any re_verified/recallable skill, recall ' +
+          'hides recorded ones to keep the LLM-free fast path safe. Domains ' +
+          'with no promoted skill auto-fallback to v1.x (all non-quarantined ' +
+          'surface). (#1431)',
       },
       include_quarantined: {
         type: 'boolean',
         description:
-          'When true, also surface skills in promotionState=quarantined. ' +
-          'Default false. Diagnostic use only — quarantined skills failed ' +
-          'a fresh-lane re-verification and should not be replayed. ' +
-          'This flag is independent of the recorded-vs-promoted filter: on a ' +
-          'domain with no promoted skills, recall is in v1.x auto-fallback ' +
-          '(recorded skills surface), so passing only include_quarantined ' +
-          'yields recorded + quarantined skills.',
+          'When true, also surface promotionState=quarantined skills. Default ' +
+          'false; diagnostic only — they failed re-verification and should not ' +
+          'be replayed. Independent of the recorded/promoted filter, so on an ' +
+          'unpromoted domain (v1.x auto-fallback) it yields recorded + ' +
+          'quarantined. (#1431)',
       },
     },
     required: ['domain'],
