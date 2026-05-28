@@ -55,6 +55,7 @@ Categories below are documentation-only — the runtime source is
 | `vision_find`              | Read-only image-based discovery                      |
 | `oc_assert`                | Single-call contract verifier (read-only)            |
 | `oc_journal_compact`       | Read-only journal compaction (deterministic + sampling) |
+| `image_qa`                | Vision Q&A over caller-supplied screenshot via MCP sampling |
 | `oc_recording_list`        | List existing recordings                             |
 | `workflow_status`          | Workflow read                                        |
 | `workflow_collect`         | Collect previously-completed results                 |

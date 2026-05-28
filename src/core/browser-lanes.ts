@@ -9,6 +9,9 @@
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import { getSessionManager } from '../session-manager';
 import { getTaskStore } from '../tools/oc-task-start';
@@ -43,6 +46,19 @@ export function findTaskLane(meta: TaskMeta, laneId: string): BrowserLane | unde
   return getTaskLanes(meta).find((lane) => lane.lane_id === laneId);
 }
 
+/**
+ * Create a task-scoped browser lane.
+ *
+ * @param input.profile - Profile isolation mode for the lane.
+ *   - `'inherit'` (default) — shares the server's existing Chrome
+ *     user-data-dir. No extra resource management required.
+ *   - `'scratch'` — provisions a fresh temporary Chrome user-data-dir
+ *     (under `os.tmpdir()`) when the lane opens and removes it with
+ *     `fs.rm({ recursive: true, force: true })` when the lane closes via
+ *     `closeBrowserLane`. This is the foundation for the fresh-lane
+ *     re-verification gate (Part 3 of #1431). If scratch-dir creation fails
+ *     the lane creation fails cleanly with no orphan directory left behind.
+ */
 export async function createBrowserLane(input: {
   sessionId: string;
   taskId: string;
@@ -50,6 +66,7 @@ export async function createBrowserLane(input: {
   purpose?: string;
   initialUrl?: string;
   budget?: unknown;
+  profile?: 'scratch' | 'inherit';
 }): Promise<BrowserLane> {
   const { sessionId, taskId } = input;
   const store = getTaskStore();
@@ -59,15 +76,32 @@ export async function createBrowserLane(input: {
     throw new Error(`task ${taskId} is not visible in this session`);
   }
 
+  const profile = input.profile ?? 'inherit';
   const laneId = makeLaneId(crypto.randomUUID());
   const now = Date.now();
   const workerId = laneWorkerId(taskId, laneId);
+
+  // Provision scratch dir before touching the session manager so that a
+  // creation failure leaves no partial state on the store.
+  let scratchDir: string | undefined;
+  if (profile === 'scratch') {
+    const scratchBase = path.join(os.tmpdir(), `oc-scratch-${crypto.randomUUID()}`);
+    try {
+      await fs.mkdir(scratchBase, { recursive: true });
+      scratchDir = scratchBase;
+    } catch (err) {
+      throw new Error(`scratch lane: failed to create temp dir ${scratchBase}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const lane: BrowserLane = {
     lane_id: laneId,
     task_id: taskId,
     ...(input.name ? { name: input.name } : {}),
     ...(input.purpose ? { purpose: input.purpose } : {}),
     status: 'open',
+    profile,
+    ...(scratchDir ? { scratchDir } : {}),
     sessionId,
     workerId,
     targetIds: [],
@@ -76,12 +110,20 @@ export async function createBrowserLane(input: {
     counters: { toolCalls: 0, failures: 0 },
   };
 
-  if (input.initialUrl) {
-    const result = await getSessionManager().createTarget(sessionId, input.initialUrl, workerId);
-    lane.targetIds.push(result.targetId);
-    lane.workerId = result.workerId;
-  } else {
-    await getSessionManager().getOrCreateWorker(sessionId, workerId);
+  try {
+    if (input.initialUrl) {
+      const result = await getSessionManager().createTarget(sessionId, input.initialUrl, workerId);
+      lane.targetIds.push(result.targetId);
+      lane.workerId = result.workerId;
+    } else {
+      await getSessionManager().getOrCreateWorker(sessionId, workerId);
+    }
+  } catch (err) {
+    // Clean up scratch dir if worker/target acquisition fails so no orphan dirs are left.
+    if (scratchDir) {
+      await fs.rm(scratchDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw err;
   }
 
   await store.update(taskId, (cur) => ({
@@ -89,7 +131,7 @@ export async function createBrowserLane(input: {
     lanes: [...getTaskLanes(cur).filter((existing) => existing.lane_id !== laneId), lane],
     last_activity_at: now,
   }));
-  store.appendEvent(taskId, { ts: now, kind: 'log', data: { event: 'lane_created', laneId, workerId, targetIds: lane.targetIds } });
+  store.appendEvent(taskId, { ts: now, kind: 'log', data: { event: 'lane_created', laneId, workerId, targetIds: lane.targetIds, profile } });
   return cloneLane(lane);
 }
 
@@ -123,6 +165,15 @@ export async function closeBrowserLane(taskId: string, laneId: string, sessionId
     last_activity_at: now,
   }));
   getTaskStore().appendEvent(taskId, { ts: now, kind: 'log', data: { event: 'lane_closed', laneId } });
+
+  // Remove the scratch user-data-dir after the lane record is committed so
+  // callers observing the closed lane can still see scratchDir if needed.
+  if (lane.scratchDir) {
+    await fs.rm(lane.scratchDir, { recursive: true, force: true }).catch((err) => {
+      console.error(`[closeBrowserLane] failed to remove scratch dir ${lane.scratchDir}:`, err);
+    });
+  }
+
   return cloneLane(closed);
 }
 

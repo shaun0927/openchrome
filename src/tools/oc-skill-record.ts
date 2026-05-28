@@ -12,18 +12,35 @@
  *
  * No LLM ranking is performed here — this is a pure write surface. Recall
  * with optional filtering lives in oc_skill_recall (#785).
+ *
+ * Codegen artifact pointers (#1430): when `OPENCHROME_CODEGEN` is set to a
+ * non-off value, existing codegen output files for the current session are
+ * detected and their paths (relative to the skill store rootDir) are persisted
+ * in `codegen_artifacts` on the stored record. When codegen is off (the
+ * default), `codegen_artifacts` is written as `[]` so existing records always
+ * have the field present after a re-record.
  */
+
+import * as path from 'node:path';
 
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import {
+  defaultSkillMemoryRootDir,
   flushRecorderBuffer,
   REPLAY_ARTIFACT_SCHEMA_VERSION,
   SkillMemoryStore,
+  type CodegenArtifactPointer,
   type ReplayArtifact,
   type ReplayArtifactStep,
 } from '../core/skill-memory';
+import {
+  codegenPath,
+  getCodegenMode,
+  isCodegenEnabled,
+  type CodegenMode,
+} from '../core/codegen';
 import { redactSecrets } from '../core/secrets';
 import { isDynamicSkillsEnabled, isSkillReplayEnabled } from '../harness/flags';
 import { getSessionManager } from '../session-manager';
@@ -199,6 +216,38 @@ const handler: ToolHandler = async (
     : undefined;
   const replayArtifactsForStore = replayArtifacts && replayArtifacts.length > 0 ? replayArtifacts : undefined;
 
+  // codegen_artifacts (#1430): collect pointers to any codegen output files
+  // written for this session by the opt-in `--codegen` / OPENCHROME_CODEGEN
+  // pipeline. Paths are stored relative to the skill store rootDir for
+  // portability across machines (per SSOT #1359 "portable local artifacts").
+  // When codegen is off (the default), we write an empty array so the field
+  // is always present in v3 records after a record/re-record.
+  const codegenArtifacts: CodegenArtifactPointer[] = [];
+  if (isCodegenEnabled()) {
+    const storeRoot = defaultSkillMemoryRootDir();
+    const codegenMode = getCodegenMode();
+    const formats: Array<Exclude<CodegenMode, 'off'>> = ['mcp-replay'];
+    if (codegenMode === 'puppeteer') formats.push('puppeteer');
+    if (codegenMode === 'playwright') formats.push('playwright');
+    const { statSync, existsSync } = await import('node:fs');
+    for (const fmt of formats) {
+      const artifactPath = codegenPath(sessionId, fmt);
+      if (existsSync(artifactPath)) {
+        let created_at: number;
+        try {
+          created_at = statSync(artifactPath).birthtimeMs || statSync(artifactPath).mtimeMs;
+        } catch {
+          created_at = Date.now();
+        }
+        codegenArtifacts.push({
+          kind: fmt,
+          path: path.relative(storeRoot, artifactPath),
+          created_at,
+        });
+      }
+    }
+  }
+
   let recordResult: { skill_id: string; stored_at: number };
   try {
     recordResult = await store.record({
@@ -210,6 +259,7 @@ const handler: ToolHandler = async (
       lastUsedAt: 0,
       frozenSnapshotPath: snapshotPath ?? null,
       ...(replayArtifactsForStore !== undefined ? { replayArtifacts: replayArtifactsForStore } : {}),
+      codegenArtifacts,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

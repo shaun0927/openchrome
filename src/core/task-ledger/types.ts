@@ -112,6 +112,25 @@ export interface BrowserLane {
   name?: string;
   purpose?: string;
   status: 'open' | 'closing' | 'closed' | 'failed';
+  /**
+   * Profile isolation mode for this lane.
+   *
+   * - `'inherit'` (default) — the lane shares the server's existing Chrome
+   *   profile / user-data-dir. This is the original behaviour and requires no
+   *   extra resource management.
+   * - `'scratch'` — a fresh temporary Chrome user-data-dir is provisioned when
+   *   the lane is created and removed (rm -rf) when the lane is closed. The
+   *   path is stored in `scratchDir` so `closeBrowserLane` can clean it up.
+   *   This is the foundation for the fresh-lane re-verification gate (Part 3
+   *   of #1431) but the gate itself is not shipped in Part 1.
+   */
+  profile?: 'scratch' | 'inherit';
+  /**
+   * Absolute path of the temporary Chrome user-data-dir created for a
+   * `profile: 'scratch'` lane. Undefined for `'inherit'` lanes. Removed
+   * (rm -rf) by `closeBrowserLane`.
+   */
+  scratchDir?: string;
   sessionId: string;
   workerId: string;
   targetIds: string[];
@@ -156,6 +175,21 @@ export interface TaskMeta {
   lanes?: BrowserLane[];
   last_tool_name?: string;
   last_activity_at?: number;
+  /**
+   * Per-step success-probability curve (issue #1428, Part 1).
+   * Appended by the marginal-utility tracker on every tool call.
+   * Optional and additive — absent on tasks that pre-date the tracker.
+   */
+  cost_curve?: Array<{ step: number; p: number; delta: number }>;
+  /**
+   * Internal tracker state persisted between tool calls so the sliding
+   * window survives across process restarts (stored in meta.json).
+   */
+  _mu_state?: {
+    totalSteps: number;
+    window: Array<{ step: number; ts: number; p: number; delta: number }>;
+    lastP: number;
+  };
 }
 
 

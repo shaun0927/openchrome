@@ -40,6 +40,7 @@ import { acquireLock, writeFileAtomicSafe } from '../../utils/atomic-file';
 import {
   SKILL_MEMORY_SCHEMA_VERSION,
   SKILL_MEMORY_SCHEMA_VERSION_V1,
+  SKILL_MEMORY_SCHEMA_VERSION_V2,
   type FrozenSnapshot,
   type SkillMemoryFile,
   type SkillRecord,
@@ -150,23 +151,31 @@ function assertSafeSnapshotId(snapshotId: string): void {
 
 /**
  * Normalise a record read from disk so its `replayArtifacts` field is
- * always defined and parallel-indexed with `steps`. Defensive against:
- *   - v1 records (no field on disk),
- *   - partial v2 writes (field present but wrong length),
- *   - non-array `steps` (we leave the field undefined; callers handle).
+ * always defined and parallel-indexed with `steps`, and its
+ * `codegenArtifacts` field is always a (possibly-empty) array. Defensive
+ * against:
+ *   - v1 records (neither field on disk),
+ *   - v2 records (`replayArtifacts` present, `codegenArtifacts` absent),
+ *   - partial v3 writes (field present but wrong length for replayArtifacts),
+ *   - non-array `steps` (we leave replayArtifacts undefined; callers handle).
  */
 function normaliseRecordForRead(rec: SkillRecord): SkillRecord {
-  if (!Array.isArray(rec.steps)) return { ...rec };
-  const stepCount = rec.steps.length;
-  const existing = rec.replayArtifacts;
-  if (Array.isArray(existing) && existing.length === stepCount) return rec;
+  // Always ensure codegenArtifacts is an array (migration from v1/v2).
+  const normalised: SkillRecord = Array.isArray(rec.codegenArtifacts)
+    ? { ...rec }
+    : { ...rec, codegenArtifacts: [] };
+
+  if (!Array.isArray(normalised.steps)) return normalised;
+  const stepCount = normalised.steps.length;
+  const existing = normalised.replayArtifacts;
+  if (Array.isArray(existing) && existing.length === stepCount) return normalised;
   const padded: Array<ReplayArtifact | null> = new Array(stepCount).fill(null);
   if (Array.isArray(existing)) {
     for (let i = 0; i < Math.min(existing.length, stepCount); i++) {
       padded[i] = existing[i] ?? null;
     }
   }
-  return { ...rec, replayArtifacts: padded };
+  return { ...normalised, replayArtifacts: padded };
 }
 
 /**
@@ -290,6 +299,19 @@ export class SkillMemoryStore {
       }
       return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: normalised };
     }
+    if (obj.schema_version === SKILL_MEMORY_SCHEMA_VERSION_V2) {
+      if (!obj.skills || typeof obj.skills !== 'object') {
+        return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
+      }
+      const v2Skills = obj.skills as Record<string, SkillRecord>;
+      const upgraded: Record<string, SkillRecord> = {};
+      for (const [id, rec] of Object.entries(v2Skills)) {
+        upgraded[id] = normaliseRecordForRead(rec);
+      }
+      // Note: we return v3 in memory but do NOT rewrite the file here.
+      // The next record() acquires the lock and writes v3 explicitly.
+      return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: upgraded };
+    }
     if (obj.schema_version === SKILL_MEMORY_SCHEMA_VERSION_V1) {
       if (!obj.skills || typeof obj.skills !== 'object') {
         return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: {} };
@@ -299,8 +321,8 @@ export class SkillMemoryStore {
       for (const [id, rec] of Object.entries(v1Skills)) {
         upgraded[id] = normaliseRecordForRead(rec);
       }
-      // Note: we return v2 in memory but do NOT rewrite the file here.
-      // The next record() acquires the lock and writes v2 explicitly.
+      // Note: we return v3 in memory but do NOT rewrite the file here.
+      // The next record() acquires the lock and writes v3 explicitly.
       return { schema_version: SKILL_MEMORY_SCHEMA_VERSION, skills: upgraded };
     }
     console.error(
@@ -404,6 +426,10 @@ export class SkillMemoryStore {
         // keeps the previously-recorded value.
         frozenSnapshotPath: skill.frozenSnapshotPath ?? existing?.frozenSnapshotPath ?? null,
         ...(replayArtifacts !== undefined ? { replayArtifacts } : {}),
+        // codegen_artifacts (#1430): caller supplies the array; on re-record
+        // without an explicit value, preserve the existing pointers so a
+        // re-record that omits codegen does not erase prior captures.
+        codegenArtifacts: skill.codegenArtifacts ?? existing?.codegenArtifacts ?? [],
       };
       // Preserve replay-outcome fields across idempotent re-record. The
       // recorder owns `steps`/`contractId`; the replay path owns the

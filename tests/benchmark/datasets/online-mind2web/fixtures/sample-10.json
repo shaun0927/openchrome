@@ -1,0 +1,62 @@
+[
+  {
+    "task_id": "om2w-0001",
+    "website": "https://www.allrecipes.com",
+    "task_description": "Find a recipe for chocolate chip cookies and note the total preparation time.",
+    "reference_length": 4
+  },
+  {
+    "task_id": "om2w-0002",
+    "website": "https://www.booking.com",
+    "task_description": "Search for hotels in Paris for 2 adults checking in on 2024-06-01 and checking out on 2024-06-03.",
+    "reference_length": 6
+  },
+  {
+    "task_id": "om2w-0003",
+    "website": "https://www.amazon.com",
+    "task_description": "Search for a Kindle Paperwhite and find its current price and customer rating.",
+    "reference_length": 3
+  },
+  {
+    "task_id": "om2w-0004",
+    "website": "https://www.wikipedia.org",
+    "task_description": "Find the article about the Eiffel Tower and note the year it was completed.",
+    "reference_length": 2
+  },
+  {
+    "task_id": "om2w-0005",
+    "website": "https://www.github.com",
+    "task_description": "Navigate to the trending repositories page and find the top trending repository for today.",
+    "reference_length": 5
+  },
+  {
+    "task_id": "om2w-0006",
+    "website": "https://www.wolframalpha.com",
+    "task_description": "Calculate the integral of x^2 from 0 to 3 and record the result.",
+    "reference_length": 3
+  },
+  {
+    "task_id": "om2w-0007",
+    "website": "https://www.reddit.com",
+    "task_description": "Find the top post in the r/worldnews subreddit and note its title and score.",
+    "reference_length": 4
+  },
+  {
+    "task_id": "om2w-0008",
+    "website": "https://www.espn.com",
+    "task_description": "Find the current NBA standings and list the top 3 teams in the Eastern Conference.",
+    "reference_length": 5
+  },
+  {
+    "task_id": "om2w-0009",
+    "website": "https://www.google.com/maps",
+    "task_description": "Get directions from Times Square New York to Central Park and note the walking distance.",
+    "reference_length": 4
+  },
+  {
+    "task_id": "om2w-0010",
+    "website": "https://www.imdb.com",
+    "task_description": "Find the movie Inception and note its director, release year, and IMDb rating.",
+    "reference_length": 4
+  }
+]

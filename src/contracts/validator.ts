@@ -38,6 +38,7 @@ const KNOWN_KINDS = new Set([
   'network',
   'screenshot_class',
   'no_dialog',
+  'image_qa',
   'and',
   'or',
   'not',
@@ -86,6 +87,8 @@ function walk(input: unknown, path: string, errors: ValidationError[]): Assertio
       return validateScreenshotClass(obj, path, errors);
     case 'no_dialog':
       return { kind: 'no_dialog' };
+    case 'image_qa':
+      return validateImageQa(obj, path, errors);
     case 'and':
     case 'or':
       return validateLogical(kind, obj, path, errors);
@@ -311,4 +314,20 @@ function validateNot(
   const child = walk(obj.child, `${path}.child`, errors);
   if (child === null) return null;
   return { kind: 'not', child };
+}
+
+function validateImageQa(
+  obj: Record<string, unknown>,
+  path: string,
+  errors: ValidationError[],
+): Assertion | null {
+  const question = requireString(obj, 'question', path, errors);
+  const pattern = requireString(obj, 'expected_pattern', path, errors);
+  if (question === null || pattern === null) return null;
+  const safety = validateRegexPattern(pattern);
+  if (!safety.ok) {
+    errors.push({ path: `${path}.expected_pattern`, message: safety.reason });
+    return null;
+  }
+  return { kind: 'image_qa', question, expected_pattern: pattern };
 }
