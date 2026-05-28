@@ -260,6 +260,14 @@ function expectedActualFor(
         expected: { no_dialog: true },
         actual: { has_open_dialog: evidence.details.has_open_dialog ?? null },
       };
+    case 'image_qa':
+      return {
+        expected: {
+          question: assertion.question,
+          expected_pattern: assertion.expected_pattern,
+        },
+        actual: evidence.details,
+      };
     case 'and':
     case 'or':
     case 'not':
