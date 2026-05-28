@@ -100,6 +100,86 @@ const definition: MCPToolDefinition = {
   annotations: TOOL_ANNOTATIONS.act,
 };
 
+
+interface SamplingDecision {
+  used: boolean;
+  supported: boolean;
+  fallbackReason?: string;
+}
+
+const VALID_ACTIONS = new Set(['click', 'type', 'select', 'hover', 'scroll', 'wait', 'navigate', 'check', 'uncheck']);
+
+function parseSampledActions(value: unknown): ParsedAction[] | null {
+  const text = typeof value === 'string'
+    ? value
+    : typeof (value as { content?: Array<{ type?: string; text?: string }> })?.content?.[0]?.text === 'string'
+      ? (value as { content: Array<{ text: string }> }).content[0].text
+      : undefined;
+  if (!text) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  const actions = (parsed as { actions?: unknown }).actions;
+  if (!Array.isArray(actions) || actions.length === 0) return null;
+  const normalized: ParsedAction[] = [];
+  for (const action of actions) {
+    if (!action || typeof action !== 'object') return null;
+    const record = action as Record<string, unknown>;
+    if (typeof record.action !== 'string' || !VALID_ACTIONS.has(record.action)) return null;
+    // `url` is accepted as a synonym for `value` (e.g. navigate actions) but
+    // must not silently shadow an explicit `value` the sampler also emitted.
+    const valueField = typeof record.value === 'string'
+      ? record.value
+      : typeof record.url === 'string'
+        ? record.url
+        : undefined;
+    normalized.push({
+      action: record.action as ParsedAction['action'],
+      ...(typeof record.target === 'string' ? { target: record.target } : {}),
+      ...(valueField !== undefined ? { value: valueField } : {}),
+      ...(typeof record.condition === 'string' ? { condition: record.condition } : {}),
+    });
+  }
+  return normalized;
+}
+
+async function maybeRefineActionsWithSampling(
+  instruction: string,
+  actions: ParsedAction[],
+  context?: ToolContext,
+): Promise<{ actions: ParsedAction[]; decision: SamplingDecision }> {
+  if (!context?.clientCapabilities?.sampling || !context.requestClient) {
+    return { actions, decision: { used: false, supported: false, fallbackReason: 'sampling_unavailable' } };
+  }
+  if (actions.length < 2) {
+    return { actions, decision: { used: false, supported: true, fallbackReason: 'single_action' } };
+  }
+  try {
+    const response = await context.requestClient<unknown>('sampling/createMessage', {
+      messages: [{
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Choose the safest deterministic OpenChrome act action sequence for: ${instruction}\nReturn strict JSON only: {"actions":[{"action":"click|type|select|hover|scroll|wait|navigate|check|uncheck","target":"optional","value":"optional","condition":"optional"}]}`,
+        },
+      }],
+      maxTokens: 400,
+    }, { timeoutMs: 8000, signal: context.signal });
+    const sampled = parseSampledActions(response);
+    if (!sampled) return { actions, decision: { used: false, supported: true, fallbackReason: 'invalid_sampling_response' } };
+    return { actions: sampled, decision: { used: true, supported: true } };
+  } catch (err) {
+    // Map known transport/cancel signatures to closed-set reasons so we don't
+    // leak raw transport text to clients in `_meta.sampling.fallbackReason`.
+    const message = err instanceof Error ? err.message : String(err);
+    const fallbackReason = /timeout/i.test(message)
+      ? 'timeout'
+      : /abort|cancel/i.test(message)
+        ? 'cancelled'
+        : 'transport_error';
+    return { actions, decision: { used: false, supported: true, fallbackReason } };
+  }
+}
+
 // ─── Element resolution helper ───
 
 async function collectWorkflowPageSignature(page: any): Promise<WorkflowPageSignature | null> {
@@ -669,6 +749,15 @@ Suggestion: ${suggestion}`,
     }
   }
 
+  // Cached/templated sequences are already known-good; subjecting them to a
+  // sampling round-trip would only add tokens and risk regressions per P4/P7.
+  const allowSampling = source === 'parsed';
+  const samplingResult = allowSampling
+    ? await maybeRefineActionsWithSampling(instruction, actions, context)
+    : { actions, decision: { used: false, supported: false, fallbackReason: `skipped_${source}` } as SamplingDecision };
+  actions = samplingResult.actions;
+  const samplingDecision = samplingResult.decision;
+
   const cdpClient = sessionManager.getCDPClient();
   const isStealth = sessionManager.isStealthTarget(tabId);
   const stepResults: StepResult[] = [];
@@ -840,6 +929,14 @@ Suggestion: ${suggestion}`,
     lines.push('', `[Warning] ${parseWarning}`);
   }
 
+  // Only surface the [Sampling] line and `_meta.sampling` when the connected
+  // client actually advertised sampling; otherwise this would pollute every
+  // act result for clients that never opted into sampling.
+  if (samplingDecision.supported) {
+    const reason = samplingDecision.fallbackReason ? ` fallback=${samplingDecision.fallbackReason}` : '';
+    lines.push('', `[Sampling] used=${samplingDecision.used}${reason}`);
+  }
+
   if (workflowDebug && workflowDecision) {
     lines.push('', formatWorkflowDebug(workflowDecision));
   }
@@ -848,7 +945,8 @@ Suggestion: ${suggestion}`,
     content: [{ type: 'text', text: lines.join('\n') }],
     isError: !success,
   };
-  return actVerifyReport ? { ...baseResult, verify: actVerifyReport } : baseResult;
+  const withMeta = samplingDecision.supported ? { ...baseResult, _meta: { sampling: samplingDecision } } : baseResult;
+  return actVerifyReport ? { ...withMeta, verify: actVerifyReport } : withMeta;
 };
 
 // ─── Registration ───
@@ -876,3 +974,4 @@ const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult
 export function registerActTool(server: MCPServer): void {
   server.registerTool('act', handler, definition);
 }
+export const __test__ = { maybeRefineActionsWithSampling, parseSampledActions };
