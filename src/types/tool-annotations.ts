@@ -171,7 +171,6 @@ export const TOOL_ANNOTATIONS = {
   memory: DESTRUCTIVE,
   oc_skill_record: MUTATES,
   oc_journal: MUTATES,
-  oc_journal_compact: READ_ONLY,
   oc_session_snapshot: MUTATES,
   oc_session_resume: MUTATES,
   oc_checkpoint: MUTATES,
@@ -250,13 +249,6 @@ export const TOOL_ANNOTATIONS = {
   oc_task_run_complete: DESTRUCTIVE,
   oc_task_run_get: READ_ONLY,
   oc_task_run_list: READ_ONLY,
-
-  // ── Vision Q&A via MCP sampling (#1432) ────────────────────────────────
-  // `image_qa` issues no browser side effects — it reads caller-supplied
-  // bytes and forwards them to the host via sampling/createMessage. The
-  // host LLM answers; the tool is observably read-only from the browser's
-  // perspective. When sampling is absent it returns a structured no-op.
-  image_qa: READ_ONLY,
 
   // ── Virtual / runtime-only ──────────────────────────────────────────────
   // expand_tools is built inline by mcp-server.ts handleToolsList() and is
