@@ -53,6 +53,14 @@ export interface SessionManagerConfig {
   sessionTTL?: number;
   /** Auto-cleanup interval in milliseconds (default: 1 minute) */
   cleanupInterval?: number;
+  /**
+   * Idle TTL for a managed target lease, in ms (default: 30 minutes; 0 disables).
+   * Sliding — refreshed on every executeCDP call. A non-default-session lease that
+   * goes silent past this window is treated as a disconnected/crashed owner and its
+   * tab is reclaimed by auto-cleanup. The "default" session is exempt (mirrors the
+   * sessionTTL protection), and `preserve`-policy leases are never auto-closed.
+   */
+  targetLeaseTtl?: number;
   /** Enable auto-cleanup (default: true) */
   autoCleanup?: boolean;
   /** Maximum number of sessions (default: 100) */
@@ -99,6 +107,7 @@ export interface SessionManagerStats {
 const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'strictTenantIsolation'>> = {
   sessionTTL: 30 * 60 * 1000,      // 30 minutes
   cleanupInterval: 60 * 1000,       // 1 minute
+  targetLeaseTtl: 30 * 60 * 1000,   // 30 minutes (sliding idle TTL; 0 disables)
   autoCleanup: true,
   maxSessions: 100,
   maxWorkersPerSession: 50,
@@ -260,11 +269,17 @@ export class SessionManager {
     contextName?: string,
     parentTargetId?: string,
   ): void {
-    if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName })) {
+    // #1359 backlog item 7: arm the sliding idle TTL so a disconnected/crashed
+    // owner's lease eventually expires and its tab is reclaimed. The "default"
+    // session is exempt (it persists like the session itself); a configured TTL
+    // of 0 disables expiry globally.
+    const configuredTtl = this.config.targetLeaseTtl;
+    const ttlMs = sessionId === DEFAULT_SESSION_ID || !configuredTtl ? undefined : configuredTtl;
+    if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName, ttlMs })) {
       return;
     }
     try {
-      this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+      this.targetLeases.acquire({ targetId, sessionId, workerId, contextName, ttlMs });
     } catch (err) {
       // #1359 backlog item 3: a conflicting lease means a stale or rogue
       // owner still holds the registry entry — log loudly so operators see
@@ -277,7 +292,7 @@ export class SessionManager {
           `[SessionManager] Target ${targetId.slice(0, 8)} lease conflict: previous owner session=${err.existing.sessionId} worker=${err.existing.workerId ?? 'unknown'}; transferring to session=${sessionId} worker=${workerId}`,
         );
         this.targetLeases.release(targetId);
-        this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+        this.targetLeases.acquire({ targetId, sessionId, workerId, contextName, ttlMs });
         return;
       }
       throw err;
@@ -704,6 +719,22 @@ export class SessionManager {
     const expiredLeases = this.targetLeases.expire(now);
     for (const lease of expiredLeases) {
       this.targetQueueManager.cancelTarget(lease.targetId);
+      // #1359 backlog item 7: reclaim the orphaned tab of an idle/crashed owner.
+      // The lease is a sliding idle TTL refreshed on every executeCDP call, so it
+      // only reaches expiry when the owner has gone silent past the TTL. Close the
+      // tab best-effort unless the owner asked to preserve it; reconcile/GC handle
+      // anything already gone.
+      if (lease.cleanupPolicy !== 'preserve') {
+        try {
+          await this.closeTarget(lease.sessionId, lease.targetId);
+          console.error(
+            `[SessionManager] Reclaimed idle target ${lease.targetId.slice(0, 8)} ` +
+            `(lease expired; owner session=${lease.sessionId} silent > TTL)`,
+          );
+        } catch {
+          // best-effort; reconcileAliveTargetIds / GC handle already-gone targets
+        }
+      }
     }
 
     // Trigger browser-level GC after bulk cleanup
@@ -1789,6 +1820,9 @@ export class SessionManager {
     }
 
     this.touchSession(sessionId);
+    // Slide the target lease forward on activity so an actively used tab is never
+    // reclaimed by the idle-TTL sweep (#1359 backlog item 7).
+    this.targetLeases.touch(targetId);
 
     const ownerInfo = this.targetToWorker.get(targetId);
     const cdpClient = ownerInfo

@@ -45,4 +45,40 @@ describe('TargetLeaseRegistry', () => {
     expect(registry.reconcileAliveTargetIds(new Set(['alive'])).map((lease) => lease.targetId)).toEqual(['gone']);
     expect(registry.snapshot().map((lease) => lease.targetId)).toEqual(['alive']);
   });
+
+  test('touch slides the idle TTL forward so an active lease is never reclaimed', () => {
+    const registry = new TargetLeaseRegistry();
+    registry.acquire({ targetId: 't1', sessionId: 's1', now: 0, ttlMs: 100 });
+    // Without activity the lease would expire at 100.
+    expect(registry.get('t1')?.leaseExpiresAt).toBe(100);
+
+    // Activity at t=80 slides expiry to 180.
+    registry.touch('t1', 80);
+    expect(registry.get('t1')?.leaseExpiresAt).toBe(180);
+
+    // So at t=120 (past the original deadline) the lease is still alive — this is
+    // the long-running-agent case the SSOT open question #4 worried about.
+    expect(registry.expire(120)).toEqual([]);
+    // Only after a full idle window with no further activity does it expire.
+    expect(registry.expire(181).map((lease) => lease.targetId)).toEqual(['t1']);
+  });
+
+  test('a lease acquired without a TTL never expires (touch does not arm one)', () => {
+    const registry = new TargetLeaseRegistry();
+    // Mirrors the "default" session exemption wired in SessionManager.
+    registry.acquire({ targetId: 'default', sessionId: 's1', now: 0 });
+    registry.touch('default', 10_000);
+    expect(registry.get('default')?.leaseExpiresAt).toBeUndefined();
+    expect(registry.expire(1_000_000)).toEqual([]);
+  });
+
+  test('re-acquire by the same session carries and refreshes the idle TTL', () => {
+    const registry = new TargetLeaseRegistry();
+    registry.acquire({ targetId: 't1', sessionId: 's1', now: 0, ttlMs: 100 });
+    // Re-acquire (e.g. ownership transfer to the same session) at t=50 without a
+    // ttlMs argument still carries the original TTL and refreshes the deadline.
+    registry.acquire({ targetId: 't1', sessionId: 's1', now: 50 });
+    expect(registry.get('t1')?.ttlMs).toBe(100);
+    expect(registry.get('t1')?.leaseExpiresAt).toBe(150);
+  });
 });

@@ -10,6 +10,12 @@ export interface TargetLeaseRecord {
   createdAt: number;
   lastActivityAt: number;
   leaseExpiresAt?: number;
+  /**
+   * Idle TTL in ms, stored so {@link TargetLeaseRegistry.touch} can slide
+   * `leaseExpiresAt` forward on activity. A lease only reaches `expire()` after
+   * its owner has been silent for `ttlMs` — i.e. a disconnected/crashed client.
+   */
+  ttlMs?: number;
   cleanupPolicy: TargetCleanupPolicy;
 }
 
@@ -42,6 +48,8 @@ export class TargetLeaseRegistry {
     const now = input.now ?? Date.now();
     const existing = this.leases.get(input.targetId);
     if (existing && existing.sessionId !== input.sessionId) throw new TargetLeaseConflictError(existing);
+    // Carry the idle TTL across re-acquires so a refreshed lease keeps sliding.
+    const ttlMs = input.ttlMs ?? existing?.ttlMs;
     const record: TargetLeaseRecord = {
       targetId: input.targetId,
       sessionId: input.sessionId,
@@ -51,7 +59,8 @@ export class TargetLeaseRegistry {
       ...(input.contextName ? { contextName: input.contextName } : {}),
       createdAt: existing?.createdAt ?? now,
       lastActivityAt: now,
-      ...(input.ttlMs ? { leaseExpiresAt: now + input.ttlMs } : existing?.leaseExpiresAt ? { leaseExpiresAt: existing.leaseExpiresAt } : {}),
+      ...(ttlMs !== undefined ? { ttlMs } : {}),
+      ...(ttlMs !== undefined ? { leaseExpiresAt: now + ttlMs } : existing?.leaseExpiresAt ? { leaseExpiresAt: existing.leaseExpiresAt } : {}),
       cleanupPolicy: input.cleanupPolicy ?? existing?.cleanupPolicy ?? 'close-on-session-end',
     };
     this.leases.set(input.targetId, record);
@@ -76,7 +85,11 @@ export class TargetLeaseRegistry {
 
   touch(targetId: string, now = Date.now()): void {
     const lease = this.leases.get(targetId);
-    if (lease) lease.lastActivityAt = now;
+    if (!lease) return;
+    lease.lastActivityAt = now;
+    // Sliding idle TTL: any activity pushes expiry forward, so an actively used
+    // tab is never reclaimed; only an idle/crashed owner's lease reaches expiry.
+    if (lease.ttlMs !== undefined) lease.leaseExpiresAt = now + lease.ttlMs;
   }
 
   get(targetId: string): TargetLeaseRecord | undefined {
