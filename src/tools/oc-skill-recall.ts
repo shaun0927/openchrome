@@ -14,6 +14,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { SkillMemoryStore, type SkillRecord } from '../core/skill-memory';
+import { createAuditLogStatsResolver, type SkillStatsResolver } from '../core/skill-memory/stats-resolver';
 
 export interface RankedSkillRecord extends SkillRecord {
   score?: number;
@@ -97,6 +98,14 @@ const definition: MCPToolDefinition = {
           'unpromoted domain (v1.x auto-fallback) it yields recorded + ' +
           'quarantined. (#1431)',
       },
+      use_run_stats: {
+        type: 'boolean',
+        description:
+          'Opt in to factor audit-log run statistics (recent-window failure ' +
+          'rate) into ranked recall, demoting skills that fail often. Implies ' +
+          'ranked recall. Default false — when off, recall does no audit-log ' +
+          'I/O and behaves exactly as before. (#1457)',
+      },
     },
     required: ['domain'],
   },
@@ -115,7 +124,8 @@ const handler: ToolHandler = async (
     : typeof args.query === 'string'
       ? args.query
       : '';
-  const rankedRecall = args.ranked === true || task.trim().length > 0;
+  const useRunStats = args.use_run_stats === true;
+  const rankedRecall = args.ranked === true || task.trim().length > 0 || useRunStats;
 
   if (typeof domain !== 'string' || domain.length === 0) {
     const output: OcSkillRecallOutput = {
@@ -182,8 +192,14 @@ const handler: ToolHandler = async (
     return true;
   });
 
+  // #1457 PR-7: opt-in audit-log run statistics. The resolver is built only when
+  // requested, so the default recall path does zero audit-log I/O (P7 — core
+  // stays fast and deterministic).
+  const statsResolver: SkillStatsResolver | undefined = useRunStats
+    ? createAuditLogStatsResolver()
+    : undefined;
   const ordered = rankedRecall
-    ? rankSkillsForTask(skills, { task, contractId })
+    ? rankSkillsForTask(skills, { task, contractId, statsResolver })
     : applyRecallRanking(skills);
 
   const capped = limit === 0 ? [] : ordered.slice(0, limit);
@@ -208,11 +224,11 @@ export function applyRecallRanking(skills: SkillRecord[]): SkillRecord[] {
 
 export function rankSkillsForTask(
   skills: SkillRecord[],
-  opts: { task?: string; contractId?: string } = {},
+  opts: { task?: string; contractId?: string; statsResolver?: SkillStatsResolver } = {},
 ): RankedSkillRecord[] {
   const queryTokens = [...tokenize(opts.task || '')];
   return skills
-    .map((skill) => scoreSkillForTask(skill, queryTokens, opts.contractId))
+    .map((skill) => scoreSkillForTask(skill, queryTokens, opts.contractId, opts.statsResolver))
     .sort((a, b) => {
       if ((b.score ?? 0) !== (a.score ?? 0)) return (b.score ?? 0) - (a.score ?? 0);
       if (b.lastUsedAt !== a.lastUsedAt) return b.lastUsedAt - a.lastUsedAt;
@@ -238,6 +254,7 @@ export function scoreSkillForTask(
   skill: SkillRecord,
   queryTokens: string[],
   contractId?: string,
+  statsResolver?: SkillStatsResolver,
 ): RankedSkillRecord {
   const searchable = buildRecallText(skill);
   const skillTokens = tokenize(searchable);
@@ -247,13 +264,28 @@ export function scoreSkillForTask(
   const successBoost = Math.min(Math.max(skill.successCount, 0), 10) * 0.025;
   const replayBoost = replaySignal * 0.2;
   const contractBoost = contractId && skill.contractId === contractId ? 0.15 : 0;
-  const score = Math.max(0, Math.min(1, overlap + successBoost + replayBoost + contractBoost));
+  // #1457 PR-7: opt-in audit-log failure-rate penalty. Only applied when a stats
+  // resolver is supplied (use_run_stats); a skill that fails often in the recent
+  // window is demoted proportionally. Deterministic, no LLM.
+  let statsPenalty = 0;
+  const statsReason: string[] = [];
+  if (statsResolver) {
+    const stats = statsResolver(skill);
+    const runs = stats.successesInWindow + stats.failuresInWindow;
+    if (runs > 0) {
+      const failRate = stats.failuresInWindow / runs;
+      statsPenalty = -0.3 * failRate;
+      statsReason.push(`run_fail_rate=${failRate.toFixed(2)} (${stats.failuresInWindow}/${runs} in window)`);
+    }
+  }
+  const score = Math.max(0, Math.min(1, overlap + successBoost + replayBoost + contractBoost + statsPenalty));
   const reasons = [
     `${overlapCount}/${queryTokens.length || 0} task-token matches`,
     `success_count=${skill.successCount}`,
     `replay_signal=${replaySignal}`,
   ];
   if (contractBoost > 0) reasons.push(`contract_id=${contractId}`);
+  reasons.push(...statsReason);
   return {
     ...skill,
     score: Number(score.toFixed(4)),
