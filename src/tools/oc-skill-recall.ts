@@ -259,8 +259,10 @@ export function projectCodegenReplay(
   skill: SkillRecord,
 ): { available: boolean; artifacts: CodegenArtifactPointer[] } {
   return {
+    // Shallow-copy so a downstream consumer mutating the projected array cannot
+    // corrupt the in-memory SkillRecord this pointer was derived from.
     available: (skill.codegenArtifacts?.length ?? 0) > 0,
-    artifacts: skill.codegenArtifacts ?? [],
+    artifacts: skill.codegenArtifacts?.slice() ?? [],
   };
 }
 
