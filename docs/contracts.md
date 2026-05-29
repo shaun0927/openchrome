@@ -231,6 +231,18 @@ followed by `JSON.parse` is lossless for every assertion kind in this
 document. If you need to wire trace events to a replay UI, attach
 `trace_ref` from the runtime — the DSL itself never invents trace IDs.
 
+### `failure_category` on a `fail` verdict
+
+When `oc_assert` returns `verdict: "fail"`, the output also carries a
+machine-stable `failure_category` (one of the shared `FAILURE_CATEGORIES`,
+e.g. `POSTCONDITION_FAILED`, `ELEMENT_NOT_FOUND`, `NAVIGATION_TIMEOUT`) plus a
+short `failure_reason`. A clean expected/actual mismatch is
+`POSTCONDITION_FAILED`; if an evaluator surfaced an error string (e.g. a
+detached node), that error is classified instead. This lets a host agent branch
+recovery (retry vs re-auth vs solve-captcha) on a stable code rather than
+re-parsing raw diffs. Classification is purely deterministic — OpenChrome never
+calls a model to decide it.
+
 ## Worked example — `amazon.checkout`
 
 ```jsonc

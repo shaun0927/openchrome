@@ -87,6 +87,35 @@ describe('oc_assert — verdicts', () => {
     expect(failed[0].actual).toBe('https://example.com');
   });
 
+  test('fail: surfaces a machine-stable failure_category (POSTCONDITION_FAILED for a clean mismatch)', async () => {
+    const { handler } = setup();
+    const out = await invoke(handler, {
+      contract: { kind: 'url', pattern: '^https://other\\.com' },
+      evidence: { snapshot: { url: 'https://example.com' } },
+    });
+    expect(out.verdict).toBe('fail');
+    // A clean expected/actual mismatch (no evaluator error) classifies as a
+    // postcondition failure so the host can branch recovery on a stable code.
+    expect(out.failure_category).toBe('POSTCONDITION_FAILED');
+    expect(typeof out.failure_reason).toBe('string');
+  });
+
+  test('pass / inconclusive verdicts carry no failure_category', async () => {
+    const { handler } = setup();
+    const pass = await invoke(handler, {
+      contract: { kind: 'url', pattern: '^https://example\\.com/?$' },
+      evidence: { snapshot: { url: 'https://example.com' } },
+    });
+    expect(pass.verdict).toBe('pass');
+    expect(pass.failure_category).toBeUndefined();
+
+    const inconclusive = await invoke(handler, {
+      contract: { kind: 'url', pattern: '^x$' },
+    });
+    expect(inconclusive.verdict).toBe('inconclusive');
+    expect(inconclusive.failure_category).toBeUndefined();
+  });
+
   test('inconclusive: missing evidence.snapshot', async () => {
     const { handler } = setup();
     const out = await invoke(handler, {
