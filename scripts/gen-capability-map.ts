@@ -111,7 +111,10 @@ function main(): void {
   const content = renderCapabilityMap(collectCapabilityMapEntries());
   if (check) {
     const current = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8') : '';
-    if (current !== content) {
+    // Compare line-ending-agnostically: on Windows, git may check the doc out
+    // with CRLF (core.autocrlf) while the generator always emits LF, which would
+    // otherwise fail this check spuriously in CI.
+    if (current.replace(/\r\n/g, '\n') !== content) {
       console.error('Capability map is out of date. Run npm run docs:capability-map.');
       process.exit(1);
     }
