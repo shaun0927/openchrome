@@ -2,7 +2,7 @@
 
 > Generated from `src/tools/index.ts`. Do not edit by hand; run `npm run docs:capability-map`.
 
-Total tools: 107
+Total tools: 118
 
 ## core
 
@@ -10,6 +10,7 @@ Total tools: 107
 - `computer` — Mouse, keyboard, and screenshot actions on a tab.
 - `console_capture` — Capture browser console output (start, stop, get, clear).
 - `drag_drop` — Drag and drop by selector or coordinates.
+- `element_pick` — Start or cancel an in-page human element picker overlay.
 - `emulate_device` — Emulate device viewport and UA via preset or custom.
 - `extract_data` — Extract JSON-schema data from JSON-LD, Microdata, OpenGraph, or CSS.
 - `file_upload` — Upload files to a file input element on the page.
@@ -18,6 +19,7 @@ Total tools: 107
 - `form_input` — Set one form element value by ref.
 - `geolocation` — Set or clear geolocation override.
 - `http_auth` — Set or clear HTTP auth credentials.
+- `image_qa` — Ask the connected host LLM a question about a caller-supplied screenshot.
 - `inspect` — Extract focused page state by query.
 - `interact` — Find element by natural language; click/hover/double_click it; wait for DOM settle; return state.
 - `javascript_tool` — Execute JavaScript in page context.
@@ -34,10 +36,17 @@ Total tools: 107
 - `oc_context_import` — Strict-replace import of a `ContextEnvelope` produced by `oc_context_export`.
 - `oc_copy_to_clipboard` — Copy text to the system clipboard.
 - `oc_devtools_url` — Get the Chrome DevTools inspector URL for the current worker's active page.
+- `oc_diff` — Compare two evidence-bundle IDs or paths and return deterministic DOM, screenshot phash, URL, console, and network diff facts.
 - `oc_doctor_report` — Read the most recent openchrome doctor diagnostic report from cache.
 - `oc_evidence_bundle` — Capture a snapshot of the current page state (DOM, screenshot, network slice, console, perceptual hash) and write it to a bundle directory.
+- `oc_gate_inspect` — Detect whether the current tab is gated (CAPTCHA, SSO redirect, paywall, 2FA prompt).
 - `oc_get_connection_info` — Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom).
 - `oc_journal` — Query the tool call journal.
+- `oc_journal_compact` — Compress a sliding window of journal entries into a compact model-friendly summary.
+- `oc_lane_close` — Close a task-scoped browser lane and its lane-owned targets without closing unrelated task tabs.
+- `oc_lane_create` — Create a task-scoped browser lane on existing SessionManager worker/target primitives.
+- `oc_lane_get` — Fetch one task-scoped browser lane including live target ids and counters.
+- `oc_lane_list` — List task-scoped browser lanes for a task.
 - `oc_normalize_action` — Validate and normalize a near-valid browser/computer action payload without executing it.
 - `oc_observe` — Deterministic, numbered list of actionable elements on the page.
 - `oc_open_host_settings` — Open the MCP connector settings page for a web AI host in the default browser.
@@ -55,6 +64,7 @@ Total tools: 107
 - `oc_run_status` — Return the current status and summary for an opt-in OpenChrome run ledger.
 - `oc_session_resume` — Restore working context after context compaction.
 - `oc_session_snapshot` — Save browser state snapshot for context recovery after compaction.
+- `oc_skill_export` — Export an opt-in codegen replay artifact written by --codegen.
 - `oc_skill_recall` — Retrieve skills from the JSON skill memory store for a given domain.
 - `oc_skill_record` — Record a skill (domain, name, steps, contract_id) into the JSON skill memory store.
 - `oc_stop` — Shut down OpenChrome and close Chrome.
@@ -72,6 +82,7 @@ Total tools: 107
 - `oc_task_start` — Create a task-level browser harness envelope, or launch a long-running tool as a background task.
 - `oc_task_update` — Update a task envelope phase or note.
 - `oc_task_wait` — Block until the task reaches a terminal state (COMPLETED / FAILED / CANCELLED) or timeout_ms elapses.
+- `oc_vitals` — Collect a read-only Web Vitals snapshot from the current page without adding page scripts or package dependencies.
 - `page_content` — Get HTML content from page or element.
 - `page_pdf` — Generate PDF from page.
 - `page_reload` — Reload the current page.

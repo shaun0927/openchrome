@@ -37,15 +37,20 @@ You: compare "AirPods Pro" prices across Amazon, eBay, Walmart, Best Buy
 
 AI:  [4 parallel lanes, already authenticated everywhere]
      Best Buy $179 · Amazon $189 · Walmart $185 · eBay $172
-     2.4s — live pages, past bot detection
+     live pages · already authenticated · past bot detection
 ```
 
 | | Traditional (Playwright et al.) | OpenChrome |
 |---|:---:|:---:|
-| 5-site task | ~250s (login each) | **~3s** (parallel) |
-| Memory | ~2.5 GB (5 browsers) | **~300 MB** (1 Chrome) |
+| 5-site task* | ~250s (login each) | **~3s** (parallel) |
+| Memory* | ~2.5 GB (5 browsers) | **~300 MB** (1 Chrome) |
 | Re-auth | every run | **never** |
 | Bot detection | flagged | **invisible** (real Chrome) |
+
+<sub>\* Illustrative of the architectural difference (one authenticated Chrome vs. N cold
+browsers), not benchmarked competitive results. Quantitative speed/cost figures become
+headline claims only as live or recorded-real benchmark rows — see
+[`docs/benchmarks/benchmark-direction.md`](docs/benchmarks/benchmark-direction.md).</sub>
 
 ---
 
@@ -100,7 +105,7 @@ Ask your agent in plain language — these all map to OpenChrome tools:
 - **Crawling** — async `crawl_start` / `crawl_status` / `crawl_cancel` jobs with cursor pagination.
 - **Verifiable runs** — `oc_assert` checks page state against an Outcome Contract (pass / fail / inconclusive) instead of guessing.
 
-The default surface is ~110 tools across navigation, interaction, reading,
+The default surface is 118 tools across navigation, interaction, reading,
 extraction, parallel workflows, contracts, skills, recovery, and diagnostics.
 Full catalogue: [`docs/agent/capability-map.md`](docs/agent/capability-map.md).
 
@@ -185,14 +190,16 @@ wrong guess costs 10–15s of inference. OpenChrome's harness cuts that loop:
 | **Outcome classifier** | Reports what *actually* happened after a click (SUCCESS / SILENT_CLICK / WRONG_ELEMENT). |
 | **49 reliability mechanisms** | 8 defense layers from process lifecycle to MCP gateway — no single failure hangs the server. See [`docs/architecture.md`](docs/architecture.md). |
 
-Result on a typical 5-site task: ~80% fewer LLM calls, ~80x faster wall time,
-~5x cheaper.
+The harness is designed to cut the think-act loop: fewer LLM round-trips, faster
+wall time, lower cost. Specific speed/cost multipliers are published as headline
+claims only when backed by live or recorded-real benchmark rows — see
+[`docs/benchmarks/benchmark-direction.md`](docs/benchmarks/benchmark-direction.md).
 
 ---
 
 ## Other capabilities worth knowing
 
-- **Parallel sessions** — 1 Chrome, N tabs/lanes; `workerId` + `profileDirectory` give per-client isolation. Multiple MCP clients can share tabs safely.
+- **Parallel sessions** — 1 Chrome, N tabs/lanes; `workerId` + `profileDirectory` give per-client isolation. Multiple MCP clients can share one Chrome safely when they connect through a single broker/HTTP owner (`--broker` / `--connect-broker`); independent stdio clients should use separate `--port` / `--user-data-dir` profiles. See [`docs/mcp/topologies.md`](docs/mcp/topologies.md).
 - **Anti-bot / Turnstile** — 3-tier auto-fallback (headless → stealth → real headed Chrome) bypasses CDN/WAF blocks. [Turnstile guide](docs/turnstile-guide.md).
 - **Interactive login** — headed by default since the launcher runs visible; complete 2FA/CAPTCHA once, reuse the persistent profile after.
 - **Session persistence** — `--persist-storage` saves cookies + localStorage atomically for headless reuse.
