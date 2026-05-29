@@ -127,4 +127,13 @@ describe('rankSkillsForTask — opt-in run-stats penalty (#1457 PR-7)', () => {
     const ranked = rankSkillsForTask([a], { task: 'submit order' });
     expect((ranked[0].reason || '')).not.toContain('run_fail_rate');
   });
+
+  test('emits no run_fail_rate note for a skill with runs but zero failures (failRate 0)', () => {
+    const a = skill('a', [{ tool: 'interact', args: { description: 'submit order' } }]);
+    // 10 successes, 0 failures → failRate 0 → no penalty and, crucially, no
+    // misleading `run_fail_rate=0.00` note in the reason.
+    const statsResolver = (): SkillRunStats => stats(10, 0);
+    const ranked = rankSkillsForTask([a], { task: 'submit order', statsResolver });
+    expect((ranked[0].reason || '')).not.toContain('run_fail_rate');
+  });
 });

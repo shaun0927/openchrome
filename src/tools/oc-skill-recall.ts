@@ -104,7 +104,9 @@ const definition: MCPToolDefinition = {
           'Opt in to factor audit-log run statistics (recent-window failure ' +
           'rate) into ranked recall, demoting skills that fail often. Implies ' +
           'ranked recall. Default false — when off, recall does no audit-log ' +
-          'I/O and behaves exactly as before. (#1457)',
+          'I/O and behaves exactly as before. When on, recall performs a one-' +
+          'time synchronous scan of the audit log per call, which can be slower ' +
+          'on very large logs. (#1457)',
       },
     },
     required: ['domain'],
@@ -275,7 +277,12 @@ export function scoreSkillForTask(
     if (runs > 0) {
       const failRate = stats.failuresInWindow / runs;
       statsPenalty = -0.3 * failRate;
-      statsReason.push(`run_fail_rate=${failRate.toFixed(2)} (${stats.failuresInWindow}/${runs} in window)`);
+      // Only surface the note when there is an actual penalty. A skill with
+      // runs but zero failures (failRate 0) is not demoted, so emitting
+      // `run_fail_rate=0.00` would be misleading noise rather than a signal.
+      if (failRate > 0) {
+        statsReason.push(`run_fail_rate=${failRate.toFixed(2)} (${stats.failuresInWindow}/${runs} in window)`);
+      }
     }
   }
   const score = Math.max(0, Math.min(1, overlap + successBoost + replayBoost + contractBoost + statsPenalty));
