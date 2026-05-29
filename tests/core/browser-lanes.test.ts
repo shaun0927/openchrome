@@ -3,7 +3,7 @@ import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { applyLaneTarget, createBrowserLane, closeBrowserLane, getBrowserLane, recordLaneToolCall } from '../../src/core/browser-lanes';
+import { applyLaneTarget, createBrowserLane, closeBrowserLane, getBrowserLane, reconcileBrowserLaneTargets, recordLaneToolCall } from '../../src/core/browser-lanes';
 import { TaskStore } from '../../src/core/task-ledger/store';
 import type { TaskMeta } from '../../src/core/task-ledger/types';
 import { setTaskStoreForTests } from '../../src/tools/oc-task-start';
@@ -73,6 +73,43 @@ describe('browser lanes (#1037)', () => {
 
   test('applyLaneTarget rejects cross-lane tabId', () => {
     expect(() => applyLaneTarget({ taskId, laneId: 'lane_alpha', tabId: 'tab-b' })).toThrow(/does not belong/);
+  });
+
+
+  test('reconcileBrowserLaneTargets marks missing restored targets as recoverable failures', async () => {
+    const lanes = await reconcileBrowserLaneTargets(taskId, new Set<string>());
+
+    expect(lanes[0]).toMatchObject({
+      status: 'failed',
+      recovery: 'target_missing',
+      targetStatuses: [{ targetId: 'tab-a', status: 'target_missing' }],
+    });
+    expect(getBrowserLane(taskId, 'lane_alpha')).toMatchObject({ status: 'failed', recovery: 'target_missing' });
+  });
+
+  test('reconcileBrowserLaneTargets keeps lane open when every restored target is live', async () => {
+    const lanes = await reconcileBrowserLaneTargets(taskId, new Set(['tab-a']));
+
+    expect(lanes[0]).toMatchObject({
+      status: 'open',
+      targetStatuses: [{ targetId: 'tab-a', status: 'open' }],
+    });
+    expect(lanes[0].recovery).toBeUndefined();
+  });
+
+  test('reconcileBrowserLaneTargets reports per-target status when some targets are missing', async () => {
+    await recordLaneToolCall({ taskId, laneId: 'lane_alpha' }, true, 'tab-b');
+
+    const lanes = await reconcileBrowserLaneTargets(taskId, new Set(['tab-a']));
+
+    expect(lanes[0]).toMatchObject({
+      status: 'failed',
+      recovery: 'target_missing',
+      targetStatuses: [
+        { targetId: 'tab-a', status: 'open' },
+        { targetId: 'tab-b', status: 'target_missing' },
+      ],
+    });
   });
 
   test('recordLaneToolCall increments lane counters and appends new target', async () => {

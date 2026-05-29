@@ -21,6 +21,7 @@ import {
   generateResumeGuide,
   SNAPSHOT_DIR,
   registerSessionResumeTool,
+  collectLiveTargetIds,
 } from '../../src/tools/session-resume';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -734,5 +735,76 @@ describe('generateResumeGuide supplemental artifacts', () => {
     expect(guide).toContain('Evidence bundles:');
     expect(guide).toContain('bundle-1: /tmp/openchrome/bundle-1');
     expect(guide).toContain('Recommended next safe action');
+  });
+
+  test('surfaces browser lane recovery status when reconcile reports target_missing', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, [], {
+      lanes: [{
+        lane_id: 'lane_alpha',
+        task_id: 'task-1',
+        name: 'login',
+        status: 'failed',
+        sessionId: 'sess-1',
+        workerId: 'task:task-1:lane:lane_alpha',
+        targetIds: ['tab-a', 'tab-b'],
+        targetStatuses: [
+          { targetId: 'tab-a', status: 'open' },
+          { targetId: 'tab-b', status: 'target_missing' },
+        ],
+        recovery: 'target_missing',
+        created_at: Date.now() - 1000,
+        last_activity_at: Date.now(),
+        counters: { toolCalls: 3, failures: 1 },
+      } as any],
+    });
+
+    expect(guide).toContain('Browser lanes:');
+    expect(guide).toContain('lane_alpha "login"');
+    expect(guide).toContain('recovery=target_missing missing=1/2');
+    expect(guide).toContain('Recovery: failed lanes need a fresh tab');
+  });
+
+  test('omits browser lane section when no lanes reconciled', () => {
+    const snap = makeSnapshot();
+    const guide = generateResumeGuide(snap as any, []);
+    expect(guide).not.toContain('Browser lanes:');
+  });
+});
+
+// ─── collectLiveTargetIds (lane reconciliation wiring, #1037) ─────────────
+
+describe('collectLiveTargetIds', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('returns LIVE and REMAPPED target ids from tab analysis', () => {
+    (getSessionManager as jest.Mock).mockReturnValue(makeMockSessionManager());
+
+    const ids = collectLiveTargetIds([
+      { saved: makeTab() as any, status: 'LIVE', currentTargetId: 'tab-live' },
+      { saved: makeTab() as any, status: 'REMAPPED', currentTargetId: 'tab-remap' },
+      { saved: makeTab() as any, status: 'CLOSED' },
+    ]);
+
+    expect(ids.has('tab-live')).toBe(true);
+    expect(ids.has('tab-remap')).toBe(true);
+    expect(ids.size).toBe(2);
+  });
+
+  test('also picks up SessionManager-known targets not present in the snapshot', () => {
+    (getSessionManager as jest.Mock).mockReturnValue(makeMockSessionManager({
+      getAllSessionInfos: jest.fn().mockReturnValue([{ id: 'sess-1', workers: [{ id: 'w1' }] }]),
+      getWorkerTargetIds: jest.fn().mockReturnValue(['extra-tab']),
+    }));
+
+    const ids = collectLiveTargetIds([]);
+    expect(ids.has('extra-tab')).toBe(true);
+  });
+
+  test('does not throw when SessionManager is unavailable', () => {
+    (getSessionManager as jest.Mock).mockImplementation(() => { throw new Error('disconnected'); });
+    expect(() => collectLiveTargetIds([])).not.toThrow();
   });
 });

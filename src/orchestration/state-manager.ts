@@ -88,6 +88,7 @@ export interface WorkerSummary {
 
 export class OrchestrationStateManager {
   private baseDir: string;
+  private workerLocks = new Map<string, Promise<void>>();
 
   constructor(baseDir: string = '.agent/chrome-sisyphus') {
     this.baseDir = baseDir;
@@ -188,20 +189,22 @@ export class OrchestrationStateManager {
       return null;
     }
 
-    const current = await this.readWorkerState(workerName);
-    if (!current) {
-      console.error(`[StateManager] Cannot update worker state: worker "${workerName}" not found`);
-      return null;
-    }
+    return this.withWorkerLock(workerName, async () => {
+      const current = await this.readWorkerState(workerName);
+      if (!current) {
+        console.error(`[StateManager] Cannot update worker state: worker "${workerName}" not found`);
+        return null;
+      }
 
-    const updated: WorkerState = {
-      ...current,
-      ...update,
-      lastUpdatedAt: Date.now(),
-    };
+      const updated: WorkerState = {
+        ...current,
+        ...update,
+        lastUpdatedAt: Date.now(),
+      };
 
-    await this.writeWorkerState(workerName, updated);
-    return updated;
+      await this.writeWorkerState(workerName, updated);
+      return updated;
+    });
   }
 
   /**
@@ -214,33 +217,55 @@ export class OrchestrationStateManager {
     result: ProgressEntry['result'],
     error?: string
   ): Promise<void> {
-    const current = await this.readWorkerState(workerName);
-    if (!current) {
-      console.error(`[StateManager] Cannot add progress entry: worker "${workerName}" not found`);
-      return;
+    await this.withWorkerLock(workerName, async () => {
+      const current = await this.readWorkerState(workerName);
+      if (!current) {
+        console.error(`[StateManager] Cannot add progress entry: worker "${workerName}" not found`);
+        return;
+      }
+
+      const entry: ProgressEntry = {
+        iteration: current.iteration,
+        timestamp: new Date().toISOString(),
+        action,
+        result,
+        error,
+      };
+
+      current.progressLog.push(entry);
+
+      // Limit progress log size to prevent unbounded growth
+      if (current.progressLog.length > MAX_PROGRESS_LOG_ENTRIES) {
+        // Keep the most recent entries, remove oldest
+        const removed = current.progressLog.length - MAX_PROGRESS_LOG_ENTRIES;
+        current.progressLog = current.progressLog.slice(removed);
+        console.error(`[StateManager] Progress log truncated for worker "${workerName}": removed ${removed} oldest entries`);
+      }
+
+      current.lastUpdatedAt = Date.now();
+
+      await this.writeWorkerState(workerName, current);
+    });
+  }
+
+  private async withWorkerLock<T>(workerName: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.workerLocks.get(workerName) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current, () => current);
+    this.workerLocks.set(workerName, tail);
+
+    await previous.catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.workerLocks.get(workerName) === tail) {
+        this.workerLocks.delete(workerName);
+      }
     }
-
-    const entry: ProgressEntry = {
-      iteration: current.iteration,
-      timestamp: new Date().toISOString(),
-      action,
-      result,
-      error,
-    };
-
-    current.progressLog.push(entry);
-
-    // Limit progress log size to prevent unbounded growth
-    if (current.progressLog.length > MAX_PROGRESS_LOG_ENTRIES) {
-      // Keep the most recent entries, remove oldest
-      const removed = current.progressLog.length - MAX_PROGRESS_LOG_ENTRIES;
-      current.progressLog = current.progressLog.slice(removed);
-      console.error(`[StateManager] Progress log truncated for worker "${workerName}": removed ${removed} oldest entries`);
-    }
-
-    current.lastUpdatedAt = Date.now();
-
-    await this.writeWorkerState(workerName, current);
   }
 
   /**

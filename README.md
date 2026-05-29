@@ -63,6 +63,9 @@ npx openchrome-mcp setup --client opencode   # OpenCode
 
 Restart your MCP client. That's it — Chrome auto-launches on first tool call.
 
+For manual Codex CLI configuration, run `openchrome config --client codex`
+and add the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
+
 <details>
 <summary>Manual MCP config (Cursor / VS Code / Windsurf / others)</summary>
 

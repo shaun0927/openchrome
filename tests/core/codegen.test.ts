@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import ts from 'typescript';
 
-import { codegenPath, getCodegenMode, normalizeCodegenMode, recordCodegenStep, setCodegenMode } from '../../src/core/codegen';
+import { codegenPath, getCodegenMode, normalizeCodegenMode, recordCodegenStep, replayCommandFor, setCodegenMode } from '../../src/core/codegen';
 
 describe('codegen aggregator (#836)', () => {
   let dir: string;
@@ -45,8 +46,30 @@ describe('codegen aggregator (#836)', () => {
     const replay = recordCodegenStep('s1', 'navigate', { url: 'http://localhost/form' });
     expect(replay?.puppeteer_snippet).toContain('page.goto');
     expect(fs.readFileSync(codegenPath('s1', 'mcp-replay'), 'utf8')).toContain('navigate');
-    const ts = fs.readFileSync(codegenPath('s1', 'puppeteer'), 'utf8');
-    expect(ts).toContain("import puppeteer");
-    expect(ts).toContain('page.goto');
+    const source = fs.readFileSync(codegenPath('s1', 'puppeteer'), 'utf8');
+    expect(source).toContain("import puppeteer");
+    expect(source).toContain('page.goto');
+    expect(source).toContain('main().catch');
+    const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
+    expect(output.diagnostics ?? []).toEqual([]);
+  });
+
+  test('playwright mode keeps the generated TypeScript syntactically complete after multiple steps', () => {
+    setCodegenMode('playwright');
+    recordCodegenStep('s1', 'navigate', { url: 'http://localhost/a' });
+    recordCodegenStep('s1', 'wait_for', { timeoutMs: 25 });
+
+    const file = codegenPath('s1', 'playwright');
+    const source = fs.readFileSync(file, 'utf8');
+    expect(source.match(/main\(\)\.catch/g)).toHaveLength(1);
+    expect(source).toContain('await context.close();');
+    const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
+    expect(output.diagnostics ?? []).toEqual([]);
+  });
+
+  test('replayCommandFor returns an operator command for each artifact format', () => {
+    expect(replayCommandFor('/tmp/s1.mcp-replay.jsonl', 'mcp-replay')).toContain('openchrome replay');
+    expect(replayCommandFor('/tmp/s1.puppeteer.ts', 'puppeteer')).toContain('ts-node');
+    expect(replayCommandFor('/tmp/s1.playwright.ts', 'playwright')).toContain('ts-node');
   });
 });

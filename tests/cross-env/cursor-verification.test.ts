@@ -8,6 +8,8 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 
 const SERVER_PATH = path.resolve(__dirname, '../../dist/index.js');
 const nodeMajor = parseInt(process.version.slice(1), 10);
@@ -19,6 +21,19 @@ jest.setTimeout(60000);
 // ── JSON-RPC helpers ──
 
 let msgId = 0;
+const testUserDataDirs: string[] = [];
+const serverArgs = (port: number, label: string) => {
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), `openchrome-${label}-`));
+  testUserDataDirs.push(userDataDir);
+  return [SERVER_PATH, 'serve', '--auto-launch', '--port', String(port), '--user-data-dir', userDataDir];
+};
+
+afterAll(() => {
+  for (const dir of testUserDataDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function rpcRequest(method: string, params?: Record<string, unknown>) {
   return JSON.stringify({ jsonrpc: '2.0', id: ++msgId, method, params });
 }
@@ -79,7 +94,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
   let server: ChildProcess;
 
   beforeAll(() => {
-    server = spawn('node', [SERVER_PATH, 'serve', '--auto-launch'], {
+    server = spawn('node', serverArgs(19222, 'cursor-primary'), {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, NODE_ENV: 'test' },
     });
@@ -387,7 +402,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
     let unknownServer: ChildProcess;
 
     beforeAll(() => {
-      unknownServer = spawn('node', [SERVER_PATH, 'serve', '--auto-launch'], {
+      unknownServer = spawn('node', serverArgs(19223, 'cursor-unknown'), {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, NODE_ENV: 'test' },
       });

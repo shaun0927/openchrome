@@ -24,17 +24,19 @@ import { execFileSync, spawn } from 'child_process';
 import { checkForUpdates } from './update-check';
 import { runUpdateCommand } from './update-command';
 import {
+  formatCodexMCPServerConfigSnippet,
   formatMCPServerConfigSnippet,
   getClientLabel,
   getClaudeManualServerConfig,
   getClaudeSetupCommand,
   getCodexServerConfig,
+  getCodexSetupCommand,
   getOpenCodeServerConfig,
+  getTopologyWarning,
   formatOpenCodeMCPServerConfigSnippet,
   getSupportedMCPClients,
   isSupportedMCPClient,
   upsertOpenCodeMCPServerConfig,
-  upsertMCPServerConfig,
 } from './mcp-client-config';
 import {
   addTotpSecret,
@@ -189,8 +191,13 @@ program
   .option('--client <client>', 'Client to configure: "claude" (default), "codex", or "opencode"', 'claude')
   .option('--dashboard', 'Enable terminal dashboard')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
+  .option('--port <port>', 'Chrome remote debugging port for generated serve args')
+  .option('--user-data-dir <dir>', 'Chrome user data directory for generated serve args')
+  .option('--profile-directory <name>', 'Chrome profile directory name for generated serve args')
+  .option('--launch-mode <mode>', 'Chrome launch mode: auto, attach, or isolated')
+  .option('--topology <preset>', 'Topology preset: single-owner, isolated, ci-headless, or dev-profile')
   .option('-s, --scope <scope>', 'Installation scope: "user" (global, default) or "project" (current project only)', 'user')
-  .action(async (options: { client?: string; dashboard?: boolean; autoLaunch?: boolean; scope?: string }) => {
+  .action(async (options: { client?: string; dashboard?: boolean; autoLaunch?: boolean; port?: string; userDataDir?: string; profileDirectory?: string; launchMode?: string; topology?: string; scope?: string }) => {
     const requestedClient = options.client || 'claude';
     if (!isSupportedMCPClient(requestedClient)) {
       console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
@@ -207,7 +214,20 @@ program
       process.exit(1);
     }
 
-    const serveArgOptions = { autoLaunch: options.autoLaunch, dashboard: options.dashboard };
+    const serveArgOptions = {
+      autoLaunch: options.autoLaunch,
+      dashboard: options.dashboard,
+      port: options.port,
+      userDataDir: options.userDataDir,
+      profileDirectory: options.profileDirectory,
+      launchMode: options.launchMode,
+      topology: options.topology as undefined | 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile',
+    };
+    const topologyWarning = getTopologyWarning(serveArgOptions);
+    if (topologyWarning) {
+      console.warn(`⚠️  ${topologyWarning}`);
+      console.warn('   See docs/mcp/topologies.md for safe parallel setup examples.');
+    }
 
     if (client === 'claude') {
       const claudeCmd = getClaudeCliCommand();
@@ -330,34 +350,28 @@ program
     }
 
     if (scope !== 'user') {
-      console.warn('⚠️  Scope is not used for Codex CLI; writing to ~/.codex/mcp.json.');
+      console.warn('⚠️  Scope is not used for Codex CLI; configuring the user-level Codex MCP registry.');
     }
 
+    const codexSetupArgs = getCodexSetupCommand(serveArgOptions);
+    console.log('Running: codex mcp add openchrome...');
+
     try {
-      const codexConfigPath = path.join(os.homedir(), '.codex', 'mcp.json');
-      fs.mkdirSync(path.dirname(codexConfigPath), { recursive: true });
-
-      let config: Record<string, unknown> = {};
-      if (fs.existsSync(codexConfigPath)) {
-        config = JSON.parse(fs.readFileSync(codexConfigPath, 'utf8'));
-      }
-
-      const updatedConfig = upsertMCPServerConfig(config, 'openchrome', getCodexServerConfig(serveArgOptions));
-      fs.writeFileSync(codexConfigPath, JSON.stringify(updatedConfig, null, 2) + '\n');
+      execFileSync('codex', codexSetupArgs, { stdio: 'inherit' });
 
       console.log('\n✅ MCP server configured successfully!\n');
-      console.log(`Config file: ${codexConfigPath}`);
+      console.log('Config file: ~/.codex/config.toml');
       console.log('Updates: run "openchrome update"\n');
       console.log('Next steps:');
       console.log('  1. Restart Codex CLI');
       console.log('  2. Verify the openchrome MCP server reconnects cleanly\n');
       console.log('Installed MCP snippet:');
-      console.log(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
+      console.log(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
     } catch (error) {
       console.error('\n❌ Failed to configure MCP server for Codex CLI.');
       console.error(`   ${error instanceof Error ? error.message : String(error)}`);
-      console.error('   You can manually add this to ~/.codex/mcp.json:');
-      console.error(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
+      console.error('   You can manually add this to ~/.codex/config.toml:');
+      console.error(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
       process.exit(1);
     }
   });
@@ -368,13 +382,31 @@ program
   .requiredOption('--client <client>', 'Client to generate config for: "claude", "codex", or "opencode"')
   .option('--dashboard', 'Enable terminal dashboard')
   .option('--auto-launch', 'Auto-launch Chrome if not running (default: true)')
-  .action((options: { client: string; dashboard?: boolean; autoLaunch?: boolean }) => {
+  .option('--port <port>', 'Chrome remote debugging port for generated serve args')
+  .option('--user-data-dir <dir>', 'Chrome user data directory for generated serve args')
+  .option('--profile-directory <name>', 'Chrome profile directory name for generated serve args')
+  .option('--launch-mode <mode>', 'Chrome launch mode: auto, attach, or isolated')
+  .option('--topology <preset>', 'Topology preset: single-owner, isolated, ci-headless, or dev-profile')
+  .action((options: { client: string; dashboard?: boolean; autoLaunch?: boolean; port?: string; userDataDir?: string; profileDirectory?: string; launchMode?: string; topology?: string }) => {
     if (!isSupportedMCPClient(options.client)) {
       console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
       process.exit(1);
     }
 
-    const serveArgOptions = { autoLaunch: options.autoLaunch, dashboard: options.dashboard };
+    const serveArgOptions = {
+      autoLaunch: options.autoLaunch,
+      dashboard: options.dashboard,
+      port: options.port,
+      userDataDir: options.userDataDir,
+      profileDirectory: options.profileDirectory,
+      launchMode: options.launchMode,
+      topology: options.topology as undefined | 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile',
+    };
+    const topologyWarning = getTopologyWarning(serveArgOptions);
+    if (topologyWarning) {
+      console.error(`⚠️  ${topologyWarning}`);
+      console.error('   See docs/mcp/topologies.md for safe parallel setup examples.');
+    }
 
     if (options.client === 'claude') {
       console.log(['claude', ...getClaudeSetupCommand('user', serveArgOptions)].join(' '));
@@ -386,7 +418,7 @@ program
       return;
     }
 
-    console.log(formatMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
+    console.log(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(serveArgOptions)));
   });
 
 program

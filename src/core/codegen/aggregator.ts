@@ -86,12 +86,24 @@ function buildPlaywrightSnippet(tool: string, args: Record<string, unknown>): st
   }
 }
 
+function tsFooter(format: 'puppeteer' | 'playwright'): string {
+  const closeContext = format === 'playwright' ? '  await context.close();\n' : '';
+  return `${closeContext}  await browser.close();\n}\n\nmain().catch((error) => {\n  console.error(error);\n  process.exitCode = 1;\n});\n`;
+}
+
+function stripTsFooter(source: string): string {
+  const marker = '\n  await browser.close();\n}\n\nmain().catch';
+  const index = source.indexOf(marker);
+  if (index === -1) return source;
+  return source.slice(0, index) + '\n';
+}
+
 function ensureTsHeader(file: string, format: 'puppeteer' | 'playwright'): void {
   if (fs.existsSync(file)) return;
   const header = format === 'puppeteer'
     ? "import puppeteer from 'puppeteer-core';\n\nasync function main() {\n  const browser = await puppeteer.launch({ headless: true });\n  const page = await browser.newPage();\n"
     : "import { chromium } from 'playwright';\n\nasync function main() {\n  const browser = await chromium.launch();\n  const context = await browser.newContext();\n  const page = await context.newPage();\n";
-  fs.writeFileSync(file, header, 'utf8');
+  fs.writeFileSync(file, header + tsFooter(format), 'utf8');
 }
 
 export function recordCodegenStep(sessionId: string, tool: string, rawArgs: Record<string, unknown>): ReplayEnvelope | undefined {
@@ -105,7 +117,8 @@ export function recordCodegenStep(sessionId: string, tool: string, rawArgs: Reco
     const file = codegenPath(sessionId, mode, root);
     ensureTsHeader(file, mode);
     const snippet = mode === 'puppeteer' ? envelope.puppeteer_snippet : envelope.playwright_snippet;
-    fs.appendFileSync(file, `  ${snippet ?? `// ${tool} ${json(rawArgs)}`}\n`, 'utf8');
+    const body = stripTsFooter(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, `${body}  ${snippet ?? `// ${tool} ${json(rawArgs)}`}\n${tsFooter(mode)}`, 'utf8');
   }
   return envelope;
 }
@@ -114,4 +127,13 @@ export function listCodegenFiles(root = defaultCodegenRoot()): string[] {
   try {
     return fs.readdirSync(root).map((f) => path.join(root, f)).filter((f) => fs.statSync(f).isFile()).sort();
   } catch { return []; }
+}
+
+export function replayCommandFor(file: string, format: Exclude<CodegenMode, 'off'>): string {
+  const qFile = JSON.stringify(file);
+  if (format === 'mcp-replay') return `openchrome replay --from ${qFile}`;
+  // puppeteer and playwright artifacts are both standalone TypeScript scripts
+  // that run via ts-node (playwright uses `import { chromium } from 'playwright'`,
+  // not `playwright/test`, so `npx playwright test` is not the right invocation).
+  return `npx ts-node ${qFile}`;
 }

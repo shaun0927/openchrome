@@ -19,6 +19,16 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
+jest.mock('../../src/utils/duplicate-controller-diagnostics', () => ({
+  getCurrentControllerTopology: jest.fn(() => ({
+    role: 'owner',
+    port: 9222,
+    userDataDir: '/tmp/profile',
+    lockPath: '/tmp/lock.json',
+    ownerPid: process.pid,
+  })),
+}));
+
 import { getSessionManager } from '../../src/session-manager';
 import { MCPServer } from '../../src/mcp-server';
 import { registerConnectionHealthTool } from '../../src/tools/connection-health';
@@ -70,6 +80,7 @@ describe('oc_connection_health tool', () => {
     expect(data.msSinceLastVerified).toBe(1500);
     expect(data.consecutiveSuccesses).toBe(5);
     expect(data.lastVerifiedAt).not.toBeNull();
+    expect(data.controllerTopology.role).toBe('owner');
     // Should be an ISO string
     expect(typeof data.lastVerifiedAt).toBe('string');
     expect(() => new Date(data.lastVerifiedAt)).not.toThrow();

@@ -413,8 +413,14 @@ async function measureOpenChrome(target) {
       const ssResult = parseToolTextJson(screenshotResp, 'page_screenshot');
       const savedPath = typeof ssResult?.path === 'string' ? ssResult.path : screenshotPath;
       if (fs.existsSync(savedPath)) {
-        result.screenshotPath = savedPath;
-        console.error(`[B1-measure][${slot}] Screenshot saved: ${savedPath}`);
+        // Record the screenshot path as repo-relative so the committed JSON
+        // evidence works on any machine, not just the one that ran the spike.
+        const repoRelative = path.relative(REPO_ROOT, savedPath);
+        const portable = repoRelative && !repoRelative.startsWith('..')
+          ? repoRelative.split(path.sep).join('/')
+          : savedPath;
+        result.screenshotPath = portable;
+        console.error(`[B1-measure][${slot}] Screenshot saved: ${savedPath} (recorded as ${portable})`);
       }
     } else {
       console.error(`[B1-measure][${slot}] Screenshot skipped: ${JSON.stringify(toolError(screenshotResp))}`);
