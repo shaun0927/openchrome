@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { SkillMemoryStore, type SkillRecord } from '../../src/core/skill-memory';
-import { computeReplaySignal } from '../../src/tools/oc-skill-recall';
+import { computeReplaySignal, projectCodegenReplay } from '../../src/tools/oc-skill-recall';
 
 const DOMAIN = 'ranking.test';
 
@@ -155,3 +155,21 @@ function applyRecallRanking(rows: SkillRecord[]): SkillRecord[] {
     return a.skillId < b.skillId ? -1 : a.skillId > b.skillId ? 1 : 0;
   });
 }
+
+describe('projectCodegenReplay (#1430 LLM-free fast path)', () => {
+  test('available=true with artifacts surfaced when the skill has codegen output', () => {
+    const artifact = {
+      kind: 'playwright' as const,
+      path: 'skills/ranking.test/c.codegen.spec.ts',
+      created_at: 1700000000000,
+    };
+    const s = baseSkill({ skillId: 'c'.repeat(16), codegenArtifacts: [artifact] });
+    expect(projectCodegenReplay(s)).toEqual({ available: true, artifacts: [artifact] });
+  });
+
+  test('available=false with empty artifacts when codegen was disabled at record time', () => {
+    expect(projectCodegenReplay(baseSkill({ codegenArtifacts: [] }))).toEqual({ available: false, artifacts: [] });
+    // Legacy records without the field at all also fall back cleanly.
+    expect(projectCodegenReplay(baseSkill({}))).toEqual({ available: false, artifacts: [] });
+  });
+});
