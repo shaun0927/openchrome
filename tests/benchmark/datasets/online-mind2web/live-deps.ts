@@ -410,7 +410,21 @@ export function createLiveOnlineMind2WebDeps(options: CreateLiveDepsOptions): Ru
       tools,
       ...(typeof options.maxTurnsPerStep === 'number' ? { maxTurns: options.maxTurnsPerStep } : {}),
     });
-    return summariseStep(stepIndex, adapter.capturedCalls(), loop.finalText);
+    const result = summariseStep(stepIndex, adapter.capturedCalls(), loop.finalText);
+    // A budget/iteration abort means the agent ran out of turns or token/USD
+    // budget before completing this step. Surface it as a failed step (mirrors
+    // the WebVoyager live runner, which records run.aborted) so the runner
+    // stops and the abort reason reaches the judge's evidence — otherwise a
+    // truncated step would be scored as a clean success and silently skew the
+    // benchmark pass-rate.
+    if (loop.aborted) {
+      return {
+        ...result,
+        ok: false,
+        summary: `${result.summary} | step aborted: ${loop.aborted}`,
+      };
+    }
+    return result;
   };
 
   const judge: RunnerDeps['judge'] = async (task, evidence) => {

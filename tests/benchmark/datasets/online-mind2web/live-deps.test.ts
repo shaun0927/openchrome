@@ -125,6 +125,42 @@ describe('createLiveOnlineMind2WebDeps.step', () => {
     expect(step.ok).toBe(true);
     expect(step.summary).toBe('I cannot proceed.');
   });
+
+  it('surfaces a budget/iteration abort as a failed step', async () => {
+    // A model that never stops emitting tool calls exhausts maxTurns, so the
+    // tool-use loop returns aborted:'MAX_ITERATIONS'. The step must be recorded
+    // as a failure (not a clean success) so the runner stops and the abort
+    // reason reaches the judge's evidence.
+    const neverStopsClient: AnthropicMessagesClient = {
+      create: async (input: Record<string, unknown>) => {
+        const system = typeof input.system === 'string' ? input.system : '';
+        if (system.includes('evaluator')) {
+          return {
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
+            content: [{ type: 'text', text: '{"passed":false,"reason":"aborted"}' }],
+          };
+        }
+        return {
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [
+            { type: 'text', text: 'still working' },
+            { type: 'tool_use', id: 't1', name: 'navigate', input: { url: 'https://example.com' } },
+          ],
+        };
+      },
+    };
+    const deps = createLiveOnlineMind2WebDeps({
+      client: neverStopsClient,
+      adapter: fakeAdapter(),
+      maxTurnsPerStep: 2,
+      now: () => 0,
+    });
+    const step = await deps.step(fakeTask(), 1, []);
+    expect(step.ok).toBe(false);
+    expect(step.summary).toContain('step aborted: MAX_ITERATIONS');
+  });
 });
 
 describe('createLiveOnlineMind2WebDeps.judge', () => {

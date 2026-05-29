@@ -24,7 +24,7 @@ import type { MCPAdapter, MCPToolResult } from '../../benchmark-runner';
 import type { AnthropicMessagesClient } from '../../llm-provider/anthropic-loop';
 import { assertAnthropicLiveEnabled } from '../../llm-provider/anthropic-loop';
 import { loadOnlineMind2Web, type OnlineMind2WebTask } from './loader';
-import { runOnlineMind2WebTask, type RunnerResult } from './runner';
+import { runOnlineMind2WebTask, type RunnerDeps, type RunnerResult } from './runner';
 import { createLiveOnlineMind2WebDeps, DEFAULT_OM2W_MODEL } from './live-deps';
 
 const RESULTS_DIR = path.join(__dirname, 'results');
@@ -218,15 +218,23 @@ function renderMarkdown(report: Om2wReport): string {
   return lines.join('\n');
 }
 
-function buildDeps(opts: CliOptions) {
+/**
+ * Build the runner deps plus the underlying adapter. The adapter is returned
+ * alongside the deps so the caller can drive its setup()/teardown() lifecycle
+ * once around the whole run — the live OpenChromeRealAdapter only spawns its
+ * MCP subprocess in setup() and would otherwise throw on the first tool call.
+ */
+function buildDeps(opts: CliOptions): { deps: RunnerDeps; adapter: MCPAdapter } {
   if (opts.adapter === 'mock') {
-    return createLiveOnlineMind2WebDeps({
+    const adapter = createMockAdapter();
+    const deps = createLiveOnlineMind2WebDeps({
       client: createMockAnthropicClient(),
-      adapter: createMockAdapter(),
+      adapter,
       model: opts.model,
       maxTurnsPerStep: 4,
       now: () => 0,
     });
+    return { deps, adapter };
   }
 
   // Live Claude path — gated, requires API key + OPENCHROME_BENCH_REAL=1.
@@ -244,12 +252,13 @@ function buildDeps(opts: CliOptions) {
     mode: 'dom',
     cdpEndpoint: process.env.OPENCHROME_BENCH_CDP_ENDPOINT,
   });
-  return createLiveOnlineMind2WebDeps({ client, adapter, model: opts.model });
+  const deps = createLiveOnlineMind2WebDeps({ client, adapter, model: opts.model });
+  return { deps, adapter };
 }
 
 export async function main(argv: string[] = process.argv): Promise<number> {
   const opts = parseArgs(argv);
-  const source: 'fixture' | 'hf' = process.env.OPENCHROME_OM2W_FETCH ? 'hf' : 'fixture';
+  const source: 'fixture' | 'hf' = process.env.OPENCHROME_OM2W_FETCH === '1' ? 'hf' : 'fixture';
 
   let tasks: OnlineMind2WebTask[];
   try {
@@ -268,32 +277,51 @@ export async function main(argv: string[] = process.argv): Promise<number> {
 
   console.error(`[om2w] adapter=${opts.adapter} model=${opts.model} source=${source} tasks=${tasks.length}`);
 
-  let deps;
+  let deps: RunnerDeps;
+  let adapter: MCPAdapter;
   try {
-    deps = buildDeps(opts);
+    ({ deps, adapter } = buildDeps(opts));
   } catch (err) {
     console.error(`[om2w] failed to build deps: ${(err as Error).message}`);
     return 1;
   }
 
+  // The adapter owns a real MCP subprocess on the live path; set it up once
+  // before the run and tear it down afterwards even if a task throws. The mock
+  // adapter has no setup/teardown, so this is a no-op there.
+  try {
+    await adapter.setup?.();
+  } catch (err) {
+    console.error(`[om2w] adapter setup failed: ${(err as Error).message}`);
+    return 1;
+  }
+
   const runnerOptions = typeof opts.stepBudget === 'number' ? { step_budget: opts.stepBudget } : {};
   const taskReports: TaskReport[] = [];
-  for (const task of tasks) {
+  try {
+    for (const task of tasks) {
+      try {
+        const result = await runOnlineMind2WebTask(task, deps, runnerOptions);
+        taskReports.push(toTaskReport(result));
+        console.error(
+          `[om2w] ${result.task_id}: ${result.passed ? 'passed' : 'failed'} ` +
+            `(${result.steps_used} steps) — ${result.reason}`,
+        );
+      } catch (err) {
+        taskReports.push({
+          task_id: task.task_id,
+          passed: false,
+          steps_used: 0,
+          reason: `runner error: ${(err as Error).message}`,
+        });
+        console.error(`[om2w] ${task.task_id}: error — ${(err as Error).message}`);
+      }
+    }
+  } finally {
     try {
-      const result = await runOnlineMind2WebTask(task, deps, runnerOptions);
-      taskReports.push(toTaskReport(result));
-      console.error(
-        `[om2w] ${result.task_id}: ${result.passed ? 'passed' : 'failed'} ` +
-          `(${result.steps_used} steps) — ${result.reason}`,
-      );
+      await adapter.teardown?.();
     } catch (err) {
-      taskReports.push({
-        task_id: task.task_id,
-        passed: false,
-        steps_used: 0,
-        reason: `runner error: ${(err as Error).message}`,
-      });
-      console.error(`[om2w] ${task.task_id}: error — ${(err as Error).message}`);
+      console.error(`[om2w] adapter teardown failed: ${(err as Error).message}`);
     }
   }
 
