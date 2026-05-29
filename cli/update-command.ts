@@ -1,10 +1,16 @@
 import { spawnSync } from 'child_process';
+import { getSupportedMCPClients, isSupportedMCPClient } from './mcp-client-config';
 
 const UPDATE_COMMAND = ['npm', 'install', '-g', 'openchrome-mcp@latest'] as const;
 
 export interface UpdateCommandOptions {
   setup?: boolean;
-  client?: 'claude' | 'codex' | 'vscode' | 'cursor' | 'windsurf';
+  /**
+   * MCP client to reconfigure after updating. Validated at runtime against the
+   * automated-setup set (`getSupportedMCPClients()`); unsupported clients such as
+   * Cursor / VS Code / Windsurf are rejected with a pointer to the manual config.
+   */
+  client?: string;
   scope?: 'user' | 'project';
 }
 
@@ -43,6 +49,18 @@ function getSetupArgs(options: UpdateCommandOptions): string[] {
 
 export function runUpdateCommand(options: UpdateCommandOptions = {}): number {
   const setup = options.setup !== false;
+
+  // Fail fast on an unsupported --client before touching npm, so the advertised
+  // flag can never forward to `setup --client X` and exit(1) mid-update. Cursor /
+  // VS Code / Windsurf use a manual MCP config block (see README), not automated
+  // setup.
+  if (setup && options.client && !isSupportedMCPClient(options.client)) {
+    console.error(`Unsupported --client "${options.client}". Automated setup supports: ${getSupportedMCPClients().join(', ')}.`);
+    console.error('For Cursor / VS Code / Windsurf, copy the manual MCP config block from the README:');
+    console.error('  https://github.com/shaun0927/openchrome#quick-start');
+    console.error('Or run "openchrome update --no-setup" to update the package without reconfiguring a client.');
+    return 1;
+  }
 
   console.log(`Running: ${getUpdateCommandText()}`);
   const updateStatus = run(UPDATE_COMMAND[0], UPDATE_COMMAND.slice(1));

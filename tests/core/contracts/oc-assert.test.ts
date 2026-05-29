@@ -13,8 +13,9 @@
  * (oc_evidence_bundle). It is asserted only by shape — not consumed.
  */
 
-import { registerOcAssertTool } from '../../../src/tools/oc-assert';
+import { registerOcAssertTool, deriveFailureCategory } from '../../../src/tools/oc-assert';
 import type { MCPToolDefinition, MCPResult, ToolHandler } from '../../../src/types/mcp';
+import type { Evidence } from '../../../src/contracts/types';
 
 interface RegisteredTool {
   name: string;
@@ -85,6 +86,35 @@ describe('oc_assert — verdicts', () => {
     expect(failed.length).toBe(1);
     expect((failed[0].expected as { pattern: string }).pattern).toBe('^https://other\\.com');
     expect(failed[0].actual).toBe('https://example.com');
+  });
+
+  test('fail: surfaces a machine-stable failure_category (POSTCONDITION_FAILED for a clean mismatch)', async () => {
+    const { handler } = setup();
+    const out = await invoke(handler, {
+      contract: { kind: 'url', pattern: '^https://other\\.com' },
+      evidence: { snapshot: { url: 'https://example.com' } },
+    });
+    expect(out.verdict).toBe('fail');
+    // A clean expected/actual mismatch (no evaluator error) classifies as a
+    // postcondition failure so the host can branch recovery on a stable code.
+    expect(out.failure_category).toBe('POSTCONDITION_FAILED');
+    expect(typeof out.failure_reason).toBe('string');
+  });
+
+  test('pass / inconclusive verdicts carry no failure_category', async () => {
+    const { handler } = setup();
+    const pass = await invoke(handler, {
+      contract: { kind: 'url', pattern: '^https://example\\.com/?$' },
+      evidence: { snapshot: { url: 'https://example.com' } },
+    });
+    expect(pass.verdict).toBe('pass');
+    expect(pass.failure_category).toBeUndefined();
+
+    const inconclusive = await invoke(handler, {
+      contract: { kind: 'url', pattern: '^x$' },
+    });
+    expect(inconclusive.verdict).toBe('inconclusive');
+    expect(inconclusive.failure_category).toBeUndefined();
   });
 
   test('inconclusive: missing evidence.snapshot', async () => {
@@ -229,5 +259,52 @@ describe('oc_assert — per-evaluator coverage', () => {
     // The failing leaf is the dom_text child at index 1.
     expect(failed[0].name).toContain('dom_text');
     expect(failed[0].name).toContain('children.1');
+  });
+});
+
+describe('deriveFailureCategory — host-actionable taxonomy', () => {
+  const failEvidence = (details: Record<string, unknown> = {}): Evidence => ({
+    passed: false,
+    assertion_kind: 'and',
+    details,
+  });
+
+  test('clean expected/actual mismatch (no evaluator error) → POSTCONDITION_FAILED', () => {
+    const out = deriveFailureCategory(failEvidence(), [
+      { name: '$[url]', expected: { pattern: '^x$' }, actual: 'https://example.com' },
+    ]);
+    expect(out.category).toBe('POSTCONDITION_FAILED');
+    expect(out.reason).toMatch(/postcondition/i);
+  });
+
+  test('classifies an evaluator error surfaced on a failed child leaf (ELEMENT_NOT_FOUND)', () => {
+    // A logical (and/or) failure can crack open to a child leaf whose `actual`
+    // carries an evaluator error string — that error is classified, not the diff.
+    const out = deriveFailureCategory(failEvidence(), [
+      { name: '$.children.0[dom_text]', expected: {}, actual: { error: 'element not found: .add-to-cart' } },
+    ]);
+    expect(out.category).toBe('ELEMENT_NOT_FOUND');
+    expect(out.reason.length).toBeGreaterThan(0);
+  });
+
+  test('classifies a navigation-timeout error string', () => {
+    const out = deriveFailureCategory(failEvidence({ error: 'navigation timeout exceeded' }), []);
+    expect(out.category).toBe('NAVIGATION_TIMEOUT');
+  });
+
+  test('unclassifiable error text falls back to POSTCONDITION_FAILED (never UNKNOWN)', () => {
+    const out = deriveFailureCategory(failEvidence(), [
+      { name: '$[dom_text]', expected: {}, actual: { error: 'totally opaque failure xyzzy' } },
+    ]);
+    expect(out.category).toBe('POSTCONDITION_FAILED');
+  });
+
+  test('ignores non-object / non-string actual values without throwing', () => {
+    const out = deriveFailureCategory(failEvidence(), [
+      { name: '$[url]', expected: {}, actual: null },
+      { name: '$[count]', expected: {}, actual: 3 },
+      { name: '$[list]', expected: {}, actual: ['element not found'] },
+    ]);
+    expect(out.category).toBe('POSTCONDITION_FAILED');
   });
 });

@@ -28,6 +28,30 @@ OpenChrome classifies high-risk browser actions deterministically so host agents
 
 Every denial includes `policy`, `reason`, `missing`, and `suggested_next_action` fields for auditability.
 
+## Where this runs: facts in core, enforcement in pilot
+
+This split follows the portability-harness contract (P4 facts-before-decisions,
+P7 core-boring/pilot-experimental). There is exactly **one** deterministic
+classifier — `evaluateToolRiskPolicy()` / `getEffectiveToolRiskPolicy()` in
+`src/security/tool-risk-policy.ts`.
+
+- **Core surfaces the decision as a fact.** The read-only `oc_policy` tool
+  exposes the matrix and the structured decision. Core tool dispatch does **not**
+  block an action on the host's behalf; it returns facts and the host agent
+  decides. This is deliberate — core making a blocking judgment would violate
+  P4/P7.
+- **Pilot enforces.** When the contract runtime is enabled (`--pilot` +
+  `OPENCHROME_CONTRACT_RUNTIME=1`), `runWithContract` fires the
+  `beforeIrreversibleAction` hook (`src/pilot/runtime/`) immediately before an
+  irreversible action, applying preview / checkpoint / elicitation / abort per
+  the contract's `on_fail` policy. With pilot off, no enforcement runs and core
+  behavior is unchanged.
+
+> Note: a second, never-wired keyword classifier
+> (`src/harness/irreversible-action.ts`, `guardIrreversibleBrowserAction`) was
+> removed to keep a single source of truth. Risk classification lives in
+> `tool-risk-policy.ts`; enforcement lives in the pilot runtime hook.
+
 ## Operator guidance
 
 Use this matrix as the common policy source for ToolAnnotations, dry-run previews, elicitation hooks, and TaskRun checkpoints. Future tool integrations should call the shared helper before executing a destructive commit path and should include the returned decision in structured tool output when blocked.

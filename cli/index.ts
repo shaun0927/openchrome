@@ -425,7 +425,7 @@ program
   .command('update')
   .description('Update the globally installed OpenChrome package')
   .option('--no-setup', 'skip MCP client reconfiguration after updating')
-  .option('--client <client>', 'MCP client to reconfigure after updating (claude, codex, vscode, cursor, windsurf)', 'claude')
+  .option('--client <client>', 'MCP client to reconfigure after updating (claude, codex, opencode)', 'claude')
   .option('--scope <scope>', 'Claude Code scope to use during setup (user or project)', 'user')
   .action((options) => {
     const code = runUpdateCommand({

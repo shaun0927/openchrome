@@ -260,6 +260,16 @@ const handler: ToolHandler = async (
       frozenSnapshotPath: snapshotPath ?? null,
       ...(replayArtifactsForStore !== undefined ? { replayArtifacts: replayArtifactsForStore } : {}),
       codegenArtifacts,
+      // #1457 PR-4: a direct oc_skill_record call is a host write. The core
+      // store does not verify (P4/P7), so this is labelled `verified: false`;
+      // recall surfaces it so a host can tell unverified direct writes apart
+      // from Verified-Skill-Loop records promoted by the pilot curator.
+      provenance: {
+        source: 'host',
+        recordedAt: Date.now(),
+        ...(contractId ? { contractRef: contractId } : {}),
+        verified: false,
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

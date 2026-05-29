@@ -13,7 +13,7 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { SkillMemoryStore, type SkillRecord } from '../core/skill-memory';
+import { SkillMemoryStore, type SkillRecord, type CodegenArtifactPointer } from '../core/skill-memory';
 import { createAuditLogStatsResolver, type SkillStatsResolver } from '../core/skill-memory/stats-resolver';
 
 export interface RankedSkillRecord extends SkillRecord {
@@ -21,6 +21,13 @@ export interface RankedSkillRecord extends SkillRecord {
   reason?: string;
   stepsPreview?: unknown;
   replaySignal?: -1 | 0 | 1;
+  /**
+   * #1430: explicit, discoverable codegen-replay pointer for the LLM-free reuse
+   * fast path. `available` is true when the skill has a recorded codegen
+   * artifact (`--codegen` / `OPENCHROME_CODEGEN`); a host can recall → check
+   * `available` → replay the snippet deterministically with no LLM round-trip.
+   */
+  codegenReplay?: { available: boolean; artifacts: CodegenArtifactPointer[] };
 }
 
 interface OcSkillRecallOutput {
@@ -45,7 +52,8 @@ const definition: MCPToolDefinition = {
     'Returns a recency-sorted list (last_used_at desc). Optionally filter by ' +
     '`contract_id` and cap results with `limit` (default 20). No LLM ranking — ' +
     'deterministic store order is returned as-is unless task/query or ranked ' +
-    'is supplied. Use oc_skill_record to write skills.',
+    'is supplied. Each result carries `codegenReplay` ({available, artifacts}) ' +
+    'for the LLM-free replay fast path. Use oc_skill_record to write skills.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -203,7 +211,14 @@ const handler: ToolHandler = async (
     : applyRecallRanking(skills);
 
   const capped = limit === 0 ? [] : ordered.slice(0, limit);
-  return jsonResult({ skills: capped, promotion_filter_active: promotionFilterActive });
+  // #1430: project an explicit codegen-replay pointer onto every result so a host
+  // can discover the LLM-free reuse fast path (recall → codegenReplay.available →
+  // replay the snippet) without scanning the raw record for codegenArtifacts.
+  const projected: RankedSkillRecord[] = capped.map((skill) => ({
+    ...skill,
+    codegenReplay: projectCodegenReplay(skill),
+  }));
+  return jsonResult({ skills: projected, promotion_filter_active: promotionFilterActive });
 };
 
 export function applyRecallRanking(skills: SkillRecord[]): SkillRecord[] {
@@ -248,6 +263,23 @@ export function computeReplaySignal(s: SkillRecord): -1 | 0 | 1 {
   if (passedAt > failedAt) return 1;
   if (failedAt > passedAt) return -1;
   return 0;
+}
+
+/**
+ * #1430: derive the explicit codegen-replay pointer surfaced on every recall
+ * result. `available` is true iff the skill carries at least one codegen
+ * artifact (recorded under the opt-in `--codegen` pipeline), enabling the
+ * LLM-free reuse fast path. Pure and deterministic.
+ */
+export function projectCodegenReplay(
+  skill: SkillRecord,
+): { available: boolean; artifacts: CodegenArtifactPointer[] } {
+  return {
+    // Shallow-copy so a downstream consumer mutating the projected array cannot
+    // corrupt the in-memory SkillRecord this pointer was derived from.
+    available: (skill.codegenArtifacts?.length ?? 0) > 0,
+    artifacts: skill.codegenArtifacts?.slice() ?? [],
+  };
 }
 
 export function scoreSkillForTask(

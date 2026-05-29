@@ -27,6 +27,7 @@ export type {
   SkillMemoryFile,
   SkillMemoryFileV1,
   SkillMemoryFileV2,
+  SkillProvenance,
   SkillRecord,
 } from './types';
 

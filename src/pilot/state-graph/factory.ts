@@ -4,10 +4,9 @@
  * Two shapes are accepted (see overloads):
  *
  *   1. `createStateHasher(getUrl)` — legacy v1-only path. Callers
- *      that only have a URL handy (e.g.
- *      `guardIrreversibleBrowserAction`, which carries `pageUrl` as
- *      a string label) keep using this signature; the hasher returns
- *      a v1 hash and never crosses into v2.
+ *      that only have a URL handy (e.g. a label-only risk probe that
+ *      carries `pageUrl` as a string) keep using this signature; the
+ *      hasher returns a v1 hash and never crosses into v2.
  *
  *   2. `createStateHasher(probe)` — v2-capable path. Callers that
  *      can probe both URL and DOM (e.g. CDP-attached tools) supply a
