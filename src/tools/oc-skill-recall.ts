@@ -103,10 +103,8 @@ const definition: MCPToolDefinition = {
         description:
           'Opt in to factor audit-log run statistics (recent-window failure ' +
           'rate) into ranked recall, demoting skills that fail often. Implies ' +
-          'ranked recall. Default false — when off, recall does no audit-log ' +
-          'I/O and behaves exactly as before. When on, recall performs a one-' +
-          'time synchronous scan of the audit log per call, which can be slower ' +
-          'on very large logs. (#1457)',
+          'ranked recall. Default false (no audit-log I/O when off). When on, ' +
+          'does a one-time synchronous audit-log scan per call. (#1457)',
       },
     },
     required: ['domain'],
