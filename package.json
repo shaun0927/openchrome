@@ -32,6 +32,8 @@
     "benchmark:ci": "ts-node tests/benchmark/run.ts --ci",
     "bench:webvoyager:mock": "ts-node tests/benchmark/webvoyager/runner.ts --adapter mock",
     "bench:webvoyager:real": "ts-node tests/benchmark/webvoyager/runner.ts --adapter claude",
+    "bench:om2w:mock": "ts-node tests/benchmark/datasets/online-mind2web/cli.ts --adapter mock",
+    "bench:om2w": "ts-node tests/benchmark/datasets/online-mind2web/cli.ts --adapter claude",
     "bench:latency": "ts-node tests/benchmark/run-latency.ts",
     "bench:tokens": "ts-node tests/benchmark/run-token-efficiency.ts",
     "bench:throughput": "ts-node tests/benchmark/run-throughput.ts --library all --include-live-competitors=false --session-mode both",
