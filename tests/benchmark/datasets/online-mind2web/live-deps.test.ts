@@ -199,6 +199,19 @@ describe('parseJudgeReply', () => {
     expect(v.passed).toBe(true);
     expect(v.reason).toBe('no reason provided');
   });
+
+  it('extracts the verdict object even when prose contains stray braces', () => {
+    const reply = 'Consider the criteria {accuracy, recall} first.\n{"passed": true, "reason": "login link clicked"}';
+    const v = parseJudgeReply(reply);
+    expect(v.passed).toBe(true);
+    expect(v.reason).toBe('login link clicked');
+  });
+
+  it('does not mis-slice when a brace appears inside a string value', () => {
+    const v = parseJudgeReply('{"passed": false, "reason": "saw text like {x} on page"}');
+    expect(v.passed).toBe(false);
+    expect(v.reason).toBe('saw text like {x} on page');
+  });
 });
 
 describe('createLiveOnlineMind2WebDeps.shouldStop', () => {

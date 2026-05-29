@@ -248,31 +248,88 @@ export function parseJudgeReply(text: string): JudgeVerdict {
     return fallback('judge returned empty response');
   }
 
-  // Extract the first balanced JSON object substring.
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
+  // Scan for balanced JSON object substrings (string-aware, so a brace inside
+  // a string or surrounding prose does not corrupt the slice). The first
+  // candidate that decodes to an object carrying a boolean `passed` wins; this
+  // tolerates code-fenced or prose-embedded verdicts without a greedy
+  // first-`{`..last-`}` slice that breaks on stray braces in the prose.
+  const candidates = extractJsonObjectCandidates(text);
+  if (candidates.length === 0) {
     return fallback(`judge response is not JSON: ${text.slice(0, 200)}`);
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch (err) {
-    return fallback(`judge response JSON parse failed: ${(err as Error).message}`);
+  let lastObject: Record<string, unknown> | null = null;
+  let lastParseError: string | null = null;
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch (err) {
+      lastParseError = (err as Error).message;
+      continue;
+    }
+    if (parsed === null || typeof parsed !== 'object') {
+      continue;
+    }
+    const obj = parsed as Record<string, unknown>;
+    if (typeof obj.passed === 'boolean') {
+      const reason = typeof obj.reason === 'string' && obj.reason.trim() !== ''
+        ? obj.reason
+        : 'no reason provided';
+      return { passed: obj.passed, reason, judge_id: LIVE_JUDGE_ID };
+    }
+    if (lastObject === null) {
+      lastObject = obj;
+    }
   }
 
-  if (parsed === null || typeof parsed !== 'object') {
-    return fallback('judge response did not decode to an object');
+  if (lastObject !== null) {
+    return fallback(`judge response missing boolean "passed": ${JSON.stringify(lastObject).slice(0, 200)}`);
   }
-  const obj = parsed as Record<string, unknown>;
-  if (typeof obj.passed !== 'boolean') {
-    return fallback(`judge response missing boolean "passed": ${JSON.stringify(obj).slice(0, 200)}`);
+  if (lastParseError !== null) {
+    return fallback(`judge response JSON parse failed: ${lastParseError}`);
   }
-  const reason = typeof obj.reason === 'string' && obj.reason.trim() !== ''
-    ? obj.reason
-    : 'no reason provided';
-  return { passed: obj.passed, reason, judge_id: LIVE_JUDGE_ID };
+  return fallback('judge response did not decode to an object');
+}
+
+/**
+ * Extract every balanced `{...}` substring from `text`, in start-index order,
+ * ignoring braces that appear inside JSON string literals. Used to locate a
+ * judge verdict object that may be wrapped in prose or code fences.
+ */
+function extractJsonObjectCandidates(text: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{') continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === '{') {
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          out.push(text.slice(i, j + 1));
+          break;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 const JUDGE_SYSTEM_PROMPT = [
