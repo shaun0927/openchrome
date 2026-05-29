@@ -442,7 +442,7 @@ const handler: ToolHandler = async (
  * timeout caught by the evaluator) we classify that instead, so a host can branch
  * recovery rather than re-reading raw diffs. Purely deterministic — no LLM.
  */
-function deriveFailureCategory(
+export function deriveFailureCategory(
   evidence: Evidence,
   failed: FailedAssertion[],
 ): { category: FailureCategory; reason: string } {
@@ -453,12 +453,17 @@ function deriveFailureCategory(
       if (typeof err === 'string' && err.length > 0) errorTexts.push(err);
     }
   };
+  // A top-level evidence error routes to `inconclusive` (see isInconclusive), so
+  // on a `fail` verdict the reachable error source is usually a logical child
+  // leaf surfaced in `fa.actual`; we still scan both for completeness.
   collectError(evidence.details);
   for (const fa of failed) collectError(fa.actual);
 
   for (const text of errorTexts) {
+    // With `fallbackToUnknown: false`, primaryFailureCategory returns undefined
+    // (never UNKNOWN) when no rule matches, so a falsy result means "fall back".
     const classified = primaryFailureCategory({ message: text, fallbackToUnknown: false });
-    if (classified && classified.category !== 'UNKNOWN') {
+    if (classified) {
       return { category: classified.category, reason: classified.reason };
     }
   }
