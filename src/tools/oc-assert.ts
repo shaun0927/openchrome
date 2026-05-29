@@ -29,6 +29,8 @@ import { evaluate } from '../contracts/evaluate';
 import { validateAssertion } from '../contracts/validator';
 import { getActiveActionRecorder } from '../recording/action-recorder';
 import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
+import { primaryFailureCategory } from '../failure/classifier';
+import type { FailureCategory } from '../failure/categories';
 import type {
   Assertion,
   EvaluationResult,
@@ -48,6 +50,13 @@ interface FailedAssertion {
 interface OcAssertOutput {
   verdict: Verdict;
   failed_assertions?: FailedAssertion[];
+  /**
+   * Machine-stable failure category on a `fail` verdict, so a host agent can
+   * branch recovery (retry vs re-auth vs solve-captcha) instead of re-parsing
+   * raw expected/actual diffs (#1457 PR-5 / SSOT P4 — facts the host can act on).
+   */
+  failure_category?: FailureCategory;
+  failure_reason?: string;
   evidence_handle?: string;
   evidence?: Evidence;
   validation_errors?: Array<{ path: string; message: string }>;
@@ -400,6 +409,9 @@ const handler: ToolHandler = async (
 
   if (verdict === 'fail') {
     output.failed_assertions = collectFailedAssertions(validation.value, result.evidence, '$');
+    const classified = deriveFailureCategory(result.evidence, output.failed_assertions);
+    output.failure_category = classified.category;
+    output.failure_reason = classified.reason;
   } else if (verdict === 'inconclusive') {
     output.inconclusive_reason =
       typeof result.evidence.details.error === 'string'
@@ -422,6 +434,44 @@ const handler: ToolHandler = async (
 
   return jsonResult(output);
 };
+
+/**
+ * Map an oc_assert failure to a structured, host-actionable failure category
+ * (#1457 PR-5 / SSOT P4). A clean expected/actual mismatch is POSTCONDITION_FAILED;
+ * when an evaluator surfaced an error string (e.g. a detached node or a navigation
+ * timeout caught by the evaluator) we classify that instead, so a host can branch
+ * recovery rather than re-reading raw diffs. Purely deterministic — no LLM.
+ */
+export function deriveFailureCategory(
+  evidence: Evidence,
+  failed: FailedAssertion[],
+): { category: FailureCategory; reason: string } {
+  const errorTexts: string[] = [];
+  const collectError = (details: unknown): void => {
+    if (details && typeof details === 'object' && !Array.isArray(details)) {
+      const err = (details as Record<string, unknown>).error;
+      if (typeof err === 'string' && err.length > 0) errorTexts.push(err);
+    }
+  };
+  // A top-level evidence error routes to `inconclusive` (see isInconclusive), so
+  // on a `fail` verdict the reachable error source is usually a logical child
+  // leaf surfaced in `fa.actual`; we still scan both for completeness.
+  collectError(evidence.details);
+  for (const fa of failed) collectError(fa.actual);
+
+  for (const text of errorTexts) {
+    // With `fallbackToUnknown: false`, primaryFailureCategory returns undefined
+    // (never UNKNOWN) when no rule matches, so a falsy result means "fall back".
+    const classified = primaryFailureCategory({ message: text, fallbackToUnknown: false });
+    if (classified) {
+      return { category: classified.category, reason: classified.reason };
+    }
+  }
+  return {
+    category: 'POSTCONDITION_FAILED',
+    reason: 'the contract postcondition did not hold (expected/actual mismatch)',
+  };
+}
 
 function makeEvidenceHandle(): string {
   // Placeholder for #792 oc_evidence_bundle. The handle is currently not
