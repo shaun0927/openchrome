@@ -192,7 +192,7 @@ export interface SkillMemoryFile {
  */
 export interface SkillMemoryFileV1 {
   schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION_V1;
-  skills: Record<string, Omit<SkillRecord, 'replayArtifacts' | 'codegenArtifacts'>>;
+  skills: Record<string, Omit<SkillRecord, 'replayArtifacts' | 'codegenArtifacts' | 'provenance'>>;
 }
 
 /**
@@ -202,7 +202,7 @@ export interface SkillMemoryFileV1 {
  */
 export interface SkillMemoryFileV2 {
   schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION_V2;
-  skills: Record<string, Omit<SkillRecord, 'codegenArtifacts'>>;
+  skills: Record<string, Omit<SkillRecord, 'codegenArtifacts' | 'provenance'>>;
 }
 
 /**
