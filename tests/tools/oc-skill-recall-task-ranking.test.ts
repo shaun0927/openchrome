@@ -1,4 +1,5 @@
 import type { SkillRecord } from '../../src/core/skill-memory';
+import type { SkillRunStats } from '../../src/core/skill-memory/stats-resolver';
 import { buildRecallText, rankSkillsForTask } from '../../src/tools/oc-skill-recall';
 
 const DOMAIN = 'ranking.test';
@@ -99,3 +100,40 @@ function skill(
     ...overrides,
   } as SkillRecord;
 }
+
+describe('rankSkillsForTask — opt-in run-stats penalty (#1457 PR-7)', () => {
+  const stats = (successes: number, failures: number): SkillRunStats => ({
+    successesInWindow: successes,
+    failuresInWindow: failures,
+    lastRunAt: 1,
+    demotesInDoubleDemoteWindow: 0,
+    hadInterveningPromotion: false,
+  });
+
+  test('demotes a skill with a high audit-log failure rate when a statsResolver is supplied', () => {
+    const flaky = skill('flaky', [{ tool: 'interact', args: { description: 'submit order' } }]);
+    const solid = skill('solid', [{ tool: 'interact', args: { description: 'submit order' } }]);
+    // Identical task match; only the audit-log failure rate differs.
+    const statsResolver = (rec: SkillRecord): SkillRunStats =>
+      rec.name === 'flaky' ? stats(1, 9) : stats(10, 0);
+
+    const withStats = rankSkillsForTask([flaky, solid], { task: 'submit order', statsResolver });
+    expect(withStats[0].name).toBe('solid');
+    expect(withStats.find((r) => r.name === 'flaky')!.reason).toContain('run_fail_rate=0.90');
+  });
+
+  test('applies no penalty (and no audit reason) when no statsResolver is supplied', () => {
+    const a = skill('a', [{ tool: 'interact', args: { description: 'submit order' } }]);
+    const ranked = rankSkillsForTask([a], { task: 'submit order' });
+    expect((ranked[0].reason || '')).not.toContain('run_fail_rate');
+  });
+
+  test('emits no run_fail_rate note for a skill with runs but zero failures (failRate 0)', () => {
+    const a = skill('a', [{ tool: 'interact', args: { description: 'submit order' } }]);
+    // 10 successes, 0 failures → failRate 0 → no penalty and, crucially, no
+    // misleading `run_fail_rate=0.00` note in the reason.
+    const statsResolver = (): SkillRunStats => stats(10, 0);
+    const ranked = rankSkillsForTask([a], { task: 'submit order', statsResolver });
+    expect((ranked[0].reason || '')).not.toContain('run_fail_rate');
+  });
+});

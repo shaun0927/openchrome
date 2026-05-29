@@ -33,3 +33,22 @@ LLM round-trip**:
 The pointer is surfaced as a fact only — recall still never auto-executes. When
 codegen was disabled at record time, `available` is `false` and `artifacts` is
 empty, so the host falls back to the normal steps-driven path.
+
+## Optional audit-log run statistics (`use_run_stats`, #1457)
+
+Pass `use_run_stats: true` (which also enables ranked recall) to factor each
+skill's recent-window **failure rate**, derived from the audit log, into the
+score. A skill that fails often is demoted proportionally, and its `reason`
+gains a `run_fail_rate=<rate> (<failures>/<runs> in window)` note.
+
+This is **opt-in**: when the flag is unset, recall performs **no audit-log I/O**
+and behaves exactly as before — the default path stays fast and deterministic.
+
+## On "selector confidence"
+
+OpenChrome does not store a separate per-selector confidence model. The
+deterministic **skill confidence** signal *is* the recall ranking itself:
+`replaySignal` (passed/failed replay history), `successCount`, the optional
+`contract_id` boost, and the opt-in `use_run_stats` failure-rate penalty above.
+These are computed facts surfaced for the host to weigh — there is no hidden
+learned score.
