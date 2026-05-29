@@ -106,6 +106,16 @@ export const OM2W_TOOLS = [
 /** Default model used when none is injected. */
 export const DEFAULT_OM2W_MODEL = 'claude-3-5-sonnet-latest';
 
+/**
+ * Default model<->tool turns allowed per single OM2W step. A step is meant to
+ * be ONE concrete action (optionally read the page, then act), so this is kept
+ * small on purpose. Without it the inner tool-use loop would fall back to
+ * WEBVOYAGER_BUDGET.max_tool_iterations (50) — a whole-task budget that, on
+ * OM2W's per-step runner (up to step_budget=100 steps), would permit ~100x50
+ * model turns per task. Callers may override via CreateLiveDepsOptions.
+ */
+export const DEFAULT_OM2W_MAX_TURNS_PER_STEP = 8;
+
 /** Default judge id surfaced on live verdicts. */
 const LIVE_JUDGE_ID = 'claude-llm-judge';
 
@@ -212,6 +222,12 @@ function summariseStep(
   finalText: string,
 ): RunnerStep {
   if (calls.length === 0) {
+    // A no-op turn (the model talked but called no tool) is recorded as ok:true
+    // by design: it is a benign "nothing happened this step", not a hard failure
+    // — the model often emits a terminal "done"/completion sentence here, and the
+    // judge rules on the accumulated evidence. It is NOT a runaway risk: the
+    // marginal-utility tracker feeds shouldStop(), which plateaus and stops the
+    // runner well before the step budget is exhausted on a stuck model.
     return {
       step: stepIndex,
       tool: 'none',
@@ -373,6 +389,7 @@ function textFromAnthropicRaw(raw: unknown): string {
 export function createLiveOnlineMind2WebDeps(options: CreateLiveDepsOptions): RunnerDeps {
   const model = options.model ?? DEFAULT_OM2W_MODEL;
   const now = options.now ?? Date.now;
+  const maxTurnsPerStep = options.maxTurnsPerStep ?? DEFAULT_OM2W_MAX_TURNS_PER_STEP;
   const adapter = new CapturingOM2WAdapter(options.adapter);
   const tools = OM2W_TOOLS.map((tool) => ({
     name: tool.name,
@@ -408,7 +425,7 @@ export function createLiveOnlineMind2WebDeps(options: CreateLiveDepsOptions): Ru
       system: STEP_SYSTEM_PROMPT,
       user: stepUserPrompt(task, stepIndex, history),
       tools,
-      ...(typeof options.maxTurnsPerStep === 'number' ? { maxTurns: options.maxTurnsPerStep } : {}),
+      maxTurns: maxTurnsPerStep,
     });
     const result = summariseStep(stepIndex, adapter.capturedCalls(), loop.finalText);
     // A budget/iteration abort means the agent ran out of turns or token/USD

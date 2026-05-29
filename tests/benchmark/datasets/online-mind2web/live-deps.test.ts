@@ -14,6 +14,7 @@ import {
   createLiveOnlineMind2WebDeps,
   parseJudgeReply,
   CapturingOM2WAdapter,
+  DEFAULT_OM2W_MAX_TURNS_PER_STEP,
 } from './live-deps';
 import type { OnlineMind2WebTask } from './loader';
 import type { RunnerStep } from './runner';
@@ -160,6 +161,71 @@ describe('createLiveOnlineMind2WebDeps.step', () => {
     const step = await deps.step(fakeTask(), 1, []);
     expect(step.ok).toBe(false);
     expect(step.summary).toContain('step aborted: MAX_ITERATIONS');
+  });
+
+  it('bounds a step to the OM2W per-step turn default when none is injected', async () => {
+    // A model that always emits another tool call would, without an explicit
+    // cap, fall back to WEBVOYAGER_BUDGET.max_tool_iterations (50) per step. The
+    // OM2W deps inject DEFAULT_OM2W_MAX_TURNS_PER_STEP instead, so the inner loop
+    // makes exactly that many tool calls before aborting MAX_ITERATIONS.
+    const adapter = fakeAdapter();
+    const neverStopsClient: AnthropicMessagesClient = {
+      create: async () => ({
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        content: [
+          { type: 'text', text: 'again' },
+          { type: 'tool_use', id: 't1', name: 'navigate', input: { url: 'https://example.com' } },
+        ],
+      }),
+    };
+    const deps = createLiveOnlineMind2WebDeps({
+      client: neverStopsClient,
+      adapter,
+      now: () => 0,
+    });
+    const step = await deps.step(fakeTask(), 1, []);
+    expect(step.ok).toBe(false);
+    expect(step.summary).toContain('step aborted: MAX_ITERATIONS');
+    expect(adapter.calls).toHaveLength(DEFAULT_OM2W_MAX_TURNS_PER_STEP);
+  });
+
+  it('surfaces a USD budget abort as a failed step', async () => {
+    // The other abort path: a single turn whose reported token usage blows the
+    // per-task USD ceiling (WEBVOYAGER_BUDGET.max_usd_per_task = 0.5; pricing is
+    // $15/M output, so 1M output tokens ≈ $15). accountLlmBudget aborts with
+    // BUDGET_EXCEEDED before the loop ever inspects the tool calls. The step
+    // must be recorded as failed so the runner stops and the abort reason is
+    // visible to the judge — same contract as MAX_ITERATIONS, different trigger.
+    const overBudgetClient: AnthropicMessagesClient = {
+      create: async (input: Record<string, unknown>) => {
+        const system = typeof input.system === 'string' ? input.system : '';
+        if (system.includes('evaluator')) {
+          return {
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
+            content: [{ type: 'text', text: '{"passed":false,"reason":"aborted"}' }],
+          };
+        }
+        return {
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 1, output_tokens: 1_000_000 },
+          content: [
+            { type: 'text', text: 'expensive turn' },
+            { type: 'tool_use', id: 't1', name: 'navigate', input: { url: 'https://example.com' } },
+          ],
+        };
+      },
+    };
+    const deps = createLiveOnlineMind2WebDeps({
+      client: overBudgetClient,
+      adapter: fakeAdapter(),
+      maxTurnsPerStep: 4,
+      now: () => 0,
+    });
+    const step = await deps.step(fakeTask(), 1, []);
+    expect(step.ok).toBe(false);
+    expect(step.summary).toContain('step aborted: BUDGET_EXCEEDED');
   });
 });
 
