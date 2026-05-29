@@ -124,6 +124,42 @@ export interface SkillRecord {
    * When codegen is disabled at record time the field is written as `[]`.
    */
   codegenArtifacts?: CodegenArtifactPointer[];
+
+  /**
+   * Explicit provenance for this record (#1457 PR-4 / SSOT Pillar D —
+   * "explicit provenance for every promoted skill or memory record"). Optional
+   * and additive: legacy records read back with `provenance` absent, which
+   * consumers treat as `source: 'unknown'`. The core store records what the
+   * writer claimed; it does NOT itself verify (P4/P7 — verification is the
+   * host's / pilot curator's job), so `verified` lets recall distinguish
+   * Verified-Skill-Loop-eligible records from unverified direct writes.
+   */
+  provenance?: SkillProvenance;
+}
+
+/**
+ * Where a {@link SkillRecord} came from and whether its writer claimed it was
+ * contract-verified. Part of the Verified Skill Loop (see
+ * docs/roadmap/ssot-decisions.md D2).
+ */
+export interface SkillProvenance {
+  /**
+   * `host` = a direct `oc_skill_record` MCP call; `curator` = the pilot
+   * auto-extractor (contract-verified); `replay` = a replay-outcome write;
+   * `unknown` = legacy / normalized.
+   */
+  source: 'host' | 'curator' | 'replay' | 'unknown';
+  /** Wall-clock ms epoch of the first record write (stable across re-records). */
+  recordedAt: number;
+  /** Contract id the skill is bound to, surfaced for audit (mirrors contractId). */
+  contractRef?: string;
+  /**
+   * Whether the writer asserted this skill came from a contract-verified
+   * success. Defaults to `false` for direct host writes — the core store never
+   * sets it `true` on its own. Only a verified extractor / promotion path may
+   * record `true`.
+   */
+  verified?: boolean;
 }
 
 /**
@@ -156,7 +192,7 @@ export interface SkillMemoryFile {
  */
 export interface SkillMemoryFileV1 {
   schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION_V1;
-  skills: Record<string, Omit<SkillRecord, 'replayArtifacts' | 'codegenArtifacts'>>;
+  skills: Record<string, Omit<SkillRecord, 'replayArtifacts' | 'codegenArtifacts' | 'provenance'>>;
 }
 
 /**
@@ -166,7 +202,7 @@ export interface SkillMemoryFileV1 {
  */
 export interface SkillMemoryFileV2 {
   schema_version: typeof SKILL_MEMORY_SCHEMA_VERSION_V2;
-  skills: Record<string, Omit<SkillRecord, 'codegenArtifacts'>>;
+  skills: Record<string, Omit<SkillRecord, 'codegenArtifacts' | 'provenance'>>;
 }
 
 /**

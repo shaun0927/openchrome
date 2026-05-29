@@ -43,6 +43,7 @@ import {
   SKILL_MEMORY_SCHEMA_VERSION_V2,
   type FrozenSnapshot,
   type SkillMemoryFile,
+  type SkillProvenance,
   type SkillRecord,
 } from './types';
 import { validateReplayArtifact, type ReplayArtifact } from './replay-artifact';
@@ -433,6 +434,26 @@ export class SkillMemoryStore {
         // without an explicit value, preserve the existing pointers so a
         // re-record that omits codegen does not erase prior captures.
         codegenArtifacts: skill.codegenArtifacts ?? existing?.codegenArtifacts ?? [],
+        // Provenance (#1457 PR-4). Caller-supplied wins, but the first-record
+        // timestamp is preserved across idempotent re-records. When neither the
+        // caller nor an existing record supplies it, default to `unknown` so the
+        // field is always present on freshly written records (legacy records
+        // read back without it and consumers treat absence as `unknown`).
+        provenance: ((): SkillProvenance => {
+          if (skill.provenance) {
+            return {
+              ...skill.provenance,
+              recordedAt: existing?.provenance?.recordedAt ?? skill.provenance.recordedAt,
+            };
+          }
+          return (
+            existing?.provenance ?? {
+              source: 'unknown',
+              recordedAt: Date.now(),
+              ...(skill.contractId ? { contractRef: skill.contractId } : {}),
+            }
+          );
+        })(),
       };
       // Preserve replay-outcome fields across idempotent re-record. The
       // recorder owns `steps`/`contractId`; the replay path owns the
