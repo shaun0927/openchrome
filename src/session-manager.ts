@@ -1441,6 +1441,11 @@ export class SessionManager {
 
     // Refresh session TTL only after ownership is confirmed (hottest path)
     this.touchSession(sessionId);
+    // Slide the target lease forward here too: getPage() — not executeCDP — is the
+    // path virtually every Puppeteer-based tool (navigate/interact/read_page/act/…)
+    // takes, so without this an actively used non-default-session tab would still
+    // reach the idle-TTL sweep and be reclaimed mid-task (#1359 backlog item 7).
+    this.targetLeases.touch(targetId);
 
     const cdpClient = this.getCDPClientForWorker(sessionId, ownerInfo.workerId);
 

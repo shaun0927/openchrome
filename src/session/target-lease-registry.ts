@@ -79,7 +79,15 @@ export class TargetLeaseRegistry {
       contextName: overrides.contextName ?? parent.contextName,
       now: overrides.now,
       cleanupPolicy: overrides.cleanupPolicy ?? parent.cleanupPolicy,
-      ...(overrides.ttlMs ? { ttlMs: overrides.ttlMs } : {}),
+      // Carry the idle TTL like every other field: prefer an explicit override,
+      // else inherit the parent's so a popup/child target slides and expires on
+      // the same schedule as its opener. Use `!== undefined` (not truthiness) so
+      // a deliberate ttlMs:0 override is honoured rather than silently dropped.
+      ...(overrides.ttlMs !== undefined
+        ? { ttlMs: overrides.ttlMs }
+        : parent.ttlMs !== undefined
+          ? { ttlMs: parent.ttlMs }
+          : {}),
     });
   }
 

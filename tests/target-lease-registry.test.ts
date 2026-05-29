@@ -81,4 +81,28 @@ describe('TargetLeaseRegistry', () => {
     expect(registry.get('t1')?.ttlMs).toBe(100);
     expect(registry.get('t1')?.leaseExpiresAt).toBe(150);
   });
+
+  test('inherit carries the parent idle TTL so a popup expires on the same schedule', () => {
+    const registry = new TargetLeaseRegistry();
+    registry.acquire({ targetId: 'parent', sessionId: 's1', now: 0, ttlMs: 100 });
+
+    // No explicit ttlMs override: the popup should still inherit the parent's TTL
+    // (like cleanupPolicy/contextName) rather than becoming a never-expiring lease.
+    const popup = registry.inherit('popup', 'parent', { now: 0 });
+    expect(popup?.ttlMs).toBe(100);
+    expect(popup?.leaseExpiresAt).toBe(100);
+    expect(registry.expire(101).map((lease) => lease.targetId).sort()).toEqual(['parent', 'popup']);
+  });
+
+  test('inherit honours an explicit ttlMs override instead of falling back to the parent', () => {
+    const registry = new TargetLeaseRegistry();
+    registry.acquire({ targetId: 'parent', sessionId: 's1', now: 0, ttlMs: 100 });
+
+    // An explicit override wins over the parent's TTL. (Registry semantics: any
+    // numeric ttlMs sets leaseExpiresAt = now + ttlMs; the "0 disables" rule lives
+    // one layer up in SessionManager, which maps 0 → undefined before acquiring.)
+    const popup = registry.inherit('popup', 'parent', { now: 0, ttlMs: 50 });
+    expect(popup?.ttlMs).toBe(50);
+    expect(popup?.leaseExpiresAt).toBe(50);
+  });
 });
