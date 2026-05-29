@@ -60,6 +60,31 @@ describe('cli/update-command', () => {
     });
   });
 
+  test('can refresh OpenCode setup after updating', () => {
+    mockedSpawnSync.mockReturnValue({ status: 0 } as unknown as ReturnType<typeof spawnSync>);
+
+    // opencode was previously missing from the --client type even though `setup`
+    // supports it; this guards that regression.
+    expect(runUpdateCommand({ client: 'opencode' })).toBe(0);
+
+    expect(mockedSpawnSync).toHaveBeenNthCalledWith(2, 'openchrome', ['setup', '--client', 'opencode', '--scope', 'user'], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
+  });
+
+  test('rejects an unsupported --client before touching npm, pointing to manual config', () => {
+    // cursor/windsurf/vscode were advertised in --client help but rejected by the
+    // setup layer with exit(1) mid-update. Now we fail fast with guidance.
+    expect(runUpdateCommand({ client: 'cursor' })).toBe(1);
+
+    expect(mockedSpawnSync).not.toHaveBeenCalled();
+
+    const output = consoleErrorSpy.mock.calls.map((call: unknown[]) => call[0]).join('\n');
+    expect(output).toContain('Unsupported --client "cursor"');
+    expect(output).toContain('manual MCP config');
+  });
+
   test('prints actionable guidance when npm is unavailable', () => {
     const error = Object.assign(new Error('spawn npm ENOENT'), { code: 'ENOENT' });
     mockedSpawnSync.mockReturnValue({ error } as unknown as ReturnType<typeof spawnSync>);
