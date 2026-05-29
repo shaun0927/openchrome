@@ -86,15 +86,20 @@ used.
 
 ### Lease expiry policy (Q4)
 
-**Sliding idle TTL** (implemented in #1457 PR-3): a managed target lease expires
-only after its owner has been silent for `targetLeaseTtl` (default 30 minutes;
-`0` disables). Every `executeCDP` call slides the deadline forward, so an
-actively used tab is never reclaimed — only a disconnected/crashed owner's lease
-reaches expiry, at which point the orphaned tab is reclaimed. The **`default`
-session is exempt** (mirrors the existing `sessionTTL` protection) so a
-single-agent workflow's tabs persist, and `preserve`-policy leases are never
-auto-closed. This resolves the SSOT worry that an absolute TTL would kill
-long-running agent tasks.
+**Sliding idle TTL.** The decided policy is: a managed target lease expires only
+after its owner has been silent for `targetLeaseTtl` (default 30 minutes; `0`
+disables). Every `executeCDP` call slides the deadline forward, so an actively
+used tab is never reclaimed — only a disconnected/crashed owner's lease reaches
+expiry, at which point the orphaned tab is reclaimed. The **`default` session is
+exempt** (mirrors the existing `sessionTTL` protection) so a single-agent
+workflow's tabs persist, and `preserve`-policy leases are never auto-closed. This
+resolves the SSOT worry that an absolute TTL would kill long-running agent tasks.
+
+> **Status:** decided, implementation in flight. The `TargetLeaseRegistry`
+> primitive (`expire()`, `leaseExpiresAt`) is already on `develop`, but no caller
+> passes `ttlMs` to `acquire()` yet, so expiry is inert until the sliding-TTL
+> wiring lands (audit #1457 PR-3 / #1460, still open). Treat this section as the
+> normative target the wiring PR must satisfy, not as shipped `develop` behavior.
 
 ### Multi-tenant default (Q6)
 
