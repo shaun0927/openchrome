@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "status": "not_ready",
+  "issues": [1257, 1299, 1300, 1301, 1302],
+  "minimum_repetitions_per_cell": 3,
+  "required_row_fields": [
+    "provider",
+    "model",
+    "adapter",
+    "budget",
+    "task",
+    "repetitions",
+    "cost",
+    "trace_artifacts",
+    "final_postcondition"
+  ],
+  "provider_rows": ["anthropic", "openai", "native"],
+  "promotion_rule": "Every compared adapter needs a valid row or reviewed skip row; cost claims require token/USD metadata on every attempt."
+}

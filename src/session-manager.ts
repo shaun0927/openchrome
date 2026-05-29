@@ -7,6 +7,8 @@ import path from 'path';
 import { Page, Target, BrowserContext, Browser } from 'puppeteer-core';
 import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, WorkerInfo, WorkerCreateOptions } from './types/session';
 import { TargetOwnershipRegistry } from './session/target-registry';
+import { TargetLeaseConflictError, TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
+import { TargetQueueManager } from './session/target-command-queue';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -111,6 +113,7 @@ const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'str
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private targetToWorker = new TargetOwnershipRegistry();
+  private targetLeases = new TargetLeaseRegistry();
   /**
    * Maps targetId → `{browser, name}` for the owning named context (#848).
    * Targets opened in the default Chrome context are not present here;
@@ -127,6 +130,7 @@ export class SessionManager {
   private chromePool: ChromePool | null = null;
   private cdpFactory: CDPClientFactory;
   private queueManager: RequestQueueManager;
+  private targetQueueManager = new TargetQueueManager();
   private eventListeners: ((event: SessionEvent) => void)[] = [];
   private browserRouter: BrowserRouter | null = null;
   /**
@@ -201,7 +205,12 @@ export class SessionManager {
         console.error('[SessionManager] Reconnect failed, clearing stale target mappings');
         for (const targetId of Array.from(this.targetToWorker.keys())) {
           this.onTargetClosed(targetId);
-          // Safety: force-delete in case session is already gone and onTargetClosed skipped it
+          // Safety: force-delete in case session is already gone and
+          // onTargetClosed skipped it. The lease release mirrors the
+          // targetToWorker.delete below so the lease registry never
+          // outlives the legacy ownership map — leases without a TTL
+          // would otherwise survive indefinitely after Chrome disappears.
+          this.targetLeases.release(targetId);
           this.targetToWorker.delete(targetId);
         }
       }
@@ -242,6 +251,89 @@ export class SessionManager {
       if (client) return client;
     }
     return this.cdpClient;
+  }
+
+  private acquireTargetLease(
+    targetId: string,
+    sessionId: string,
+    workerId: string,
+    contextName?: string,
+    parentTargetId?: string,
+  ): void {
+    if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName })) {
+      return;
+    }
+    try {
+      this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+    } catch (err) {
+      // #1359 backlog item 3: a conflicting lease means a stale or rogue
+      // owner still holds the registry entry — log loudly so operators see
+      // the duplicate-controller signal, then transfer ownership to the
+      // caller. This keeps the legacy targetToWorker map (which has already
+      // recorded the new owner) consistent with the registry and prevents
+      // the conflict from killing the caller's tool invocation.
+      if (err instanceof TargetLeaseConflictError) {
+        console.error(
+          `[SessionManager] Target ${targetId.slice(0, 8)} lease conflict: previous owner session=${err.existing.sessionId} worker=${err.existing.workerId ?? 'unknown'}; transferring to session=${sessionId} worker=${workerId}`,
+        );
+        this.targetLeases.release(targetId);
+        this.targetLeases.acquire({ targetId, sessionId, workerId, contextName });
+        return;
+      }
+      throw err;
+    }
+  }
+
+  getTargetLease(targetId: string): TargetLeaseRecord | undefined {
+    const lease = this.targetLeases.get(targetId);
+    return lease ? { ...lease } : undefined;
+  }
+
+  getTargetLeaseSnapshot(): TargetLeaseRecord[] {
+    return this.targetLeases.snapshot();
+  }
+
+  getTargetQueueStats(): ReturnType<TargetQueueManager['getStats']> {
+    return this.targetQueueManager.getStats();
+  }
+
+  getTargetDiagnostics(tenantId: TenantId = DEFAULT_TENANT_ID): { leases: Array<Record<string, unknown>>; queues: Array<Record<string, unknown>> } {
+    const visibleSessionIds = new Set<string>();
+    for (const [sessionId, session] of this.sessions) {
+      if ((session.tenantId ?? DEFAULT_TENANT_ID) === tenantId) visibleSessionIds.add(sessionId);
+    }
+    const visibleTargetIds = new Set<string>();
+    const leases = this.targetLeases.snapshot()
+      .filter((lease) => visibleSessionIds.has(lease.sessionId))
+      .map((lease) => {
+        visibleTargetIds.add(lease.targetId);
+        return {
+          targetId: lease.targetId,
+          sessionId: lease.sessionId,
+          workerId: lease.workerId,
+          laneId: lease.laneId,
+          contextName: lease.contextName,
+          cleanupPolicy: lease.cleanupPolicy,
+          createdAt: lease.createdAt,
+          lastActivityAt: lease.lastActivityAt,
+          leaseExpiresAt: lease.leaseExpiresAt,
+        };
+      });
+    const queues = this.targetQueueManager.getStats()
+      .filter((queue) => visibleTargetIds.has(queue.targetId))
+      .map((queue) => ({
+        targetId: queue.targetId,
+        pending: queue.pending,
+        processing: queue.processing,
+        closed: queue.closed,
+        enqueued: queue.enqueued,
+        completed: queue.completed,
+        rejected: queue.rejected,
+        cancelled: queue.cancelled,
+        averageWaitMs: queue.completed > 0 ? Math.round(queue.totalWaitMs / queue.completed) : 0,
+        averageExecutionMs: queue.completed > 0 ? Math.round(queue.totalExecutionMs / queue.completed) : 0,
+      }));
+    return { leases, queues };
   }
 
   /**
@@ -576,6 +668,7 @@ export class SessionManager {
 
     // Remove session
     this.sessions.delete(sessionId);
+    this.targetLeases.releaseSession(sessionId);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
     this.emitLifecycle({ kind: 'session:destroy', sessionId, reason, ts: Date.now() });
 
@@ -606,6 +699,11 @@ export class SessionManager {
         deletedSessions.push(sessionId);
         this.totalSessionsCleaned++;
       }
+    }
+
+    const expiredLeases = this.targetLeases.expire(now);
+    for (const lease of expiredLeases) {
+      this.targetQueueManager.cancelTarget(lease.targetId);
     }
 
     // Trigger browser-level GC after bulk cleanup
@@ -894,6 +992,11 @@ export class SessionManager {
         // Page might already be closed
       }
       this.targetToWorker.delete(targetId);
+      // #1359 backlog item 3: closePage triggers targetdestroyed → onTargetClosed
+      // asynchronously, but targetToWorker.delete above runs first, so by the
+      // time the event handler fires it cannot resolve the owner. Release the
+      // lease here so the registry stays consistent with the legacy map.
+      this.targetLeases.release(targetId, session.id);
     }
 
     // Close the browser context (only if it's an isolated context, not the default)
@@ -1131,6 +1234,7 @@ export class SessionManager {
       resolvedContextName = isolatedContext;
       resolvedIsolated = true;
     }
+    this.acquireTargetLease(targetId, sessionId, worker.id, resolvedContextName);
 
     this.emitEvent({
       type: 'session:target-added',
@@ -1212,6 +1316,7 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
+    this.acquireTargetLease(targetId, sessionId, worker.id);
 
     // Track as stealth target for human-behavior integration in tools
     this.stealthTargets.add(targetId);
@@ -1249,6 +1354,7 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId });
+    this.acquireTargetLease(targetId, sessionId, workerId);
 
     this.emitEvent({
       type: 'session:target-added',
@@ -1383,6 +1489,13 @@ export class SessionManager {
       // Re-register the target
       worker.targets.add(targetId);
       this.targetToWorker.set(targetId, { sessionId, workerId: resolvedWorkerId });
+      // #1359 backlog item 3: keep the lease registry in sync with the
+      // recovered ownership so reconcile/expire/diagnostics observe the same
+      // session/worker the legacy targetToWorker map records. Recovery
+      // intentionally transfers ownership, so drop any stale lease the
+      // previous owner left behind before acquiring fresh.
+      this.targetLeases.release(targetId);
+      this.acquireTargetLease(targetId, sessionId, resolvedWorkerId);
       console.error(`[SessionManager] Recovered untracked target ${targetId.slice(0, 8)} (${pageUrl.slice(0, 50)}) into session ${sessionId} worker ${resolvedWorkerId}`);
 
       return page;
@@ -1536,6 +1649,7 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId });
+    this.acquireTargetLease(targetId, sessionId, workerId, undefined, opts?.inheritContextFromTargetId);
 
     // #848 Codex P1: inherit named-context mapping from the opener so popup
     // tab accounting matches the parent. Skip when the parent lives in the
@@ -1610,6 +1724,8 @@ export class SessionManager {
 
       // Remove from mapping
       this.targetToWorker.delete(targetId);
+      this.targetLeases.release(targetId, sessionId);
+      this.targetQueueManager.cancelTarget(targetId);
 
       // #848: drop named-context association on graceful close.
       const ctxEntry = this.targetToContext.get(targetId);
@@ -1679,8 +1795,7 @@ export class SessionManager {
       ? this.getCDPClientForWorker(sessionId, ownerInfo.workerId)
       : this.cdpClient;
 
-    const workerQueueKey = ownerInfo ? `${sessionId}:${ownerInfo.workerId}` : sessionId;
-    return this.queueManager.enqueue(workerQueueKey, async () => {
+    return this.targetQueueManager.enqueue(targetId, async () => {
       const page = await cdpClient.getPageByTargetId(targetId);
       if (!page) {
         throw new Error(`Page not found for target ${targetId}`);
@@ -1707,6 +1822,8 @@ export class SessionManager {
         getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
 
         this.targetToWorker.delete(targetId);
+        this.targetLeases.release(targetId, ownerInfo.sessionId);
+        this.targetQueueManager.cancelTarget(targetId);
         this.stealthTargets.delete(targetId);
         this.lastRoutingByTarget.delete(targetId);
 
@@ -1877,6 +1994,11 @@ export class SessionManager {
 
     const aliveTargets = browser.targets().filter(t => t.type() === 'page');
     const aliveTargetIds = new Set(aliveTargets.map(t => getTargetId(t)));
+    this.targetLeases.reconcileAliveTargetIds(aliveTargetIds);
+    // #1359 backlog item 4: drop per-target queues whose targetId no longer
+    // exists post-reconnect so closed/expired targets stop holding queue
+    // state and metrics in memory.
+    this.targetQueueManager.reconcileAliveTargetIds(aliveTargetIds);
 
     // Build a map of untracked live targets by URL for re-mapping
     const untrackedByUrl = new Map<string, Target>();
@@ -1922,6 +2044,11 @@ export class SessionManager {
         // Update targetToWorker mapping
         this.targetToWorker.delete(targetId);
         this.targetToWorker.set(newTargetId, ownerInfo);
+        // #1359 backlog item 3: reconcileAliveTargetIds above already dropped
+        // the old targetId from the lease registry. Acquire a fresh lease
+        // for the re-mapped targetId so diagnostics and cleanup observe the
+        // same ownership the legacy map records.
+        this.acquireTargetLease(newTargetId, ownerInfo.sessionId, ownerInfo.workerId);
 
         // Update worker's target set
         const session = this.sessions.get(ownerInfo.sessionId);

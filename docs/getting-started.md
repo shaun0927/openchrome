@@ -43,6 +43,9 @@ openchrome setup --client opencode   # OpenCode
 Restart your MCP client. That's it for the core install — the next sections
 are optional.
 
+For manual Codex CLI setup, run `openchrome config --client codex` and add
+the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
+
 ## 2. Confirm core tier is live
 
 Open a fresh chat in your MCP client and ask it to navigate somewhere:

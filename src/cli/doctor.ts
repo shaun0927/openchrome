@@ -21,6 +21,7 @@ import { checkMacosPerms } from './doctor/checks/macos-perms';
 import { checkNetworkLocal } from './doctor/checks/network-local';
 import { checkNetworkRemote } from './doctor/checks/network-remote';
 import { checkOptionalDeps } from './doctor/checks/optional-deps';
+import { checkDuplicateControllers } from './doctor/checks/duplicate-controllers';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
 
@@ -56,6 +57,7 @@ const ALL_CHECKS: Array<{ id: string; fn: CheckFn }> = [
   { id: 'pid-lock', fn: checkPidLock },
   { id: 'orphan-chrome', fn: checkOrphanChrome },
   { id: 'profile-lock', fn: checkProfileLock },
+  { id: 'duplicate-controllers', fn: checkDuplicateControllers },
   { id: 'disk-space', fn: checkDiskSpace },
   { id: 'macos-perms', fn: checkMacosPerms },
   { id: 'network-local', fn: checkNetworkLocal },

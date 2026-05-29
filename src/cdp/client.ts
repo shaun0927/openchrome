@@ -1639,41 +1639,11 @@ export class CDPClient {
         }),
       ]) as Page;
     } else {
-      // First-call NTP reuse: when this CDPClient hasn't created any managed
-      // pages yet AND Chrome was OpenChrome-spawned AND there's exactly one
-      // untracked page-type target whose URL looks like the startup New Tab
-      // Page, navigate THAT tab instead of opening a second one. Avoids the
-      // "extra blank tab" race that the post-hoc prune in _createTargetImpl
-      // tries (imperfectly) to clean up.
-      let reused: Page | null = null;
-      if (this.targetIdIndex.size === 0 && this.getChromeLifecycleMode() === 'isolated') {
-        const candidates = browser.targets().filter(t => {
-          if (t.type() !== 'page') return false;
-          const tid = getTargetId(t);
-          return !!tid && !this.targetIdIndex.has(tid);
-        });
-        if (candidates.length === 1) {
-          const candidateUrl = candidates[0].url();
-          const isStartupBlank =
-            candidateUrl === '' ||
-            candidateUrl === 'about:blank' ||
-            candidateUrl === 'chrome://newtab/' ||
-            candidateUrl.startsWith('chrome://new-tab-page');
-          if (isStartupBlank) {
-            try {
-              reused = await candidates[0].page();
-            } catch {
-              reused = null;
-            }
-          }
-        }
-      }
-
-      if (reused) {
-        page = reused;
-        console.error(`[CDPClient] Reused startup NTP target ${getTargetId(reused.target())} for first createPage (URL: ${reused.url()})`);
-        // Skip cookie bridge on reuse: this is the very first managed page on
-        // this Chrome, so there are no authenticated source tabs to copy from.
+      const startupPage = await this.findReusableStartupPage(browser);
+      if (startupPage) {
+        page = startupPage;
+        skipCookieBridge = true;
+        console.error(`[CDPClient] Reused startup tab ${getTargetId(page.target())} for first default-context page`);
       } else {
         // Create page in Chrome's default context
         let newPageTid2: ReturnType<typeof setTimeout>;
@@ -1683,32 +1653,32 @@ export class CDPClient {
             newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
           }),
         ]) as Page;
+      }
 
-        // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
-        // CDP session conflicts and unnecessary overhead on about:blank pages).
-        // The global skipCookieBridge flag serves as a manual override escape hatch.
-        // Overall timeout prevents cascading hangs from unresponsive source tabs.
-        if (!skipCookieBridge && !getGlobalConfig().skipCookieBridge) {
-          const cookieScan = await this.findAuthenticatedPageTarget(targetDomain);
-          if (cookieScan.status === 'partial' && !cookieScan.targetId) {
-            console.error(
-              `[CDPClient] Cookie bridge proceeding without copied cookies: ${cookieScan.warning ?? 'cookie scan incomplete'}`,
-            );
-          }
-          if (cookieScan.targetId) {
-            let cookieCopyTid: ReturnType<typeof setTimeout> | undefined;
-            await Promise.race([
-              this.copyCookiesViaCDP(cookieScan.targetId, page),
-              new Promise<void>((resolve) => {
-                cookieCopyTid = setTimeout(() => {
-                  console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
-                  resolve();
-                }, DEFAULT_COOKIE_COPY_TIMEOUT_MS);
-              }),
-            ]).finally(() => {
-              if (cookieCopyTid) clearTimeout(cookieCopyTid);
-            });
-          }
+      // Copy cookies from an authenticated page (skip for pool pre-warming to avoid
+      // CDP session conflicts and unnecessary overhead on about:blank pages).
+      // The global skipCookieBridge flag serves as a manual override escape hatch.
+      // Overall timeout prevents cascading hangs from unresponsive source tabs.
+      if (!skipCookieBridge && !getGlobalConfig().skipCookieBridge) {
+        const cookieScan = await this.findAuthenticatedPageTarget(targetDomain);
+        if (cookieScan.status === 'partial' && !cookieScan.targetId) {
+          console.error(
+            `[CDPClient] Cookie bridge proceeding without copied cookies: ${cookieScan.warning ?? 'cookie scan incomplete'}`,
+          );
+        }
+        if (cookieScan.targetId) {
+          let cookieCopyTid: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            this.copyCookiesViaCDP(cookieScan.targetId, page),
+            new Promise<void>((resolve) => {
+              cookieCopyTid = setTimeout(() => {
+                console.error(`[CDPClient] Cookie copy timed out after ${DEFAULT_COOKIE_COPY_TIMEOUT_MS}ms, proceeding without cookies`);
+                resolve();
+              }, DEFAULT_COOKIE_COPY_TIMEOUT_MS);
+            }),
+          ]).finally(() => {
+            if (cookieCopyTid) clearTimeout(cookieCopyTid);
+          });
         }
       }
     }
@@ -1740,7 +1710,11 @@ export class CDPClient {
         await smartGoto(page, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
         assertDomainAllowed(page.url());
       } catch (err) {
-        // Close the page to prevent about:blank ghost tabs on navigation failure
+        // Close the page to prevent about:blank ghost tabs on navigation failure.
+        // When `page` came from findReusableStartupPage the closed tab is the
+        // startup NTP — that's intentional: reuse is gated to isolated-mode
+        // (OpenChrome owns Chrome), so the user does not see a stuck about:blank
+        // from a failed first navigation.
         const targetId = getTargetId(page.target());
         this.targetIdIndex.delete(targetId);
         await page.close().catch(() => {});
@@ -1749,6 +1723,27 @@ export class CDPClient {
     }
 
     return page;
+  }
+
+
+  private async findReusableStartupPage(browser: Browser): Promise<Page | null> {
+    if (this.targetIdIndex.size !== 0 || this.getChromeLifecycleMode() !== 'isolated') return null;
+    const candidates = browser.targets().filter((target) => {
+      if (target.type() !== 'page') return false;
+      const targetId = getTargetId(target);
+      if (!targetId || this.targetIdIndex.has(targetId)) return false;
+      const targetUrl = target.url();
+      return targetUrl === ''
+        || targetUrl === 'about:blank'
+        || targetUrl === 'chrome://newtab/'
+        || targetUrl.startsWith('chrome://new-tab-page');
+    });
+    if (candidates.length !== 1) return null;
+    try {
+      return await candidates[0].page();
+    } catch {
+      return null;
+    }
   }
 
   /**

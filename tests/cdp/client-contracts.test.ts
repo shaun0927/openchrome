@@ -5,12 +5,13 @@ jest.mock('puppeteer-core', () => ({
   default: { connect: jest.fn() },
 }));
 
+const mockLauncher = {
+  ensureChrome: jest.fn(),
+  invalidateInstance: jest.fn(),
+  getInstance: jest.fn(() => ({ launchMode: 'isolated' })),
+};
 jest.mock('../../src/chrome/launcher', () => ({
-  getChromeLauncher: jest.fn().mockReturnValue({
-    ensureChrome: jest.fn(),
-    invalidateInstance: jest.fn(),
-    getInstance: jest.fn(() => ({ launchMode: 'attach' })),
-  }),
+  getChromeLauncher: jest.fn(() => mockLauncher),
 }));
 
 jest.mock('../../src/config/global', () => ({
@@ -43,10 +44,11 @@ type MockPage = {
   mainFrame: jest.Mock;
 };
 
-function makeTarget(targetId: string, page?: MockPage, type = 'page') {
+function makeTarget(targetId: string, page?: MockPage, type = 'page', url = 'about:blank') {
   return {
     _targetId: targetId,
     type: jest.fn(() => type),
+    url: jest.fn(() => url),
     page: jest.fn(async () => page ?? null),
     createCDPSession: jest.fn(async () => ({ send: jest.fn(async () => ({})), detach: jest.fn(async () => undefined) })),
   };
@@ -93,6 +95,7 @@ function connectedClient(browser: ReturnType<typeof makeBrowser>) {
 describe('CDPClient target/page contracts (#687 Wave 4 prereq)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockLauncher.getInstance.mockReturnValue({ launchMode: 'isolated' });
     smartGoto.mockReset();
     smartGoto.mockResolvedValue(undefined);
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -151,4 +154,60 @@ describe('CDPClient target/page contracts (#687 Wave 4 prereq)', () => {
     expect(page.close).toHaveBeenCalled();
     expect(await client.getPageByTargetId('new-target')).toBeNull();
   });
+
+  it('createPage reuses the single startup NTP target on first default-context page', async () => {
+    const startupPage = makePage('startup-target', 'chrome://newtab/');
+    const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');
+    const browser = makeBrowser([], [startupTarget]);
+    const client = connectedClient(browser);
+
+    const page = await client.createPage('https://example.test/', null, false);
+
+    expect(page).toBe(startupPage);
+    expect(browser.newPage).not.toHaveBeenCalled();
+    expect(startupTarget.page).toHaveBeenCalledTimes(1);
+    expect(startupPage.setViewport).toHaveBeenCalled();
+    expect(smartGoto).toHaveBeenCalledWith(startupPage, 'https://example.test/', expect.any(Object));
+    expect(await client.getPageByTargetId('startup-target')).toBe(startupPage);
+  });
+
+  it('createPage does not reuse startup candidates outside safe first-call guards', async () => {
+    const startupPage = makePage('startup-target', 'chrome://newtab/');
+    const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');
+    const browser = makeBrowser([], [startupTarget]);
+    const newPage = makePage('new-target');
+    browser.newPage.mockResolvedValue(newPage);
+    const client = connectedClient(browser);
+    mockLauncher.getInstance.mockReturnValue({ launchMode: 'attach' });
+
+    const page = await client.createPage(undefined, null, true);
+
+    expect(page).toBe(newPage);
+    expect(browser.newPage).toHaveBeenCalledTimes(1);
+    expect(startupTarget.page).not.toHaveBeenCalled();
+  });
+
+  // Second-call guard: once targetIdIndex is non-empty the startup target must
+  // never be reused, even if Chrome still happens to list an NTP-shaped tab.
+  // Protects the bug where a second createPage call would race and consume an
+  // unrelated about:blank-ish target that another component opened.
+  it('createPage does not reuse startup candidates after the first default-context page is created', async () => {
+    const startupPage = makePage('startup-target', 'chrome://newtab/');
+    const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');
+    const secondPage = makePage('second-target');
+    const browser = makeBrowser([], [startupTarget]);
+    browser.newPage.mockResolvedValue(secondPage);
+    const client = connectedClient(browser);
+
+    const first = await client.createPage('https://first.test/', null, true);
+    expect(first).toBe(startupPage);
+    expect(browser.newPage).not.toHaveBeenCalled();
+
+    const second = await client.createPage('https://second.test/', null, true);
+
+    expect(second).toBe(secondPage);
+    expect(browser.newPage).toHaveBeenCalledTimes(1);
+    expect(startupTarget.page).toHaveBeenCalledTimes(1);
+  });
+
 });

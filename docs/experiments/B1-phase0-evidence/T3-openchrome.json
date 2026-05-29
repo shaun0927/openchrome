@@ -1,0 +1,13 @@
+{
+  "slot": "T3",
+  "url": "https://www.zillow.com/homes/Seattle-WA_rb/",
+  "arm": "openchrome",
+  "pass": false,
+  "httpStatus": null,
+  "challengeFound": "Promise\nDiagnostic: CDP returned a Promise remote object even though Runtime.evaluate used awaitPromise: true.\nReturn or await the promise directly so javascript_tool can show the resolved value.",
+  "headingFound": false,
+  "screenshotPath": "docs/experiments/B1-phase0-evidence/T3-openchrome.png",
+  "error": "HTTP status unknown: navigate and performance timing did not expose a status",
+  "skipped": false,
+  "measuredAt": "2026-05-27T13:05:10.184Z"
+}

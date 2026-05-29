@@ -1,0 +1,14 @@
+{
+  "slot": "T2",
+  "url": "https://www.amazon.com/dp/B07XJ8C8F5",
+  "arm": "browsermcp",
+  "pass": null,
+  "httpStatus": null,
+  "challengeFound": null,
+  "headingFound": null,
+  "screenshotPath": null,
+  "error": "pending — fill in manually per instructions printed to stderr",
+  "skipped": false,
+  "pendingManual": true,
+  "measuredAt": null
+}
