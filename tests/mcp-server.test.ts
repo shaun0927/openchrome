@@ -21,7 +21,7 @@ jest.mock('../src/session-manager', () => ({
 import { getSessionManager } from '../src/session-manager';
 import { MCPServer } from '../src/mcp-server';
 import { MCPRequest, MCPErrorCodes, MCPToolDefinition } from '../src/types/mcp';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS } from '../src/config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS } from '../src/config/defaults';
 
 // Helper type for response with result
 interface MCPResultResponse {
@@ -762,6 +762,31 @@ describe('MCPServer', () => {
 
           expect(handler).toHaveBeenCalledTimes(2);
           // Retry timed out → catch keeps the original swallowed error result.
+          expect(response.result!.isError).toBe(true);
+          expect(response.result!.content![0].text).toContain('WebSocket is not open');
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+
+      test('does not hang when the reconnect itself stalls', async () => {
+        jest.useFakeTimers();
+        try {
+          // forceReconnect never resolves — the reconnect timeout race must end the call.
+          mockForceReconnect.mockReturnValueOnce(new Promise(() => { /* never resolves */ }));
+          const handler = jest.fn().mockReturnValue({
+            content: [{ type: 'text', text: swallowedErr }],
+            isError: true,
+          });
+          const request = makeTool('swallowed_reconnect_hang', handler);
+
+          const responsePromise = server.handleRequest(request) as Promise<MCPResultResponse>;
+          await jest.advanceTimersByTimeAsync(DEFAULT_RECONNECT_TIMEOUT_MS + 50);
+          const response = await responsePromise;
+
+          // Reconnect timed out before the retry was dispatched → handler called once,
+          // original error result preserved (never-hang honored at the reconnect step).
+          expect(handler).toHaveBeenCalledTimes(1);
           expect(response.result!.isError).toBe(true);
           expect(response.result!.content![0].text).toContain('WebSocket is not open');
         } finally {

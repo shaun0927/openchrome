@@ -2159,7 +2159,21 @@ export class MCPServer {
           console.error(`[MCPServer] Detected swallowed connection error in "${toolName}" result, attempting reconnect + retry`);
           try {
             const cdpClientRetry = getCDPClient();
-            await cdpClientRetry.forceReconnect();
+            // Race the reconnect against DEFAULT_RECONNECT_TIMEOUT_MS, exactly like the
+            // thrown-error retry path above. A bare `await forceReconnect()` would
+            // re-open the same hang window the handler race below closes: if Chrome is
+            // dead and the reconnect never resolves, the stdio path would hang here
+            // before the retry is even dispatched. (SSOT decision D5 / L1)
+            let swallowedReconnectTid: ReturnType<typeof setTimeout>;
+            await Promise.race([
+              cdpClientRetry.forceReconnect().finally(() => clearTimeout(swallowedReconnectTid)),
+              new Promise<never>((_, reject) => {
+                swallowedReconnectTid = setTimeout(
+                  () => reject(new Error(`Reconnect timed out after ${DEFAULT_RECONNECT_TIMEOUT_MS}ms (swallowed-error path)`)),
+                  DEFAULT_RECONNECT_TIMEOUT_MS,
+                );
+              }),
+            ]);
             // Wait for session state reconciliation before retrying — mirrors the
             // thrown-error retry path above. If reconciliation fails this throws and
             // the catch below keeps the original error result, since stale target
