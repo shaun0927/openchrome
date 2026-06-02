@@ -387,28 +387,39 @@ These scenarios test the reliability guarantee under real conditions. All must p
 
 ## 7. E2E Certification Tests (Follow-Up)
 
-Automated versions of the real-world tests above, under `tests/e2e/scenarios/`. Status below
-reconciled against the actual test files on 2026-06-02. ✅ = the test file self-declares its
-`E2E-NN` ID (confirmed). 🟡 = a scenario file by that name exists but does not carry an explicit
-`E2E-NN` tag, so the mapping is by filename and should be confirmed before relying on it.
+New-series (E2E-11..21) automated tests under `tests/e2e/scenarios/`. Status below reconciled
+against the actual test files on 2026-06-02 by reading each file's `describe('E2E-NN: …')` tag.
 
-| Test ID | Scenario | Automated? | File |
-|---------|----------|------------|------|
-| E2E-11 | WebSocket disconnect recovery | 🟡 Likely | `server-restart.e2e.ts` / `kill-recovery.e2e.ts` |
-| E2E-12 | Infinite reconnection (5 min Chrome down) | 🟡 Likely | `kill-recovery.e2e.ts` |
-| E2E-13 | HTTP transport independence (client disconnect) | ✅ Implemented | `http-independence.e2e.ts` |
-| E2E-14 | Multi-client HTTP concurrency | ✅ Implemented | `http-multi-client.e2e.ts` |
-| E2E-15 | Parallel tool call burst | ✅ Implemented | `parallel-burst.e2e.ts` |
-| E2E-16 | Rate limiter under flood | ✅ Implemented | `rate-limiter.e2e.ts` |
-| E2E-17 | Prometheus metrics accuracy | ✅ Implemented | `prometheus-metrics.e2e.ts` |
-| E2E-18 | Disk space auto-cleanup | ✅ Implemented | `disk-cleanup.e2e.ts` |
-| E2E-19 | Event loop fatal recovery | 🟡 Likely | `event-loop-block.e2e.ts` |
-| E2E-20 | 72-hour endurance | 🟡 Likely | `endurance-24h.e2e.ts` / `marathon.e2e.ts` (note: 24h file, not 72h) |
-| E2E-21 | System pressure degradation | 🟡 Likely | `memory-pressure.e2e.ts` |
+> **Correction note:** an earlier draft of this table mapped E2E-11/12/19/20/21 to
+> `server-restart`/`kill-recovery`/`event-loop-block`/`endurance-24h`/`memory-pressure`. That was
+> wrong: those files self-declare as the **existing** series (E2E-3/2/4/8/6 — see §3 of
+> `e2e-certification-criteria.md`), which cover *similar* scenarios under different IDs. The
+> new-series tests E2E-11/12/19/20/21 are **not** implemented as distinct tests yet.
 
-A certification harness also exists at `tests/harness/certification/run-certification.ts`. The
-🟡 rows need an explicit `E2E-NN` tag added to their test file (or the table corrected) to close
-the mapping — a small follow-up.
+| Test ID | Scenario | Status | File / coverage |
+|---------|----------|--------|------|
+| E2E-11 | WebSocket disconnect without process death | ❌ Not implemented (new) | scenario overlaps existing **E2E-2** (`kill-recovery.e2e.ts`) but not the same test |
+| E2E-12 | Infinite reconnection (5 min Chrome down) | ❌ Not implemented (new) | partial overlap with existing **E2E-2** |
+| E2E-13 | HTTP transport independence | ✅ Implemented | `http-independence.e2e.ts` (tagged) |
+| E2E-14 | Multi-client HTTP concurrency | ✅ Implemented | `http-multi-client.e2e.ts` (tagged) |
+| E2E-15 | Parallel tool call burst | ✅ Implemented | `parallel-burst.e2e.ts` (tagged) |
+| E2E-16 | Rate limiter under flood | ✅ Implemented | `rate-limiter.e2e.ts` (tagged) |
+| E2E-17 | Prometheus metrics accuracy | ✅ Implemented | `prometheus-metrics.e2e.ts` (tagged) |
+| E2E-18 | Disk space auto-cleanup | ✅ Implemented | `disk-cleanup.e2e.ts` (tagged) |
+| E2E-19 | Event loop fatal recovery | ❌ Not implemented (new) | scenario overlaps existing **E2E-4** (`event-loop-block.e2e.ts`), which tests the monitor in isolation, not a live 30s+ fatal exit |
+| E2E-20 | 72-hour endurance | ❌ Not implemented (new) | existing **E2E-8** (`endurance-24h.e2e.ts`) covers 24h, not the 72h composite |
+| E2E-21 | Graceful degradation under system pressure | ❌ Not implemented (new) | scenario overlaps existing **E2E-6** (`memory-pressure.e2e.ts` / `memory-stability.e2e.ts`) |
+
+The existing series **E2E-1..10** is implemented and tagged (`marathon`/`kill-recovery`/
+`server-restart`/`auth-persistence`/`tab-isolation`/`memory-pressure`+`memory-stability`/
+`idle-session`+`multi-site`/`endurance-24h`+`compaction-resume`/`multi-profile`/
+`multi-profile-errors`). A certification harness exists at
+`tests/harness/certification/run-certification.ts`.
+
+**Open follow-up (issue #1470):** the §5 Certification Matrix in `e2e-certification-criteria.md`
+still marks E2E-13..18 as "New ❌" though they are implemented — flip those to ✅. Decide whether
+E2E-11/12/19/20/21 warrant distinct new-series tests or whether the existing E2E-2/4/8/6 coverage
+is accepted (and the matrix amended accordingly).
 
 See [E2E Certification Criteria](docs/roadmap/e2e-certification-criteria.md) for full test specifications.
 
