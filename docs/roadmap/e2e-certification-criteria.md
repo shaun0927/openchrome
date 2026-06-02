@@ -743,15 +743,23 @@ The following table is the authoritative reference for all 21 certification test
 | E2E-10 | Multi-profile Errors | Concurrent Operations | Existing ✅ | Push/PR, Nightly | Yes | Phase 0 (shipped) |
 | E2E-11 | WebSocket Disconnect Without Process Death | Connection Resilience | New ❌ | Push/PR, Nightly | Yes | Phase 1: Heartbeat & reconnect |
 | E2E-12 | Infinite Reconnection (Chrome Down 5 min) | Connection Resilience | New ❌ | Push/PR, Nightly | Yes | Phase 1: Heartbeat & reconnect |
-| E2E-13 | HTTP Transport Independence | Server Independence | New ❌ | Push/PR, Nightly | Yes | Phase 2: HTTP transport |
-| E2E-14 | Multi-Client HTTP Concurrency | Concurrent Operations | New ❌ | Push/PR, Nightly | Yes | Phase 2: HTTP transport |
-| E2E-15 | Parallel Tool Call Burst | Concurrent Operations | New ❌ | Push/PR, Nightly | Yes | Phase 1: Concurrent dispatch |
-| E2E-16 | Rate Limiter Under Flood | Overload Protection | New ❌ | Push/PR, Nightly | Yes | Phase 3: Rate limiter |
-| E2E-17 | Prometheus Metrics Accuracy | Observability | New ❌ | Push/PR, Nightly | Yes | Phase 3: Observability |
-| E2E-18 | Disk Space Auto-Cleanup | Resource Safety | New ❌ | Push/PR, Nightly | Yes | Phase 2: Cleanup system |
+| E2E-13 | HTTP Transport Independence | Server Independence | Impl. ✅ | Push/PR, Nightly | Yes | Phase 2: HTTP transport |
+| E2E-14 | Multi-Client HTTP Concurrency | Concurrent Operations | Impl. ✅ | Push/PR, Nightly | Yes | Phase 2: HTTP transport |
+| E2E-15 | Parallel Tool Call Burst | Concurrent Operations | Impl. ✅ | Push/PR, Nightly | Yes | Phase 1: Concurrent dispatch |
+| E2E-16 | Rate Limiter Under Flood | Overload Protection | Impl. ✅ | Push/PR, Nightly | Yes | Phase 3: Rate limiter |
+| E2E-17 | Prometheus Metrics Accuracy | Observability | Impl. ✅ | Push/PR, Nightly | Yes | Phase 3: Observability |
+| E2E-18 | Disk Space Auto-Cleanup | Resource Safety | Impl. ✅ | Push/PR, Nightly | Yes | Phase 2: Cleanup system |
 | E2E-19 | Event Loop Fatal Recovery | Resource Safety | New ❌ | Push/PR, Nightly | Yes | Phase 1: Watchdog (Layer 4) |
 | E2E-20 | 72-Hour Endurance (Nightly) | Connection Resilience (composite) | New ❌ | Nightly (Weekly for full 72 h) | Yes | Phase 4: All phases complete |
 | E2E-21 | Graceful Degradation Under System Pressure | Resource Safety | New ❌ | Push/PR, Nightly | Yes | Phase 3: Memory pressure handler |
+
+> **Status reconciliation (2026-06-02, issue #1470):** E2E-13..18 were marked `New ❌` but their
+> test files exist and self-declare their IDs (`tests/e2e/scenarios/http-independence`,
+> `http-multi-client`, `parallel-burst`, `rate-limiter`, `prometheus-metrics`, `disk-cleanup`), so
+> their **Status** is updated to `Impl. ✅`. This is an implementation-status correction only — no
+> **pass criterion** (threshold, metric, category) is changed, so §6.5 does not apply. E2E-11/12/19/20/21
+> remain `New ❌`: their scenarios partially overlap the existing E2E-2/4/8/6 tests but are not yet
+> implemented as distinct new-series tests.
 
 ### CI Track Definitions
 
