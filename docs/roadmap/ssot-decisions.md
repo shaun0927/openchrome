@@ -136,9 +136,14 @@ only** and is **at-least-once**, not at-most-once:
    `idempotencyKey` for callers that need dedup.
 4. Both retry paths (thrown error and swallowed-error-in-result) **must** apply the
    same guards: a timeout race around the retried handler and the reconcile gate.
-   The swallowed-error path currently omits both — this is a tracked **bug** (the
-   "Known Limitations / L1" item in `issue-reliability-guarantee.md`), not a
-   sanctioned divergence.
+   The swallowed-error path historically omitted both, **and was in fact dead code**:
+   it gated on `isConnectionError({ message: errorText })`, but `isConnectionError`
+   stringifies non-`Error` values via `formatError` → `String(value)`, so the plain
+   object became `"[object Object]"` and matched no pattern, meaning the retry never
+   fired. Fixed in PR #1471 (issue #1469 / "Known Limitations / L1" in
+   `issue-reliability-guarantee.md`): pass the string directly, then apply the same
+   reconcile gate and timeout race as the thrown-error path. This is the normative
+   shape; any future divergence is a bug.
 
 ## D5. Timeout / abort cancellation semantics
 

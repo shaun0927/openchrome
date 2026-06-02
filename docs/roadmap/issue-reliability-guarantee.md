@@ -315,13 +315,15 @@ found to be already implemented (e.g. memory-pressure aggressive cleanup in
 `src/session-manager.ts` + E2E-21) or explicitly out of scope (SLO burn-rate alerting → operator).
 What survived rigorous re-verification:
 
-- **L1 — Retry-path inconsistency (bug).** The thrown-connection-error retry path
-  (`src/mcp-server.ts` ~2092) wraps its retry in a timeout race *and* gates it on
-  `reconcileAfterReconnect()`. The swallowed-connection-error retry path (~2148) does **neither**:
-  the retry is a bare `await tool.handler(...)` with no timeout race (can hang the stdio path,
-  violating the never-hang contract — HTTP mode is masked by the 30s request timeout) and no
-  reconcile guard. Fix is consistency, not new behavior: mirror the throw-path guards. Tracked
-  for a dedicated PR. Decision context: **D4** in `ssot-decisions.md`.
+- **L1 — Retry-path inconsistency + dead gate (bug). [Fixed: PR #1471, issue #1469]** The
+  thrown-connection-error retry path (`src/mcp-server.ts` ~2092) wraps its retry in a timeout race
+  *and* gates it on `reconcileAfterReconnect()`. The swallowed-connection-error retry path (~2148)
+  did **neither** — and was in fact **dead code**: it gated on `isConnectionError({ message: errorText })`,
+  but `isConnectionError` stringifies non-`Error` values via `formatError`→`String(value)`, so the
+  plain object became `"[object Object]"` and matched no pattern, so the retry never fired. The fix
+  passes the string directly, then mirrors the throw-path guards (reconcile gate + timeout race; a
+  bare `await` could otherwise hang the stdio path, violating the never-hang contract). Decision
+  context: **D4** in `ssot-decisions.md`.
 
 - **L2 — Timeout/abort does not cancel the underlying CDP call.** On tool timeout or client
   abort, `src/utils/with-timeout.ts` returns immediately and leaves the in-flight CDP command
