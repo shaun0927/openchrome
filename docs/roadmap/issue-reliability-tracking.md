@@ -2,6 +2,15 @@
 
 > **Philosophy:** Every tool call MUST return a result — success or error — within the timeout. OpenChrome never hangs.
 
+> **Reconciliation note (2026-06-02):** All 7 implementation phases below have **shipped** to
+> `develop`/`main` (PRs #392, #395, #397, #398, #399, #400, #402 — all verified MERGED). The
+> per-phase `Status` lines and the §7 E2E table have been updated to reflect shipped reality.
+> The manual verification checklists in §3–§6 are left unchecked: they are process artifacts to
+> be exercised at release time, not facts to assert here. Residual hardening items surfaced by a
+> post-ship audit live in the "Known Limitations" section of `issue-reliability-guarantee.md`
+> (L1 retry-path consistency, L2 timeout cancellation) with decision context in
+> `ssot-decisions.md` (D4, D5).
+
 ---
 
 ## 1. Overview & Philosophy
@@ -50,7 +59,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 - `--auto-launch` — launch Chrome automatically on startup
 - `--server-mode` — suppress interactive prompts
 
-**Status:** - [ ] Merged
+**Status:** - [x] Merged (verified on `main`, 2026-06-02)
 
 ---
 
@@ -83,7 +92,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 - `OPENCHROME_RECONNECT_BASE_DELAY_MS` — initial backoff delay (default: `1000`)
 - `OPENCHROME_RECONNECT_MAX_DELAY_MS` — maximum backoff ceiling (default: `30000`)
 
-**Status:** - [ ] Merged
+**Status:** - [x] Merged (verified on `main`, 2026-06-02)
 
 ---
 
@@ -108,7 +117,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 - `OPENCHROME_RATE_LIMIT_BURST` — burst allowance above sustained rate (default: `20`)
 - Set to `0` to disable rate limiting entirely
 
-**Status:** - [ ] Merged
+**Status:** - [x] Merged (verified on `main`, 2026-06-02)
 
 ---
 
@@ -132,7 +141,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 - `OPENCHROME_ASYNC_IO` — `true`/`false`, enables async file operations (default: `true`)
 - `OPENCHROME_EVENT_LOOP_FATAL_MS` — event loop stall threshold in ms before process exit (default: `30000`); set to `0` to disable
 
-**Status:** - [ ] Merged
+**Status:** - [x] Merged (verified on `main`, 2026-06-02)
 
 ---
 
@@ -156,7 +165,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 - `OPENCHROME_METRICS_PORT` — port for `/health` and `/metrics` endpoints (default: `9090`)
 - Metrics endpoint is always enabled when running in HTTP mode; no flag to disable
 
-**Status:** - [ ] Merged
+**Status:** - [x] Merged (verified on `main`, 2026-06-02)
 
 ---
 
@@ -186,7 +195,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 - All configuration via environment variables; see `deploy/systemd/openchrome.env` for full template
 - Docker volume: `/home/openchrome/.openchrome` for session state persistence
 
-**Status:** - [ ] Merged
+**Status:** - [x] Merged (verified on `main`, 2026-06-02)
 
 ---
 
@@ -213,7 +222,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 - `OPENCHROME_DISK_TARGET_MB` — target disk usage after pruning (default: `400`)
 - `OPENCHROME_DISK_CHECK_INTERVAL_MS` — how often to check disk usage (default: `60000`)
 
-**Status:** - [ ] Merged
+**Status:** - [x] Merged (verified on `main`, 2026-06-02)
 
 ---
 
@@ -378,21 +387,28 @@ These scenarios test the reliability guarantee under real conditions. All must p
 
 ## 7. E2E Certification Tests (Follow-Up)
 
-Automated versions of the real-world tests above. Implementation tracked separately.
+Automated versions of the real-world tests above, under `tests/e2e/scenarios/`. Status below
+reconciled against the actual test files on 2026-06-02. ✅ = the test file self-declares its
+`E2E-NN` ID (confirmed). 🟡 = a scenario file by that name exists but does not carry an explicit
+`E2E-NN` tag, so the mapping is by filename and should be confirmed before relying on it.
 
-| Test ID | Scenario | Automated? |
-|---------|----------|------------|
-| E2E-11 | WebSocket disconnect recovery | ❌ To implement |
-| E2E-12 | Infinite reconnection (5 min Chrome down) | ❌ To implement |
-| E2E-13 | HTTP transport independence (client disconnect) | ❌ To implement |
-| E2E-14 | Multi-client HTTP concurrency | ❌ To implement |
-| E2E-15 | Parallel tool call burst | ❌ To implement |
-| E2E-16 | Rate limiter under flood | ❌ To implement |
-| E2E-17 | Prometheus metrics accuracy | ❌ To implement |
-| E2E-18 | Disk space auto-cleanup | ❌ To implement |
-| E2E-19 | Event loop fatal recovery | ❌ To implement |
-| E2E-20 | 72-hour endurance | ❌ To implement |
-| E2E-21 | System pressure degradation | ❌ To implement |
+| Test ID | Scenario | Automated? | File |
+|---------|----------|------------|------|
+| E2E-11 | WebSocket disconnect recovery | 🟡 Likely | `server-restart.e2e.ts` / `kill-recovery.e2e.ts` |
+| E2E-12 | Infinite reconnection (5 min Chrome down) | 🟡 Likely | `kill-recovery.e2e.ts` |
+| E2E-13 | HTTP transport independence (client disconnect) | ✅ Implemented | `http-independence.e2e.ts` |
+| E2E-14 | Multi-client HTTP concurrency | ✅ Implemented | `http-multi-client.e2e.ts` |
+| E2E-15 | Parallel tool call burst | ✅ Implemented | `parallel-burst.e2e.ts` |
+| E2E-16 | Rate limiter under flood | ✅ Implemented | `rate-limiter.e2e.ts` |
+| E2E-17 | Prometheus metrics accuracy | ✅ Implemented | `prometheus-metrics.e2e.ts` |
+| E2E-18 | Disk space auto-cleanup | ✅ Implemented | `disk-cleanup.e2e.ts` |
+| E2E-19 | Event loop fatal recovery | 🟡 Likely | `event-loop-block.e2e.ts` |
+| E2E-20 | 72-hour endurance | 🟡 Likely | `endurance-24h.e2e.ts` / `marathon.e2e.ts` (note: 24h file, not 72h) |
+| E2E-21 | System pressure degradation | 🟡 Likely | `memory-pressure.e2e.ts` |
+
+A certification harness also exists at `tests/harness/certification/run-certification.ts`. The
+🟡 rows need an explicit `E2E-NN` tag added to their test file (or the table corrected) to close
+the mapping — a small follow-up.
 
 See [E2E Certification Criteria](docs/roadmap/e2e-certification-criteria.md) for full test specifications.
 

@@ -112,6 +112,57 @@ profiles.
 
 ---
 
+## D4. Auto-retry semantics (reliability scope)
+
+Recorded as part of the post-ship reliability audit (2026-06-02). Promotes an
+implicit behavior in `src/mcp-server.ts` to a normative decision so it is not
+"fixed" in the wrong direction by future contributors.
+
+**Decision.** OpenChrome's built-in auto-retry of a tool call is **connection-error
+only** and is **at-least-once**, not at-most-once:
+
+1. A retry is attempted only when the failure is classified as a connection error
+   (`isConnectionError`). Non-connection failures are surfaced as-is, never retried.
+2. The thrown-error retry path is gated on a successful
+   `sessionManager.reconcileAfterReconnect()`; if reconciliation fails the retry is
+   aborted and the **original** error is returned (stale target state must not drive
+   a retry).
+3. Because a connection can drop *after* a side effect was dispatched to Chrome but
+   *before* its acknowledgement, a side-effectful tool (e.g. a form submit) may
+   execute twice across the drop+retry. This at-least-once window is **accepted**:
+   **at-most-once / idempotency for arbitrary actions is the orchestrator's
+   responsibility** (see the Responsibility Boundary and Non-Goals in
+   `issue-reliability-tracking.md`). OpenChrome offers only an opt-in
+   `idempotencyKey` for callers that need dedup.
+4. Both retry paths (thrown error and swallowed-error-in-result) **must** apply the
+   same guards: a timeout race around the retried handler and the reconcile gate.
+   The swallowed-error path historically omitted both, **and was in fact dead code**:
+   it gated on `isConnectionError({ message: errorText })`, but `isConnectionError`
+   stringifies non-`Error` values via `formatError` → `String(value)`, so the plain
+   object became `"[object Object]"` and matched no pattern, meaning the retry never
+   fired. Fixed in PR #1471 (issue #1469 / "Known Limitations / L1" in
+   `issue-reliability-guarantee.md`): pass the string directly, then apply the same
+   reconcile gate and timeout race as the thrown-error path. This is the normative
+   shape; any future divergence is a bug.
+
+## D5. Timeout / abort cancellation semantics
+
+Recorded 2026-06-02. Promotes the doc comment in `src/utils/with-timeout.ts` to a
+normative decision.
+
+**Decision.** On a tool-execution timeout or a client `AbortSignal`, OpenChrome
+**returns immediately and does not guarantee cancellation of the in-flight CDP
+command.** The underlying operation may continue to completion in the background
+(an "orphaned background call"), so a side effect may land *after* a timeout/abort
+error was already returned ("ghost effect"). This residual risk is **consciously
+accepted** in favour of the never-hang contract — bounding caller latency takes
+priority over guaranteeing downstream cancellation. Per-tool best-effort
+cancellation (propagating the signal into specific CDP/Puppeteer calls and
+reconciling page state afterward) is a **future improvement, not part of the
+contract**.
+
+---
+
 ## Still open
 
 - The C6 perf/console **assertion kinds** (audit #1457) are deferred to a

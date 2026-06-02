@@ -21,20 +21,29 @@ daemons:
 3. **Operational visibility** — operators can observe health metrics and set capacity limits
 
 OpenChrome already has a strong 4-layer self-healing architecture (CDP connection resilience,
-session state persistence, Chrome process supervision, application watchdog). The layers are
-solid individually. What is missing is the glue that makes them work together as a coherent
-production-grade daemon:
+session state persistence, Chrome process supervision, application watchdog). The original gap
+was the glue that makes those layers work together as a coherent production-grade daemon.
 
-- The server is still bound to its host process via stdio (no HTTP transport)
-- Reconnection attempts are capped at 5 (fine for interactive use, fatal for overnight runs)
-- There are no rate limits (a runaway agent can saturate the event loop)
-- The event-loop watchdog is disabled by default in production builds
-- Domain memory uses synchronous I/O that blocks the event loop under load
-- There are no Prometheus metrics (operators are flying blind)
-- There are no deployment artifacts (no systemd unit, no Docker Compose, no PM2 config)
-- Disk usage is unbounded (journals and snapshots accumulate forever)
+> **Status (reconciled 2026-06-02):** every item below has shipped. This section is kept as a
+> historical record of the original motivation; see `issue-reliability-tracking.md` for the
+> per-phase merge status and the "Known limitations" section at the end of this document for
+> what remains.
 
-This initiative closes all of those gaps in a single tracked effort.
+Originally-missing glue, now **delivered**:
+
+- ~~The server is still bound to its host process via stdio (no HTTP transport)~~ → Streamable
+  HTTP transport (`src/transports/http.ts`, PR #392)
+- ~~Reconnection attempts are capped at 5 (fatal for overnight runs)~~ → infinite reconnection in
+  HTTP mode (`DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP = Infinity`, PR #395)
+- ~~There are no rate limits~~ → per-session/tenant token bucket (`src/utils/rate-limiter.ts`, PR #397)
+- ~~The event-loop watchdog is disabled by default~~ → `DEFAULT_EVENT_LOOP_FATAL_MS = 30000` (PR #398)
+- ~~Domain memory uses synchronous I/O~~ → `fs/promises` async path (`src/memory/domain-memory.ts`, PR #398)
+- ~~There are no Prometheus metrics~~ → `/metrics` endpoint + collector (`src/metrics/collector.ts`, PR #399)
+- ~~There are no deployment artifacts~~ → `deploy/{systemd,docker,pm2}` (PR #400)
+- ~~Disk usage is unbounded~~ → disk monitor with auto-prune (`src/watchdog/disk-monitor.ts`, PR #402)
+
+The 1st-generation "never hangs" initiative is therefore **shipped**. Residual hardening work
+(retry-path consistency, timeout cancellation semantics) is tracked under "Known limitations".
 
 ---
 
@@ -294,6 +303,40 @@ The following are explicitly out of scope for this initiative:
 
 - **Authentication and authorization.** The HTTP transport added in Phase 1 will be
   localhost-only by default. Full auth is a separate security initiative.
+
+---
+
+## Known Limitations (post-ship, 2026-06-02)
+
+The 1st-generation initiative is shipped. A reliability audit surfaced the following residual
+items. They are **in-scope hardening** (per the Responsibility Boundary table in
+`issue-reliability-tracking.md`), not new direction. Most candidate "gaps" from the audit were
+found to be already implemented (e.g. memory-pressure aggressive cleanup in
+`src/session-manager.ts` + E2E-21) or explicitly out of scope (SLO burn-rate alerting → operator).
+What survived rigorous re-verification:
+
+- **L1 — Retry-path inconsistency + dead gate (bug). [Fixed: PR #1471, issue #1469]** The
+  thrown-connection-error retry path (`src/mcp-server.ts` ~2092) wraps its retry in a timeout race
+  *and* gates it on `reconcileAfterReconnect()`. The swallowed-connection-error retry path (~2148)
+  did **neither** — and was in fact **dead code**: it gated on `isConnectionError({ message: errorText })`,
+  but `isConnectionError` stringifies non-`Error` values via `formatError`→`String(value)`, so the
+  plain object became `"[object Object]"` and matched no pattern, so the retry never fired. The fix
+  passes the string directly, then mirrors the throw-path guards (reconcile gate + timeout race; a
+  bare `await` could otherwise hang the stdio path, violating the never-hang contract). Decision
+  context: **D4** in `ssot-decisions.md`.
+
+- **L2 — Timeout/abort does not cancel the underlying CDP call.** On tool timeout or client
+  abort, `src/utils/with-timeout.ts` returns immediately and leaves the in-flight CDP command
+  running (an "orphaned background call", acknowledged in that file's own doc comment). This is a
+  *deliberate* trade-off in favour of never-hang, with an accepted residual "ghost effect" risk
+  (the operation may complete after the error was returned). Promoted from a buried code comment
+  to a normative decision: **D5** in `ssot-decisions.md`. Per-tool best-effort cancellation is a
+  future improvement, not a contract.
+
+Explicitly **not** added here as direction (verified already-done or out of scope): memory-pressure
+eviction (done), circuit breaker on the Chrome path (optional latency optimization, not a contract
+gap — reconnection-wait already partial-fast-fails), SLO/error-budget alerting (operator's job per
+Non-Goals).
 
 ---
 
