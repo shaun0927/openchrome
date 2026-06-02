@@ -21,6 +21,7 @@ jest.mock('../src/session-manager', () => ({
 import { getSessionManager } from '../src/session-manager';
 import { MCPServer } from '../src/mcp-server';
 import { MCPRequest, MCPErrorCodes, MCPToolDefinition } from '../src/types/mcp';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS } from '../src/config/defaults';
 
 // Helper type for response with result
 interface MCPResultResponse {
@@ -685,6 +686,113 @@ describe('MCPServer', () => {
         expect(handler).toHaveBeenCalledTimes(2);
         mockForceReconnect.mockClear();
       }
+    });
+
+    // L1 (issue #1469 / SSOT D4 & D5): the swallowed-connection-error retry path —
+    // where a tool RETURNS an isError result instead of throwing — must apply the
+    // same guards as the thrown-error path: a reconcile gate and a timeout race.
+    describe('swallowed connection error retry (L1)', () => {
+      const swallowedErr = 'WebSocket is not open: readyState 3 (CLOSED)';
+      const makeTool = (name: string, handler: jest.Mock) => {
+        const definition: MCPToolDefinition = {
+          name,
+          description: 'swallowed-error tool',
+          inputSchema: { type: 'object' as const, properties: {}, required: [] },
+          annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        };
+        server.registerTool(name, handler, definition);
+        return { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } } as MCPRequest;
+      };
+
+      test('retries and succeeds when handler returns (not throws) a connection error', async () => {
+        let callCount = 0;
+        const handler = jest.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return { content: [{ type: 'text', text: swallowedErr }], isError: true };
+          }
+          return { content: [{ type: 'text', text: 'Recovered' }] };
+        });
+        const request = makeTool('swallowed_ok', handler);
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+
+        expect(handler).toHaveBeenCalledTimes(2);
+        expect(mockForceReconnect).toHaveBeenCalledTimes(1);
+        expect(mockSessionManager.reconcileAfterReconnect).toHaveBeenCalledTimes(1);
+        expect(response.result!.content![0].text).toBe('Recovered');
+      });
+
+      test('aborts the retry and keeps the original error when reconcile fails', async () => {
+        (mockSessionManager.reconcileAfterReconnect as jest.Mock).mockRejectedValueOnce(
+          new Error('reconcile failed'),
+        );
+        const handler = jest.fn().mockReturnValue({
+          content: [{ type: 'text', text: swallowedErr }],
+          isError: true,
+        });
+        const request = makeTool('swallowed_reconcile_fail', handler);
+
+        const response = (await server.handleRequest(request)) as MCPResultResponse;
+
+        // Reconcile threw → no second handler invocation, original error kept.
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(mockForceReconnect).toHaveBeenCalledTimes(1);
+        expect(response.result!.isError).toBe(true);
+        expect(response.result!.content![0].text).toContain('WebSocket is not open');
+      });
+
+      test('does not hang: the retry is bounded by the tool-execution timeout', async () => {
+        jest.useFakeTimers();
+        try {
+          let callCount = 0;
+          const handler = jest.fn().mockImplementation(() => {
+            callCount++;
+            if (callCount === 1) {
+              return { content: [{ type: 'text', text: swallowedErr }], isError: true };
+            }
+            // Retry handler never resolves — only the timeout race can end the call.
+            return new Promise(() => { /* never resolves */ });
+          });
+          const request = makeTool('swallowed_hang', handler);
+
+          const responsePromise = server.handleRequest(request) as Promise<MCPResultResponse>;
+          await jest.advanceTimersByTimeAsync(DEFAULT_TOOL_EXECUTION_TIMEOUT_MS + 50);
+          const response = await responsePromise;
+
+          expect(handler).toHaveBeenCalledTimes(2);
+          // Retry timed out → catch keeps the original swallowed error result.
+          expect(response.result!.isError).toBe(true);
+          expect(response.result!.content![0].text).toContain('WebSocket is not open');
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+
+      test('does not hang when the reconnect itself stalls', async () => {
+        jest.useFakeTimers();
+        try {
+          // forceReconnect never resolves — the reconnect timeout race must end the call.
+          mockForceReconnect.mockReturnValueOnce(new Promise(() => { /* never resolves */ }));
+          const handler = jest.fn().mockReturnValue({
+            content: [{ type: 'text', text: swallowedErr }],
+            isError: true,
+          });
+          const request = makeTool('swallowed_reconnect_hang', handler);
+
+          const responsePromise = server.handleRequest(request) as Promise<MCPResultResponse>;
+          await jest.advanceTimersByTimeAsync(DEFAULT_RECONNECT_TIMEOUT_MS + 50);
+          const response = await responsePromise;
+
+          // Reconnect timed out before the retry was dispatched → handler called once,
+          // original error result preserved (never-hang honored at the reconnect step).
+          expect(handler).toHaveBeenCalledTimes(1);
+          expect(response.result!.isError).toBe(true);
+          expect(response.result!.content![0].text).toContain('WebSocket is not open');
+        } finally {
+          jest.useRealTimers();
+        }
+      });
     });
   });
 

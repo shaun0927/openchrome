@@ -2150,11 +2150,35 @@ export class MCPServer {
       // isError results, bypassing the thrown-error retry at the catch block above.
       if (result.isError && result.content?.[0]?.type === 'text') {
         const errorText = (result.content[0] as { text: string }).text;
-        if (isConnectionError({ message: errorText })) {
+        // Pass the string directly: isConnectionError() runs the value through
+        // formatError(), which only extracts `.message` from Error instances and
+        // otherwise calls String(value). A plain `{ message: errorText }` object
+        // therefore stringifies to "[object Object]" and matches no pattern — which
+        // had silently made this whole swallowed-error retry path dead code. (L1)
+        if (isConnectionError(errorText)) {
           console.error(`[MCPServer] Detected swallowed connection error in "${toolName}" result, attempting reconnect + retry`);
           try {
             const cdpClientRetry = getCDPClient();
-            await cdpClientRetry.forceReconnect();
+            // Race the reconnect against DEFAULT_RECONNECT_TIMEOUT_MS, exactly like the
+            // thrown-error retry path above. A bare `await forceReconnect()` would
+            // re-open the same hang window the handler race below closes: if Chrome is
+            // dead and the reconnect never resolves, the stdio path would hang here
+            // before the retry is even dispatched. (SSOT decision D5 / L1)
+            let swallowedReconnectTid: ReturnType<typeof setTimeout>;
+            await Promise.race([
+              cdpClientRetry.forceReconnect().finally(() => clearTimeout(swallowedReconnectTid)),
+              new Promise<never>((_, reject) => {
+                swallowedReconnectTid = setTimeout(
+                  () => reject(new Error(`Reconnect timed out after ${DEFAULT_RECONNECT_TIMEOUT_MS}ms (swallowed-error path)`)),
+                  DEFAULT_RECONNECT_TIMEOUT_MS,
+                );
+              }),
+            ]);
+            // Wait for session state reconciliation before retrying — mirrors the
+            // thrown-error retry path above. If reconciliation fails this throws and
+            // the catch below keeps the original error result, since stale target
+            // state would otherwise cause wrong-target errors. (SSOT decision D4 / L1)
+            await this.sessionManager.reconcileAfterReconnect();
             // Retry the tool call once
             const swallowedRetryContext: ToolContext = {
               startTime: Date.now(),
@@ -2165,7 +2189,20 @@ export class MCPServer {
               requestClient: this.requestFromClient.bind(this),
               reportProgress,
             };
-            result = await Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext));
+            // Race the retry against the tool-execution timeout, exactly like the
+            // initial dispatch and the thrown-error retry. A bare `await` here can
+            // hang the stdio path indefinitely (no outer request timeout exists in
+            // stdio mode), violating the never-hang contract. (SSOT decision D5 / L1)
+            let swallowedRetryTid: ReturnType<typeof setTimeout>;
+            result = await Promise.race([
+              Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext)).finally(() => clearTimeout(swallowedRetryTid)),
+              new Promise<never>((_, reject) => {
+                swallowedRetryTid = setTimeout(
+                  () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (swallowed-error retry)`)),
+                  DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+                );
+              }),
+            ]);
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
           } catch (retryError) {
             console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);
