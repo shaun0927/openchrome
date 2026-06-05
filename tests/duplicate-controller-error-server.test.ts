@@ -80,4 +80,16 @@ describe('DuplicateControllerErrorServer (#1474)', () => {
   test('blank lines are ignored', () => {
     expect(makeServer().handleLine('   ')).toEqual([]);
   });
+
+  test('exits with failure (2) when stdin closes without an MCP handshake', () => {
+    // e.g. `serve --auto-launch </dev/null` from CI/systemd: non-TTY, immediate
+    // EOF, no initialize. Must report refusal-to-start, not silent success.
+    expect(makeServer().closeExitCode()).toBe(2);
+  });
+
+  test('exits cleanly (0) after a real MCP client handshook and disconnected', () => {
+    const server = makeServer();
+    server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }));
+    expect(server.closeExitCode()).toBe(0);
+  });
 });
