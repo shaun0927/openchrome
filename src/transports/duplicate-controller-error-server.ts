@@ -37,6 +37,18 @@ export interface DuplicateControllerErrorServerOptions {
   protocolVersion?: string;
   /** Override process exit (tests). */
   exit?: (code: number) => void;
+  /**
+   * If no `initialize` arrives within this window, exit(2) instead of hanging.
+   * Guards a non-MCP stdin that stays open but never speaks (e.g.
+   * `tail -f /dev/null | serve`). 0 disables. Default 10s.
+   */
+  initTimeoutMs?: number;
+}
+
+function parseEnvInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 type JsonRpcMessage = {
@@ -51,6 +63,7 @@ export class DuplicateControllerErrorServer {
   private readonly writeOut: (chunk: string) => void;
   private readonly protocolVersion: string;
   private readonly exit: (code: number) => void;
+  private readonly initTimeoutMs: number;
   /** Whether a real MCP client completed `initialize` before stdin closed. */
   private sawInitialize = false;
 
@@ -59,14 +72,36 @@ export class DuplicateControllerErrorServer {
     this.writeOut = options.write ?? ((chunk) => { process.stdout.write(chunk); });
     this.protocolVersion = options.protocolVersion ?? '2024-11-05';
     this.exit = options.exit ?? ((code) => process.exit(code));
+    this.initTimeoutMs = options.initTimeoutMs
+      ?? parseEnvInt(process.env.OPENCHROME_DUPLICATE_RESPONDER_INIT_TIMEOUT_MS, 10_000);
   }
 
-  start(): void {
-    const rl = readline.createInterface({ input: process.stdin, terminal: false });
+  start(input: NodeJS.ReadableStream = process.stdin): void {
+    const rl = readline.createInterface({ input, terminal: false });
+
+    // A non-MCP stdin that stays open but never sends `initialize` (e.g.
+    // `tail -f /dev/null | serve`) would otherwise hang forever and never
+    // report the duplicate-controller refusal. Bound the wait: if no handshake
+    // arrives in time, exit(2). Unref'd so a real MCP client is unaffected.
+    let initTimer: NodeJS.Timeout | null = null;
+    if (this.initTimeoutMs > 0) {
+      initTimer = setTimeout(() => {
+        if (!this.sawInitialize) this.exit(2);
+      }, this.initTimeoutMs);
+      initTimer.unref?.();
+    }
+    const clearInitTimer = () => {
+      if (initTimer) { clearTimeout(initTimer); initTimer = null; }
+    };
+
     rl.on('line', (line) => {
       for (const out of this.handleLine(line)) this.writeOut(out);
+      if (this.sawInitialize) clearInitTimer();
     });
-    rl.on('close', () => this.exit(this.closeExitCode()));
+    rl.on('close', () => {
+      clearInitTimer();
+      this.exit(this.closeExitCode());
+    });
   }
 
   /**
@@ -140,7 +175,7 @@ export class DuplicateControllerErrorServer {
       const responses: Array<MCPResponse | Record<string, unknown>> = [];
       const serverNotifications: string[] = [];
       for (const item of parsed) {
-        for (const frame of this.handle(item as JsonRpcMessage)) {
+        for (const frame of this.handle(item)) {
           if ('id' in frame) responses.push(frame);
           else serverNotifications.push(serialize(frame)); // server notification → own line
         }
@@ -150,10 +185,22 @@ export class DuplicateControllerErrorServer {
       return out.concat(serverNotifications);
     }
 
-    return this.handle(parsed as JsonRpcMessage).map(serialize);
+    return this.handle(parsed).map(serialize);
   }
 
-  private handle(message: JsonRpcMessage): Array<MCPResponse | Record<string, unknown>> {
+  private handle(raw: unknown): Array<MCPResponse | Record<string, unknown>> {
+    // Valid JSON that is not a JSON-RPC object (null, number, string, boolean,
+    // or a nested array inside a batch) must yield an Invalid Request error —
+    // not a TypeError from `'id' in raw`, which would crash the process and
+    // drop the connection the responder exists to preserve.
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return [{
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: MCPErrorCodes.INVALID_REQUEST, message: 'Invalid Request: expected a JSON-RPC object' },
+      }];
+    }
+    const message = raw as JsonRpcMessage;
     const method = typeof message.method === 'string' ? message.method : '';
     // JSON-RPC §4.1: a notification is a request WITHOUT an `id` member. An
     // explicit `id: null` is an unusual-but-valid request, so key off member
