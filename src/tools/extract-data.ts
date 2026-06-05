@@ -78,6 +78,7 @@ const definition: MCPToolDefinition = {
       },
       alreadyCollected: {
         type: 'array',
+        items: { type: 'string' },
         description: 'Semantic mode only: values already collected by the host, used for simple chunk dedupe hints.',
       },
       selector: {
