@@ -230,9 +230,12 @@ function envInt(name: string, fallback: number): number {
 
 /**
  * Extra headroom added on top of the Chrome launch budget when deriving the
- * default takeover grace, covering process spawn + waitForDebugPort jitter.
+ * default takeover grace. `startedAt` is stamped at lock-ACQUIRE time (MCP
+ * boot), which precedes the Chrome launch — so this buffer must also absorb a
+ * slow MCP boot (profile scan, cookie copy, disk latency) before Chrome even
+ * starts, on top of the launch budget itself.
  */
-const LOCK_TAKEOVER_GRACE_BUFFER_MS = 30_000;
+const LOCK_TAKEOVER_GRACE_BUFFER_MS = 60_000;
 
 /**
  * Resolve the Chrome launch budget the owner is allowed before its CDP
@@ -249,6 +252,9 @@ function delay(ms: number): Promise<void> {
 }
 
 function isWithinGracePeriod(startedAt: string, now: number, graceMs: number): boolean {
+  // A legacy lock written before `startedAt` existed has an empty string here:
+  // no timestamp means no grace can be computed, so proceed straight to the CDP
+  // probe (the probe — not the clock — then decides whether to evict).
   if (!startedAt) return false;
   const started = Date.parse(startedAt);
   if (!Number.isFinite(started)) return false;
@@ -315,18 +321,28 @@ export async function acquireControllerLockWithHealthCheck(
   // budget (default 60s). The grace must exceed that budget, or a second
   // --auto-launch started mid-launch would probe an empty port and evict the
   // live owner — turning a slow-but-valid startup into split ownership (#1474).
+  // NOTE: `OPENCHROME_LOCK_TAKEOVER_GRACE_MS=0` disables the grace window (a
+  // foot-gun). To turn off health-based takeover entirely, use the dedicated
+  // kill-switch `OPENCHROME_LOCK_HEALTH_TAKEOVER=0` instead.
   const graceMs = options.graceMs
     ?? envInt('OPENCHROME_LOCK_TAKEOVER_GRACE_MS', resolveChromeLaunchBudgetMs() + LOCK_TAKEOVER_GRACE_BUFFER_MS);
   const probeAttempts = options.probeAttempts ?? envInt('OPENCHROME_LOCK_PROBE_ATTEMPTS', 3);
   const probeIntervalMs = options.probeIntervalMs ?? envInt('OPENCHROME_LOCK_PROBE_INTERVAL_MS', 500);
-  const maxTakeovers = options.maxTakeovers ?? 3;
+  const maxTakeovers = options.maxTakeovers ?? envInt('OPENCHROME_LOCK_MAX_TAKEOVERS', 3);
   const now = options.now ?? Date.now;
   const probe = options.probe ?? (async (port: number) => (await fetchJsonVersion(port)) !== null);
   const userDataDir = normalizeControllerUserDataDir(identity.userDataDir);
   const lockPath = getControllerLockPath(identity.port, userDataDir, rootDir);
   const selfHostname = os.hostname();
 
-  for (let attempt = 0; attempt <= maxTakeovers; attempt++) {
+  // Bound total iterations independently of the takeover budget so pathological
+  // lock churn (a concurrent taker repeatedly rewriting the lock) can never
+  // livelock. Only *successful* takeovers count against maxTakeovers, so a
+  // contended re-evaluation no longer burns the budget prematurely.
+  const maxIterations = maxTakeovers + 8;
+  let takeovers = 0;
+
+  for (let iter = 0; iter < maxIterations; iter++) {
     try {
       return acquireControllerLock(identity, rootDir);
     } catch (err) {
@@ -346,15 +362,20 @@ export async function acquireControllerLockWithHealthCheck(
       const healthy = await probeOwnerHealthy(owner.port, probeAttempts, probeIntervalMs, probe);
       if (healthy) throw err;
 
-      if (!unlinkStaleLock(lockPath, owner.pid, owner.startedAt)) {
-        // The lock changed underneath us (a concurrent taker won) — re-evaluate.
-        continue;
+      // Out of takeover budget — surface the duplicate-owner error rather than
+      // evicting yet another owner.
+      if (takeovers >= maxTakeovers) throw err;
+
+      if (unlinkStaleLock(lockPath, owner.pid, owner.startedAt)) {
+        // A real takeover: count it, then re-attempt the O_EXCL create.
+        takeovers += 1;
       }
-      // Loop: re-attempt the O_EXCL create. A concurrent taker may still win,
-      // in which case the next iteration sees a (now healthy) owner and throws.
+      // else: the lock changed underneath us (a concurrent taker won). Re-
+      // evaluate WITHOUT spending takeover budget — the next iteration probes
+      // the new owner and throws if it is healthy.
     }
   }
 
-  // Takeover budget exhausted — surface the duplicate-owner error to the caller.
+  // Iteration ceiling hit under pathological churn — surface the duplicate error.
   return acquireControllerLock(identity, rootDir);
 }
