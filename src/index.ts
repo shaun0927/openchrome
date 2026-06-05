@@ -42,7 +42,7 @@ import { setComponent, resetReadinessMachine } from './watchdog/readiness';
 import { wireChromeReadiness } from './watchdog/chrome-readiness';
 import {
   DuplicateControllerError,
-  acquireControllerLock,
+  acquireControllerLockWithHealthCheck,
   formatDuplicateControllerMessage,
   type ControllerLockHandle,
 } from './utils/controller-lock';
@@ -320,7 +320,11 @@ program
         );
       } else {
         try {
-          controllerLock = acquireControllerLock({
+          // #1474: health-aware acquisition. A half-zombie owner (MCP alive but
+          // its Chrome/CDP dead) would otherwise hold the lock forever and
+          // deadlock every other session. This probes the owner's CDP endpoint
+          // and takes over a stale lock, while never evicting a healthy owner.
+          controllerLock = await acquireControllerLockWithHealthCheck({
             port,
             userDataDir: lockUserDataDir,
             lifecycleMode: options.launchMode || 'auto',

@@ -4,6 +4,7 @@ import * as path from 'path';
 import {
   DuplicateControllerError,
   acquireControllerLock,
+  acquireControllerLockWithHealthCheck,
   controllerLockKey,
   formatDuplicateControllerMessage,
   getControllerLockPath,
@@ -100,5 +101,114 @@ describe('controller lock', () => {
     } finally {
       first.release();
     }
+  });
+
+  describe('health-aware acquisition (#1474)', () => {
+    const profile = () => path.join(tmpDir, 'profile');
+
+    // Writes a lock owned by a *live* pid (this process) so PID-liveness alone
+    // would keep it forever. Guardrail inputs (startedAt/hostname) are explicit.
+    function writeOwnerLock(overrides: Record<string, unknown> = {}): string {
+      const lockPath = getControllerLockPath(9222, profile(), tmpDir);
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          port: 9222,
+          userDataDir: path.resolve(profile()),
+          startedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+          hostname: os.hostname(),
+          ...overrides,
+        }) + '\n',
+      );
+      return lockPath;
+    }
+
+    const opts = (over: Record<string, unknown> = {}) => ({
+      graceMs: 15_000,
+      probeAttempts: 2,
+      probeIntervalMs: 0,
+      ...over,
+    });
+
+    test('takes over a half-zombie owner whose CDP is unreachable', async () => {
+      const lockPath = writeOwnerLock();
+      const probe = jest.fn(async () => false);
+
+      const handle = await acquireControllerLockWithHealthCheck(
+        { port: 9222, userDataDir: profile() },
+        tmpDir,
+        opts({ probe }),
+      );
+
+      expect(probe).toHaveBeenCalledWith(9222);
+      expect(handle.metadata.pid).toBe(process.pid);
+      expect(fs.existsSync(lockPath)).toBe(true);
+      handle.release();
+    });
+
+    test('never evicts a healthy owner (CDP reachable)', async () => {
+      const first = acquireControllerLock({ port: 9222, userDataDir: profile() }, tmpDir);
+      const probe = jest.fn(async () => true);
+
+      await expect(
+        acquireControllerLockWithHealthCheck({ port: 9222, userDataDir: profile() }, tmpDir, opts({ probe })),
+      ).rejects.toBeInstanceOf(DuplicateControllerError);
+
+      first.release();
+    });
+
+    test('does not take over within the boot grace period', async () => {
+      writeOwnerLock({ startedAt: new Date().toISOString() });
+      const probe = jest.fn(async () => false);
+
+      await expect(
+        acquireControllerLockWithHealthCheck({ port: 9222, userDataDir: profile() }, tmpDir, opts({ probe })),
+      ).rejects.toBeInstanceOf(DuplicateControllerError);
+      // Grace short-circuits before any probe runs.
+      expect(probe).not.toHaveBeenCalled();
+    });
+
+    test('never evicts an owner registered on a different host', async () => {
+      writeOwnerLock({ hostname: `${os.hostname()}-other` });
+      const probe = jest.fn(async () => false);
+
+      await expect(
+        acquireControllerLockWithHealthCheck({ port: 9222, userDataDir: profile() }, tmpDir, opts({ probe })),
+      ).rejects.toBeInstanceOf(DuplicateControllerError);
+      expect(probe).not.toHaveBeenCalled();
+    });
+
+    test('escape hatch (disabled) preserves legacy reject-on-live-owner', async () => {
+      writeOwnerLock();
+      const probe = jest.fn(async () => false);
+
+      await expect(
+        acquireControllerLockWithHealthCheck(
+          { port: 9222, userDataDir: profile() },
+          tmpDir,
+          opts({ probe, disabled: true }),
+        ),
+      ).rejects.toBeInstanceOf(DuplicateControllerError);
+      expect(probe).not.toHaveBeenCalled();
+    });
+
+    test('still recovers a plain dead-pid stale lock without probing', async () => {
+      const lockPath = getControllerLockPath(9222, profile(), tmpDir);
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(lockPath, JSON.stringify({ pid: 99999999, port: 9222, userDataDir: profile() }) + '\n');
+      const probe = jest.fn(async () => false);
+
+      const handle = await acquireControllerLockWithHealthCheck(
+        { port: 9222, userDataDir: profile() },
+        tmpDir,
+        opts({ probe }),
+      );
+
+      expect(handle.metadata.pid).toBe(process.pid);
+      expect(probe).not.toHaveBeenCalled();
+      handle.release();
+    });
   });
 });
