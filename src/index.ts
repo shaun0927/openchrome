@@ -26,7 +26,6 @@ import { getVersion } from './version';
 import { bootstrapPilot, logActiveFlags } from './harness/flags';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { wireOwnerSelfRelease } from './chrome/owner-self-release';
-import { fetchJsonVersion } from './chrome/devtools-info';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
@@ -874,12 +873,15 @@ program
     processWatchdog.on('chrome-died', () => {
       setComponent('chrome', 'failing');
     });
-    // #1474: owner self-release. If the watchdog exhausts its relaunch budget,
-    // Chrome is unrecoverable and this owner would otherwise hold the controller
-    // lock forever as a half-zombie, deadlocking every other session. Surrender
-    // the lock and exit so the host respawns and another session can take over.
+    // #1474: owner self-release. When relaunches keep failing and a CDP probe
+    // confirms Chrome is unreachable, this owner is a half-zombie that would
+    // otherwise hold the controller lock forever, deadlocking every other
+    // session. Surrender the lock and exit so the host respawns and another
+    // session can take over.
     wireOwnerSelfRelease(processWatchdog, {
-      releaseLock: () => controllerLock?.release(),
+      // Null the handle after release so the process.on('exit') hook above does
+      // not redundantly re-release during the exit(70) that follows.
+      releaseLock: () => { controllerLock?.release(); controllerLock = null; },
       exit: (code) => process.exit(code),
       // Hard safety gate: only release if Chrome's CDP is genuinely unreachable,
       // so a recovered or still-serving Chrome is never torn down.

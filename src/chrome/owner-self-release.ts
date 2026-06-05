@@ -66,9 +66,15 @@ export function wireOwnerSelfRelease(watchdog: EventEmitter, deps: OwnerSelfRele
   const threshold = Math.max(1, deps.failureThreshold ?? DEFAULT_RELEASE_FAILURE_THRESHOLD);
   let consecutiveFailures = 0;
   let releasing = false;
+  let recoveredDuringProbe = false;
 
   watchdog.on('chrome-relaunched', () => {
     consecutiveFailures = 0;
+    // A relaunch that lands while a self-release probe is in flight must abort
+    // that decision: the new Chrome may not have bound its debug port yet, so a
+    // `false` probe result would be stale and could tear down a recovered
+    // browser. Record it; the in-flight probe checks this flag after awaiting.
+    if (releasing) recoveredDuringProbe = true;
   });
 
   watchdog.on('relaunch-failed', () => {
@@ -77,16 +83,30 @@ export function wireOwnerSelfRelease(watchdog: EventEmitter, deps: OwnerSelfRele
     if (consecutiveFailures < threshold) return;
 
     releasing = true;
+    recoveredDuringProbe = false;
     void (async () => {
       let reachable: boolean;
       try {
         reachable = await deps.probeChromeReachable();
       } catch (err) {
-        // Inconclusive probe — do not tear down on uncertainty.
+        // Inconclusive probe — do not tear down on uncertainty. Step the
+        // counter back one so at least one more failure is required before we
+        // re-probe, avoiding a tight no-back-off retry when the probe keeps
+        // timing out.
         log(
           `[SelfHealing] Chrome reachability probe errored during self-release; ` +
             `staying up: ${err instanceof Error ? err.message : String(err)}`,
         );
+        consecutiveFailures = Math.max(0, threshold - 1);
+        releasing = false;
+        return;
+      }
+
+      // A successful relaunch landed while we were probing — abort: a stale
+      // `false` here would tear down the freshly recovered browser.
+      if (recoveredDuringProbe) {
+        recoveredDuringProbe = false;
+        consecutiveFailures = 0;
         releasing = false;
         return;
       }

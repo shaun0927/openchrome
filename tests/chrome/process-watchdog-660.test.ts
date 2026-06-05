@@ -88,9 +88,14 @@ describe('ChromeProcessWatchdog #660 quiesce', () => {
     });
 
     watchdog = new ChromeProcessWatchdog(launcher, { intervalMs: 100 });
+    const relaunchFailed = jest.fn();
+    watchdog.on('relaunch-failed', relaunchFailed);
     watchdog.start();
     await tickOnce(100);
 
     expect(ensureChrome).not.toHaveBeenCalled();
+    // #1474: the rate-limit branch must emit relaunch-failed so owner
+    // self-release can observe this otherwise-silent irrecoverable state.
+    expect(relaunchFailed).toHaveBeenCalled();
   });
 });
