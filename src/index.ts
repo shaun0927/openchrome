@@ -342,6 +342,11 @@ program
             // Instead complete `initialize` and surface the remediation through
             // MCP. A human running this in a terminal (TTY) keeps the old
             // exit(2) so the command does not hang waiting on stdin.
+            //
+            // Scope: stdio only. `--transport both`/`http` daemons keep the
+            // hard exit(2) — the responder speaks stdio, and surfacing this over
+            // the HTTP leg would need a separate HTTP error path (out of scope;
+            // such daemons typically use --connect-broker, not --auto-launch).
             if (transportMode === 'stdio' && !process.stdin.isTTY) {
               const { DuplicateControllerErrorServer } = await import('./transports/duplicate-controller-error-server');
               new DuplicateControllerErrorServer(err).start();

@@ -114,9 +114,9 @@ export class DuplicateControllerErrorServer {
   /** Pure line handler — returns serialized JSON-RPC frames to write. */
   handleLine(line: string): string[] {
     if (!line.trim()) return [];
-    let message: JsonRpcMessage;
+    let parsed: unknown;
     try {
-      message = JSON.parse(line) as JsonRpcMessage;
+      parsed = JSON.parse(line);
     } catch (err) {
       return [serialize({
         jsonrpc: '2.0',
@@ -124,15 +124,44 @@ export class DuplicateControllerErrorServer {
         error: { code: MCPErrorCodes.PARSE_ERROR, message: err instanceof Error ? err.message : 'Parse error' },
       })];
     }
-    return this.handle(message).map(serialize);
+
+    // JSON-RPC §6 batch: respond with an array of the per-request responses;
+    // request members that are notifications produce no response member. We
+    // also surface any server-originated notification (the logging frame from
+    // initialize) as its own line outside the batch array.
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) {
+        return [serialize({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: MCPErrorCodes.INVALID_REQUEST, message: 'Invalid empty batch' },
+        })];
+      }
+      const responses: Array<MCPResponse | Record<string, unknown>> = [];
+      const serverNotifications: string[] = [];
+      for (const item of parsed) {
+        for (const frame of this.handle(item as JsonRpcMessage)) {
+          if ('id' in frame) responses.push(frame);
+          else serverNotifications.push(serialize(frame)); // server notification → own line
+        }
+      }
+      const out: string[] = [];
+      if (responses.length > 0) out.push(JSON.stringify(responses) + '\n');
+      return out.concat(serverNotifications);
+    }
+
+    return this.handle(parsed as JsonRpcMessage).map(serialize);
   }
 
   private handle(message: JsonRpcMessage): Array<MCPResponse | Record<string, unknown>> {
     const method = typeof message.method === 'string' ? message.method : '';
-    const hasId = message.id !== undefined && message.id !== null;
+    // JSON-RPC §4.1: a notification is a request WITHOUT an `id` member. An
+    // explicit `id: null` is an unusual-but-valid request, so key off member
+    // presence rather than null-ness (a null-check would drop the reply).
+    const hasId = 'id' in message;
     const id = (message.id ?? null) as number | string | null;
 
-    // Notifications (no id) get no reply — JSON-RPC §4.1.
+    // Notifications (no id member) get no reply — JSON-RPC §4.1.
     if (!hasId) return [];
 
     if (method === 'initialize') {
@@ -152,9 +181,23 @@ export class DuplicateControllerErrorServer {
         {
           jsonrpc: '2.0',
           method: 'notifications/message',
-          params: { level: 'error', logger: 'openchrome', data: this.summaryMessage() },
+          // MCP logging `data` is a structured, JSON-serializable value (the
+          // real server uses an object too), not a bare string.
+          params: {
+            level: 'error',
+            logger: 'openchrome',
+            data: { message: this.summaryMessage(), remediation: this.remediationData() },
+          },
         },
       ];
+    }
+
+    // MCP/JSON-RPC keepalive: a host that pings during or after initialize must
+    // get `{ result: {} }`. Returning the generic error here would make many
+    // hosts treat the connection as failed and disconnect before the user ever
+    // sees the remediation.
+    if (method === 'ping') {
+      return [{ jsonrpc: '2.0', id, result: {} }];
     }
 
     if (method === 'tools/list') {
