@@ -35,6 +35,8 @@ export interface DuplicateControllerErrorServerOptions {
   write?: (chunk: string) => void;
   /** Override the protocol version echoed in initialize (tests/compat). */
   protocolVersion?: string;
+  /** Override process exit (tests). */
+  exit?: (code: number) => void;
 }
 
 type JsonRpcMessage = {
@@ -48,11 +50,15 @@ export class DuplicateControllerErrorServer {
   private readonly error: DuplicateControllerError;
   private readonly writeOut: (chunk: string) => void;
   private readonly protocolVersion: string;
+  private readonly exit: (code: number) => void;
+  /** Whether a real MCP client completed `initialize` before stdin closed. */
+  private sawInitialize = false;
 
   constructor(error: DuplicateControllerError, options: DuplicateControllerErrorServerOptions = {}) {
     this.error = error;
     this.writeOut = options.write ?? ((chunk) => { process.stdout.write(chunk); });
     this.protocolVersion = options.protocolVersion ?? '2024-11-05';
+    this.exit = options.exit ?? ((code) => process.exit(code));
   }
 
   start(): void {
@@ -60,7 +66,19 @@ export class DuplicateControllerErrorServer {
     rl.on('line', (line) => {
       for (const out of this.handleLine(line)) this.writeOut(out);
     });
-    rl.on('close', () => process.exit(0));
+    rl.on('close', () => this.exit(this.closeExitCode()));
+  }
+
+  /**
+   * Exit code to use when stdin closes. If a real MCP client handshook
+   * (`initialize` seen), the remediation was delivered and a clean disconnect
+   * is success (0). But a non-interactive launch with stdin already EOF — e.g.
+   * `serve --auto-launch </dev/null` from CI/systemd — closes without any
+   * handshake; that is still a refusal-to-start and MUST report failure (2),
+   * not a silent success (Codex P2, #1474).
+   */
+  closeExitCode(): number {
+    return this.sawInitialize ? 0 : 2;
   }
 
   /** Structured remediation payload reused for both the error and the tool. */
@@ -118,6 +136,7 @@ export class DuplicateControllerErrorServer {
     if (!hasId) return [];
 
     if (method === 'initialize') {
+      this.sawInitialize = true;
       return [
         {
           jsonrpc: '2.0',
