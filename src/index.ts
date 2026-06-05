@@ -25,6 +25,7 @@ import { getIdleState } from './utils/idle-state';
 import { getVersion } from './version';
 import { bootstrapPilot, logActiveFlags } from './harness/flags';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
+import { wireOwnerSelfRelease } from './chrome/owner-self-release';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
@@ -871,6 +872,14 @@ program
     // Readiness: flip chrome to failing when watchdog detects Chrome died
     processWatchdog.on('chrome-died', () => {
       setComponent('chrome', 'failing');
+    });
+    // #1474: owner self-release. If the watchdog exhausts its relaunch budget,
+    // Chrome is unrecoverable and this owner would otherwise hold the controller
+    // lock forever as a half-zombie, deadlocking every other session. Surrender
+    // the lock and exit so the host respawns and another session can take over.
+    wireOwnerSelfRelease(processWatchdog, {
+      releaseLock: () => controllerLock?.release(),
+      exit: (code) => process.exit(code),
     });
     processWatchdog.start();
     // Readiness: watchdogs component is ok once the first tick has been scheduled
