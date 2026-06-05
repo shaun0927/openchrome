@@ -335,7 +335,18 @@ program
           });
         } catch (err) {
           if (err instanceof DuplicateControllerError) {
+            // Always emit the full diagnostic to stderr (CLI/operator path).
             console.error(formatDuplicateControllerMessage(err));
+            // #1474: when launched by an MCP host over stdio, exiting before the
+            // handshake makes the host discard stderr and show only `-32000`.
+            // Instead complete `initialize` and surface the remediation through
+            // MCP. A human running this in a terminal (TTY) keeps the old
+            // exit(2) so the command does not hang waiting on stdin.
+            if (transportMode === 'stdio' && !process.stdin.isTTY) {
+              const { DuplicateControllerErrorServer } = await import('./transports/duplicate-controller-error-server');
+              new DuplicateControllerErrorServer(err).start();
+              return;
+            }
             process.exit(2);
           }
           throw err;
