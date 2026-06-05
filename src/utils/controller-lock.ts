@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { getVersion } from '../version';
 import { fetchJsonVersion } from '../chrome/devtools-info';
+import { DEFAULT_CHROME_LAUNCH_TIMEOUT_MS } from '../config/defaults';
 
 export interface ControllerLockIdentity {
   port: number;
@@ -227,6 +228,22 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+/**
+ * Extra headroom added on top of the Chrome launch budget when deriving the
+ * default takeover grace, covering process spawn + waitForDebugPort jitter.
+ */
+const LOCK_TAKEOVER_GRACE_BUFFER_MS = 30_000;
+
+/**
+ * Resolve the Chrome launch budget the owner is allowed before its CDP
+ * endpoint must be listening — the same value the launcher uses
+ * (CHROME_LAUNCH_TIMEOUT_MS, else DEFAULT_CHROME_LAUNCH_TIMEOUT_MS).
+ */
+function resolveChromeLaunchBudgetMs(): number {
+  const raw = Number.parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CHROME_LAUNCH_TIMEOUT_MS;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -293,7 +310,13 @@ export async function acquireControllerLockWithHealthCheck(
   options: HealthAwareAcquireOptions = {},
 ): Promise<ControllerLockHandle> {
   const disabled = options.disabled ?? process.env.OPENCHROME_LOCK_HEALTH_TAKEOVER === '0';
-  const graceMs = options.graceMs ?? envInt('OPENCHROME_LOCK_TAKEOVER_GRACE_MS', 15_000);
+  // The lock is acquired BEFORE ensureChrome() launches Chrome, so a
+  // legitimately-launching owner has no CDP endpoint for up to the full launch
+  // budget (default 60s). The grace must exceed that budget, or a second
+  // --auto-launch started mid-launch would probe an empty port and evict the
+  // live owner — turning a slow-but-valid startup into split ownership (#1474).
+  const graceMs = options.graceMs
+    ?? envInt('OPENCHROME_LOCK_TAKEOVER_GRACE_MS', resolveChromeLaunchBudgetMs() + LOCK_TAKEOVER_GRACE_BUFFER_MS);
   const probeAttempts = options.probeAttempts ?? envInt('OPENCHROME_LOCK_PROBE_ATTEMPTS', 3);
   const probeIntervalMs = options.probeIntervalMs ?? envInt('OPENCHROME_LOCK_PROBE_INTERVAL_MS', 500);
   const maxTakeovers = options.maxTakeovers ?? 3;

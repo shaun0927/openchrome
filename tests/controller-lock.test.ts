@@ -170,6 +170,23 @@ describe('controller lock', () => {
       expect(probe).not.toHaveBeenCalled();
     });
 
+    test('default grace derives from the Chrome launch budget — does not evict a still-launching owner', async () => {
+      // 45s old: past the previous 15s default, but well within the 60s Chrome
+      // launch budget during which CDP is legitimately not yet listening.
+      writeOwnerLock({ startedAt: new Date(Date.now() - 45_000).toISOString() });
+      const probe = jest.fn(async () => false);
+
+      await expect(
+        // No graceMs override → exercises the launch-budget-derived default.
+        acquireControllerLockWithHealthCheck(
+          { port: 9222, userDataDir: profile() },
+          tmpDir,
+          { probe, probeAttempts: 2, probeIntervalMs: 0 },
+        ),
+      ).rejects.toBeInstanceOf(DuplicateControllerError);
+      expect(probe).not.toHaveBeenCalled(); // grace short-circuits before probing
+    });
+
     test('never evicts an owner registered on a different host', async () => {
       writeOwnerLock({ hostname: `${os.hostname()}-other` });
       const probe = jest.fn(async () => false);
