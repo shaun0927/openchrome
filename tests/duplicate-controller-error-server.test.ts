@@ -1,3 +1,4 @@
+import { PassThrough } from 'stream';
 import {
   DUPLICATE_CONTROLLER_ERROR_CODE,
   DuplicateControllerErrorServer,
@@ -13,6 +14,7 @@ function makeServer(): DuplicateControllerErrorServer {
     port: 9222,
     userDataDir: '/home/u/.openchrome/profile',
     startedAt: '2026-06-05T00:00:00.000Z',
+    lastHeartbeatAt: '2026-06-05T00:00:00.000Z',
     hostname: 'host',
   };
   return new DuplicateControllerErrorServer(
@@ -75,6 +77,46 @@ describe('DuplicateControllerErrorServer (#1474)', () => {
   test('an empty batch is rejected as an invalid request', () => {
     const frames = parseFrames(makeServer(), '[]');
     expect(frames[0].error.code).toBe(-32600);
+  });
+
+  test('non-object JSON does not crash — returns Invalid Request', () => {
+    // valid JSON that is not a JSON-RPC object would make `'id' in message`
+    // throw a TypeError (process crash) without the guard.
+    for (const line of ['null', '5', '"hello"', 'true']) {
+      const frames = parseFrames(makeServer(), line);
+      expect(frames[0].error.code).toBe(-32600);
+      expect(frames[0].id).toBeNull();
+    }
+  });
+
+  test('a batch member that is a non-object yields an Invalid Request response', () => {
+    const out = makeServer().handleLine(JSON.stringify([1, { jsonrpc: '2.0', id: 2, method: 'ping' }]));
+    const batch = JSON.parse(out[0]);
+    expect(Array.isArray(batch)).toBe(true);
+    expect(batch.some((r: any) => r.error?.code === -32600)).toBe(true); // the bare `1`
+    expect(batch.some((r: any) => r.id === 2 && r.result)).toBe(true); // the ping
+  });
+
+  test('init-timeout exits(2) when an open non-MCP stdin never sends initialize', () => {
+    jest.useFakeTimers();
+    const input = new PassThrough(); // open, never emits a line, never closes
+    try {
+      const exit = jest.fn();
+      const owner: ControllerLockMetadata = {
+        pid: 1, command: [], version: 'x', cwd: '', port: 9222,
+        userDataDir: '/p', startedAt: 't', lastHeartbeatAt: 't', hostname: 'h',
+      };
+      const server = new DuplicateControllerErrorServer(
+        new DuplicateControllerError('/l', owner),
+        { exit, initTimeoutMs: 5_000 },
+      );
+      server.start(input);
+      jest.advanceTimersByTime(5_000);
+      expect(exit).toHaveBeenCalledWith(2);
+    } finally {
+      input.end();
+      jest.useRealTimers();
+    }
   });
 
   test('lists a single diagnostic tool that names the conflict', () => {
