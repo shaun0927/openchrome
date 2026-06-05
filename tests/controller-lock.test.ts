@@ -8,7 +8,9 @@ import {
   controllerLockKey,
   formatDuplicateControllerMessage,
   getControllerLockPath,
+  recordControllerHeartbeat,
   releaseControllerLock,
+  startControllerHeartbeat,
 } from '../src/utils/controller-lock';
 
 describe('controller lock', () => {
@@ -209,6 +211,77 @@ describe('controller lock', () => {
         ),
       ).rejects.toBeInstanceOf(DuplicateControllerError);
       expect(probe).not.toHaveBeenCalled();
+    });
+
+    test('does NOT take over a long-lived owner that is mid-relaunch (recent heartbeat)', async () => {
+      // The owner started long ago (past the grace) but refreshed its heartbeat
+      // 1s ago — i.e. its Chrome was healthy a moment before this crash/relaunch
+      // window. Its CDP is momentarily unreachable, but it must NOT be evicted,
+      // or two controllers would own the same port/profile (the #1474 P1 gap).
+      writeOwnerLock({
+        startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+        lastHeartbeatAt: new Date(Date.now() - 1_000).toISOString(),
+      });
+      const probe = jest.fn(async () => false);
+
+      await expect(
+        acquireControllerLockWithHealthCheck({ port: 9222, userDataDir: profile() }, tmpDir, opts({ probe })),
+      ).rejects.toBeInstanceOf(DuplicateControllerError);
+      expect(probe).not.toHaveBeenCalled(); // recent heartbeat short-circuits before probing
+    });
+
+    test('DOES take over when the heartbeat is stale beyond the grace (true half-zombie)', async () => {
+      writeOwnerLock({
+        startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+        lastHeartbeatAt: new Date(Date.now() - 5 * 60_000).toISOString(), // stale > grace
+      });
+      const probe = jest.fn(async () => false);
+
+      const handle = await acquireControllerLockWithHealthCheck(
+        { port: 9222, userDataDir: profile() },
+        tmpDir,
+        opts({ probe }),
+      );
+      expect(handle.metadata.pid).toBe(process.pid);
+      handle.release();
+    });
+
+    test('recordControllerHeartbeat refreshes lastHeartbeatAt only for the owning pid', () => {
+      const handle = acquireControllerLock({ port: 9222, userDataDir: profile() }, tmpDir);
+      const before = handle.metadata.lastHeartbeatAt;
+
+      recordControllerHeartbeat(handle.path, handle.metadata.pid, () => Date.parse(before) + 60_000);
+      const afterOwn = JSON.parse(fs.readFileSync(handle.path, 'utf8'));
+      expect(afterOwn.lastHeartbeatAt).not.toBe(before);
+
+      // A different pid must not be able to refresh (or resurrect) the lock.
+      recordControllerHeartbeat(handle.path, handle.metadata.pid + 1, () => Date.parse(before) + 120_000);
+      const afterOther = JSON.parse(fs.readFileSync(handle.path, 'utf8'));
+      expect(afterOther.lastHeartbeatAt).toBe(afterOwn.lastHeartbeatAt);
+
+      handle.release();
+    });
+
+    test('startControllerHeartbeat refreshes the lock while the probe reports healthy', async () => {
+      jest.useFakeTimers();
+      try {
+        const handle = acquireControllerLock({ port: 9222, userDataDir: profile() }, tmpDir);
+        const before = JSON.parse(fs.readFileSync(handle.path, 'utf8')).lastHeartbeatAt;
+        let clock = Date.parse(before);
+
+        const hb = startControllerHeartbeat(handle, async () => true, {
+          intervalMs: 1000,
+          nowFn: () => (clock += 60_000),
+        });
+        await jest.advanceTimersByTimeAsync(1000); // fire one tick + flush probe/record
+        hb.stop();
+
+        const after = JSON.parse(fs.readFileSync(handle.path, 'utf8')).lastHeartbeatAt;
+        expect(after).not.toBe(before);
+        handle.release();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     test('still recovers a plain dead-pid stale lock without probing', async () => {

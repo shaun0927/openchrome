@@ -44,8 +44,10 @@ import {
   DuplicateControllerError,
   acquireControllerLockWithHealthCheck,
   formatDuplicateControllerMessage,
+  startControllerHeartbeat,
   type ControllerLockHandle,
 } from './utils/controller-lock';
+import { fetchJsonVersion } from './chrome/devtools-info';
 import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
@@ -340,7 +342,17 @@ program
       }
     }
 
+    // #1474: while we own the lock, periodically refresh its heartbeat whenever
+    // our Chrome/CDP is reachable. This lets a contender distinguish a live
+    // owner that is briefly relaunching Chrome (heartbeat recent) from a true
+    // half-zombie (heartbeat stale beyond the grace), preventing split
+    // ownership during a legitimate relaunch.
+    const controllerHeartbeat = controllerLock
+      ? startControllerHeartbeat(controllerLock, async () => (await fetchJsonVersion(port)) !== null)
+      : null;
+
     process.on('exit', () => {
+      try { controllerHeartbeat?.stop(); } catch { /* best-effort */ }
       try { controllerLock?.release(); } catch { /* best-effort */ }
     });
 

@@ -24,6 +24,14 @@ export interface ControllerLockMetadata {
   port: number;
   userDataDir: string;
   startedAt: string;
+  /**
+   * Last time the owner confirmed its Chrome/CDP was reachable and refreshed
+   * the lock. Distinguishes a live owner whose Chrome is briefly down (e.g.
+   * mid-relaunch after a crash) from a half-zombie whose Chrome is gone for
+   * good: a contender only takes over when this is stale beyond the grace.
+   * Falls back to `startedAt` for locks written before this field existed.
+   */
+  lastHeartbeatAt: string;
   lifecycleMode?: string;
   transportMode?: string;
   hostname: string;
@@ -98,6 +106,10 @@ function readMetadata(lockPath: string): ControllerLockMetadata | null {
       port,
       userDataDir,
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
+      lastHeartbeatAt:
+        typeof parsed.lastHeartbeatAt === 'string'
+          ? parsed.lastHeartbeatAt
+          : (typeof parsed.startedAt === 'string' ? parsed.startedAt : ''),
       ...(typeof parsed.lifecycleMode === 'string' ? { lifecycleMode: parsed.lifecycleMode } : {}),
       ...(typeof parsed.transportMode === 'string' ? { transportMode: parsed.transportMode } : {}),
       hostname: typeof parsed.hostname === 'string' ? parsed.hostname : '',
@@ -116,6 +128,7 @@ function buildMetadata(identity: ControllerLockIdentity): ControllerLockMetadata
     port: identity.port,
     userDataDir: normalizeControllerUserDataDir(identity.userDataDir),
     startedAt: new Date((identity.now ?? Date.now)()).toISOString(),
+    lastHeartbeatAt: new Date((identity.now ?? Date.now)()).toISOString(),
     ...(identity.lifecycleMode ? { lifecycleMode: identity.lifecycleMode } : {}),
     ...(identity.transportMode ? { transportMode: identity.transportMode } : {}),
     hostname: os.hostname(),
@@ -354,9 +367,14 @@ export async function acquireControllerLockWithHealthCheck(
       // its PID/CDP are not meaningfully probeable from here.
       if (owner.hostname && owner.hostname !== selfHostname) throw err;
 
-      // Owner may still be launching Chrome; its CDP endpoint is legitimately
-      // not listening yet during the grace window.
-      if (isWithinGracePeriod(owner.startedAt, now(), graceMs)) throw err;
+      // Owner liveness: a live owner refreshes `lastHeartbeatAt` whenever its
+      // Chrome/CDP is reachable. If that is recent (within grace), the owner is
+      // either still launching Chrome or mid-relaunch after a crash — its CDP
+      // is legitimately down for now, so do not evict. Only a heartbeat stale
+      // beyond the grace marks a true half-zombie. (Falls back to startedAt for
+      // pre-heartbeat locks.)
+      const ownerLivenessAt = owner.lastHeartbeatAt || owner.startedAt;
+      if (isWithinGracePeriod(ownerLivenessAt, now(), graceMs)) throw err;
 
       // Only a half-zombie (CDP unreachable across every attempt) is evictable.
       const healthy = await probeOwnerHealthy(owner.port, probeAttempts, probeIntervalMs, probe);
@@ -378,4 +396,63 @@ export async function acquireControllerLockWithHealthCheck(
 
   // Iteration ceiling hit under pathological churn — surface the duplicate error.
   return acquireControllerLock(identity, rootDir);
+}
+
+/**
+ * Refresh the owner's `lastHeartbeatAt` in the lock file. Best-effort and
+ * pid-guarded: if the lock has been taken over (pid changed) or removed, this
+ * is a no-op, so a stale owner can never resurrect a lock it no longer holds.
+ */
+export function recordControllerHeartbeat(
+  lockPath: string,
+  pid: number,
+  nowFn: () => number = Date.now,
+): void {
+  const current = readMetadata(lockPath);
+  if (!current || current.pid !== pid) return;
+  const updated: ControllerLockMetadata = { ...current, lastHeartbeatAt: new Date(nowFn()).toISOString() };
+  try {
+    fs.writeFileSync(lockPath, JSON.stringify(updated, null, 2) + '\n', { mode: 0o600 });
+  } catch {
+    /* best-effort */
+  }
+}
+
+export interface ControllerHeartbeatHandle {
+  stop(): void;
+}
+
+/**
+ * Periodically probe the owner's own Chrome/CDP and, when reachable, refresh
+ * the lock heartbeat so contenders can tell a live owner — even one briefly
+ * relaunching Chrome after a crash — from a half-zombie whose Chrome is gone
+ * for good. The timer is unref'd so it never keeps the process alive; disable
+ * with OPENCHROME_LOCK_HEARTBEAT=0.
+ */
+export function startControllerHeartbeat(
+  handle: Pick<ControllerLockHandle, 'path' | 'metadata'>,
+  probe: () => Promise<boolean>,
+  options: { intervalMs?: number; nowFn?: () => number } = {},
+): ControllerHeartbeatHandle {
+  if (process.env.OPENCHROME_LOCK_HEARTBEAT === '0') {
+    return { stop: () => undefined };
+  }
+  const intervalMs = Math.max(1000, options.intervalMs ?? envInt('OPENCHROME_LOCK_HEARTBEAT_INTERVAL_MS', 10_000));
+  const nowFn = options.nowFn ?? Date.now;
+  let inFlight = false;
+  const timer = setInterval(() => {
+    if (inFlight) return;
+    inFlight = true;
+    void (async () => {
+      try {
+        if (await probe()) recordControllerHeartbeat(handle.path, handle.metadata.pid, nowFn);
+      } catch {
+        // A failed/throwing probe simply means no refresh this tick.
+      } finally {
+        inFlight = false;
+      }
+    })();
+  }, intervalMs);
+  timer.unref?.();
+  return { stop: () => clearInterval(timer) };
 }
