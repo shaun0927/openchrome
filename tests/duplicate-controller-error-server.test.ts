@@ -38,8 +38,43 @@ describe('DuplicateControllerErrorServer (#1474)', () => {
     const note = frames.find((f) => f.method === 'notifications/message');
     expect(note).toBeDefined();
     expect(note.params.level).toBe('error');
-    expect(String(note.params.data)).toContain('another session');
+    // data is a structured object (spec), not a bare string.
+    expect(note.params.data.message).toContain('another session');
+    expect(note.params.data.remediation.reason).toBe('duplicate_controller');
     expect(note.id).toBeUndefined(); // notification has no id
+  });
+
+  test('responds to ping with an empty result (keepalive must not error)', () => {
+    const frames = parseFrames(makeServer(), JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'ping' }));
+    expect(frames[0].id).toBe(7);
+    expect(frames[0].result).toEqual({});
+    expect(frames[0].error).toBeUndefined();
+  });
+
+  test('handles a JSON-RPC batch: array of responses + the server notification', () => {
+    const out = makeServer().handleLine(JSON.stringify([
+      { jsonrpc: '2.0', id: 1, method: 'initialize' },
+      { jsonrpc: '2.0', id: 2, method: 'ping' },
+      { jsonrpc: '2.0', method: 'notifications/initialized' }, // notification → no response member
+    ]));
+    const parsed = out.map((f) => JSON.parse(f));
+    const batch = parsed.find((f) => Array.isArray(f)) as any[] | undefined;
+    expect(batch).toBeDefined();
+    expect((batch as any[]).map((r: any) => r.id).sort()).toEqual([1, 2]); // only the two requests
+    // the server-originated logging notification is emitted as its own frame
+    expect(parsed.some((f) => !Array.isArray(f) && f.method === 'notifications/message')).toBe(true);
+  });
+
+  test('an explicit id:null request still gets a reply (not treated as a notification)', () => {
+    const frames = parseFrames(makeServer(), JSON.stringify({ jsonrpc: '2.0', id: null, method: 'resources/list' }));
+    expect(frames).toHaveLength(1);
+    expect(frames[0].id).toBeNull();
+    expect(frames[0].error.code).toBe(DUPLICATE_CONTROLLER_ERROR_CODE);
+  });
+
+  test('an empty batch is rejected as an invalid request', () => {
+    const frames = parseFrames(makeServer(), '[]');
+    expect(frames[0].error.code).toBe(-32600);
   });
 
   test('lists a single diagnostic tool that names the conflict', () => {
