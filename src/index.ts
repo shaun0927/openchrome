@@ -26,6 +26,7 @@ import { getVersion } from './version';
 import { bootstrapPilot, logActiveFlags } from './harness/flags';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
 import { wireOwnerSelfRelease } from './chrome/owner-self-release';
+import { fetchJsonVersion } from './chrome/devtools-info';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
@@ -880,6 +881,9 @@ program
     wireOwnerSelfRelease(processWatchdog, {
       releaseLock: () => controllerLock?.release(),
       exit: (code) => process.exit(code),
+      // Hard safety gate: only release if Chrome's CDP is genuinely unreachable,
+      // so a recovered or still-serving Chrome is never torn down.
+      probeChromeReachable: async () => (await fetchJsonVersion(port)) !== null,
     });
     processWatchdog.start();
     // Readiness: watchdogs component is ok once the first tick has been scheduled
