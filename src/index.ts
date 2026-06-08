@@ -696,7 +696,22 @@ program
     if (authToken) {
       console.error('[openchrome] Bearer token authentication: enabled');
     }
-    const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp;
+    // #1480 S2: an auto-elected owner exposes the broker over a loopback HTTP
+    // endpoint for same-user local sharing. There is no operator to supply a
+    // bearer token (this is zero-config), and a cross-process auto-generated
+    // token cannot be advertised via `authTokenEnv` (the client process would
+    // not inherit it). So, only when electing AND no token is configured AND the
+    // broker binds loopback, allow the unauthenticated loopback HTTP leg — the
+    // same posture as OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1. Non-loopback
+    // (--http-host 0.0.0.0) or any explicit token keeps auth mandatory; cross-
+    // tenant trust still requires explicit auth per D3 Q6.
+    const effectiveHttpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
+    const brokerHostIsLoopback = effectiveHttpHost === '127.0.0.1' || effectiveHttpHost === 'localhost' || effectiveHttpHost === '::1';
+    const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp
+      || (electBrokerOwner && !authToken && brokerHostIsLoopback);
+    if (electBrokerOwner && !authToken && brokerHostIsLoopback && !options.allowUnauthenticatedHttp) {
+      console.error('[openchrome] auto-elect: broker HTTP leg is loopback-only and unauthenticated (no token configured).');
+    }
 
     // Multi-tenant API key store: when OPENCHROME_API_KEYS_PATH points at a
     // JSONL store file, load it and pass it to the HTTP transport so
