@@ -376,7 +376,9 @@ program
                   || process.env.OPENCHROME_AUTH_TOKEN
                   || (broker.authTokenEnv ? process.env[broker.authTokenEnv] : undefined);
                 console.error(`[openchrome] auto-elect: attaching as broker client -> ${broker.endpoint}`);
-                new BrokerProxyStdioBridge(broker, resolvedAuthToken).start();
+                // #1480 S4: re-elect if this owner later dies (host respawns →
+                // a survivor wins the lock and becomes the new owner; no SPOF).
+                new BrokerProxyStdioBridge(broker, { authToken: resolvedAuthToken, reElectOnBrokerLoss: true }).start();
                 return;
               }
               console.error('[openchrome] auto-elect: owner holds the lock but published no broker; falling back to duplicate-controller remediation.');

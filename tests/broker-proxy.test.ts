@@ -185,4 +185,73 @@ describe('BrokerProxyStdioBridge multi-client broker forwarding', () => {
     const headers = (fetchImpl.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
     expect(headers['X-Tenant-Id']).toBe('tenant-alpha');
   });
+
+  describe('re-election on broker loss (#1480 S4)', () => {
+    const throwingFetch = (() => { throw new Error('connect ECONNREFUSED 127.0.0.1:3100'); }) as unknown as typeof fetch;
+
+    test('isBrokerGone() is false while the discovery file still names this owner', () => {
+      const bridge = new BrokerProxyStdioBridge(broker, {
+        readBrokerMetadataImpl: () => broker,
+      });
+      expect(bridge.isBrokerGone()).toBe(false);
+    });
+
+    test('isBrokerGone() is true when the discovery file is absent or names a new owner', () => {
+      expect(new BrokerProxyStdioBridge(broker, { readBrokerMetadataImpl: () => null }).isBrokerGone()).toBe(true);
+      expect(new BrokerProxyStdioBridge(broker, { readBrokerMetadataImpl: () => ({ ...broker, pid: 999 }) }).isBrokerGone()).toBe(true);
+      expect(new BrokerProxyStdioBridge(broker, { readBrokerMetadataImpl: () => ({ ...broker, endpoint: 'http://127.0.0.1:9999/mcp' }) }).isBrokerGone()).toBe(true);
+    });
+
+    test('forwarding failure with the broker GONE triggers re-election (no error spam)', async () => {
+      const output: string[] = [];
+      const onBrokerLost = jest.fn();
+      const bridge = new BrokerProxyStdioBridge(broker, {
+        fetchImpl: throwingFetch,
+        write: (chunk) => { output.push(chunk); },
+        reElectOnBrokerLoss: true,
+        onBrokerLost,
+        readBrokerMetadataImpl: () => null, // owner gone
+      });
+
+      await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+
+      expect(onBrokerLost).toHaveBeenCalledTimes(1);
+      expect(output).toHaveLength(0); // re-elect instead of returning an error
+    });
+
+    test('forwarding failure with the broker still ALIVE returns a transient error, no re-election', async () => {
+      const output: string[] = [];
+      const onBrokerLost = jest.fn();
+      const bridge = new BrokerProxyStdioBridge(broker, {
+        fetchImpl: throwingFetch,
+        write: (chunk) => { output.push(chunk); },
+        reElectOnBrokerLoss: true,
+        onBrokerLost,
+        readBrokerMetadataImpl: () => broker, // owner still present
+      });
+
+      await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+
+      expect(onBrokerLost).not.toHaveBeenCalled();
+      expect(output).toHaveLength(1);
+      expect(output[0]).toContain('Broker forwarding failed');
+    });
+
+    test('default (reElectOnBrokerLoss off) preserves the prior error-returning behavior', async () => {
+      const output: string[] = [];
+      const onBrokerLost = jest.fn();
+      const bridge = new BrokerProxyStdioBridge(broker, {
+        fetchImpl: throwingFetch,
+        write: (chunk) => { output.push(chunk); },
+        onBrokerLost,
+        readBrokerMetadataImpl: () => null,
+      });
+
+      await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+
+      expect(onBrokerLost).not.toHaveBeenCalled();
+      expect(output).toHaveLength(1);
+      expect(output[0]).toContain('Broker forwarding failed');
+    });
+  });
 });
