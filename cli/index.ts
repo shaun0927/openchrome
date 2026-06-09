@@ -465,6 +465,23 @@ program
   .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
   .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
   .option('--storage-dir <path>', 'Directory for storage state files (default: .openchrome/storage-state/)')
+  // Shared-profile / parallel-session topology (#1359 broker, #1480). These are
+  // implemented in dist/index.js and reach it via the argv passthrough below;
+  // they are declared here so `openchrome serve --help` documents them instead of
+  // hiding the only sanctioned multi-session path (see docs/roadmap/ssot-decisions.md D3).
+  .option('--broker', 'Run as the shared-profile broker owner (HTTP daemon plus broker discovery metadata). Requires --auto-launch.')
+  .option('--connect-broker', 'Proxy stdio MCP requests to the discovered broker for this (port, profile) instead of attaching to Chrome directly')
+  .option('--allow-unsafe-shared-attach', 'Debug escape hatch: allow a second direct controller for the same Chrome port/profile (races on target cleanup/reconnect — not for normal use)')
+  // Mirror the remaining src/index.ts serve flags that operators commonly need
+  // documented; the passthrough already forwards them.
+  .option('--transport <mode>', 'Transport mode: stdio, http, or both')
+  .option('--auth-token <token>', 'Bearer token for HTTP transport')
+  .option('--auto-connect [userDataDir]', 'Attach to a Chrome you started yourself by reading <userDataDir>/DevToolsActivePort (#849). Implies --launch-mode=attach.')
+  .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659)')
+  // Never let the bin wrapper reject a flag that the real serve implementation in
+  // dist/index.js understands: forward unknowns instead of erroring, so this
+  // wrapper can never again silently diverge from the full option surface (#1480 G1).
+  .allowUnknownOption()
   .action(async () => {
     // Non-blocking update check (fires in background)
     checkForUpdates(version).catch(() => {});
