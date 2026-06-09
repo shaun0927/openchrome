@@ -408,13 +408,46 @@ export function recordControllerHeartbeat(
   pid: number,
   nowFn: () => number = Date.now,
 ): void {
-  const current = readMetadata(lockPath);
-  if (!current || current.pid !== pid) return;
-  const updated: ControllerLockMetadata = { ...current, lastHeartbeatAt: new Date(nowFn()).toISOString() };
+  let fd: number | null = null;
   try {
-    fs.writeFileSync(lockPath, JSON.stringify(updated, null, 2) + '\n', { mode: 0o600 });
+    // Open the currently-linked lock file and update that same inode. A simple
+    // readMetadata(path) -> writeFile(path) sequence can resurrect stale
+    // ownership if another process unlinks/recreates the lock between the read
+    // and write. With an already-open fd, a concurrent takeover that unlinks the
+    // old file makes our write target the unlinked old inode, never the new
+    // owner's path.
+    fd = fs.openSync(lockPath, 'r+');
+    const parsed = JSON.parse(fs.readFileSync(fd, 'utf8')) as Partial<ControllerLockMetadata>;
+    const currentPid = parsed.pid;
+    const port = parsed.port;
+    const userDataDir = parsed.userDataDir;
+    if (
+      currentPid !== pid ||
+      typeof port !== 'number' ||
+      !Number.isSafeInteger(port) ||
+      typeof userDataDir !== 'string'
+    ) return;
+    const updated: ControllerLockMetadata = {
+      pid,
+      command: Array.isArray(parsed.command) ? parsed.command.map(String) : [],
+      version: typeof parsed.version === 'string' ? parsed.version : 'unknown',
+      cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
+      port,
+      userDataDir,
+      startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
+      lastHeartbeatAt: new Date(nowFn()).toISOString(),
+      ...(typeof parsed.lifecycleMode === 'string' ? { lifecycleMode: parsed.lifecycleMode } : {}),
+      ...(typeof parsed.transportMode === 'string' ? { transportMode: parsed.transportMode } : {}),
+      hostname: typeof parsed.hostname === 'string' ? parsed.hostname : '',
+    };
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, JSON.stringify(updated, null, 2) + '\n', 0, 'utf8');
   } catch {
     /* best-effort */
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* best-effort */ }
+    }
   }
 }
 

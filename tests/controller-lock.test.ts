@@ -262,6 +262,17 @@ describe('controller lock', () => {
       handle.release();
     });
 
+    test('recordControllerHeartbeat ignores malformed lock content even when pid matches', () => {
+      const lockPath = writeOwnerLock({ pid: 111, port: undefined });
+      fs.writeFileSync(lockPath, JSON.stringify({ pid: 111, userDataDir: path.resolve(profile()) }) + '\n');
+
+      recordControllerHeartbeat(lockPath, 111, () => Date.parse('2026-01-01T00:02:00.000Z'));
+
+      const current = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+      expect(current.lastHeartbeatAt).toBeUndefined();
+      expect(current.port).toBeUndefined();
+    });
+
     test('startControllerHeartbeat refreshes the lock while the probe reports healthy', async () => {
       jest.useFakeTimers();
       try {
