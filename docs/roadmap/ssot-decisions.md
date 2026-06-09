@@ -77,10 +77,13 @@ the controller lock (the second failed fast with `process.exit(2)`) rather than
 silently sharing. This kept the simple single-client case dependency-free and
 made sharing a deliberate act.
 
-#### Amendment — default auto-elect coordinated sharing (Q1′, 2026-06-08)
+#### Amendment — auto-elect coordinated sharing path (Q1′, 2026-06-08)
 
-**Superseded for the `serve --auto-launch` path: the default now auto-elects into
-coordinated sharing instead of failing fast.** Recorded after the parallel-session
+**Superseded target for the `serve --auto-launch` path: OpenChrome should converge
+on coordinated auto-elect sharing instead of fail-fast surplus sessions.** The
+initial implementation is intentionally guarded by `--auto-elect` /
+`OPENCHROME_AUTO_ELECT=1`; flipping that path to the default remains a separate
+release decision after S2–S4 validation. Recorded after the parallel-session
 regression report ([#1474](https://github.com/shaun0927/openchrome/issues/1474))
 and root-cause tracking ([#1480](https://github.com/shaun0927/openchrome/issues/1480)).
 
@@ -95,8 +98,9 @@ names the safe end-state explicitly:
 > "Multiple sessions may share a Chrome/profile, but they must do so through **one
 > coordinated owner/broker**, not through multiple independent controllers."
 
-Auto-elect *is* that end-state, wired into the default rather than left as a manual
-flag:
+Auto-elect *is* that end-state. The #1480 implementation first wires it as an
+explicit opt-in (`--auto-elect`) so the behavior can be validated before any
+default flip:
 
 - The `--auto-launch` process that **wins** the controller lock becomes the broker
   **owner** (it alone runs Chrome lifecycle, the watchdog, and CDP cleanup) and
@@ -128,12 +132,14 @@ hidden host-specific behavior** — election is host-neutral, decided purely by 
 outcome (owner / client / takeover / refusal) is surfaced over portable MCP
 surfaces, not host-coded.
 
-> **Status:** decided, implementation in flight under #1480. The controller lock,
-> broker discovery, and stdio proxy primitives are already on `develop`; the
-> wiring that makes the default auto-elect lands in the #1480 PR program (S2 owner
-> auto-publish → S3 client auto-elect → S4 re-election), stacked on the #1474
-> reliability fixes (#1477 → #1478 → #1479). Until S3 lands, the default remains
-> fail-fast; treat this section as the normative target the wiring must satisfy.
+> **Status:** decided as the target topology; implementation in flight under #1480.
+> The controller lock, broker discovery, and stdio proxy primitives are already on
+> `develop`; the S2 owner auto-publish → S3 client auto-connect → S4 re-election
+> wiring is stacked on the #1474 reliability fixes (#1477 → #1478 → #1479). Until
+> an explicit default-flip PR lands, plain `serve --auto-launch` remains fail-fast
+> and coordinated sharing requires `--auto-elect` (or manual `--broker` /
+> `--connect-broker`). Treat this section as the normative target and rollout plan,
+> not as a claim that the default has already flipped.
 
 ### Local discovery mechanism (Q2)
 
