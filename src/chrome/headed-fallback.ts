@@ -21,6 +21,7 @@ import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { safeTitle } from '../utils/safe-title';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { spawnProcessGuardian } from '../utils/process-guardian';
+import { writeMarker, removeMarker } from './ownership-marker';
 
 /** Default port offset from main Chrome port for the headed fallback */
 const HEADED_PORT_OFFSET = 100;
@@ -85,6 +86,12 @@ class HeadedFallbackManager {
   private port: number;
   private alivePages: Map<string, Page> = new Map();
   private profileDirectory?: string;
+  // #1480 G2: track the fallback Chrome's identity so the orphan reaper can
+  // reclaim it. The reaper's marker scan is port-independent, so a marker is the
+  // only thing that lets it reap a fallback Chrome living at basePort+100 — well
+  // outside the default basePort..basePort+4 reap window.
+  private chromePid?: number;
+  private markerUserDataDir?: string;
   private readonly cleanup = (): void => { this.shutdown(); };
   constructor(basePort: number = 9222) {
     this.port = basePort + HEADED_PORT_OFFSET;
@@ -182,6 +189,17 @@ class HeadedFallbackManager {
       spawnProcessGuardian(process.pid, this.chromeProcess.pid, {
         label: 'headed-fallback',
       });
+      // #1480 G2: mark the fallback Chrome as openchrome-managed so that if this
+      // owner dies hard (SIGKILL) before the guardian/cleanup fires, the next
+      // openchrome start's orphan-reap sweep classifies it 'kill' (ppid dead)
+      // and reclaims it instead of leaking a headed Chrome on port basePort+100.
+      this.chromePid = this.chromeProcess.pid;
+      this.markerUserDataDir = userDataDir;
+      try {
+        writeMarker({ chromePid: this.chromeProcess.pid, userDataDir });
+      } catch (err) {
+        console.error('[HeadedFallback] ownership marker write failed:', err);
+      }
     }
 
     // Wait for Chrome to be ready
@@ -322,6 +340,13 @@ class HeadedFallbackManager {
     if (this.chromeProcess && this.chromeProcess.exitCode === null) {
       try { this.chromeProcess.kill(); } catch { /* ignore */ }
       this.chromeProcess = null;
+    }
+    // #1480 G2: drop the ownership marker on clean shutdown so the reaper does
+    // not later chase an already-terminated PID.
+    if (this.chromePid !== undefined) {
+      try { removeMarker({ chromePid: this.chromePid, userDataDir: this.markerUserDataDir }); } catch { /* ignore */ }
+      this.chromePid = undefined;
+      this.markerUserDataDir = undefined;
     }
   }
 }
