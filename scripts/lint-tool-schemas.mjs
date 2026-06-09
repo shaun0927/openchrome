@@ -9,6 +9,11 @@
  *   4. Each required input property description starts with "REQUIRED " (uppercase, single space)
  *   5. Tool name matches ^[a-z][a-z0-9_]{2,63}$
  *   6. No duplicate tool names
+ *   7. Every `type: 'array'` node (anywhere in inputSchema/outputSchema,
+ *      recursively) declares `items`. Strict MCP clients (e.g. VS Code)
+ *      reject tools whose array parameters lack `items`. This is a HARD
+ *      correctness contract, not a soft budget — it must carry zero baseline
+ *      entries (fix the schema instead of allowlisting).
  *
  * Usage:
  *   node scripts/lint-tool-schemas.mjs <tools-list.json|-> [--update-baseline]
@@ -88,6 +93,49 @@ const baselineSet = new Set(baseline.map((e) => `${e.tool}:${e.field}:${e.rule}`
 /** @type {Violation[]} */
 const allViolations = [];
 
+/**
+ * Rule 7: walk a JSON-Schema subtree and flag any `type: 'array'` node that
+ * lacks `items`. Recurses through schema composition keywords, `properties`,
+ * `additionalProperties`, `items` (object or tuple array), and the
+ * `$defs`/`definitions` keyword bags. Path is a dotted JSON pointer used as
+ * the violation `field` so distinct nodes don't collapse.
+ *
+ * @param {unknown} node
+ * @param {string} path
+ * @param {string} toolName
+ */
+function checkArrayItems(node, path, toolName) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    node.forEach((child, i) => checkArrayItems(child, `${path}[${i}]`, toolName));
+    return;
+  }
+  if (node.type === 'array' && !('items' in node)) {
+    allViolations.push({ tool: toolName, field: path, rule: 'array_missing_items', value: 'missing', limit: 'items' });
+  }
+  for (const keyword of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(node[keyword])) {
+      node[keyword].forEach((child, i) => checkArrayItems(child, `${path}.${keyword}[${i}]`, toolName));
+    }
+  }
+  if (node.properties && typeof node.properties === 'object') {
+    for (const [key, child] of Object.entries(node.properties)) {
+      checkArrayItems(child, `${path}.properties.${key}`, toolName);
+    }
+  }
+  if (node.additionalProperties && typeof node.additionalProperties === 'object') {
+    checkArrayItems(node.additionalProperties, `${path}.additionalProperties`, toolName);
+  }
+  if ('items' in node) checkArrayItems(node.items, `${path}.items`, toolName);
+  for (const bag of ['$defs', 'definitions']) {
+    if (node[bag] && typeof node[bag] === 'object') {
+      for (const [key, child] of Object.entries(node[bag])) {
+        checkArrayItems(child, `${path}.${bag}.${key}`, toolName);
+      }
+    }
+  }
+}
+
 const seenNames = new Map(); // name -> first-seen index
 
 for (const tool of tools) {
@@ -110,6 +158,10 @@ for (const tool of tools) {
   if (desc.length > DESCRIPTION_MAX) {
     allViolations.push({ tool: name, field: 'description', rule: 'description_length', value: desc.length, limit: DESCRIPTION_MAX });
   }
+
+  // Rule 7: recursive array-needs-items check across input AND output schemas.
+  if (tool.inputSchema) checkArrayItems(tool.inputSchema, 'inputSchema', name);
+  if (tool.outputSchema) checkArrayItems(tool.outputSchema, 'outputSchema', name);
 
   // Per-property checks
   const schema = tool.inputSchema || {};
