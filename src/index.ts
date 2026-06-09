@@ -707,9 +707,13 @@ program
     // tenant trust still requires explicit auth per D3 Q6.
     const effectiveHttpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
     const brokerHostIsLoopback = effectiveHttpHost === '127.0.0.1' || effectiveHttpHost === 'localhost' || effectiveHttpHost === '::1';
-    const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp
+    const explicitAllowUnauthenticatedHttp = options.allowUnauthenticatedHttp
+      || process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP === '1'
+      || process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP === 'true'
+      || process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP === 'yes';
+    const allowUnauthenticatedHttp = explicitAllowUnauthenticatedHttp
       || (electBrokerOwner && !authToken && brokerHostIsLoopback);
-    if (electBrokerOwner && !authToken && brokerHostIsLoopback && !options.allowUnauthenticatedHttp) {
+    if (electBrokerOwner && !authToken && brokerHostIsLoopback && !explicitAllowUnauthenticatedHttp) {
       console.error('[openchrome] auto-elect: broker HTTP leg is loopback-only and unauthenticated (no token configured).');
     }
 
