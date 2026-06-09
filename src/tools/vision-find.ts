@@ -17,6 +17,7 @@ import { formatPerceptionSnapshotAsText } from '../vision/perception-provider';
 import { DomAnnotatorPerceptionProvider } from '../vision/providers/dom-annotator-provider';
 import { trackVisionUsage } from '../vision/config';
 import { recordVisualTrajectory } from '../observability/visual-trajectory';
+import { makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
 
 const definition: MCPToolDefinition = {
   name: 'vision_find',
@@ -178,8 +179,8 @@ Tiled mode: ${tiles.length} tile screenshot(s) attached below in document-Y orde
         : '';
     const imageBlocks =
       tiles.length > 0
-        ? tiles.map((t) => ({ type: 'image' as const, data: t.imageBase64, mimeType: t.mimeType }))
-        : [{ type: 'image' as const, data: result.screenshot, mimeType: result.mimeType }];
+        ? tiles.map((t) => makeImageContent(t.imageBase64, t.mimeType as SupportedImageMimeType))
+        : [makeImageContent(result.screenshot, result.mimeType as SupportedImageMimeType)];
 
     const content: MCPResult['content'] = [];
     if (format === 'legacy' || format === 'both') {

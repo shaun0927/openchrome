@@ -15,6 +15,7 @@ import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
+import { normalizeImageMimeType, makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
 
 const definition: MCPToolDefinition = {
   name: 'batch_paginate',
@@ -78,7 +79,7 @@ interface PageResult {
   pageNumber: number;
   text?: string;
   screenshot?: string; // base64
-  screenshotMimeType?: 'image/webp' | 'image/png';
+  screenshotMimeType?: SupportedImageMimeType;
   dom?: string;
   error?: string;
 }
@@ -205,7 +206,7 @@ const handler: ToolHandler = async (
           ]);
           if (screenshotData !== null) {
             result.screenshot = screenshotData;
-            result.screenshotMimeType = 'image/webp';
+            result.screenshotMimeType = normalizeImageMimeType(screenshotData, 'image/webp');
           } else {
             throw new Error('Screenshot timed out');
           }
@@ -225,7 +226,7 @@ const handler: ToolHandler = async (
               }),
             ]);
             result.screenshot = screenshotData as string;
-            result.screenshotMimeType = 'image/png';
+            result.screenshotMimeType = normalizeImageMimeType(result.screenshot, 'image/png');
           }
         }
       }
@@ -497,11 +498,7 @@ const handler: ToolHandler = async (
     if ((captureMode === 'screenshot' || captureMode === 'both') && !tooManyScreenshots) {
       for (const p of pages) {
         if (p.screenshot) {
-          content.push({
-            type: 'image',
-            data: p.screenshot,
-            mimeType: p.screenshotMimeType ?? 'image/webp',
-          });
+          content.push(makeImageContent(p.screenshot, p.screenshotMimeType ?? 'image/webp'));
         }
       }
     }
