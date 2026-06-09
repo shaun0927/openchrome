@@ -33,11 +33,13 @@ import {
   getCodexSetupCommand,
   getOpenCodeServerConfig,
   getTopologyWarning,
+  HOST_CONFIG_MIGRATION_NOTE,
   formatOpenCodeMCPServerConfigSnippet,
   getSupportedMCPClients,
   isSupportedMCPClient,
   upsertOpenCodeMCPServerConfig,
 } from './mcp-client-config';
+import { getHostConfigMigrationNotice, scanOpenChromeHostConfigs } from './mcp-config-diagnostics';
 import {
   addTotpSecret,
   generateTOTP,
@@ -185,6 +187,41 @@ program
     console.log('Simply remove the MCP server config from ~/.claude.json if you want to disable it.');
   });
 
+function printHostConfigMigrationNotice(label: string): void {
+  for (const line of getHostConfigMigrationNotice(label)) {
+    console.log(`ℹ️  ${line}`);
+  }
+}
+
+function printDoctorMCPTopologyGuidance(): void {
+  const diagnostics = scanOpenChromeHostConfigs();
+  console.log('\nMCP Host Topology:');
+
+  if (diagnostics.configs.length === 0) {
+    console.log('  ℹ️  No OpenChrome MCP host registrations detected in Claude Code, Codex CLI, or OpenCode config files.');
+    console.log(`  ℹ️  ${HOST_CONFIG_MIGRATION_NOTE}`);
+    return;
+  }
+
+  for (const config of diagnostics.configs) {
+    const mode = config.connectBroker ? 'broker client' : config.broker ? 'broker owner' : 'direct';
+    console.log(`  • ${config.label}: ${mode} port=${config.port} userDataDir=${config.userDataDir} (${config.path})`);
+  }
+
+  if (diagnostics.duplicateDirectGroups.length > 0) {
+    console.log('  ⚠️  Multiple host registrations use the same direct OpenChrome port/profile.');
+    for (const group of diagnostics.duplicateDirectGroups) {
+      const labels = group.configs.map((config) => config.label).join(', ');
+      console.log(`     - port=${group.port} userDataDir=${group.userDataDir}: ${labels}`);
+    }
+    console.log('     Use isolated per-client ports/profiles or the broker topology; do not rely on npm update alone.');
+  } else if (diagnostics.directConfigs.length > 0) {
+    console.log('  ℹ️  Direct OpenChrome registrations stay direct until setup or manual config changes migrate them.');
+  }
+
+  console.log(`  ℹ️  ${HOST_CONFIG_MIGRATION_NOTE}`);
+}
+
 program
   .command('setup')
   .description('Automatically configure MCP server for Claude Code, Codex CLI, or OpenCode')
@@ -295,7 +332,8 @@ program
 
         console.log(`\nScope: ${scope === 'user' ? 'Global (all projects)' : 'Project (this directory only)'}`);
         console.log('Updates: run "openchrome update"\n');
-        console.log('Next steps:');
+        printHostConfigMigrationNotice('Claude Code');
+        console.log('\nNext steps:');
         console.log('  1. Restart Claude Code');
         console.log('  2. Just say "oc" — that\'s it.\n');
         console.log('Examples:');
@@ -333,7 +371,8 @@ program
         console.log('\n✅ MCP server configured successfully!\n');
         console.log(`Config file: ${openCodeConfigPath}`);
         console.log('Auto-updates: enabled (via npx)\n');
-        console.log('Next steps:');
+        printHostConfigMigrationNotice('OpenCode');
+        console.log('\nNext steps:');
         console.log('  1. Restart OpenCode');
         console.log('  2. Verify the openchrome MCP server reconnects cleanly\n');
         console.log('Installed MCP snippet:');
@@ -362,7 +401,8 @@ program
       console.log('\n✅ MCP server configured successfully!\n');
       console.log('Config file: ~/.codex/config.toml');
       console.log('Updates: run "openchrome update"\n');
-      console.log('Next steps:');
+      printHostConfigMigrationNotice('Codex CLI');
+      console.log('\nNext steps:');
       console.log('  1. Restart Codex CLI');
       console.log('  2. Verify the openchrome MCP server reconnects cleanly\n');
       console.log('Installed MCP snippet:');
@@ -577,6 +617,8 @@ program
         console.log('  Set CHROME_PATH environment variable to your Chrome binary');
       }
     }
+
+    printDoctorMCPTopologyGuidance();
 
     const allPassed = Object.values(coreChecks).every(Boolean);
     console.log();
