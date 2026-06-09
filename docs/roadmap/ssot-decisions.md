@@ -69,12 +69,77 @@ question.
 
 ### Broker default vs. opt-in (Q1)
 
-**Opt-in.** A shared broker is engaged only when an operator explicitly passes
-`--broker` (the owner) and `--connect-broker` (the forwarding client). The
-default stdio path does **not** auto-join a broker; two plain `openchrome`
-invocations against the same `(port, userDataDir)` collide on the controller
-lock (the second fails fast) rather than silently sharing. This keeps the simple
-single-client case dependency-free and makes sharing a deliberate act.
+**Opt-in (original ship, #1376/#1379).** A shared broker was engaged only when an
+operator explicitly passed `--broker` (the owner) and `--connect-broker` (the
+forwarding client). The default stdio path did **not** auto-join a broker; two
+plain `openchrome` invocations against the same `(port, userDataDir)` collided on
+the controller lock (the second failed fast with `process.exit(2)`) rather than
+silently sharing. This kept the simple single-client case dependency-free and
+made sharing a deliberate act.
+
+#### Amendment — auto-elect coordinated sharing path (Q1′, 2026-06-08)
+
+**Superseded target for the `serve --auto-launch` path: OpenChrome should converge
+on coordinated auto-elect sharing instead of fail-fast surplus sessions.** The
+initial implementation is intentionally guarded by `--auto-elect` /
+`OPENCHROME_AUTO_ELECT=1`; flipping that path to the default remains a separate
+release decision after S2–S4 validation. Recorded after the parallel-session
+regression report ([#1474](https://github.com/shaun0927/openchrome/issues/1474))
+and root-cause tracking ([#1480](https://github.com/shaun0927/openchrome/issues/1480)).
+
+Rationale. The fail-fast default delivered safety (one CDP owner per
+`(port, userDataDir)`, per #1367) but **regressed a previously-working topology**:
+before [#1376](https://github.com/shaun0927/openchrome/pull/1376) (commit
+`664ffa36`, closes [#1367](https://github.com/shaun0927/openchrome/issues/1367)),
+the second `--auto-launch` process attached to the already-running Chrome on the
+port, so N host sessions shared one browser and all worked. #1367's own conclusion
+names the safe end-state explicitly:
+
+> "Multiple sessions may share a Chrome/profile, but they must do so through **one
+> coordinated owner/broker**, not through multiple independent controllers."
+
+Auto-elect *is* that end-state. The #1480 implementation first wires it as an
+explicit opt-in (`--auto-elect`) so the behavior can be validated before any
+default flip:
+
+- The `--auto-launch` process that **wins** the controller lock becomes the broker
+  **owner** (it alone runs Chrome lifecycle, the watchdog, and CDP cleanup) and
+  publishes broker discovery metadata under `~/.openchrome/brokers/`.
+- A process that **loses** to a *healthy* owner does **not** `exit(2)`; it
+  auto-switches to a `--connect-broker` **client**, forwarding its stdio MCP
+  traffic to the owner. Clients own no lifecycle, so the multi-independent-controller
+  races #1367 prevented (stale targets, accidental tab closure, reconnect races)
+  **cannot recur**.
+- A process that finds a **half-zombie** owner (lock held, CDP dead) takes the lock
+  over and promotes itself
+  ([#1477](https://github.com/shaun0927/openchrome/pull/1477)); on owner death a
+  surviving client re-elects
+  ([#1478](https://github.com/shaun0927/openchrome/pull/1478) self-release + lock
+  takeover), removing the single-point-of-failure.
+
+This is **not** a return to silent multi-controller sharing: there is still exactly
+**one** direct CDP owner per `(port, userDataDir)`; the change is that surplus
+sessions become *coordinated clients of that one owner* instead of being rejected.
+Manual `--broker` / `--connect-broker` remain valid and unchanged for operators who
+want to place the owner explicitly (e.g. a long-lived daemon). The only path that
+still permits multiple *independent* direct controllers is the loud debug escape
+`--allow-unsafe-shared-attach` / `OPENCHROME_ALLOW_UNSAFE_SHARED_ATTACH=1`, which
+keeps the documented race warning.
+
+Boundary check against the SSOT non-identity (#1359): auto-elect introduces **no
+hidden host-specific behavior** — election is host-neutral, decided purely by the
+`(port, userDataDir)` controller lock and the broker discovery file, and every
+outcome (owner / client / takeover / refusal) is surfaced over portable MCP
+surfaces, not host-coded.
+
+> **Status:** decided as the target topology; implementation in flight under #1480.
+> The controller lock, broker discovery, and stdio proxy primitives are already on
+> `develop`; the S2 owner auto-publish → S3 client auto-connect → S4 re-election
+> wiring is stacked on the #1474 reliability fixes (#1477 → #1478 → #1479). Until
+> an explicit default-flip PR lands, plain `serve --auto-launch` remains fail-fast
+> and coordinated sharing requires `--auto-elect` (or manual `--broker` /
+> `--connect-broker`). Treat this section as the normative target and rollout plan,
+> not as a claim that the default has already flipped.
 
 ### Local discovery mechanism (Q2)
 
