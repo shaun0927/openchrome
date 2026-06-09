@@ -68,6 +68,14 @@ npx openchrome-mcp setup --client opencode   # OpenCode
 
 Restart your MCP client. That's it — Chrome auto-launches on first tool call.
 
+**Updating is not configuration migration.** `npm install -g openchrome-mcp@latest`
+updates the OpenChrome binary, but it does not rewrite existing Claude Code,
+Codex CLI, OpenCode, or other MCP host registrations. If a release note asks you
+to move to a new topology (for example isolated profiles, broker mode, or a
+future auto-elect mode), rerun `openchrome setup --client <host> ...` or update
+the host config manually, then restart that host session so the MCP namespace is
+loaded from the new config.
+
 For manual Codex CLI configuration, run `openchrome config --client codex`
 and add the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
 
@@ -199,7 +207,7 @@ claims only when backed by live or recorded-real benchmark rows — see
 
 ## Other capabilities worth knowing
 
-- **Parallel sessions** — 1 Chrome, N tabs/lanes; `workerId` + `profileDirectory` give per-client isolation. Multiple MCP clients can share one Chrome safely when they connect through a single broker/HTTP owner (`--broker` / `--connect-broker`); independent stdio clients should use separate `--port` / `--user-data-dir` profiles. See [`docs/mcp/topologies.md`](docs/mcp/topologies.md).
+- **Parallel sessions** — 1 Chrome, N tabs/lanes; `workerId` + `profileDirectory` give per-client isolation. Multiple MCP clients can share one Chrome safely when they connect through a single broker/HTTP owner (`--broker` / `--connect-broker`); independent stdio clients should use separate `--port` / `--user-data-dir` profiles. If you upgraded OpenChrome after seeing duplicate-controller or `-32000` startup failures, also migrate the MCP host config and restart the host; package updates alone do not change existing registrations. See [`docs/mcp/topologies.md`](docs/mcp/topologies.md).
 - **Anti-bot / Turnstile** — 3-tier auto-fallback (headless → stealth → real headed Chrome) bypasses CDN/WAF blocks. [Turnstile guide](docs/turnstile-guide.md).
 - **Interactive login** — headed by default since the launcher runs visible; complete 2FA/CAPTCHA once, reuse the persistent profile after.
 - **Session persistence** — `--persist-storage` saves cookies + localStorage atomically for headless reuse.

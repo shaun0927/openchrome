@@ -6,6 +6,29 @@ OpenChrome currently supports one safe direct-controller rule:
 
 Multiple MCP clients can still run in parallel today. When they need to share one Chrome user data directory, run a single broker owner (`openchrome serve --broker --auto-launch`) and point the other clients at it with `--connect-broker`; otherwise give each client its own isolated port and user-data directory.
 
+## After upgrading OpenChrome
+
+A package update only installs new OpenChrome code. It does **not** rewrite the
+MCP server entries already registered in Claude Code, Codex CLI, OpenCode, or any
+other host. Existing direct entries such as `openchrome serve --auto-launch` keep
+using that direct topology until you change the host config.
+
+If a release note says a new topology is required to avoid duplicate-controller
+or opaque `-32000` startup failures:
+
+1. update the package (`npm install -g openchrome-mcp@latest` or your package
+   manager equivalent);
+2. rerun `openchrome setup --client <host> ...` with the topology recommended by
+   that release, or edit the host MCP config manually;
+3. restart the MCP host session. Active sessions usually load their MCP tool
+   namespace at startup and will not hot-reload a changed config.
+
+Until an auto-elect topology is explicitly shipped and enabled by the release
+notes, use either isolated per-client profiles or the explicit broker owner /
+`--connect-broker` topology below. Maintainers can reuse the release-note wording
+in [`docs/releases/action-required-config-migration.md`](../releases/action-required-config-migration.md)
+when a release requires host config migration.
+
 ## Single-owner default
 
 Use this when one MCP client owns OpenChrome on the default Chrome port/profile.
@@ -112,7 +135,7 @@ multi-client shared-profile behavior.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Duplicate-controller error on startup | A client started direct mode against the shared profile | Stop the direct client and restart it with `--connect-broker`. |
+| Duplicate-controller error on startup | A client started direct mode against the shared profile | Stop the direct client and restart it with `--connect-broker`, or migrate that host to an isolated port/profile. If you just upgraded OpenChrome, rerun setup or edit the host config; the package update did not change the existing registration. |
 | `No broker metadata found` | Broker owner is not running or profile/port do not match | Start the broker with the same `--port` and `--user-data-dir`. |
 | A client lost connection but Chrome stayed open | Expected proxy disconnect behavior | Reconnect the stdio proxy; do not start a second direct owner. |
 | Cross-tenant resource denial | The MCP session is bound to a different tenant | Use the matching tenant credentials or an isolated profile. |
