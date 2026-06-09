@@ -155,6 +155,14 @@ export class ChromeProcessWatchdog extends EventEmitter {
     if (shouldRateLimitRelaunch(this.launcher.recentCrashesMs)) {
       console.error('[ProcessWatchdog] Chrome crashing repeatedly; pausing relaunches. Run oc_stop and inspect logs.');
       this.cooldownUntil = Date.now() + 60_000;
+      // #1474: a rate-limited crash loop is an irrecoverable state — Chrome is
+      // down and we are deliberately not relaunching. Emit `relaunch-failed` so
+      // owner self-release can observe it; otherwise this branch is silent and a
+      // half-zombie would hold the controller lock forever.
+      this.emit('relaunch-failed', {
+        error: new Error('relaunch-rate-limited'),
+        timestamp: Date.now(),
+      });
       return;
     }
 
