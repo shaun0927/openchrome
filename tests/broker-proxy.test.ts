@@ -228,6 +228,7 @@ describe('BrokerProxyStdioBridge multi-client broker forwarding', () => {
         reElectOnBrokerLoss: true,
         onBrokerLost,
         readBrokerMetadataImpl: () => broker, // owner still present
+        isPidAliveImpl: () => true,
       });
 
       await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
@@ -235,6 +236,27 @@ describe('BrokerProxyStdioBridge multi-client broker forwarding', () => {
       expect(onBrokerLost).not.toHaveBeenCalled();
       expect(output).toHaveLength(1);
       expect(output[0]).toContain('Broker forwarding failed');
+    });
+
+    test('forwarding failure with stale same-owner metadata but dead owner PID triggers re-election', async () => {
+      const staleBroker = { ...broker, pid: 999_999_999 };
+      const output: string[] = [];
+      const onBrokerLost = jest.fn();
+      const bridge = new BrokerProxyStdioBridge(staleBroker, {
+        fetchImpl: throwingFetch,
+        write: (chunk) => { output.push(chunk); },
+        reElectOnBrokerLoss: true,
+        onBrokerLost,
+        readBrokerMetadataImpl: () => staleBroker, // stale file still names the old owner
+        isPidAliveImpl: () => false,
+      });
+
+      expect(bridge.isBrokerGone()).toBe(false); // metadata alone looks unchanged
+
+      await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+
+      expect(onBrokerLost).toHaveBeenCalledTimes(1);
+      expect(output).toHaveLength(0);
     });
 
     test('default (reElectOnBrokerLoss off) preserves the prior error-returning behavior', async () => {

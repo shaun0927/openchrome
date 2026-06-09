@@ -2,6 +2,7 @@ import * as readline from 'readline';
 import type { BrokerMetadata } from '../broker/discovery';
 import { readBrokerMetadata } from '../broker/discovery';
 import { MCPErrorCodes, MCPResponse } from '../types/mcp';
+import { isPidAlive } from '../utils/controller-lock';
 
 /**
  * Exit code a re-electing client uses when it detects its broker owner has died.
@@ -35,6 +36,8 @@ export interface BrokerProxyOptions {
   onBrokerLost?: () => void;
   /** Override broker-metadata reader (tests). */
   readBrokerMetadataImpl?: (port: number, userDataDir: string) => BrokerMetadata | null;
+  /** Override process liveness check (tests). */
+  isPidAliveImpl?: (pid: number) => boolean;
 }
 
 export class BrokerProxyStdioBridge {
@@ -47,6 +50,7 @@ export class BrokerProxyStdioBridge {
   private readonly reElectOnBrokerLoss: boolean;
   private readonly onBrokerLost: () => void;
   private readonly readBrokerMetadataImpl: (port: number, userDataDir: string) => BrokerMetadata | null;
+  private readonly isPidAliveImpl: (pid: number) => boolean;
   private brokerLostHandled = false;
   private mcpSessionId?: string;
 
@@ -63,6 +67,7 @@ export class BrokerProxyStdioBridge {
     this.reElectOnBrokerLoss = options.reElectOnBrokerLoss ?? false;
     this.onBrokerLost = options.onBrokerLost ?? (() => process.exit(BROKER_REELECT_EXIT_CODE));
     this.readBrokerMetadataImpl = options.readBrokerMetadataImpl ?? readBrokerMetadata;
+    this.isPidAliveImpl = options.isPidAliveImpl ?? isPidAlive;
   }
 
   start(): void {
@@ -91,7 +96,22 @@ export class BrokerProxyStdioBridge {
    */
   isBrokerGone(): boolean {
     const latest = this.readBrokerMetadataImpl(this.broker.port, this.broker.userDataDir);
+    return this.isDifferentBrokerOwner(latest);
+  }
+
+  private isDifferentBrokerOwner(latest: BrokerMetadata | null): boolean {
     return !latest || latest.endpoint !== this.broker.endpoint || latest.pid !== this.broker.pid;
+  }
+
+  private shouldReElectAfterForwardingFailure(): boolean {
+    const latest = this.readBrokerMetadataImpl(this.broker.port, this.broker.userDataDir);
+    if (this.isDifferentBrokerOwner(latest)) return true;
+
+    // The discovery file can be left behind by a hard crash/SIGKILL. In that
+    // case the metadata still names the original owner, but the forwarding
+    // request just failed and the owner PID is no longer alive, so this client
+    // should re-elect instead of returning transient errors forever.
+    return !this.isPidAliveImpl(this.broker.pid);
   }
 
   private handleBrokerLost(): void {
@@ -158,7 +178,7 @@ export class BrokerProxyStdioBridge {
       // dying. Distinguish via the discovery file: if the broker is gone,
       // re-elect instead of returning errors forever. Otherwise surface the
       // transient error as before.
-      if (this.reElectOnBrokerLoss && this.isBrokerGone()) {
+      if (this.reElectOnBrokerLoss && this.shouldReElectAfterForwardingFailure()) {
         this.handleBrokerLost();
         return;
       }
