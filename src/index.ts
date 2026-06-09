@@ -50,7 +50,7 @@ import {
 } from './utils/controller-lock';
 import { fetchJsonVersion } from './chrome/devtools-info';
 import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
-import { isAutoElectEnabled, shouldElectBrokerOwner, defaultBrokerHttpPort } from './broker/auto-elect';
+import { isAutoElectEnabled, shouldElectBrokerOwner, shouldClientAutoConnect, defaultBrokerHttpPort } from './broker/auto-elect';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -356,17 +356,42 @@ program
           if (err instanceof DuplicateControllerError) {
             // Always emit the full diagnostic to stderr (CLI/operator path).
             console.error(formatDuplicateControllerMessage(err));
+
+            // #1480 S3: auto-elect loser attaches to the healthy owner's broker
+            // instead of failing fast. The owner may have only just won the lock
+            // (this collision is the race), so poll briefly for its broker
+            // discovery metadata before giving up. If a broker is found, become a
+            // coordinated --connect-broker client; the previously-rejected surplus
+            // session now works.
+            if (autoElect) {
+              const { readBrokerMetadata } = await import('./broker/discovery');
+              const { BrokerProxyStdioBridge } = await import('./transports/broker-proxy');
+              let broker = readBrokerMetadata(port, lockUserDataDir);
+              for (let i = 0; i < 10 && !broker; i++) {
+                await new Promise((r) => setTimeout(r, 300));
+                broker = readBrokerMetadata(port, lockUserDataDir);
+              }
+              if (broker && shouldClientAutoConnect({ autoElect, brokerPresent: true })) {
+                const resolvedAuthToken = options.authToken
+                  || process.env.OPENCHROME_AUTH_TOKEN
+                  || (broker.authTokenEnv ? process.env[broker.authTokenEnv] : undefined);
+                console.error(`[openchrome] auto-elect: attaching as broker client -> ${broker.endpoint}`);
+                new BrokerProxyStdioBridge(broker, resolvedAuthToken).start();
+                return;
+              }
+              console.error('[openchrome] auto-elect: owner holds the lock but published no broker; falling back to duplicate-controller remediation.');
+            }
+
             // #1474: when launched by an MCP host over stdio, exiting before the
             // handshake makes the host discard stderr and show only `-32000`.
             // Instead complete `initialize` and surface the remediation through
             // MCP. A human running this in a terminal (TTY) keeps the old
             // exit(2) so the command does not hang waiting on stdin.
             //
-            // Scope: stdio only. `--transport both`/`http` daemons keep the
-            // hard exit(2) — the responder speaks stdio, and surfacing this over
-            // the HTTP leg would need a separate HTTP error path (out of scope;
-            // such daemons typically use --connect-broker, not --auto-launch).
-            if (transportMode === 'stdio' && !process.stdin.isTTY) {
+            // An auto-elect loser that found no broker is also a stdio host
+            // session (the elected owner serves stdio to its own host); surface
+            // the MCP error to it too rather than a bare exit(2).
+            if ((transportMode === 'stdio' || autoElect) && !process.stdin.isTTY) {
               const { DuplicateControllerErrorServer } = await import('./transports/duplicate-controller-error-server');
               new DuplicateControllerErrorServer(err).start();
               return;
