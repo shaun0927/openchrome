@@ -3,6 +3,8 @@ export type SetupScope = 'user' | 'project';
 
 export type TopologyPreset = 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile';
 
+export const HOST_CONFIG_MIGRATION_NOTE = 'Package updates do not rewrite existing MCP host registrations; rerun setup or edit host config, then restart the host to activate topology changes.';
+
 export interface ServeArgOptions {
   autoLaunch?: boolean;
   dashboard?: boolean;
@@ -114,7 +116,7 @@ export function getTopologyWarning(options: ServeArgOptions = {}): string | null
   const resolved = resolveTopologyOptions(options);
   const usingDefaultPortProfile = resolved.port === undefined && !resolved.userDataDir;
   if (!usingDefaultPortProfile) return null;
-  return 'Topology note: this config uses the default single-owner Chrome port/profile. Do not install the same direct config in multiple MCP clients at once; choose --topology isolated or explicit --port + --user-data-dir until broker mode is available.';
+  return `Topology note: this config uses the default single-owner Chrome port/profile. Do not install the same direct config in multiple MCP clients at once; choose --topology isolated, explicit --port + --user-data-dir, or the broker topology for shared profiles. ${HOST_CONFIG_MIGRATION_NOTE}`;
 }
 
 export function getCodexServerConfig(options: ServeArgOptions = {}): MCPServerConfig {

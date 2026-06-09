@@ -8,6 +8,7 @@ import {
   getOpenCodeServerConfig,
   getServeArgs,
   getTopologyWarning,
+  HOST_CONFIG_MIGRATION_NOTE,
   isSupportedMCPClient,
   upsertMCPServerConfig,
 } from '../../cli/mcp-client-config';
@@ -192,6 +193,7 @@ describe('cli/mcp-client-config', () => {
 
   test('default topology warning is omitted once port/profile is explicit', () => {
     expect(getTopologyWarning()).toContain('default single-owner');
+    expect(getTopologyWarning()).toContain(HOST_CONFIG_MIGRATION_NOTE);
     expect(getTopologyWarning({ port: 9333, userDataDir: '/tmp/openchrome-codex' })).toBeNull();
   });
 
