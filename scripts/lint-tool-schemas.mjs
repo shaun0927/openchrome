@@ -95,9 +95,10 @@ const allViolations = [];
 
 /**
  * Rule 7: walk a JSON-Schema subtree and flag any `type: 'array'` node that
- * lacks `items`. Recurses through `properties`, `items` (object or tuple
- * array), and the `$defs`/`definitions` keyword bags. Path is a dotted JSON
- * pointer used as the violation `field` so distinct nodes don't collapse.
+ * lacks `items`. Recurses through schema composition keywords, `properties`,
+ * `additionalProperties`, `items` (object or tuple array), and the
+ * `$defs`/`definitions` keyword bags. Path is a dotted JSON pointer used as
+ * the violation `field` so distinct nodes don't collapse.
  *
  * @param {unknown} node
  * @param {string} path
@@ -112,10 +113,18 @@ function checkArrayItems(node, path, toolName) {
   if (node.type === 'array' && !('items' in node)) {
     allViolations.push({ tool: toolName, field: path, rule: 'array_missing_items', value: 'missing', limit: 'items' });
   }
+  for (const keyword of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(node[keyword])) {
+      node[keyword].forEach((child, i) => checkArrayItems(child, `${path}.${keyword}[${i}]`, toolName));
+    }
+  }
   if (node.properties && typeof node.properties === 'object') {
     for (const [key, child] of Object.entries(node.properties)) {
       checkArrayItems(child, `${path}.properties.${key}`, toolName);
     }
+  }
+  if (node.additionalProperties && typeof node.additionalProperties === 'object') {
+    checkArrayItems(node.additionalProperties, `${path}.additionalProperties`, toolName);
   }
   if ('items' in node) checkArrayItems(node.items, `${path}.items`, toolName);
   for (const bag of ['$defs', 'definitions']) {

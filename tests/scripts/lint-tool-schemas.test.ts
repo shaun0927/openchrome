@@ -353,6 +353,41 @@ describe('Rule 7 — array_missing_items', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/array_missing_items/);
   });
+
+  it('fails when an array under oneOf is missing items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: {
+        type: 'object',
+        properties: { value: { oneOf: [{ type: 'string' }, { type: 'array' }] } },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/FAIL my_tool:inputSchema\.properties\.value\.oneOf\[1\]:array_missing_items/);
+  });
+
+  it('fails when an array under additionalProperties is missing items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          buckets: {
+            type: 'object',
+            additionalProperties: { type: 'array' },
+          },
+        },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/FAIL my_tool:inputSchema\.properties\.buckets\.additionalProperties:array_missing_items/);
+  });
 });
 
 // ── Baseline ratchet ───────────────────────────────────────────────────────
