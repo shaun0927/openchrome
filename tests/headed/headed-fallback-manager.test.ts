@@ -53,6 +53,8 @@ const mockSpawn = jest.fn().mockReturnValue({
   kill: jest.fn(),
   pid: 12345,
 });
+const mockWriteMarker = jest.fn().mockReturnValue('marker-uuid');
+const mockRemoveMarker = jest.fn();
 
 // Mock fetch for waitForDebugPort
 const mockFetch = jest.fn();
@@ -90,6 +92,11 @@ jest.mock('../../src/utils/puppeteer-helpers', () => ({
 
 jest.mock('../../src/utils/process-guardian', () => ({
   spawnProcessGuardian: jest.fn(),
+}));
+
+jest.mock('../../src/chrome/ownership-marker', () => ({
+  writeMarker: (...args: any[]) => mockWriteMarker(...args),
+  removeMarker: (...args: any[]) => mockRemoveMarker(...args),
 }));
 
 import { getHeadedFallback, shutdownHeadedFallback } from '../../src/chrome/headed-fallback';
@@ -247,6 +254,37 @@ describe('HeadedFallbackManager', () => {
     test('safe to call when no Chrome was launched', () => {
       const manager = getHeadedFallback(9222);
       expect(() => manager.shutdown()).not.toThrow();
+    });
+  });
+
+  describe('ownership marker (#1480 G2)', () => {
+    test('writes a managed marker for the fallback Chrome on launch', async () => {
+      const manager = getHeadedFallback(9222);
+      await manager.navigate('https://example.com');
+
+      expect(mockWriteMarker).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chromePid: 12345,
+          userDataDir: expect.stringContaining('openchrome-headed-fallback-9322'),
+        }),
+      );
+    });
+
+    test('removes the marker on shutdown', async () => {
+      const manager = getHeadedFallback(9222);
+      await manager.navigate('https://example.com');
+
+      manager.shutdown();
+
+      expect(mockRemoveMarker).toHaveBeenCalledWith(
+        expect.objectContaining({ chromePid: 12345 }),
+      );
+    });
+
+    test('does not attempt marker removal when no Chrome was launched', () => {
+      const manager = getHeadedFallback(9222);
+      manager.shutdown();
+      expect(mockRemoveMarker).not.toHaveBeenCalled();
     });
   });
 
