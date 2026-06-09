@@ -50,6 +50,7 @@ import {
 } from './utils/controller-lock';
 import { fetchJsonVersion } from './chrome/devtools-info';
 import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
+import { isAutoElectEnabled, shouldElectBrokerOwner, defaultBrokerHttpPort } from './broker/auto-elect';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -120,6 +121,7 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--broker', 'Run as the shared-profile broker owner (HTTP daemon plus broker discovery metadata)')
   .option('--connect-broker', 'Proxy stdio MCP requests to the discovered broker instead of attaching to Chrome directly')
+  .option('--auto-elect', 'Coordinated sharing (#1480): the --auto-launch process that wins the controller lock becomes the broker owner and surplus sessions auto-attach as clients instead of failing fast. Also: OPENCHROME_AUTO_ELECT=1. Off by default.')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
   .option('--slim', 'Expose only core tools (alias for --tools-only core).')
@@ -130,7 +132,7 @@ program
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
   .option('--codegen <mode>', 'Opt-in replay artifact generation: off, puppeteer, playwright, or mcp-replay. Default: off (no response shape changes). Also: OPENCHROME_CODEGEN.')
-  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; autoElect?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
     const { normalizeCodegenMode, setCodegenMode } = await import('./core/codegen');
     const codegenMode = normalizeCodegenMode(options.codegen ?? process.env.OPENCHROME_CODEGEN);
     setCodegenMode(codegenMode);
@@ -267,6 +269,19 @@ program
       process.exit(2);
     }
 
+    // #1480 auto-elect (D3 Q1′): the --auto-launch lock winner elects itself the
+    // broker owner so surplus sessions attach as coordinated clients instead of
+    // failing fast. Opt-in (off by default) — when disabled, every branch below
+    // is byte-for-byte the prior fail-fast behavior. Explicit --broker/
+    // --connect-broker always take precedence over auto-elect.
+    const autoElect = isAutoElectEnabled(options);
+    const electBrokerOwner = shouldElectBrokerOwner({
+      autoElect,
+      autoLaunch,
+      manualBroker: Boolean(options.broker),
+      connectBroker: Boolean(options.connectBroker),
+    });
+
     // Resolve transport mode before owner-lock acquisition so lock metadata
     // describes whether this process is a stdio, HTTP, or dual-transport owner.
     const validModes = ['stdio', 'http', 'both'];
@@ -278,7 +293,11 @@ program
     }
     const rawMode = options.broker
       ? 'http'
-      : options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
+      // An elected owner serves its own host over stdio AND exposes the broker
+      // over HTTP, so it needs dual transport.
+      : electBrokerOwner
+        ? 'both'
+        : options.transport ?? process.env.OPENCHROME_TRANSPORT ?? (options.http !== undefined && options.http !== false ? 'http' : 'stdio');
     if (!validModes.includes(rawMode)) {
       console.error(`[openchrome] Unknown transport mode "${rawMode}", falling back to stdio`);
     }
@@ -677,7 +696,26 @@ program
     if (authToken) {
       console.error('[openchrome] Bearer token authentication: enabled');
     }
-    const allowUnauthenticatedHttp = options.allowUnauthenticatedHttp;
+    // #1480 S2: an auto-elected owner exposes the broker over a loopback HTTP
+    // endpoint for same-user local sharing. There is no operator to supply a
+    // bearer token (this is zero-config), and a cross-process auto-generated
+    // token cannot be advertised via `authTokenEnv` (the client process would
+    // not inherit it). So, only when electing AND no token is configured AND the
+    // broker binds loopback, allow the unauthenticated loopback HTTP leg — the
+    // same posture as OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1. Non-loopback
+    // (--http-host 0.0.0.0) or any explicit token keeps auth mandatory; cross-
+    // tenant trust still requires explicit auth per D3 Q6.
+    const effectiveHttpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
+    const brokerHostIsLoopback = effectiveHttpHost === '127.0.0.1' || effectiveHttpHost === 'localhost' || effectiveHttpHost === '::1';
+    const explicitAllowUnauthenticatedHttp = options.allowUnauthenticatedHttp
+      || process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP === '1'
+      || process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP === 'true'
+      || process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP === 'yes';
+    const allowUnauthenticatedHttp = explicitAllowUnauthenticatedHttp
+      || (electBrokerOwner && !authToken && brokerHostIsLoopback);
+    if (electBrokerOwner && !authToken && brokerHostIsLoopback && !explicitAllowUnauthenticatedHttp) {
+      console.error('[openchrome] auto-elect: broker HTTP leg is loopback-only and unauthenticated (no token configured).');
+    }
 
     // Multi-tenant API key store: when OPENCHROME_API_KEYS_PATH points at a
     // JSONL store file, load it and pass it to the HTTP transport so
@@ -705,7 +743,13 @@ program
 
     if (transportMode === 'both') {
       // Dual mode: run both stdio and HTTP transports simultaneously
-      const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
+      // #1480: an auto-elected owner with no explicit --http uses a deterministic
+      // broker port (cdpPort + 200) instead of the shared 3100 default, so two
+      // owners on different profiles don't collide on one HTTP port.
+      const httpPort = typeof options.http === 'string'
+        ? parseInt(options.http, 10)
+        : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10)
+          || (electBrokerOwner ? defaultBrokerHttpPort(port) : 3100);
       const httpHost = (options as Record<string, unknown>).httpHost as string || process.env.OPENCHROME_HTTP_HOST || '127.0.0.1';
       const { HTTPTransport } = require('./transports/http');
       const httpTrans = new HTTPTransport(
@@ -729,13 +773,15 @@ program
 
       console.error(`[openchrome] Dual transport mode: stdio + HTTP on ${httpHost}:${httpPort}`);
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');
-      if (options.broker) {
+      // Publish broker discovery for an explicit --broker owner OR an auto-elected
+      // owner (#1480), so surplus sessions can find and attach to this owner.
+      if (options.broker || electBrokerOwner) {
         const { publishBrokerMetadata, removeBrokerMetadata } = await import('./broker/discovery');
         const { setBrokerOwnerMode, recordBrokerStopped } = await import('./broker/lifecycle');
         setBrokerOwnerMode(true);
         const metadata = publishBrokerMetadata({ port, userDataDir: lockUserDataDir, httpHost, httpPort, authTokenEnv: brokerAuthTokenEnv });
         process.on('exit', () => { recordBrokerStopped(); removeBrokerMetadata(port, lockUserDataDir); });
-        console.error(`[openchrome] Broker metadata: ${metadata.endpoint}`);
+        console.error(`[openchrome] Broker metadata: ${metadata.endpoint}${electBrokerOwner ? ' (auto-elected)' : ''}`);
       }
     } else if (useHttp) {
       const httpPort = typeof options.http === 'string' ? parseInt(options.http, 10) : parseInt(process.env.OPENCHROME_HTTP_PORT || '', 10) || 3100;
