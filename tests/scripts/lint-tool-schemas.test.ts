@@ -2,7 +2,7 @@
 /**
  * Tests for scripts/lint-tool-schemas.mjs
  *
- * Covers each of the 6 rules with one passing + one failing fixture,
+ * Covers each of the 7 rules with one passing + one failing fixture,
  * plus the baseline ratchet refusal test.
  *
  * The script is a standalone ESM module, so we test it by spawning it as a
@@ -266,6 +266,127 @@ describe('Rule 6 — duplicate_name', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toMatch(/FAIL my_tool:name:duplicate_name/);
     unlinkSync(path);
+  });
+});
+
+// ── Rule 7: array_missing_items ────────────────────────────────────────────
+describe('Rule 7 — array_missing_items', () => {
+  it('passes when an input array declares items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: {
+        type: 'object',
+        properties: { tags: { type: 'array', items: { type: 'string' }, description: 'Tags.' } },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('passes when an output array declares items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+      outputSchema: {
+        type: 'object',
+        properties: { warnings: { type: 'array', items: { type: 'object' } } },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('fails when an input array is missing items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: {
+        type: 'object',
+        properties: { tags: { type: 'array', description: 'Tags with no items.' } },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/FAIL my_tool:inputSchema\.properties\.tags:array_missing_items/);
+  });
+
+  it('fails when an output array is missing items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+      outputSchema: {
+        type: 'object',
+        properties: { warnings: { type: 'array' } },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/FAIL my_tool:outputSchema\.properties\.warnings:array_missing_items/);
+  });
+
+  it('fails when a nested array (array of objects) is missing items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          rows: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { cells: { type: 'array', description: 'Inner array, no items.' } },
+            },
+          },
+        },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/array_missing_items/);
+  });
+
+  it('fails when an array under oneOf is missing items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: {
+        type: 'object',
+        properties: { value: { oneOf: [{ type: 'string' }, { type: 'array' }] } },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/FAIL my_tool:inputSchema\.properties\.value\.oneOf\[1\]:array_missing_items/);
+  });
+
+  it('fails when an array under additionalProperties is missing items', () => {
+    const tools = [{
+      name: 'my_tool',
+      description: 'Short.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          buckets: {
+            type: 'object',
+            additionalProperties: { type: 'array' },
+          },
+        },
+        required: [],
+      },
+    }];
+    const result = runLintFromStdin(tools);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/FAIL my_tool:inputSchema\.properties\.buckets\.additionalProperties:array_missing_items/);
   });
 });
 
