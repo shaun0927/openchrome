@@ -47,6 +47,25 @@ describe('cli/mcp-config-diagnostics', () => {
     });
   });
 
+
+  test('classifies equals-style flags and platform-specific openchrome executable names', () => {
+    expect(classifyOpenChromeCommand('/opt/bin/openchrome', ['serve', '--port=9333', '--user-data-dir=/tmp/oc'])).toMatchObject({
+      direct: true,
+      port: '9333',
+      userDataDir: '/tmp/oc',
+    });
+
+    expect(classifyOpenChromeCommand('C:\\Tools\\openchrome.cmd', ['serve', '-p', '9444'])).toMatchObject({
+      direct: true,
+      port: '9444',
+    });
+
+    expect(classifyOpenChromeCommand('C:\\Tools\\openchrome.exe', ['serve', '--broker'])).toMatchObject({
+      broker: true,
+      direct: false,
+    });
+  });
+
   test('groups duplicate direct configs by port and user data dir', () => {
     const duplicateGroups = findDuplicateDirectGroups([
       {

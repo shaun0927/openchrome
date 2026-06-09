@@ -41,7 +41,7 @@ export function getHostConfigMigrationNotice(label = 'this MCP host'): string[] 
 
 export function classifyOpenChromeCommand(command: string, args: string[]): Omit<DetectedOpenChromeConfig, 'client' | 'label' | 'path'> | null {
   const commandParts = [command, ...args].filter(Boolean);
-  const openchromeIndex = commandParts.findIndex((part) => part === 'openchrome' || part.endsWith('/openchrome'));
+  const openchromeIndex = commandParts.findIndex(isOpenChromeExecutable);
   if (openchromeIndex === -1) return null;
 
   const serveArgs = commandParts.slice(openchromeIndex + 1);
@@ -96,7 +96,17 @@ export function scanOpenChromeHostConfigs(homeDir = os.homedir()): MCPConfigDiag
   ]);
 }
 
+function isOpenChromeExecutable(part: string): boolean {
+  const normalized = part.replace(/\\/g, '/');
+  const basename = normalized.split('/').pop() ?? normalized;
+  return basename === 'openchrome' || basename === 'openchrome.cmd' || basename === 'openchrome.exe';
+}
+
 function readFlagValue(args: string[], flag: string): string | undefined {
+  const equalsPrefix = `${flag}=`;
+  const equalsValue = args.find((arg) => arg.startsWith(equalsPrefix));
+  if (equalsValue) return equalsValue.slice(equalsPrefix.length) || undefined;
+
   const index = args.indexOf(flag);
   if (index === -1) return undefined;
   const value = args[index + 1];
