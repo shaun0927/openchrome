@@ -21,6 +21,7 @@ import * as fs from 'node:fs';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { coerceSupportedImageMimeType, makeImageContent } from '../utils/image-mime';
 
 interface ImageQaScreenshot {
   /** Opaque in-memory reference produced by a sibling tool. */
@@ -189,7 +190,7 @@ const handler: ToolHandler = async (
           {
             role: 'user',
             content: [
-              { type: 'image', data: decoded.base64, mimeType: decoded.mime },
+              makeImageContent(decoded.base64, coerceSupportedImageMimeType(decoded.mime)),
               { type: 'text', text: question },
             ],
           },
@@ -268,7 +269,7 @@ export async function runImageQaSampling(
           {
             role: 'user',
             content: [
-              { type: 'image', data: params.base64, mimeType: params.mime ?? 'image/png' },
+              makeImageContent(params.base64, coerceSupportedImageMimeType(params.mime)),
               { type: 'text', text: params.question },
             ],
           },

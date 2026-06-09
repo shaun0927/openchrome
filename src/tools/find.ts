@@ -16,6 +16,7 @@ import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-
 import { getVisionMode, trackVisionUsage } from '../vision/config';
 import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';
 import { formatAffordancePrefix } from '../utils/element-affordance';
+import { makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
 
 const definition: MCPToolDefinition = {
   name: 'find',
@@ -255,11 +256,7 @@ const handler: ToolHandler = async (
                   type: 'text',
                   text: `DOM found nothing for "${query}" — vision fallback found ${visionResult.elementCount} elements:\n\n${textMap}`,
                 },
-                {
-                  type: 'image',
-                  data: visionResult.screenshot,
-                  mimeType: visionResult.mimeType,
-                },
+                makeImageContent(visionResult.screenshot, visionResult.mimeType as SupportedImageMimeType),
               ],
             };
           }

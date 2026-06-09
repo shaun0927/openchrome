@@ -30,6 +30,7 @@ import type {
   VisionTilingInfo,
 } from './types';
 import { bufferToBase64WithPayloadGuard, resolveViewportDimensions, validateCaptureArea } from '../utils/screenshot-guards';
+import { detectImageMimeType } from '../utils/image-mime';
 
 /** Raw element collected from the page */
 export interface RawElement {
@@ -609,7 +610,7 @@ async function captureAnnotatedScreenshot(
     if ('error' in encoded) {
       throw new Error(encoded.error);
     }
-    const mimeType = options.format === 'webp' ? 'image/webp' : 'image/png';
+    const mimeType = detectImageMimeType(screenshotBuffer) ?? (options.format === 'webp' ? 'image/webp' : 'image/png');
 
     return {
       screenshot: encoded.data,

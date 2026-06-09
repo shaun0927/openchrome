@@ -13,6 +13,8 @@ import {
 import type { VisionElementMap } from '../../src/vision/types';
 import { MAX_INLINE_IMAGE_PAYLOAD_BYTES } from '../../src/config/defaults';
 
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+
 // ─── Mock Page Factory ───
 
 function createMockPage(
@@ -189,6 +191,14 @@ describe('analyzeScreenshot', () => {
     const result = await analyzeScreenshot(page as any);
     expect(result.mimeType).toBe('image/webp');
     expect(result.elementCount).toBe(0);
+  });
+
+  it('normalizes MIME when a WebP-requested annotated screenshot returns PNG bytes', async () => {
+    const page = createMockPage([]);
+    page.screenshot.mockResolvedValueOnce(PNG_BYTES);
+    const result = await analyzeScreenshot(page as any, { format: 'webp' });
+    expect(result.screenshot).toBe(PNG_BYTES.toString('base64'));
+    expect(result.mimeType).toBe('image/png');
   });
 
   it('respects png format option', async () => {

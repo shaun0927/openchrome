@@ -15,6 +15,7 @@ import {
   validateCaptureArea,
 } from '../utils/screenshot-guards';
 import { withTimeout } from '../utils/with-timeout';
+import { makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
 
 const FULL_PAGE_DIMENSION_TIMEOUT_MS = 5000;
 
@@ -216,15 +217,9 @@ const handler: ToolHandler = async (
         return makeError(`Error: ${encoded.error}`);
       }
 
-      const mimeType = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png';
+      const mimeType: SupportedImageMimeType = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png';
       return {
-        content: [
-          {
-            type: 'image',
-            data: encoded.data,
-            mimeType,
-          },
-        ],
+        content: [makeImageContent(encoded.data, mimeType)],
       };
     }
   } catch (error) {
