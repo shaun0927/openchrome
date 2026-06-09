@@ -13,6 +13,7 @@ import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../utils/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
+import { makeImageContent } from '../utils/image-mime';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
 import { detectPagination, type PaginationInfo } from '../utils/pagination-detector';
@@ -303,7 +304,7 @@ const innerHandler: ToolHandler = async (
           }
 
           const content: MCPContent[] = [
-            { type: 'image', data: screenshot.data, mimeType: screenshot.mimeType },
+            makeImageContent(screenshot.data, screenshot.mimeType as 'image/webp' | 'image/png' | 'image/jpeg'),
           ];
 
           const paginationGuidance = await getPaginationGuidance(page, tabId);

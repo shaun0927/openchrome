@@ -7,6 +7,9 @@ import { createMockSessionManager, createMockRefIdManager } from '../utils/mock-
 import { keyNormalizationMap } from '../utils/test-helpers';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, MAX_INLINE_IMAGE_PAYLOAD_BYTES } from '../../src/config/defaults';
 
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+const PNG_BASE64 = PNG_BYTES.toString('base64');
+
 // Mock the session manager and ref-id-manager modules
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
@@ -534,6 +537,24 @@ describe('ComputerTool', () => {
         format: 'webp',
         optimizeForSpeed: true,
       }));
+    });
+
+    test('normalizes MIME when a WebP-requested CDP screenshot returns PNG bytes', async () => {
+      const handler = await getComputerHandler();
+      const page = (await mockSessionManager.getPage(testSessionId, testTargetId))!;
+      const cdpSession = await (page as any).createCDPSession();
+      (cdpSession.send as jest.Mock).mockResolvedValueOnce({ data: PNG_BASE64 });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        action: 'screenshot',
+      }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
+
+      expect(result.content[0]).toMatchObject({
+        type: 'image',
+        data: PNG_BASE64,
+        mimeType: 'image/png',
+      });
     });
 
     test('returns image/png and omits quality when screenshotFormat="png"', async () => {

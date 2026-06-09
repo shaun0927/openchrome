@@ -13,6 +13,9 @@
 import { createMockSessionManager } from '../utils/mock-session';
 import { createMockPage } from '../utils/mock-cdp';
 
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+const PNG_BASE64 = PNG_BYTES.toString('base64');
+
 // Session manager mock
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
@@ -251,6 +254,23 @@ describe('interact tool — coordinate mode', () => {
   });
 
   // ── Happy path ─────────────────────────────────────────────────────────────
+
+  test('verify screenshot normalizes MIME when WebP request returns PNG bytes', async () => {
+    mockPage.screenshot.mockResolvedValueOnce(PNG_BASE64 as never);
+
+    const result = await callInteract({
+      tabId: 'tab-1',
+      mode: 'coordinate',
+      coordinate: { x: 100, y: 200 },
+      verify: true,
+    }) as { content: Array<{ type: string; data?: string; mimeType?: string }> };
+
+    expect(result.content[1]).toEqual({
+      type: 'image',
+      data: PNG_BASE64,
+      mimeType: 'image/png',
+    });
+  });
 
   test('valid coordinate click dispatches via cdpClient and returns success', async () => {
     const result = await callInteract({
