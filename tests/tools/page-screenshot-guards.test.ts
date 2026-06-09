@@ -7,6 +7,8 @@ import {
   getBase64EncodedByteLengthForRawBytes,
 } from '../../src/utils/screenshot-guards';
 
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
@@ -89,6 +91,24 @@ describe('page_screenshot payload guards', () => {
     expect(result.content[0]).toEqual({
       type: 'image',
       data: Buffer.from('small image').toString('base64'),
+      mimeType: 'image/png',
+    });
+  });
+
+  it('normalizes MIME when a WebP-requested screenshot returns PNG bytes', async () => {
+    const handler = await getPageScreenshotHandler(mockSessionManager);
+    const page = (await mockSessionManager.getPage(sessionId, tabId))!;
+    (page.screenshot as jest.Mock).mockResolvedValue(PNG_BYTES);
+
+    const result = await handler(sessionId, { tabId, format: 'webp' }) as {
+      content: Array<{ type: string; data?: string; mimeType?: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]).toEqual({
+      type: 'image',
+      data: PNG_BYTES.toString('base64'),
       mimeType: 'image/png',
     });
   });

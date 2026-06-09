@@ -14,6 +14,7 @@ import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAUL
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { withTimeout } from '../utils/with-timeout';
+import { makeImageContent } from '../utils/image-mime';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../utils/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
@@ -522,7 +523,7 @@ const coreHandler: ToolHandler = async (
             'verify-screenshot',
             context
           ) as string;
-          resultContent.push({ type: 'image' as const, data: screenshotBuf, mimeType: 'image/webp' });
+          resultContent.push(makeImageContent(screenshotBuf, 'image/webp'));
         } catch { /* screenshot failed, non-fatal */ }
       }
 
@@ -702,7 +703,7 @@ const coreHandler: ToolHandler = async (
               'verify-screenshot',
               context
             ) as string;
-            resultContent.push({ type: 'image' as const, data: screenshotBuf, mimeType: 'image/webp' });
+            resultContent.push(makeImageContent(screenshotBuf, 'image/webp'));
           } catch { /* screenshot failed, non-fatal */ }
         }
 
@@ -1021,7 +1022,7 @@ const coreHandler: ToolHandler = async (
                 quality: 60,
                 optimizeForSpeed: true,
               });
-              return { data: data as string, mimeType: 'image/webp' };
+              return makeImageContent(data as string, 'image/webp');
             } finally {
               await cdpSession.detach().catch(() => {});
             }
@@ -1030,7 +1031,7 @@ const coreHandler: ToolHandler = async (
         ]);
 
         if (screenshotResult) {
-          screenshotContent = { type: 'image' as const, ...screenshotResult };
+          screenshotContent = screenshotResult;
         } else {
           throw new Error('CDP screenshot timed out');
         }
@@ -1044,7 +1045,7 @@ const coreHandler: ToolHandler = async (
               fallbackTimer = setTimeout(() => reject(new Error('Fallback screenshot timed out')), DEFAULT_SCREENSHOT_TIMEOUT_MS);
             }),
           ]);
-          screenshotContent = { type: 'image' as const, data: screenshot as unknown as string, mimeType: 'image/png' };
+          screenshotContent = makeImageContent(screenshot as unknown as string, 'image/png');
         } catch {
           // Screenshot failure is non-fatal
         }
