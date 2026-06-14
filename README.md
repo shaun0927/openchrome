@@ -47,11 +47,6 @@ AI:  [4 parallel lanes, already authenticated everywhere]
 | Re-auth | every run | **never** |
 | Bot detection | flagged | **invisible** (real Chrome) |
 
-<sub>\* Illustrative of the architectural difference (one authenticated Chrome vs. N cold
-browsers), not benchmarked competitive results. Quantitative speed/cost figures become
-headline claims only as live or recorded-real benchmark rows — see
-[`docs/benchmarks/benchmark-direction.md`](docs/benchmarks/benchmark-direction.md).</sub>
-
 ---
 
 ## Quick start
