@@ -534,8 +534,12 @@ describe('JavaScriptTool', () => {
   });
 
   describe('Result formatting diagnostics', () => {
-    test('returns an explicit Promise remote object diagnostic', async () => {
-      const mockSender = { send: jest.fn().mockResolvedValue({}) };
+    test('resolves Promise remote object before formatting result', async () => {
+      const mockSender = {
+        send: jest.fn()
+          .mockResolvedValueOnce({ result: { type: 'number', value: 42, description: '42' } })
+          .mockResolvedValue({}),
+      };
 
       const result = await formatCDPResult(
         {
@@ -549,10 +553,58 @@ describe('JavaScriptTool', () => {
         {}
       );
 
-      expect(result).toContain('Promise');
-      expect(result).toContain('Diagnostic: CDP returned a Promise remote object');
-      expect(result).toContain('awaitPromise: true');
+      expect(result).toBe('42');
+      expect(mockSender.send).toHaveBeenCalledWith({}, 'Runtime.awaitPromise', {
+        promiseObjectId: 'promise-1',
+        returnByValue: false,
+      });
       expect(mockSender.send).toHaveBeenCalledWith({}, 'Runtime.releaseObject', { objectId: 'promise-1' });
+    });
+
+    test('resolves Promise remote object to object output', async () => {
+      const mockSender = {
+        send: jest.fn()
+          .mockResolvedValueOnce({
+            result: { type: 'object', objectId: 'obj-1', description: 'Object', className: 'Object' },
+          })
+          .mockResolvedValueOnce({})
+          .mockResolvedValueOnce({ result: { value: '{\n  "ok": true\n}' } })
+          .mockResolvedValue({}),
+      };
+
+      const result = await formatCDPResult(
+        {
+          type: 'object',
+          subtype: 'promise',
+          className: 'Promise',
+          description: 'Promise',
+          objectId: 'promise-1',
+        },
+        mockSender,
+        {}
+      );
+
+      expect(result).toContain('"ok": true');
+      expect(mockSender.send).toHaveBeenCalledWith({}, 'Runtime.awaitPromise', {
+        promiseObjectId: 'promise-1',
+        returnByValue: false,
+      });
+    });
+
+    test('throws when Promise remote object cannot be resolved', async () => {
+      const mockSender = { send: jest.fn().mockRejectedValue(new Error('Protocol error')) };
+
+      await expect(formatCDPResult(
+        {
+          type: 'object',
+          subtype: 'promise',
+          className: 'Promise',
+          description: 'Promise',
+          objectId: 'promise-1',
+        },
+        mockSender,
+        {}
+      )).rejects.toThrow(/Runtime\.awaitPromise failed/);
     });
   });
 

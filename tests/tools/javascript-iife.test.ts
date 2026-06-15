@@ -28,18 +28,18 @@ describe('wrapInIIFE', () => {
   test('bare return statement gets wrapped', () => {
     const code = "return 'hello'";
     const wrapped = wrapInIIFE(code);
-    expect(wrapped).toContain('(async () =>');
+    expect(wrapped).toContain('(() =>');
     expect(wrapped).toContain("return 'hello'");
   });
 
   test('top-level return remains valid inside generated IIFE', () => {
-    expect(wrapInIIFE('return document.title')).toBe('(async () => { return document.title\n})()');
+    expect(wrapInIIFE('return document.title')).toBe('(() => { return document.title\n})()');
   });
 
   test('multi-line code with explicit return gets wrapped', () => {
     const code = 'const x = 5;\nreturn x;';
     const wrapped = wrapInIIFE(code);
-    expect(wrapped).toContain('(async () =>');
+    expect(wrapped).toContain('(() =>');
     expect(wrapped).toContain('return x');
   });
 
@@ -55,21 +55,22 @@ describe('wrapInIIFE', () => {
   test('multi-line expression auto-returns last line', () => {
     const code = 'const x = 5;\nx';
     const wrapped = wrapInIIFE(code);
-    expect(wrapped).toContain('(async () =>');
+    expect(wrapped).toContain('(() =>');
     expect(wrapped).toContain('return x');
   });
 
   test('let declaration followed by identifier auto-returns identifier', () => {
     const code = "let result = 'test';\nresult";
     const wrapped = wrapInIIFE(code);
-    expect(wrapped).toContain('(async () =>');
+    expect(wrapped).toContain('(() =>');
     expect(wrapped).toContain('return result');
   });
 
   test('semicolon-separated single-line code gets wrapped', () => {
     const code = "const a = 1; a + 2";
     const wrapped = wrapInIIFE(code);
-    expect(wrapped).toContain('(async () =>');
+    expect(wrapped).toContain('(() =>');
+    expect(wrapped).not.toContain('(async () =>');
   });
 
   // --- last line is a declaration — wrapped but no spurious auto-return ---
@@ -77,7 +78,7 @@ describe('wrapInIIFE', () => {
   test('code ending with a declaration is wrapped without auto-return', () => {
     const code = 'let x = 5;\nconst y = x + 1';
     const wrapped = wrapInIIFE(code);
-    expect(wrapped).toContain('(async () =>');
+    expect(wrapped).toContain('(() =>');
     // No auto-return injected before a const line
     expect(wrapped).not.toMatch(/return const/);
   });
@@ -86,13 +87,19 @@ describe('wrapInIIFE', () => {
     const code = 'function f() { return 1; }\nf()';
     // last non-empty line is "f()" which IS auto-returnable
     const wrapped = wrapInIIFE(code);
-    expect(wrapped).toContain('(async () =>');
+    expect(wrapped).toContain('(() =>');
   });
 
   // --- IIFE structure correctness ---
 
-  test('IIFE uses async arrow function', () => {
+  test('IIFE uses sync arrow function unless await is present', () => {
     const wrapped = wrapInIIFE("return 42");
+    expect(wrapped).toMatch(/^\(\(\) => \{/);
+    expect(wrapped).not.toContain('(async () =>');
+  });
+
+  test('IIFE uses async arrow function when await is present', () => {
+    const wrapped = wrapInIIFE('const x = await Promise.resolve(42);\nreturn x');
     expect(wrapped).toMatch(/^\(async \(\) => \{/);
   });
 
@@ -105,5 +112,25 @@ describe('wrapInIIFE', () => {
     const code = "const x = 'world';\nreturn 'hello ' + x;";
     const wrapped = wrapInIIFE(code);
     expect(wrapped).toContain(code);
+  });
+
+  test('already-complete sync IIFE stays unwrapped for issue #1497', () => {
+    const code = `(() => {
+  const header = document.querySelector('header.z-30');
+  return {
+    headerBg: header ? window.getComputedStyle(header).backgroundColor : 'not found',
+  };
+})();`;
+
+    expect(wrapInIIFE(code)).toBe(code);
+  });
+
+  test('already-complete async IIFE stays unwrapped', () => {
+    const code = `(async () => {
+  const value = await Promise.resolve(42);
+  return value;
+})();`;
+
+    expect(wrapInIIFE(code)).toBe(code);
   });
 });

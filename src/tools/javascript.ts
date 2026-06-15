@@ -102,16 +102,26 @@ export const JAVASCRIPT_HELPER_INJECTION = `(() => {
 export function wrapInIIFE(code: string): string {
   const trimmed = code.trim();
 
+  // Already-complete IIFEs should evaluate as written. Re-wrapping them can
+  // turn a sync result into an outer Promise and can also drop the inner return.
+  if (/^\(\s*(?:async\s*)?\(\s*\)\s*=>[\s\S]*\)\s*\(\s*\)\s*;?$/.test(trimmed)) {
+    return trimmed;
+  }
+
   // Single expression without semicolons, newlines, or return: evaluate as-is
   // so the expression value is returned naturally by Runtime.evaluate.
   if (!trimmed.includes('\n') && !trimmed.includes(';') && !/\breturn\b/.test(trimmed)) {
     return trimmed;
   }
 
-  // Multi-statement code or code with explicit return: wrap in async IIFE.
+  const iifeStart = /\bawait\b/.test(trimmed) ? '(async () => {' : '(() => {';
+
+  // Multi-statement code or code with explicit return: wrap in an IIFE.
   // This fixes two common LLM errors:
   //   1. SyntaxError: Illegal return statement  (return outside a function)
   //   2. SyntaxError: Identifier 'x' has already been declared  (let/const redeclaration)
+  // Use async only when the code actually awaits, so ordinary sync snippets do
+  // not produce a Promise remote object.
   //
   // If there is no explicit `return`, try to auto-return the last expression so
   // that `let x = 5;\nx` still returns 5 instead of undefined.
@@ -144,11 +154,11 @@ export function wrapInIIFE(code: string): string {
     if (isAutoReturnable) {
       const bodyLines = lines.slice(0, -1).join('\n');
       const body = bodyLines ? `${bodyLines}\nreturn ${lastLine}` : `return ${lastLine}`;
-      return `(async () => { ${body}\n})()`;
+      return `${iifeStart} ${body}\n})()`;
     }
   }
 
-  return `(async () => { ${code}\n})()`;
+  return `${iifeStart} ${code}\n})()`;
 }
 
 export function buildJavascriptExpression(code: string): string {
@@ -158,7 +168,8 @@ export function buildJavascriptExpression(code: string): string {
 export async function formatCDPResult(
   evalResult: CDPEvalResult['result'],
   cdpClient?: CDPSender,
-  page?: unknown
+  page?: unknown,
+  promiseDepth = 0
 ): Promise<string> {
   const { type, subtype, value, description, className, objectId } = evalResult;
 
@@ -179,13 +190,50 @@ export async function formatCDPResult(
   }
 
   if (type === 'object' && (subtype === 'promise' || className === 'Promise')) {
-    if (objectId) {
-      releaseObject(cdpClient, page, objectId);
+    if (objectId && cdpClient && page) {
+      let promiseReleased = false;
+      const releasePromise = () => {
+        if (!promiseReleased) {
+          promiseReleased = true;
+          releaseObject(cdpClient, page, objectId);
+        }
+      };
+
+      if (promiseDepth >= 3) {
+        releasePromise();
+        throw new Error('Runtime.awaitPromise exceeded nested Promise resolution limit');
+      }
+
+      try {
+        const awaited = await cdpClient.send<CDPEvalResult>(
+          page,
+          'Runtime.awaitPromise',
+          {
+            promiseObjectId: objectId,
+            returnByValue: false,
+          }
+        );
+        releasePromise();
+
+        if (awaited.exceptionDetails) {
+          const errorMsg =
+            awaited.exceptionDetails.exception?.description ||
+            awaited.exceptionDetails.text ||
+            'Unknown error';
+          throw new Error(`Runtime.awaitPromise rejected: ${errorMsg}`);
+        }
+
+        return formatCDPResult(awaited.result, cdpClient, page, promiseDepth + 1);
+      } catch (error) {
+        releasePromise();
+        throw new Error(`Runtime.awaitPromise failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
+
+    if (objectId) releaseObject(cdpClient, page, objectId);
     return [
       description || 'Promise',
-      'Diagnostic: CDP returned a Promise remote object even though Runtime.evaluate used awaitPromise: true.',
-      'Return or await the promise directly so javascript_tool can show the resolved value.',
+      'Diagnostic: CDP returned a Promise remote object, but javascript_tool could not resolve it because CDP context was unavailable.',
     ].join('\n');
   }
 
