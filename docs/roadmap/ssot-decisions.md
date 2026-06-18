@@ -116,6 +116,12 @@ default flip:
   surviving client re-elects
   ([#1478](https://github.com/shaun0927/openchrome/pull/1478) self-release + lock
   takeover), removing the single-point-of-failure.
+- An owner that becomes a **half-zombie during startup** (controller lock acquired,
+  but Chrome/CDP never becomes reachable) self-releases the lock and exits with
+  the owner self-release code after a confirming CDP probe. Probe errors,
+  debug-port timeouts, or a reachable CDP endpoint keep ownership, so
+  slow-but-valid Chrome startup is not evicted merely because launch returned an
+  error.
 
 This is **not** a return to silent multi-controller sharing: there is still exactly
 **one** direct CDP owner per `(port, userDataDir)`; the change is that surplus

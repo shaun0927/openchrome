@@ -51,28 +51,46 @@ export async function waitForDebugPort(port: number, timeout = 30000, chromeProc
   const deadline = Date.now() + timeout;
   let attempts = 0;
   let backoff = DEBUG_PORT_INITIAL_BACKOFF_MS;
+  let onProcessError: ((err: Error) => void) | undefined;
+  const canObserveProcessError = typeof chromeProcess?.once === 'function';
+  const processError = canObserveProcessError
+    ? new Promise<never>((_, reject) => {
+        onProcessError = (err: Error) => reject(err);
+        chromeProcess.once('error', onProcessError);
+      })
+    : null;
 
-  while (Date.now() <= deadline) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new DebugPortTimeoutError(port, timeout, attempts);
-    if (chromeProcess && (chromeProcess.exitCode !== null || chromeProcess.signalCode !== null)) {
-      throw new Error(
-        `Chrome exited with code ${chromeProcess.exitCode} signal ${chromeProcess.signalCode} before debug port ${port} became available. ` +
-        `Likely cause: --user-data-dir is locked by another Chrome instance.`
-      );
+  try {
+    while (Date.now() <= deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new DebugPortTimeoutError(port, timeout, attempts);
+      if (chromeProcess && (chromeProcess.exitCode !== null || chromeProcess.signalCode !== null)) {
+        throw new Error(
+          `Chrome exited with code ${chromeProcess.exitCode} signal ${chromeProcess.signalCode} before debug port ${port} became available. ` +
+          `Likely cause: --user-data-dir is locked by another Chrome instance.`
+        );
+      }
+      attempts += 1;
+      const wsEndpoint = await (processError
+        ? Promise.race([checkDebugPort(port, Math.min(remaining, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS)), processError])
+        : checkDebugPort(port, Math.min(remaining, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS)));
+      if (wsEndpoint) return wsEndpoint;
+      if (attempts % DEBUG_PORT_PROGRESS_LOG_INTERVAL === 0) {
+        const elapsed = timeout - remaining;
+        console.error(`[Launcher] Debug port ${port} not ready yet ` + `(attempt ${attempts}, elapsed ${elapsed}ms, remaining ${Math.max(0, deadline - Date.now())}ms)`);
+      }
+      const remainingAfterProbe = deadline - Date.now();
+      if (remainingAfterProbe <= 0) throw new DebugPortTimeoutError(port, timeout, attempts);
+      const sleepFor = Math.min(backoff, DEBUG_PORT_MAX_BACKOFF_MS, Math.max(0, remainingAfterProbe - 1));
+      if (sleepFor > 0) {
+        await (processError
+          ? Promise.race([new Promise((r) => setTimeout(r, sleepFor)), processError])
+          : new Promise((r) => setTimeout(r, sleepFor)));
+      }
+      backoff = Math.min(backoff * DEBUG_PORT_BACKOFF_FACTOR, DEBUG_PORT_MAX_BACKOFF_MS);
     }
-    attempts += 1;
-    const wsEndpoint = await checkDebugPort(port, Math.min(remaining, DEBUG_PORT_MAX_HTTP_TIMEOUT_MS));
-    if (wsEndpoint) return wsEndpoint;
-    if (attempts % DEBUG_PORT_PROGRESS_LOG_INTERVAL === 0) {
-      const elapsed = timeout - remaining;
-      console.error(`[Launcher] Debug port ${port} not ready yet ` + `(attempt ${attempts}, elapsed ${elapsed}ms, remaining ${Math.max(0, deadline - Date.now())}ms)`);
-    }
-    const remainingAfterProbe = deadline - Date.now();
-    if (remainingAfterProbe <= 0) throw new DebugPortTimeoutError(port, timeout, attempts);
-    const sleepFor = Math.min(backoff, DEBUG_PORT_MAX_BACKOFF_MS, Math.max(0, remainingAfterProbe - 1));
-    if (sleepFor > 0) await new Promise((r) => setTimeout(r, sleepFor));
-    backoff = Math.min(backoff * DEBUG_PORT_BACKOFF_FACTOR, DEBUG_PORT_MAX_BACKOFF_MS);
+    throw new DebugPortTimeoutError(port, timeout, attempts);
+  } finally {
+    if (canObserveProcessError && onProcessError) chromeProcess.off('error', onProcessError);
   }
-  throw new DebugPortTimeoutError(port, timeout, attempts);
 }
