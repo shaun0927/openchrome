@@ -22,6 +22,7 @@
  */
 
 import type { EventEmitter } from 'events';
+import { DebugPortTimeoutError } from './launcher-debug-port';
 
 /**
  * Non-zero exit code meaning "owner gave up Chrome; respawn me". Distinct from
@@ -106,6 +107,28 @@ export async function releaseOwnerIfChromeUnreachable(
   }
   deps.exit(OWNER_SELF_RELEASE_EXIT_CODE);
   return 'released';
+}
+
+export async function releaseOwnerAfterStartupFailure(
+  err: unknown,
+  deps: OwnerSelfReleaseDeps,
+): Promise<OwnerReleaseAttemptResult> {
+  const log = deps.log ?? ((m: string) => console.error(m));
+  log(`[SelfHealing] Startup Chrome launch failed after controller lock acquisition: ${err instanceof Error ? err.message : String(err)}`);
+
+  // A debug-port timeout is intentionally not terminal in ChromeLauncher: the
+  // spawned process may still be starting and is kept as pending for reuse.
+  // Treat it as inconclusive here so a slow-but-valid Chrome is not evicted by
+  // a single immediate post-timeout probe. Watchdog relaunch failures and
+  // health-aware takeover still cover genuinely dead owners after their grace.
+  if (err instanceof DebugPortTimeoutError) {
+    log('[SelfHealing] Startup Chrome launch timed out; keeping ownership while watchdog/health checks continue.');
+    return 'inconclusive';
+  }
+
+  return releaseOwnerIfChromeUnreachable(deps, {
+    trigger: 'startup Chrome launch failure and a confirming CDP probe',
+  });
 }
 
 /**

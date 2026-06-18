@@ -537,10 +537,20 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] CI/Docker detected: sandbox disabled');
     }
 
+    const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || String(DEFAULT_CHROME_LAUNCH_TIMEOUT_MS), 10);
+    let spawnFailedError: Error | null = null;
     const chromeProcess = spawn(chromePath, args, {
       detached: true,
       stdio: ['ignore', 'ignore', 'pipe'],
       // shell: false is safe on all platforms; avoids cmd.exe injection risks on Windows
+    });
+
+    chromeProcess.once('error', (err) => {
+      if (this.pendingProcess === chromeProcess) this.pendingProcess = null;
+      spawnFailedError = new Error(
+        `[ChromeLauncher] Failed to spawn Chrome at ${chromePath}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     });
 
     // Capture stderr for diagnostics (Chrome writes "DevTools listening on ws://..." and errors here)
@@ -641,8 +651,6 @@ export class ChromeLauncher {
     // Track as pending for retry reuse (issue #171)
     this.pendingProcess = chromeProcess;
 
-    const launchTimeout = parseInt(process.env.CHROME_LAUNCH_TIMEOUT_MS || String(DEFAULT_CHROME_LAUNCH_TIMEOUT_MS), 10);
-
     // Wait for debug port — pass chromeProcess for fast-fail on premature exit.
     // On timeout, pendingProcess is intentionally kept set so the next call can
     // reuse the still-starting Chrome instead of spawning a duplicate (issue #171).
@@ -650,6 +658,10 @@ export class ChromeLauncher {
     try {
       wsEndpoint = await waitForDebugPort(port, launchTimeout, chromeProcess);
     } catch (err) {
+      if (spawnFailedError) {
+        if (this.pendingProcess === chromeProcess) this.pendingProcess = null;
+        throw spawnFailedError;
+      }
       const stderr = stderrChunks.join('').trim();
       const diagnostics = [
         `Chrome debug port ${port} not available after ${launchTimeout}ms`,

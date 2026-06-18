@@ -72,6 +72,7 @@ const mockSpawn = child_process.spawn as jest.MockedFunction<typeof child_proces
 
 interface MockProcess extends EventEmitter {
   exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
   pid: number;
   unref: jest.MockedFunction<() => void>;
   kill: jest.MockedFunction<(signal?: string) => boolean>;
@@ -80,6 +81,7 @@ interface MockProcess extends EventEmitter {
 function createMockProcess(opts: { exitCode?: number | null } = {}): MockProcess {
   const proc = new EventEmitter() as MockProcess;
   proc.exitCode = opts.exitCode ?? null;
+  proc.signalCode = null;
   proc.pid = 12345;
   proc.unref = jest.fn();
   proc.kill = jest.fn().mockReturnValue(true);
@@ -195,6 +197,23 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
 
       // pendingProcess should still be set (for reuse on next call)
       expect((launcher as any).pendingProcess).toBe(proc);
+    }, 15000);
+
+    it('should reject and clear pendingProcess when Chrome spawn emits an error', async () => {
+      const proc = createMockProcess();
+      mockSpawn.mockReturnValue(proc as any);
+
+      const launcher = new ChromeLauncher(19993);
+      const launch = launcher.ensureChrome({ autoLaunch: true });
+      for (let i = 0; i < 80 && proc.listenerCount('error') === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(mockSpawn).toHaveBeenCalled();
+      expect(proc.listenerCount('error')).toBeGreaterThan(0);
+      proc.emit('error', new Error('spawn ENOENT'));
+
+      await expect(launch).rejects.toThrow(/Failed to spawn Chrome.*spawn ENOENT/);
+      expect((launcher as any).pendingProcess).toBeNull();
     }, 15000);
 
     it('should clear pendingProcess on successful launch', async () => {
