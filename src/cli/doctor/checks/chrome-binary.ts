@@ -77,6 +77,24 @@ function findChromeHeadlessShell(): string | null {
   return null;
 }
 
+
+function displayPath(filePath: string): string {
+  const homes = [os.homedir()];
+  try {
+    homes.push(os.userInfo().homedir);
+  } catch {
+    // Best-effort redaction only.
+  }
+
+  const normalizedHomes = Array.from(new Set(homes.filter(Boolean)))
+    .sort((a, b) => b.length - a.length);
+  for (const home of normalizedHomes) {
+    if (filePath === home) return '~';
+    if (filePath.startsWith(`${home}${path.sep}`)) return `~/${filePath.slice(home.length + 1)}`;
+  }
+  return filePath;
+}
+
 function probeChromeVersion(chromePath: string): { major: number; raw: string } | null {
   try {
     const outputRaw = execFileSync(chromePath, ['--version'], {
@@ -102,17 +120,20 @@ export const checkChromeBinary: CheckFn = async () => {
       status: 'fail',
       detail: 'Chrome executable not found on this system',
       remediation: 'Install Google Chrome, or set CHROME_PATH env var to the binary path',
+      facts: { chromeFound: false },
     };
   }
 
   const version = probeChromeVersion(candidatePath);
+  const chromePath = displayPath(candidatePath);
   if (!version) {
     return {
       id: 'chrome-binary',
       title: 'Chrome binary',
       status: 'fail',
-      detail: `Found at ${candidatePath} but could not determine version`,
-      remediation: `Ensure Chrome is executable: chmod +x "${candidatePath}"`,
+      detail: `Found at ${chromePath} but could not determine version`,
+      remediation: `Ensure Chrome is executable: chmod +x "${chromePath}"`,
+      facts: { chromeFound: true, chromePath },
     };
   }
 
@@ -121,8 +142,9 @@ export const checkChromeBinary: CheckFn = async () => {
       id: 'chrome-binary',
       title: 'Chrome binary',
       status: 'fail',
-      detail: `${version.raw} at ${candidatePath} (minimum major: ${MIN_CHROME_MAJOR})`,
+      detail: `${version.raw} at ${chromePath} (minimum major: ${MIN_CHROME_MAJOR})`,
       remediation: 'Upgrade Chrome to a recent stable release — https://www.google.com/chrome',
+      facts: { chromeFound: true, chromePath, chromeMajor: version.major, minChromeMajor: MIN_CHROME_MAJOR },
     };
   }
 
@@ -130,6 +152,7 @@ export const checkChromeBinary: CheckFn = async () => {
     id: 'chrome-binary',
     title: 'Chrome binary',
     status: 'ok',
-    detail: `${version.raw} at ${candidatePath}`,
+    detail: `${version.raw} at ${chromePath}`,
+    facts: { chromeFound: true, chromePath, chromeMajor: version.major },
   };
 };
