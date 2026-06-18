@@ -61,7 +61,14 @@ jobs:
       - name: Check capability map is in sync
         run: npm run docs:capability-map:check
 
-      - name: Run tests
+      - name: Run full tests
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 20
         run: npx jest --config jest.ci.config.js
+        env:
+          CI: true
+
+      - name: Run smoke tests
+        if: matrix.os != 'ubuntu-latest' || matrix.node-version != 20
+        run: npx jest --config jest.ci.config.js --runTestsByPath tests/cli/doctor/runtime-diagnostics.test.ts tests/scripts/gen-capability-map.test.ts
         env:
           CI: true
