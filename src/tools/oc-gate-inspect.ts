@@ -47,7 +47,7 @@ export type GateKind = 'captcha' | NonCaptchaGateKind;
 /**
  * Closed gate-type vocabulary. Adding a value is non-breaking.
  */
-export type GateType = CaptchaType | 'sso_redirect' | 'paywall' | 'two_factor';
+export type GateType = CaptchaType | 'bot_check' | 'sso_redirect' | 'paywall' | 'two_factor';
 
 export interface OcGateInspectOutput {
   detected: boolean;

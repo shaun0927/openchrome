@@ -4,6 +4,7 @@
  * Pure DOM/URL heuristics that surface common access gates the host agent
  * should reason about before proceeding:
  *
+ *   - Bot check: a CDN/WAF interstitial is blocking progress.
  *   - SSO redirect: the page has navigated to an identity provider login.
  *   - Paywall: a subscription/metered overlay is blocking the content.
  *   - Two-factor: an OTP / verification-code input is the foreground form.
@@ -23,7 +24,7 @@
 
 import type { Page } from 'puppeteer-core';
 
-export type NonCaptchaGateKind = 'sso' | 'paywall' | '2fa';
+export type NonCaptchaGateKind = 'bot-check' | 'sso' | 'paywall' | '2fa';
 
 export type SsoProvider =
   | 'microsoft'
@@ -38,6 +39,13 @@ export interface SsoSignal {
   kind: 'sso';
   gateType: 'sso_redirect';
   provider: SsoProvider;
+  pageUrl: string;
+}
+
+export interface BotCheckSignal {
+  kind: 'bot-check';
+  gateType: 'bot_check';
+  selector: string;
   pageUrl: string;
 }
 
@@ -57,7 +65,52 @@ export interface TwoFactorSignal {
   pageUrl: string;
 }
 
-export type NonCaptchaGateSignal = SsoSignal | PaywallSignal | TwoFactorSignal;
+export type NonCaptchaGateSignal = BotCheckSignal | SsoSignal | PaywallSignal | TwoFactorSignal;
+
+// ─── Bot checks / CDN verification interstitials ──────────────────────────
+
+function botCheckProbe(): { selector: string } | null {
+  const title = document.title.toLowerCase();
+  const bodyText = document.body?.innerText?.slice(0, 1000).toLowerCase() || '';
+  const html = document.documentElement?.innerHTML?.slice(0, 5000).toLowerCase() || '';
+
+  // Cloudflare Managed Challenge pages are often sparse and expose no visible
+  // form controls while JavaScript runs. In the field they commonly present
+  // only a "Just a moment..." title and Cloudflare/privacy links, so relying
+  // solely on captcha iframes misses this gate.
+  if (title.includes('just a moment') && (bodyText.includes('cloudflare') || html.includes('cf_chl_'))) {
+    return { selector: 'title:just-a-moment' };
+  }
+
+  if (bodyText.includes('verify you are human') ||
+      bodyText.includes('checking if the site connection is secure') ||
+      bodyText.includes('review the security of your connection') ||
+      bodyText.includes('please stand by, while we are checking your browser') ||
+      bodyText.includes('bot protection') ||
+      bodyText.includes('automated access') ||
+      title.includes('security check') ||
+      title.includes('robot check')) {
+    return { selector: 'text:bot-check' };
+  }
+
+  return null;
+}
+
+export async function detectBotCheck(page: Page): Promise<BotCheckSignal | null> {
+  let url: string;
+  try {
+    url = page.url();
+  } catch {
+    url = 'unknown';
+  }
+  try {
+    const match = await page.evaluate(botCheckProbe);
+    if (!match) return null;
+    return { kind: 'bot-check', gateType: 'bot_check', selector: match.selector, pageUrl: url };
+  } catch {
+    return null;
+  }
+}
 
 // ─── SSO ──────────────────────────────────────────────────────────────────
 
@@ -229,7 +282,7 @@ export async function detectTwoFactor(page: Page): Promise<TwoFactorSignal | nul
 /**
  * Run the non-CAPTCHA detectors in priority order and return the first
  * positive signal. Used by `oc_gate_inspect` after CAPTCHA detection. The
- * order — SSO → paywall → 2FA — reflects how the host would typically
+ * order — bot-check → SSO → paywall → 2FA — reflects how the host would typically
  * reason about a gate: an SSO redirect means "you're no longer on the
  * target site"; a paywall means "you're on the site but blocked"; a 2FA
  * prompt means "you're authenticating right now."
@@ -237,6 +290,8 @@ export async function detectTwoFactor(page: Page): Promise<TwoFactorSignal | nul
 export async function detectNonCaptchaGate(
   page: Page,
 ): Promise<NonCaptchaGateSignal | null> {
+  const botCheck = await detectBotCheck(page);
+  if (botCheck) return botCheck;
   const sso = await detectSso(page);
   if (sso) return sso;
   const paywall = await detectPaywall(page);
