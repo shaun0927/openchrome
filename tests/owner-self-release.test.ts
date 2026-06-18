@@ -2,9 +2,11 @@ import { EventEmitter } from 'events';
 import {
   DEFAULT_RELEASE_FAILURE_THRESHOLD,
   OWNER_SELF_RELEASE_EXIT_CODE,
+  releaseOwnerAfterStartupFailure,
   releaseOwnerIfChromeUnreachable,
   wireOwnerSelfRelease,
 } from '../src/chrome/owner-self-release';
+import { DebugPortTimeoutError } from '../src/chrome/launcher-debug-port';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -233,6 +235,74 @@ describe('owner self-release (#1474)', () => {
 
     expect(result).toBe('inconclusive');
     expect(onInconclusive).toHaveBeenCalledTimes(1);
+    expect(releaseLock).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  test('startup failure helper logs the startup failure and uses the same release gate', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+    const log = jest.fn();
+
+    const result = await releaseOwnerAfterStartupFailure(new Error('launch timeout'), {
+      releaseLock,
+      exit,
+      log,
+      probeChromeReachable: jest.fn(async () => false),
+    });
+
+    expect(result).toBe('released');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Startup Chrome launch failed'));
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(OWNER_SELF_RELEASE_EXIT_CODE);
+  });
+
+  test('startup failure helper keeps ownership when CDP is reachable', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+
+    const result = await releaseOwnerAfterStartupFailure(new Error('launch timeout'), {
+      releaseLock,
+      exit,
+      log: jest.fn(),
+      probeChromeReachable: jest.fn(async () => true),
+    });
+
+    expect(result).toBe('reachable');
+    expect(releaseLock).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  test('startup failure helper treats probe errors as inconclusive', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+
+    const result = await releaseOwnerAfterStartupFailure(new Error('launch timeout'), {
+      releaseLock,
+      exit,
+      log: jest.fn(),
+      probeChromeReachable: jest.fn(async () => { throw new Error('probe failed'); }),
+    });
+
+    expect(result).toBe('inconclusive');
+    expect(releaseLock).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  test('startup failure helper treats debug-port timeout as inconclusive without probing', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+    const probeChromeReachable = jest.fn(async () => false);
+
+    const result = await releaseOwnerAfterStartupFailure(new DebugPortTimeoutError(9222, 1000, 3), {
+      releaseLock,
+      exit,
+      log: jest.fn(),
+      probeChromeReachable,
+    });
+
+    expect(result).toBe('inconclusive');
+    expect(probeChromeReachable).not.toHaveBeenCalled();
     expect(releaseLock).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
   });

@@ -25,7 +25,7 @@ import { getIdleState } from './utils/idle-state';
 import { getVersion } from './version';
 import { bootstrapPilot, logActiveFlags } from './harness/flags';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
-import { wireOwnerSelfRelease } from './chrome/owner-self-release';
+import { releaseOwnerAfterStartupFailure, wireOwnerSelfRelease } from './chrome/owner-self-release';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
@@ -51,6 +51,7 @@ import {
 import { fetchJsonVersion } from './chrome/devtools-info';
 import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
 import { isAutoElectEnabled, shouldElectBrokerOwner, shouldClientAutoConnect, defaultBrokerHttpPort } from './broker/auto-elect';
+import { removeBrokerMetadata } from './broker/discovery';
 import {
   DEFAULT_PROCESS_WATCHDOG_INTERVAL_MS,
   DEFAULT_TAB_HEALTH_PROBE_INTERVAL_MS,
@@ -893,9 +894,25 @@ program
 
     // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
 
-    const launcher = getChromeLauncher();
+    const launcher = getChromeLauncher(port);
     const cdpClient = getCDPClient();
     const sessionManager = getSessionManager();
+
+    if (controllerLock && autoLaunch) {
+      launcher.ensureChrome({ autoLaunch: true, port, userDataDir }).catch((err: unknown) => {
+        releaseOwnerAfterStartupFailure(err, {
+          releaseLock: () => {
+            if (options.broker || electBrokerOwner) removeBrokerMetadata(port, lockUserDataDir);
+            controllerLock?.release();
+            controllerLock = null;
+          },
+          exit: (code) => process.exit(code),
+          probeChromeReachable: async () => (await fetchJsonVersion(port)) !== null,
+        }).catch((releaseErr: unknown) => {
+          console.error('[SelfHealing] Startup owner self-release failed:', releaseErr);
+        });
+      });
+    }
 
     // Readiness: wire chrome component via CDPClient connection events, then
     // proactively connect so daemon /ready probes can become ready before the
