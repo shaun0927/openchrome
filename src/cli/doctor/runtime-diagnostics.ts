@@ -41,9 +41,19 @@ export interface DoctorDiagnostics {
 
 
 export function displayPath(filePath: string): string {
-  const home = os.homedir();
-  if (filePath === home) return '~';
-  if (filePath.startsWith(`${home}/`)) return `~/${filePath.slice(home.length + 1)}`;
+  const homes = [os.homedir()];
+  try {
+    homes.push(os.userInfo().homedir);
+  } catch {
+    // Best-effort redaction only.
+  }
+
+  const normalizedHomes = Array.from(new Set(homes.filter(Boolean)))
+    .sort((a, b) => b.length - a.length);
+  for (const home of normalizedHomes) {
+    if (filePath === home) return '~';
+    if (filePath.startsWith(`${home}/`)) return `~/${filePath.slice(home.length + 1)}`;
+  }
   return filePath;
 }
 

@@ -32,6 +32,14 @@ export interface CheckResult {
   status: CheckStatus;
   detail?: string;
   remediation?: string;
+  /** Short factual cause, safe for machine readers. */
+  reason?: string;
+  /** Primary next action. Mirrors remediation when no better structured action exists. */
+  next_action?: string;
+  /** Safe alternatives that do not change OpenChrome policy by themselves. */
+  safe_alternatives?: string[];
+  docs?: string[];
+  facts?: Record<string, unknown>;
   durationMs: number;
 }
 
@@ -50,6 +58,83 @@ export interface DoctorReport {
 export type CheckFn = () => Promise<Omit<CheckResult, 'durationMs'>>;
 
 const CHECK_TIMEOUT_MS = 5000;
+
+
+function prescriptiveDefaults(result: Omit<CheckResult, 'durationMs'>): Partial<CheckResult> {
+  if (result.status === 'ok' || result.status === 'skip') {
+    return {};
+  }
+
+  const nextAction = result.remediation;
+  const base: Partial<CheckResult> = {
+    ...(result.detail ? { reason: result.detail } : {}),
+    ...(nextAction ? { next_action: nextAction } : {}),
+  };
+
+  switch (result.id) {
+    case 'chrome-binary':
+      return {
+        ...base,
+        docs: ['https://www.google.com/chrome/'],
+        safe_alternatives: [
+          'Install Google Chrome and rerun openchrome doctor.',
+          'Set CHROME_PATH to an existing Chrome or chrome-headless-shell binary.',
+        ],
+      };
+    case 'chrome-port':
+      return {
+        ...base,
+        safe_alternatives: [
+          'Free the configured CDP port, then rerun openchrome doctor.',
+          'Use a different --port or CHROME_PORT value for this OpenChrome instance.',
+          'If another OpenChrome owner should be shared, connect through the broker path instead of creating a second direct controller.',
+        ],
+        docs: ['docs/mcp/topologies.md'],
+      };
+    case 'duplicate-controllers':
+      return {
+        ...base,
+        safe_alternatives: [
+          'Use --broker/--connect-broker or --auto-elect for coordinated sharing when enabled.',
+          'Do not use --allow-unsafe-shared-attach unless debugging a known race; it is intentionally not selected by default.',
+          'Assign independent clients separate --port and --user-data-dir values.',
+        ],
+        docs: ['docs/mcp/topologies.md', 'docs/roadmap/ssot-decisions.md'],
+      };
+    case 'pid-lock':
+      return {
+        ...base,
+        safe_alternatives: [
+          'Run openchrome reap to clean stale OpenChrome-managed state.',
+          'Remove only the stale PID file named in the detail if the process is no longer alive.',
+        ],
+      };
+    case 'profile-lock':
+      return {
+        ...base,
+        safe_alternatives: [
+          'Close Chrome windows using this profile before reusing it.',
+          'Use --user-data-dir to point OpenChrome at a separate profile.',
+        ],
+        docs: ['docs/mcp/topologies.md'],
+      };
+    default:
+      return base;
+  }
+}
+
+export function withPrescriptiveFields(result: Omit<CheckResult, 'durationMs'>): Omit<CheckResult, 'durationMs'> {
+  const defaults = prescriptiveDefaults(result);
+  return {
+    ...result,
+    ...defaults,
+    reason: result.reason ?? defaults.reason,
+    next_action: result.next_action ?? defaults.next_action,
+    safe_alternatives: result.safe_alternatives ?? defaults.safe_alternatives,
+    docs: result.docs ?? defaults.docs,
+    facts: result.facts ?? defaults.facts,
+  };
+}
 
 const ALL_CHECKS: Array<{ id: string; fn: CheckFn }> = [
   { id: 'node-version', fn: checkNodeVersion },
@@ -89,7 +174,7 @@ async function runCheckWithTimeout(id: string, fn: CheckFn): Promise<CheckResult
       detail: msg === 'timed out' ? 'timed out' : `Error: ${msg}`,
     };
   }
-  return { ...partial, durationMs: Date.now() - start };
+  return { ...withPrescriptiveFields(partial), durationMs: Date.now() - start };
 }
 
 export async function runDoctor(options: {
@@ -161,8 +246,19 @@ export function formatReport(report: DoctorReport, noColor: boolean): string {
     const statusStr = statusColor(r.status, noColor);
     const detail = r.detail ? `  ${r.detail}` : '';
     lines.push(`[${statusStr}] ${r.title}${detail}`);
-    if (r.remediation && r.status !== 'ok' && r.status !== 'skip') {
-      lines.push(`         Fix: ${r.remediation}`);
+    if (r.status !== 'ok' && r.status !== 'skip') {
+      if (r.remediation && (!r.next_action || r.next_action === r.remediation)) {
+        lines.push(`         Fix: ${r.remediation}`);
+      } else if (r.next_action) {
+        lines.push(`         Next: ${r.next_action}`);
+      } else if (r.remediation) {
+        lines.push(`         Fix: ${r.remediation}`);
+      }
+    }
+    if (r.safe_alternatives && r.safe_alternatives.length > 0 && r.status !== 'ok' && r.status !== 'skip') {
+      for (const alternative of r.safe_alternatives.slice(0, 2)) {
+        lines.push(`         Also: ${alternative}`);
+      }
     }
   }
 

@@ -192,8 +192,8 @@ export function summarizeDuplicateControllerDiagnostics(options: {
   if (staleConfigs.length > 0) warnings.push(`stale MCP config registration(s) detected: ${staleConfigs.map((config) => config.path).join(', ')}`);
 
   const remediation = [
-    'Keep exactly one direct OpenChrome controller per Chrome port/profile until broker mode is available.',
-    'Prefer assigning different --port and --user-data-dir values to independent MCP clients, or route clients through the future broker topology.',
+    'Keep exactly one direct OpenChrome owner per Chrome port/profile.',
+    'For coordinated sharing, route clients through --broker/--connect-broker or --auto-elect when that topology is explicitly enabled.',
     'Remove stale MCP registrations such as ~/.codex/mcp.json after migrating to the active client config.',
   ];
 

@@ -578,6 +578,7 @@ program
     }
     program.help();
   });
+
 program
   .command('launch')
   .description('Start Claude Code with isolated config (prevents corruption)')

@@ -105,6 +105,20 @@ describe('openchrome doctor --json', () => {
     expect(report.summary).toEqual(computed);
   });
 
+
+  test('degraded checks expose structured remediation fields when present', () => {
+    const fs = require('fs');
+    if (!fs.existsSync(DIST_INDEX)) return;
+    for (const result of report.results) {
+      if (result.status === 'warn' || result.status === 'fail') {
+        expect(result.reason ?? result.detail).toBeDefined();
+        if (result.remediation) {
+          expect(result.next_action).toBe(result.remediation);
+        }
+      }
+    }
+  });
+
   test('each result has required fields', () => {
     const fs = require('fs');
     if (!fs.existsSync(DIST_INDEX)) return;
@@ -146,6 +160,19 @@ describe('openchrome doctor --json', () => {
     });
     expect(result.stdout).toContain('=== openchrome doctor ===');
     expect(result.stdout).toContain('Node.js version');
+    expect(result.status).toBe(0);
+  });
+
+
+  test('package bin wrapper delegates check to canonical implementation', () => {
+    const fs = require('fs');
+    if (!fs.existsSync(DIST_CLI_INDEX)) return;
+    const result = spawnSync(process.execPath, [DIST_CLI_INDEX, 'check', '--help'], {
+      encoding: 'utf8',
+      timeout: 30000,
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
+    expect(result.stdout).toContain('Check Chrome connection status');
     expect(result.status).toBe(0);
   });
 
