@@ -569,79 +569,15 @@ program
 
 program
   .command('doctor')
-  .description('Check installation status')
+  .description('Run holistic environment diagnostics (Node, Chrome, ports, disk, network)')
+  .option('--json', 'Emit DoctorReport as JSON to stdout')
+  .option('--check <id>', 'Run only this check (repeatable)', (_val: string, prev: string[]) => prev, [] as string[])
+  .option('--remote', 'Enable opt-in remote network probe (HEAD update.googleapis.com)')
+  .option('--no-color', 'Disable colored output (also respected via NO_COLOR env var)')
   .action(async () => {
-    console.log('Checking installation status...\n');
-
-    // Core checks (required for CDP mode)
-    const portCheck = await checkChromeDebugPort();
-    const coreChecks = {
-      'Node.js version (>=18)': checkNodeVersion(),
-      '.claude.json health': await checkClaudeConfigHealth(),
-      'Chrome debugging port': portCheck.available,
-    };
-
-    console.log('Core Requirements:');
-    for (const [name, passed] of Object.entries(coreChecks)) {
-      const status = passed ? '✅' : '❌';
-      console.log(`  ${status} ${name}`);
-    }
-
-    // Chrome binary detection
-    console.log('\nChrome Detection:');
-    const platform = os.platform();
-    const chromePaths: string[] = [];
-    if (platform === 'darwin') {
-      chromePaths.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
-    } else if (platform === 'win32') {
-      const envProgramFiles = process.env['PROGRAMFILES'];
-      const envLocalAppData = process.env['LOCALAPPDATA'];
-      if (envProgramFiles) chromePaths.push(path.join(envProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-      if (envLocalAppData) chromePaths.push(path.join(envLocalAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'));
-    } else {
-      chromePaths.push('/usr/bin/google-chrome-stable', '/usr/bin/google-chrome', '/snap/bin/chromium');
-    }
-    if (process.env.CHROME_PATH) {
-      console.log(`  CHROME_PATH: ${process.env.CHROME_PATH} ${fs.existsSync(process.env.CHROME_PATH) ? '✅' : '❌ not found'}`);
-    } else {
-      let found = false;
-      for (const p of chromePaths) {
-        if (fs.existsSync(p)) {
-          console.log(`  ✅ Found: ${p}`);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        console.log('  ❌ Chrome not found in standard locations');
-        console.log('  Set CHROME_PATH environment variable to your Chrome binary');
-      }
-    }
-
-    printDoctorMCPTopologyGuidance();
-
-    const allPassed = Object.values(coreChecks).every(Boolean);
-    console.log();
-
-    if (allPassed) {
-      console.log('All checks passed! Ready to use with Claude Code.');
-      console.log('\nUsage:');
-      console.log('  1. Start Chrome with: chrome --remote-debugging-port=9222');
-      console.log('  2. Add to ~/.claude.json:');
-      console.log('     "mcpServers": { "openchrome": { "command": "openchrome", "args": ["serve"] } }');
-      console.log('  3. Restart Claude Code');
-    } else {
-      if (!coreChecks['Chrome debugging port']) {
-        console.log(`Chrome debugging port issue: ${portCheck.details || 'Unknown'}`);
-        if (portCheck.details?.includes('Nothing is listening')) {
-          console.log('Start Chrome with: chrome --remote-debugging-port=9222');
-          console.log('Or enable auto-launch: set autoLaunch=true in openchrome config');
-        }
-      }
-      if (!coreChecks['.claude.json health']) {
-        console.log('Run "openchrome recover" to fix .claude.json');
-      }
-    }
+    const serveEntry = path.join(__dirname, '..', 'index.js');
+    const child = spawn(process.execPath, [serveEntry, ...process.argv.slice(2)], { stdio: 'inherit' });
+    child.on('exit', (code) => process.exit(code ?? 0));
   });
 
 program

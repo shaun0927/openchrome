@@ -8,6 +8,7 @@ import * as path from 'path';
 import type { DoctorReport } from '../../src/cli/doctor';
 
 const DIST_INDEX = path.join(__dirname, '../../dist/index.js');
+const DIST_CLI_INDEX = path.join(__dirname, '../../dist/cli/index.js');
 
 // All check IDs that must appear in the report (network-remote is excluded by default)
 const REQUIRED_CHECK_IDS = [
@@ -26,8 +27,8 @@ const REQUIRED_CHECK_IDS = [
 ];
 
 // Run the doctor command using the compiled dist output
-function runDoctorJson(): { stdout: string; stderr: string; exitCode: number } {
-  const result = spawnSync(process.execPath, [DIST_INDEX, 'doctor', '--json'], {
+function runDoctorJson(entry = DIST_INDEX): { stdout: string; stderr: string; exitCode: number } {
+  const result = spawnSync(process.execPath, [entry, 'doctor', '--json'], {
     encoding: 'utf8',
     timeout: 30000,
     env: { ...process.env, NODE_ENV: 'test' },
@@ -82,6 +83,18 @@ describe('openchrome doctor --json', () => {
     }
   });
 
+  test('includes runtime diagnostics facts', () => {
+    const fs = require('fs');
+    if (!fs.existsSync(DIST_INDEX)) return;
+    expect(report.diagnostics).toBeDefined();
+    expect(report.diagnostics.runtime).toBeDefined();
+    expect(typeof report.diagnostics.runtime.runtime_topology).toBe('string');
+    expect(report.diagnostics.runtime.active_runtime_path).toBe(report.diagnostics.runtime.runtime_topology);
+    expect(typeof report.diagnostics.runtime.facts.port).toBe('number');
+    expect(typeof report.diagnostics.runtime.facts.userDataDir).toBe('string');
+    expect(typeof report.diagnostics.runtime.facts.lockPath).toBe('string');
+  });
+
   test('summary counts match results', () => {
     const fs = require('fs');
     if (!fs.existsSync(DIST_INDEX)) return;
@@ -110,6 +123,30 @@ describe('openchrome doctor --json', () => {
     const expectedExit = report.summary.fail > 0 ? 2 : report.summary.warn > 0 ? 1 : 0;
     expect(report.exitCode).toBe(expectedExit);
     expect(exitCode).toBe(expectedExit);
+  });
+
+
+  test('package bin wrapper delegates doctor --json to structured report', () => {
+    const fs = require('fs');
+    if (!fs.existsSync(DIST_CLI_INDEX)) return;
+    const result = runDoctorJson(DIST_CLI_INDEX);
+    const parsed = JSON.parse(result.stdout) as DoctorReport;
+    expect(parsed.diagnostics.runtime.active_runtime_path).toBeDefined();
+    expect(result.exitCode).toBe(parsed.exitCode);
+  });
+
+
+  test('package bin wrapper delegates plain doctor to canonical formatter', () => {
+    const fs = require('fs');
+    if (!fs.existsSync(DIST_CLI_INDEX)) return;
+    const result = spawnSync(process.execPath, [DIST_CLI_INDEX, 'doctor', '--check', 'node-version', '--no-color'], {
+      encoding: 'utf8',
+      timeout: 30000,
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
+    expect(result.stdout).toContain('=== openchrome doctor ===');
+    expect(result.stdout).toContain('Node.js version');
+    expect(result.status).toBe(0);
   });
 
   test('network-remote check is absent by default', () => {
