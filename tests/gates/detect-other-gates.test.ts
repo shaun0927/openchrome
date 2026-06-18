@@ -8,6 +8,7 @@
  */
 
 import {
+  detectBotCheck,
   detectSsoSignalFromUrl,
   detectSso,
   detectPaywall,
@@ -21,6 +22,58 @@ function makePage(url: string, evalImpl: (fn: any, ...args: any[]) => any): any 
     evaluate: jest.fn(async (fn: any, ...args: any[]) => evalImpl(fn, ...args)),
   };
 }
+
+describe('detectBotCheck', () => {
+  test('detects Cloudflare managed challenge pages that have no captcha iframe yet', async () => {
+    const page = makePage('https://dash.cloudflare.com/login', () => ({ selector: 'title:just-a-moment' }));
+    const out = await detectBotCheck(page);
+    expect(out).toEqual({
+      kind: 'bot-check',
+      gateType: 'bot_check',
+      selector: 'title:just-a-moment',
+      pageUrl: 'https://dash.cloudflare.com/login',
+    });
+  });
+
+  test('detects generic bot-check text only with a WAF marker', async () => {
+    const page = makePage('https://example.com/', (fn: any) => {
+      const previousDocument = (globalThis as any).document;
+      (globalThis as any).document = {
+        title: 'Please wait',
+        body: { innerText: 'Verify you are human before continuing' },
+        documentElement: { innerHTML: '<script src="/cdn-cgi/challenge-platform/cf_chl_js"></script>' },
+      };
+      try {
+        return fn();
+      } finally {
+        (globalThis as any).document = previousDocument;
+      }
+    });
+    expect(await detectBotCheck(page)).toMatchObject({ selector: 'text:bot-check' });
+  });
+
+  test('does not flag ordinary content that merely mentions human verification', async () => {
+    const page = makePage('https://example.com/help', (fn: any) => {
+      const previousDocument = (globalThis as any).document;
+      (globalThis as any).document = {
+        title: 'Account help',
+        body: { innerText: 'Some forms ask you to verify you are human.' },
+        documentElement: { innerHTML: '<article>Some forms ask you to verify you are human.</article>' },
+      };
+      try {
+        return fn();
+      } finally {
+        (globalThis as any).document = previousDocument;
+      }
+    });
+    expect(await detectBotCheck(page)).toBeNull();
+  });
+
+  test('returns null when the bot-check probe finds nothing', async () => {
+    const page = makePage('https://example.com/', () => null);
+    expect(await detectBotCheck(page)).toBeNull();
+  });
+});
 
 describe('detectSsoSignalFromUrl', () => {
   test('returns null for empty / invalid URLs', () => {
@@ -117,14 +170,24 @@ describe('detectTwoFactor', () => {
 });
 
 describe('detectNonCaptchaGate — priority composer', () => {
-  test('SSO wins over paywall / 2fa', async () => {
+  test('bot-check wins over SSO / paywall / 2fa', async () => {
     const page = {
       url: () => 'https://accounts.google.com/signin',
-      evaluate: jest.fn(),
+      evaluate: jest.fn(async () => ({ selector: 'title:just-a-moment' })),
+    };
+    const out = await detectNonCaptchaGate(page as any);
+    expect(out?.kind).toBe('bot-check');
+    expect(out?.gateType).toBe('bot_check');
+  });
+
+  test('SSO wins over paywall / 2fa after bot-check probe misses', async () => {
+    const page = {
+      url: () => 'https://accounts.google.com/signin',
+      evaluate: jest.fn(async () => null),
     };
     const out = await detectNonCaptchaGate(page as any);
     expect(out?.kind).toBe('sso');
-    expect(page.evaluate).not.toHaveBeenCalled();
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
   });
 
   test('paywall wins over 2fa when there is no SSO', async () => {
@@ -133,7 +196,7 @@ describe('detectNonCaptchaGate — priority composer', () => {
       url: () => 'https://news.example.com/article',
       evaluate: jest.fn(async () => {
         call += 1;
-        if (call === 1) return { selector: '.paywall' };
+        if (call === 2) return { selector: '.paywall' };
         return null;
       }),
     };
@@ -147,8 +210,8 @@ describe('detectNonCaptchaGate — priority composer', () => {
       url: () => 'https://example.com/verify',
       evaluate: jest.fn(async () => {
         call += 1;
-        // 1st: paywall probe → null. 2nd: 2fa probe → match.
-        if (call === 1) return null;
+        // 1st: bot-check probe → null. 2nd: paywall probe → null. 3rd: 2fa probe → match.
+        if (call < 3) return null;
         return { selector: 'input[name="otp"]' };
       }),
     };

@@ -314,6 +314,28 @@ describe('oc_gate_inspect — non-CAPTCHA gates', () => {
     mockDetectCaptcha.mockResolvedValue(null);
   });
 
+  test('bot-check → kind=bot-check, gateType=bot_check, selector exposed', async () => {
+    const { handler } = loadHandler();
+    mockGetPage.mockResolvedValue(makeFakePage('https://dash.cloudflare.com/login'));
+    mockDetectNonCaptchaGate.mockResolvedValue({
+      kind: 'bot-check',
+      gateType: 'bot_check',
+      selector: 'title:just-a-moment',
+      pageUrl: 'https://dash.cloudflare.com/login',
+    });
+
+    const result = await handler('sess-1', { tabId: 'tab-1' });
+    const out = parseResult(result);
+
+    expect(out).toEqual({
+      detected: true,
+      kind: 'bot-check',
+      gateType: 'bot_check',
+      selector: 'title:just-a-moment',
+      pageUrl: 'https://dash.cloudflare.com/login',
+    });
+  });
+
   test('SSO redirect → kind=sso, gateType=sso_redirect, provider exposed', async () => {
     const { handler } = loadHandler();
     mockGetPage.mockResolvedValue(makeFakePage('https://accounts.google.com/signin'));
