@@ -33,13 +33,12 @@ import {
   getCodexSetupCommand,
   getOpenCodeServerConfig,
   getTopologyWarning,
-  HOST_CONFIG_MIGRATION_NOTE,
   formatOpenCodeMCPServerConfigSnippet,
   getSupportedMCPClients,
   isSupportedMCPClient,
   upsertOpenCodeMCPServerConfig,
 } from './mcp-client-config';
-import { getHostConfigMigrationNotice, scanOpenChromeHostConfigs } from './mcp-config-diagnostics';
+import { getHostConfigMigrationNotice } from './mcp-config-diagnostics';
 import {
   addTotpSecret,
   generateTOTP,
@@ -57,6 +56,39 @@ import { registerRunCommand } from './run';
 import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
 
 const program = new Command();
+
+const SIGNAL_EXIT_CODES: Partial<Record<NodeJS.Signals, number>> = {
+  SIGINT: 130,
+  SIGTERM: 143,
+};
+
+function fullCliArgs(): string[] {
+  const args = process.argv.slice(2);
+  if (args[0] === 'help' && ['serve', 'check', 'doctor'].includes(args[1] ?? '')) {
+    return [args[1], '--help', ...args.slice(2)];
+  }
+  return args;
+}
+
+function runFullCliCommand(): void {
+  const fullEntry = path.join(__dirname, '..', 'index.js');
+  const child = spawn(process.execPath, [fullEntry, ...fullCliArgs()], {
+    stdio: 'inherit',
+  });
+
+  const forwardSignal = (signal: NodeJS.Signals) => {
+    if (!child.killed) child.kill(signal);
+  };
+  process.on('SIGTERM', () => forwardSignal('SIGTERM'));
+  process.on('SIGINT', () => forwardSignal('SIGINT'));
+
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      process.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
+    }
+    process.exit(code ?? 0);
+  });
+}
 
 async function readHiddenLine(prompt: string): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -191,35 +223,6 @@ function printHostConfigMigrationNotice(label: string): void {
   for (const line of getHostConfigMigrationNotice(label)) {
     console.log(`ℹ️  ${line}`);
   }
-}
-
-function printDoctorMCPTopologyGuidance(): void {
-  const diagnostics = scanOpenChromeHostConfigs();
-  console.log('\nMCP Host Topology:');
-
-  if (diagnostics.configs.length === 0) {
-    console.log('  ℹ️  No OpenChrome MCP host registrations detected in Claude Code, Codex CLI, or OpenCode config files.');
-    console.log(`  ℹ️  ${HOST_CONFIG_MIGRATION_NOTE}`);
-    return;
-  }
-
-  for (const config of diagnostics.configs) {
-    const mode = config.connectBroker ? 'broker client' : config.broker ? 'broker owner' : 'direct';
-    console.log(`  • ${config.label}: ${mode} port=${config.port} userDataDir=${config.userDataDir} (${config.path})`);
-  }
-
-  if (diagnostics.duplicateDirectGroups.length > 0) {
-    console.log('  ⚠️  Multiple host registrations use the same direct OpenChrome port/profile.');
-    for (const group of diagnostics.duplicateDirectGroups) {
-      const labels = group.configs.map((config) => config.label).join(', ');
-      console.log(`     - port=${group.port} userDataDir=${group.userDataDir}: ${labels}`);
-    }
-    console.log('     Use isolated per-client ports/profiles or the broker topology; do not rely on npm update alone.');
-  } else if (diagnostics.directConfigs.length > 0) {
-    console.log('  ℹ️  Direct OpenChrome registrations stay direct until setup or manual config changes migrate them.');
-  }
-
-  console.log(`  ℹ️  ${HOST_CONFIG_MIGRATION_NOTE}`);
 }
 
 program
@@ -511,6 +514,7 @@ program
   // hiding the only sanctioned multi-session path (see docs/roadmap/ssot-decisions.md D3).
   .option('--broker', 'Run as the shared-profile broker owner (HTTP daemon plus broker discovery metadata). Requires --auto-launch.')
   .option('--connect-broker', 'Proxy stdio MCP requests to the discovered broker for this (port, profile) instead of attaching to Chrome directly')
+  .option('--auto-elect', 'Coordinated sharing: auto-launch lock winner becomes broker owner and surplus sessions auto-attach as clients')
   .option('--allow-unsafe-shared-attach', 'Debug escape hatch: allow a second direct controller for the same Chrome port/profile (races on target cleanup/reconnect — not for normal use)')
   // Mirror the remaining src/index.ts serve flags that operators commonly need
   // documented; the passthrough already forwards them.
@@ -522,37 +526,21 @@ program
   // dist/index.js understands: forward unknowns instead of erroring, so this
   // wrapper can never again silently diverge from the full option surface (#1480 G1).
   .allowUnknownOption()
+  .helpOption(false)
   .action(async () => {
     // Non-blocking update check (fires in background)
     checkForUpdates(version).catch(() => {});
 
-    // Forward to the full-featured serve implementation in dist/index.js
-    // This includes self-healing, HTTP transport, event loop monitor, disk monitor,
-    // health endpoint, session persistence, and all reliability features.
-    const serveEntry = path.join(__dirname, '..', 'index.js');
-    const child = spawn(process.execPath, [serveEntry, ...process.argv.slice(2)], {
-      stdio: 'inherit',
-    });
-
-    // Forward signals to child process
-    const forwardSignal = (signal: NodeJS.Signals) => {
-      if (!child.killed) {
-        child.kill(signal);
-      }
-    };
-    process.on('SIGTERM', () => forwardSignal('SIGTERM'));
-    process.on('SIGINT', () => forwardSignal('SIGINT'));
-    // Forward SIGHUP on all platforms — on Unix this fires when the
-    // controlling terminal closes (e.g., MCP client session ends).
-    process.on('SIGHUP', () => forwardSignal('SIGHUP'));
-
-    // If the parent closes stdin, kill the child to prevent orphaning.
-    process.stdin.on('end', () => {
-      if (!child.killed) child.kill('SIGTERM');
-    });
-
-    child.on('exit', (code) => process.exit(code ?? 0));
+    // Forward to the full-featured serve implementation in dist/index.js.
+    runFullCliCommand();
   });
+
+program
+  .command('check')
+  .description('Check Chrome connection status')
+  .allowUnknownOption()
+  .helpOption(false)
+  .action(() => runFullCliCommand());
 
 program
   .command('sessions')
@@ -570,16 +558,26 @@ program
 program
   .command('doctor')
   .description('Run holistic environment diagnostics (Node, Chrome, ports, disk, network)')
-  .option('--json', 'Emit DoctorReport as JSON to stdout')
-  .option('--check <id>', 'Run only this check (repeatable)', (_val: string, prev: string[]) => prev, [] as string[])
-  .option('--remote', 'Enable opt-in remote network probe (HEAD update.googleapis.com)')
-  .option('--no-color', 'Disable colored output (also respected via NO_COLOR env var)')
-  .action(async () => {
-    const serveEntry = path.join(__dirname, '..', 'index.js');
-    const child = spawn(process.execPath, [serveEntry, ...process.argv.slice(2)], { stdio: 'inherit' });
-    child.on('exit', (code) => process.exit(code ?? 0));
-  });
+  .allowUnknownOption()
+  .helpOption(false)
+  .action(() => runFullCliCommand());
 
+program
+  .command('help [command]')
+  .description('Display help for command')
+  .allowUnknownOption()
+  .action((commandName?: string) => {
+    if (['serve', 'check', 'doctor'].includes(commandName ?? '')) {
+      runFullCliCommand();
+      return;
+    }
+    const localCommand = program.commands.find((command) => command.name() === commandName);
+    if (localCommand) {
+      localCommand.help();
+      return;
+    }
+    program.help();
+  });
 program
   .command('launch')
   .description('Start Claude Code with isolated config (prevents corruption)')
@@ -1068,98 +1066,6 @@ function checkNativeHostManifest(): boolean {
   }
 
   return fs.existsSync(manifestPath);
-}
-
-/**
- * Check Node.js version
- */
-function checkNodeVersion(): boolean {
-  const version = process.version;
-  const major = parseInt(version.slice(1).split('.')[0], 10);
-  return major >= 18;
-}
-
-interface PortCheckResult {
-  available: boolean;
-  details?: string;
-}
-
-/**
- * Check if Chrome is running with debugging port
- */
-async function checkChromeDebugPort(port: number = 9222): Promise<PortCheckResult> {
-  try {
-    const http = await import('http');
-    const net = await import('net');
-
-    // First: check if anything is listening on the port
-    const portInUse = await new Promise<boolean>((resolve) => {
-      const socket = new net.Socket();
-      socket.setTimeout(2000);
-      socket.on('connect', () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.on('timeout', () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.on('error', () => {
-        resolve(false);
-      });
-      socket.connect(port, '127.0.0.1');
-    });
-
-    if (!portInUse) {
-      return { available: false, details: `Nothing is listening on port ${port}. Start Chrome with: chrome --remote-debugging-port=${port}` };
-    }
-
-    // Port is in use — check if it's Chrome DevTools
-    return new Promise((resolve) => {
-      const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
-        if (res.statusCode === 200) {
-          let data = '';
-          res.on('data', (chunk: string) => data += chunk);
-          res.on('end', () => {
-            try {
-              const json = JSON.parse(data);
-              resolve({
-                available: true,
-                details: `Chrome ${json.Browser || 'unknown'} responding on port ${port}`
-              });
-            } catch {
-              resolve({ available: true, details: `Port ${port} responding but could not parse version info` });
-            }
-          });
-        } else {
-          resolve({ available: false, details: `Port ${port} is in use but not responding as Chrome DevTools (HTTP ${res.statusCode})` });
-        }
-      });
-      req.on('error', () => {
-        resolve({ available: false, details: `Port ${port} is in use but not responding to HTTP (may not be Chrome)` });
-      });
-      req.setTimeout(2000, () => {
-        req.destroy();
-        resolve({ available: false, details: `Port ${port} is in use but timed out (may be blocked by firewall)` });
-      });
-    });
-  } catch {
-    return { available: false, details: 'Failed to check port' };
-  }
-}
-
-/**
- * Check .claude.json health
- */
-async function checkClaudeConfigHealth(): Promise<boolean> {
-  const configPath = path.join(os.homedir(), '.claude.json');
-
-  if (!fs.existsSync(configPath)) {
-    return true; // No config is fine
-  }
-
-  const content = fs.readFileSync(configPath, 'utf8');
-  return isValidJson(content);
 }
 
 /**
