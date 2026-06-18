@@ -70,7 +70,8 @@
     "bench:runtime-preflight": "ts-node tests/benchmark/runtime-preflight.ts",
     "bench:full:live": "ts-node tests/benchmark/run-full-benchmark.ts --mode live",
     "bench:full:recorded": "ts-node tests/benchmark/run-full-benchmark.ts --mode recorded",
-    "bench:api-key-readiness": "ts-node tests/benchmark/benchmark-readiness.ts --api-key-only"
+    "bench:api-key-readiness": "ts-node tests/benchmark/benchmark-readiness.ts --api-key-only",
+    "lint:skill-tools": "node scripts/lint-skill-tool-refs.mjs skills/openchrome/SKILL.md"
   },
   "keywords": [
     "openchrome",
@@ -140,6 +141,11 @@
     "assets",
     "config",
     "README.md",
-    "LICENSE"
+    "docs/agent/capability-map.md",
+    "LICENSE",
+    "skills",
+    "commands",
+    ".codex-plugin",
+    ".claude-plugin"
   ]
 }

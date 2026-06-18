@@ -43,6 +43,33 @@ openchrome setup --client codex   # Codex CLI
 
 Restart your MCP client. Chrome auto-launches on the first tool call.
 
+## First tool by intent
+
+Use this as the short routing card. The full catalogue remains in
+[`docs/agent/capability-map.md`](../../docs/agent/capability-map.md).
+
+| Intent | Start with | Fallback | Verify with |
+|---|---|---|---|
+| Open a URL | `navigate` | `tabs_create` | `read_page` |
+| Read page facts | `read_page mode=dom` | `inspect` / `query_dom` | `oc_assert` |
+| Find action targets | `oc_observe` | `find` / `oc_query` | `inspect` |
+| Click or type | `interact` | `computer` | `oc_assert` |
+| Verify success | `oc_assert` | `validate_page` | `oc_evidence_bundle` |
+| Capture evidence | `oc_evidence_bundle` | `page_screenshot` | `oc_diff` |
+| Debug a broken page | `validate_page` | `console_capture` | `oc_evidence_bundle` |
+| Crawl or run background work | `crawl_start` | `crawl_status` / `crawl_cancel` | `oc_assert` |
+| Repair runtime setup | `openchrome doctor` | `oc_doctor_report` | `openchrome check` |
+
+Default loop: `navigate` → `read_page` / `oc_observe` → `interact` →
+`oc_assert` → `oc_evidence_bundle` if the result is uncertain.
+
+Use something else when:
+
+- You need a deterministic browser script without an MCP host agent: use
+  Playwright or Puppeteer.
+- The user explicitly asks for a platform API or CLI: use that external tool.
+- The next step is irreversible: get the host/user confirmation gate first.
+
 ## Key tools
 
 | Tool | Purpose |
