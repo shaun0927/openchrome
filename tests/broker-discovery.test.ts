@@ -7,6 +7,7 @@ import {
   publishBrokerMetadata,
   readBrokerMetadata,
   removeBrokerMetadata,
+  resolveLiveBrokerMetadata,
 } from '../src/broker/discovery';
 
 describe('broker discovery metadata', () => {
@@ -60,5 +61,74 @@ describe('broker discovery metadata', () => {
     removeBrokerMetadata(9222, profile, process.pid, tmpDir);
 
     expect(readBrokerMetadata(9222, profile, tmpDir)?.pid).toBe(999999);
+  });
+
+  test('live resolver removes metadata for a dead owner pid', async () => {
+    const profile = path.join(tmpDir, 'profile');
+    publishBrokerMetadata({ port: 9222, userDataDir: profile, httpHost: '127.0.0.1', httpPort: 3101, pid: 999999 }, tmpDir);
+
+    const resolved = await resolveLiveBrokerMetadata(9222, profile, {
+      rootDir: tmpDir,
+      isPidAliveImpl: () => false,
+      fetchImpl: jest.fn() as unknown as typeof fetch,
+    });
+
+    expect(resolved).toBeNull();
+    expect(readBrokerMetadata(9222, profile, tmpDir)).toBeNull();
+  });
+
+  test('live resolver preserves live-pid metadata when the endpoint has a transient failure', async () => {
+    const profile = path.join(tmpDir, 'profile');
+    const metadata = publishBrokerMetadata({ port: 9222, userDataDir: profile, httpHost: '127.0.0.1', httpPort: 3101, pid: 123 }, tmpDir);
+
+    const resolved = await resolveLiveBrokerMetadata(9222, profile, {
+      rootDir: tmpDir,
+      isPidAliveImpl: () => true,
+      fetchImpl: jest.fn(async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch,
+    });
+
+    expect(resolved).toBeNull();
+    expect(readBrokerMetadata(9222, profile, tmpDir)).toEqual(metadata);
+  });
+
+  test('live resolver removes metadata when the endpoint is a non-broker HTTP service', async () => {
+    const profile = path.join(tmpDir, 'profile');
+    publishBrokerMetadata({ port: 9222, userDataDir: profile, httpHost: '127.0.0.1', httpPort: 3101, pid: 123 }, tmpDir);
+
+    const resolved = await resolveLiveBrokerMetadata(9222, profile, {
+      rootDir: tmpDir,
+      isPidAliveImpl: () => true,
+      fetchImpl: jest.fn(async () => ({
+        status: 404,
+        json: async () => ({ error: 'not found' }),
+      } as Response)) as unknown as typeof fetch,
+    });
+
+    expect(resolved).toBeNull();
+    expect(readBrokerMetadata(9222, profile, tmpDir)).toBeNull();
+  });
+
+  test('live resolver requires OpenChrome health response and preserves auth token env hints', async () => {
+    const profile = path.join(tmpDir, 'profile');
+    const metadata = publishBrokerMetadata({
+      port: 9222,
+      userDataDir: profile,
+      httpHost: '127.0.0.1',
+      httpPort: 3101,
+      pid: 123,
+      authTokenEnv: 'OPENCHROME_AUTH_TOKEN',
+    }, tmpDir);
+
+    const resolved = await resolveLiveBrokerMetadata(9222, profile, {
+      rootDir: tmpDir,
+      isPidAliveImpl: () => true,
+      fetchImpl: jest.fn(async () => ({
+        status: 200,
+        json: async () => ({ status: 'ok', transport: 'http' }),
+      } as Response)) as unknown as typeof fetch,
+    });
+
+    expect(resolved).toEqual(metadata);
+    expect(resolved?.authTokenEnv).toBe('OPENCHROME_AUTH_TOKEN');
   });
 });

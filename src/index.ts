@@ -314,9 +314,9 @@ program
     }
 
     if (options.connectBroker) {
-      const { readBrokerMetadata } = await import('./broker/discovery');
+      const { resolveLiveBrokerMetadata } = await import('./broker/discovery');
       const { BrokerProxyStdioBridge } = await import('./transports/broker-proxy');
-      const broker = readBrokerMetadata(port, lockUserDataDir);
+      const broker = await resolveLiveBrokerMetadata(port, lockUserDataDir);
       if (!broker) {
         console.error(`[openchrome] No broker metadata found for port ${port} and profile ${lockUserDataDir}. Start one with: openchrome serve --broker --auto-launch --port ${port} --user-data-dir ${lockUserDataDir}`);
         process.exit(2);
@@ -364,12 +364,12 @@ program
             // coordinated --connect-broker client; the previously-rejected surplus
             // session now works.
             if (autoElect) {
-              const { readBrokerMetadata } = await import('./broker/discovery');
+              const { resolveLiveBrokerMetadata } = await import('./broker/discovery');
               const { BrokerProxyStdioBridge } = await import('./transports/broker-proxy');
-              let broker = readBrokerMetadata(port, lockUserDataDir);
+              let broker = await resolveLiveBrokerMetadata(port, lockUserDataDir);
               for (let i = 0; i < 10 && !broker; i++) {
                 await new Promise((r) => setTimeout(r, 300));
-                broker = readBrokerMetadata(port, lockUserDataDir);
+                broker = await resolveLiveBrokerMetadata(port, lockUserDataDir);
               }
               if (broker && shouldClientAutoConnect({ autoElect, brokerPresent: true })) {
                 const resolvedAuthToken = options.authToken
