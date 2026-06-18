@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getVersion } from '../version';
-import { controllerLockKey, normalizeControllerUserDataDir } from '../utils/controller-lock';
+import { controllerLockKey, isPidAlive, normalizeControllerUserDataDir } from '../utils/controller-lock';
 
 export interface BrokerIdentity {
   port: number;
@@ -69,6 +69,61 @@ export function readBrokerMetadata(port: number, userDataDir: string, rootDir?: 
   } catch {
     return null;
   }
+}
+
+export interface LiveBrokerMetadataOptions {
+  rootDir?: string;
+  fetchImpl?: typeof fetch;
+  isPidAliveImpl?: (pid: number) => boolean;
+}
+
+type BrokerEndpointState = 'live' | 'not-broker' | 'unreachable';
+
+function brokerHealthEndpoint(metadata: BrokerMetadata): string {
+  const url = new URL(metadata.endpoint);
+  url.pathname = '/health';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
+async function brokerEndpointState(metadata: BrokerMetadata, fetchImpl: typeof fetch): Promise<BrokerEndpointState> {
+  try {
+    const response = await fetchImpl(brokerHealthEndpoint(metadata), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(1000),
+    });
+    if (response.status !== 200) return 'not-broker';
+
+    const body = await response.json().catch(() => null) as { status?: unknown; transport?: unknown } | null;
+    return body?.status === 'ok' && body.transport === 'http' ? 'live' : 'not-broker';
+  } catch {
+    return 'unreachable';
+  }
+}
+
+export async function resolveLiveBrokerMetadata(
+  port: number,
+  userDataDir: string,
+  options: LiveBrokerMetadataOptions = {},
+): Promise<BrokerMetadata | null> {
+  const metadata = readBrokerMetadata(port, userDataDir, options.rootDir);
+  if (!metadata) return null;
+
+  const pidAlive = (options.isPidAliveImpl ?? isPidAlive)(metadata.pid);
+  if (!pidAlive) {
+    removeBrokerMetadata(port, userDataDir, metadata.pid, options.rootDir);
+    return null;
+  }
+
+  const endpointState = await brokerEndpointState(metadata, options.fetchImpl ?? fetch);
+  if (endpointState === 'live') return metadata;
+
+  if (endpointState === 'not-broker') {
+    removeBrokerMetadata(port, userDataDir, metadata.pid, options.rootDir);
+  }
+  return null;
 }
 
 export function removeBrokerMetadata(port: number, userDataDir: string, pid = process.pid, rootDir?: string): void {
