@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import {
   DEFAULT_RELEASE_FAILURE_THRESHOLD,
   OWNER_SELF_RELEASE_EXIT_CODE,
+  releaseOwnerIfChromeUnreachable,
   wireOwnerSelfRelease,
 } from '../src/chrome/owner-self-release';
 
@@ -168,5 +169,71 @@ describe('owner self-release (#1474)', () => {
 
     expect(exit).toHaveBeenCalledWith(OWNER_SELF_RELEASE_EXIT_CODE);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('release failed'));
+  });
+
+  test('primitive releases only after a confirming unreachable probe', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+    const result = await releaseOwnerIfChromeUnreachable({
+      releaseLock,
+      exit,
+      log: jest.fn(),
+      probeChromeReachable: jest.fn(async () => false),
+    }, { trigger: 'startup connect failure' });
+
+    expect(result).toBe('released');
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(OWNER_SELF_RELEASE_EXIT_CODE);
+  });
+
+  test('primitive keeps ownership when Chrome is reachable', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+    const onKept = jest.fn();
+    const result = await releaseOwnerIfChromeUnreachable({
+      releaseLock,
+      exit,
+      log: jest.fn(),
+      probeChromeReachable: jest.fn(async () => true),
+    }, { trigger: 'startup connect failure', onKept });
+
+    expect(result).toBe('reachable');
+    expect(onKept).toHaveBeenCalledTimes(1);
+    expect(releaseLock).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  test('primitive aborts release when a recovery race makes the probe stale', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+    const onKept = jest.fn();
+    const result = await releaseOwnerIfChromeUnreachable({
+      releaseLock,
+      exit,
+      log: jest.fn(),
+      probeChromeReachable: jest.fn(async () => false),
+    }, { trigger: 'startup connect failure', abortIfRecovered: () => true, onKept });
+
+    expect(result).toBe('aborted');
+    expect(onKept).toHaveBeenCalledTimes(1);
+    expect(releaseLock).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  test('primitive treats probe errors as inconclusive and keeps ownership', async () => {
+    const releaseLock = jest.fn();
+    const exit = jest.fn();
+    const onInconclusive = jest.fn();
+    const result = await releaseOwnerIfChromeUnreachable({
+      releaseLock,
+      exit,
+      log: jest.fn(),
+      probeChromeReachable: jest.fn(async () => { throw new Error('probe failed'); }),
+    }, { trigger: 'startup connect failure', onInconclusive });
+
+    expect(result).toBe('inconclusive');
+    expect(onInconclusive).toHaveBeenCalledTimes(1);
+    expect(releaseLock).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
   });
 });
