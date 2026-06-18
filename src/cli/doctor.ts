@@ -22,6 +22,7 @@ import { checkNetworkLocal } from './doctor/checks/network-local';
 import { checkNetworkRemote } from './doctor/checks/network-remote';
 import { checkOptionalDeps } from './doctor/checks/optional-deps';
 import { checkDuplicateControllers } from './doctor/checks/duplicate-controllers';
+import { collectDoctorDiagnostics, type DoctorDiagnostics } from './doctor/runtime-diagnostics';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
 
@@ -41,6 +42,7 @@ export interface DoctorReport {
   nodeVersion: string;
   startedAt: string;
   results: CheckResult[];
+  diagnostics: DoctorDiagnostics;
   summary: { ok: number; warn: number; fail: number; skip: number };
   exitCode: 0 | 1 | 2;
 }
@@ -117,6 +119,7 @@ export async function runDoctor(options: {
   }
 
   const exitCode: 0 | 1 | 2 = summary.fail > 0 ? 2 : summary.warn > 0 ? 1 : 0;
+  const diagnostics = collectDoctorDiagnostics();
 
   return {
     openchromeVersion: getVersion(),
@@ -125,6 +128,7 @@ export async function runDoctor(options: {
     nodeVersion: process.versions.node,
     startedAt,
     results,
+    diagnostics,
     summary,
     exitCode,
   };
