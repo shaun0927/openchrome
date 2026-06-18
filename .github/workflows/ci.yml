@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: build-and-test (${{ matrix.os }}, ${{ matrix.node-version }})
+    name: build-and-test (${{ matrix.os }}, ${{ matrix.node-version }}, shard=${{ matrix.test-shard }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -18,18 +18,30 @@ jobs:
       matrix:
         include:
           # Fast PR gate: full Node compatibility on Linux plus one smoke lane
-          # per non-Linux OS. This keeps PRs from waiting on three macOS hosted
-          # runners while preserving cross-platform signal before merge.
+          # per non-Linux OS. The full Ubuntu/Node 20 Jest suite is sharded so
+          # CI wall-clock is bounded by the slowest shard instead of one long
+          # serial test job.
           - os: ubuntu-latest
             node-version: 18
+            test-shard: ''
           - os: ubuntu-latest
             node-version: 20
+            test-shard: '1'
+          - os: ubuntu-latest
+            node-version: 20
+            test-shard: '2'
+          - os: ubuntu-latest
+            node-version: 20
+            test-shard: '3'
           - os: ubuntu-latest
             node-version: 22
+            test-shard: ''
           - os: windows-latest
             node-version: 20
+            test-shard: ''
           - os: macos-latest
             node-version: 20
+            test-shard: ''
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -61,14 +73,14 @@ jobs:
       - name: Check capability map is in sync
         run: npm run docs:capability-map:check
 
-      - name: Run full tests
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 20
-        run: npx jest --config jest.ci.config.js
+      - name: Run full tests shard ${{ matrix.test-shard }}/3
+        if: matrix.test-shard != ''
+        run: npx jest --config jest.ci.config.js --shard=${{ matrix.test-shard }}/3
         env:
           CI: true
 
       - name: Run smoke tests
-        if: matrix.os != 'ubuntu-latest' || matrix.node-version != 20
+        if: matrix.test-shard == ''
         run: npx jest --config jest.ci.config.js --runTestsByPath tests/cli/doctor/runtime-diagnostics.test.ts tests/scripts/gen-capability-map.test.ts
         env:
           CI: true

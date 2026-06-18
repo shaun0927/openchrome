@@ -99,7 +99,7 @@ describe('handleTwoFA', () => {
       const options: TwoFAHandlerOptions = {
         domain: 'github.com',
         credentialProvider,
-        timeoutMs: 5000,
+        timeoutMs: 10,
       };
 
       const result = await handleTwoFA(page, detection, options);
@@ -124,7 +124,7 @@ describe('handleTwoFA', () => {
         domain: 'github.com',
         credentialProvider,
         maxRetries: 3,
-        timeoutMs: 1000,
+        timeoutMs: 1,
       };
 
       const result = await handleTwoFA(page, detection, options);
@@ -147,7 +147,7 @@ describe('handleTwoFA', () => {
         domain: 'github.com',
         credentialProvider,
         maxRetries: 2,
-        timeoutMs: 500,
+        timeoutMs: 1,
       };
 
       await handleTwoFA(page, detection, options);
@@ -202,7 +202,7 @@ describe('handleTwoFA', () => {
       const page = makePage({
         urlSequence: ['https://example.com/2fa'],
       });
-      const options: TwoFAHandlerOptions = { domain: 'example.com', timeoutMs: 600 };
+      const options: TwoFAHandlerOptions = { domain: 'example.com', timeoutMs: 1 };
 
       const result = await handleTwoFA(page, detection, options);
 
@@ -228,7 +228,7 @@ describe('handleTwoFA', () => {
         type: jest.fn().mockResolvedValue(undefined),
         keyboard: { press: jest.fn().mockResolvedValue(undefined) },
       };
-      const options: TwoFAHandlerOptions = { domain: 'example.com', timeoutMs: 5000 };
+      const options: TwoFAHandlerOptions = { domain: 'example.com', timeoutMs: 10 };
 
       const result = await handleTwoFA(page, detection, options);
 

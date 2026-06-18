@@ -5,6 +5,13 @@
 
 /// <reference types="jest" />
 
+// Some tests intentionally reset Jest's module registry and re-import modules
+// that depend on proper-lockfile/signal-exit. In one worker process that can
+// install many process-level signal listeners and produce MaxListeners warnings
+// even when behavior is correct. Raise the process listener cap for tests so CI
+// output stays actionable and fast.
+process.setMaxListeners(Math.max(process.getMaxListeners(), 100));
+
 // ============================================================================
 // GLOBAL SAFETY NET: Prevent real Chrome connections during tests
 // These mocks are overridden by individual test files that provide their own.

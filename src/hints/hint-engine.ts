@@ -116,6 +116,24 @@ export class HintEngine {
   private flushTimer: NodeJS.Timeout | null = null;
   private recoveryFeedback: RecoveryFeedbackWriter | null = null;
   private static readonly FLUSH_INTERVAL = 200; // ms
+  private static readonly instances = new Set<HintEngine>();
+  private static exitFlushRegistered = false;
+
+  private static registerExitFlush(engine: HintEngine): void {
+    HintEngine.instances.add(engine);
+    if (HintEngine.exitFlushRegistered) return;
+
+    // One process-level listener is enough for every engine instance. Tests and
+    // capability-filter setup may instantiate many MCPServer/HintEngine objects
+    // in a single process; registering per instance trips MaxListenersExceeded
+    // warnings and slows CI with noisy stderr output.
+    process.on('exit', () => {
+      for (const instance of HintEngine.instances) {
+        instance.flushBuffer();
+      }
+    });
+    HintEngine.exitFlushRegistered = true;
+  }
 
   constructor(activityTracker: ActivityTracker, progressTracker?: ProgressTracker, repeatedCallDetector?: RepeatedCallDetector) {
     this.activityTracker = activityTracker;
@@ -140,10 +158,8 @@ export class HintEngine {
       ...successHintRules,           // priority 400-403
     ].sort((a, b) => a.priority - b.priority);
 
-    // Flush remaining buffer on process exit
-    process.on('exit', () => {
-      this.flushBuffer();
-    });
+    // Flush remaining buffer on process exit.
+    HintEngine.registerExitFlush(this);
   }
 
   /**
@@ -590,6 +606,7 @@ export class HintEngine {
    * Flush pending writes and close the log stream. Call on shutdown.
    */
   destroy(): void {
+    HintEngine.instances.delete(this);
     this.flushBuffer();
     if (this.logStream) {
       this.logStream.end();

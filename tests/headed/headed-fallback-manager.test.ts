@@ -102,7 +102,10 @@ jest.mock('../../src/chrome/ownership-marker', () => ({
 import { getHeadedFallback, shutdownHeadedFallback } from '../../src/chrome/headed-fallback';
 
 describe('HeadedFallbackManager', () => {
+  const savedSettleMs = process.env.OPENCHROME_HEADED_FALLBACK_SETTLE_MS;
+
   beforeEach(() => {
+    process.env.OPENCHROME_HEADED_FALLBACK_SETTLE_MS = '0';
     jest.clearAllMocks();
     // Reset singleton
     shutdownHeadedFallback();
@@ -118,6 +121,8 @@ describe('HeadedFallbackManager', () => {
 
   afterEach(() => {
     shutdownHeadedFallback();
+    if (savedSettleMs === undefined) delete process.env.OPENCHROME_HEADED_FALLBACK_SETTLE_MS;
+    else process.env.OPENCHROME_HEADED_FALLBACK_SETTLE_MS = savedSettleMs;
   });
 
   describe('isAvailable()', () => {
