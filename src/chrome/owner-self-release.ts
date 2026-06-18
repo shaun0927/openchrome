@@ -49,6 +49,65 @@ export interface OwnerSelfReleaseDeps {
   log?: (message: string) => void;
 }
 
+export type OwnerReleaseAttemptResult = 'released' | 'reachable' | 'aborted' | 'inconclusive';
+
+export interface OwnerReleaseAttemptOptions {
+  /** Human-readable trigger used in release logs. */
+  trigger: string;
+  /**
+   * Optional race guard checked after the async CDP probe resolves. Return true
+   * when another recovery signal made the probe result stale.
+   */
+  abortIfRecovered?: () => boolean;
+  /** Called when the probe errors and release is skipped. */
+  onInconclusive?: () => void;
+  /** Called when Chrome is reachable or a recovery race aborts release. */
+  onKept?: () => void;
+}
+
+export async function releaseOwnerIfChromeUnreachable(
+  deps: OwnerSelfReleaseDeps,
+  options: OwnerReleaseAttemptOptions,
+): Promise<OwnerReleaseAttemptResult> {
+  const log = deps.log ?? ((m: string) => console.error(m));
+  let reachable: boolean;
+  try {
+    reachable = await deps.probeChromeReachable();
+  } catch (err) {
+    log(
+      `[SelfHealing] Chrome reachability probe errored during self-release; ` +
+        `staying up: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    options.onInconclusive?.();
+    return 'inconclusive';
+  }
+
+  if (options.abortIfRecovered?.()) {
+    options.onKept?.();
+    return 'aborted';
+  }
+
+  if (reachable) {
+    options.onKept?.();
+    return 'reachable';
+  }
+
+  log(
+    `[SelfHealing] Chrome unreachable after ${options.trigger}; releasing controller lock and ` +
+      `exiting (code ${OWNER_SELF_RELEASE_EXIT_CODE}) so another session can take over (#1474).`,
+  );
+  try {
+    deps.releaseLock();
+  } catch (err) {
+    log(
+      `[SelfHealing] Controller lock release failed during self-release: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  deps.exit(OWNER_SELF_RELEASE_EXIT_CODE);
+  return 'released';
+}
+
 /**
  * Subscribe to the watchdog's relaunch-lifecycle events and, when Chrome is
  * confirmed irrecoverable, release the controller lock and exit.
@@ -62,7 +121,6 @@ export interface OwnerSelfReleaseDeps {
  * crash cannot flap the lock.
  */
 export function wireOwnerSelfRelease(watchdog: EventEmitter, deps: OwnerSelfReleaseDeps): void {
-  const log = deps.log ?? ((m: string) => console.error(m));
   const threshold = Math.max(1, deps.failureThreshold ?? DEFAULT_RELEASE_FAILURE_THRESHOLD);
   let consecutiveFailures = 0;
   let releasing = false;
@@ -85,53 +143,19 @@ export function wireOwnerSelfRelease(watchdog: EventEmitter, deps: OwnerSelfRele
     releasing = true;
     recoveredDuringProbe = false;
     void (async () => {
-      let reachable: boolean;
-      try {
-        reachable = await deps.probeChromeReachable();
-      } catch (err) {
-        // Inconclusive probe — do not tear down on uncertainty. Step the
-        // counter back one so at least one more failure is required before we
-        // re-probe, avoiding a tight no-back-off retry when the probe keeps
-        // timing out.
-        log(
-          `[SelfHealing] Chrome reachability probe errored during self-release; ` +
-            `staying up: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        consecutiveFailures = Math.max(0, threshold - 1);
-        releasing = false;
-        return;
-      }
-
-      // A successful relaunch landed while we were probing — abort: a stale
-      // `false` here would tear down the freshly recovered browser.
-      if (recoveredDuringProbe) {
-        recoveredDuringProbe = false;
-        consecutiveFailures = 0;
-        releasing = false;
-        return;
-      }
-
-      if (reachable) {
-        // Chrome is actually serving despite the relaunch error — keep running.
-        consecutiveFailures = 0;
-        releasing = false;
-        return;
-      }
-
-      log(
-        `[SelfHealing] Chrome unrecoverable after ${consecutiveFailures} consecutive ` +
-          `relaunch failures and a confirming CDP probe; releasing controller lock and ` +
-          `exiting (code ${OWNER_SELF_RELEASE_EXIT_CODE}) so another session can take over (#1474).`,
-      );
-      try {
-        deps.releaseLock();
-      } catch (err) {
-        log(
-          `[SelfHealing] Controller lock release failed during self-release: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      deps.exit(OWNER_SELF_RELEASE_EXIT_CODE);
+      await releaseOwnerIfChromeUnreachable(deps, {
+        trigger: `${consecutiveFailures} consecutive relaunch failures and a confirming CDP probe`,
+        abortIfRecovered: () => recoveredDuringProbe,
+        onInconclusive: () => {
+          consecutiveFailures = Math.max(0, threshold - 1);
+          releasing = false;
+        },
+        onKept: () => {
+          recoveredDuringProbe = false;
+          consecutiveFailures = 0;
+          releasing = false;
+        },
+      });
     })();
   });
 }
