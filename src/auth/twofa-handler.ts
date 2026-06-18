@@ -36,7 +36,7 @@ async function waitForPageChange(
   timeoutMs: number,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  const pollIntervalMs = 500;
+  const pollIntervalMs = Math.min(500, Math.max(1, Math.floor(timeoutMs / 2) || 1));
 
   while (Date.now() < deadline) {
     try {
@@ -130,7 +130,7 @@ export async function handleTwoFA(
               );
 
               // Wait briefly and check if page changed
-              const changed = await waitForPageChange(page, originalUrl, 3000);
+              const changed = await waitForPageChange(page, originalUrl, Math.min(timeoutMs, 3000));
               if (changed) {
                 filled = true;
                 break;

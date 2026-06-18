@@ -235,7 +235,7 @@ describe('staticFetch', () => {
           '</p></body></html>',
       },
       '/slow.html': {
-        delayMs: 1000,
+        delayMs: 50,
         status: 200,
         contentType: 'text/html',
         body: '<html><body>too late</body></html>',
@@ -314,14 +314,14 @@ describe('staticFetch', () => {
 
   test('aborts when timeoutMs elapses before response', async () => {
     await expect(
-      staticFetch(`${server.origin}/slow.html`, { timeoutMs: 100 }),
+      staticFetch(`${server.origin}/slow.html`, { timeoutMs: 1 }),
     ).rejects.toThrow();
   });
 
   test('honors external AbortSignal', async () => {
     const ac = new AbortController();
     const p = staticFetch(`${server.origin}/slow.html`, { signal: ac.signal });
-    setTimeout(() => ac.abort(new Error('client gone')), 50);
+    setTimeout(() => ac.abort(new Error('client gone')), 1);
     await expect(p).rejects.toThrow();
   });
 

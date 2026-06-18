@@ -51,8 +51,10 @@ function mkEvent(kind: LifecycleEventKind, extra: Record<string, unknown> = {}):
 
 describe('lifecycle-parity', () => {
   let metrics: MetricsCollector;
+  let stderrWriteSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    stderrWriteSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     resetLifecycleBusForTests();
     metrics = new MetricsCollector();
     metrics.registerCounter(LIFECYCLE_LISTENER_ERROR_METRIC, 'test');
@@ -60,6 +62,7 @@ describe('lifecycle-parity', () => {
   });
 
   afterEach(() => {
+    stderrWriteSpy.mockRestore();
     delete process.env.OPENCHROME_LIFECYCLE_BUS;
     resetLifecycleBusForTests();
   });

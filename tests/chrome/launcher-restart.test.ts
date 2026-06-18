@@ -70,16 +70,20 @@ const mockExecFileSync = execFileSync as jest.MockedFunction<typeof execFileSync
 describe('ChromeLauncher graceful restart', () => {
   let launcher: ChromeLauncher;
   let consoleErrorSpy: jest.SpyInstance;
+  const savedLaunchMode = process.env.OPENCHROME_LAUNCH_MODE;
 
   beforeEach(() => {
     launcher = new ChromeLauncher(9222);
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockExecSync.mockReset();
     mockExecFileSync.mockReset();
+    process.env.OPENCHROME_LAUNCH_MODE = 'isolated';
   });
 
   afterEach(() => {
     consoleErrorSpy.mockRestore();
+    if (savedLaunchMode === undefined) delete process.env.OPENCHROME_LAUNCH_MODE;
+    else process.env.OPENCHROME_LAUNCH_MODE = savedLaunchMode;
   });
 
   describe('isChromeRunning()', () => {
@@ -153,7 +157,7 @@ describe('ChromeLauncher graceful restart', () => {
       // pgrep always succeeds → Chrome never exits
       mockExecFileSync.mockReturnValue(Buffer.from('12345'));
 
-      const result = await (launcher as any).quitRunningChrome(1000);
+      const result = await (launcher as any).quitRunningChrome(1);
       expect(result).toBe(false);
     });
 
@@ -214,7 +218,7 @@ describe('ChromeLauncher graceful restart', () => {
       // pgrep always succeeds → Chrome never quits
       mockExecFileSync.mockReturnValue(Buffer.from('12345'));
 
-      const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 1000, 1000);
+      const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 1, 1);
       expect(result).toBe(false);
 
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -243,7 +247,7 @@ describe('ChromeLauncher graceful restart', () => {
         return Buffer.from('');
       });
 
-      const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 5000, 1000);
+      const result = await (launcher as any).quitAndUnlockProfile(tmpDir, 5000, 1);
       expect(result).toBe(false);
 
       fs.rmSync(tmpDir, { recursive: true, force: true });

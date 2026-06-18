@@ -118,38 +118,35 @@ describe('capability-filter: default surface (P2 compliance)', () => {
 // ---------------------------------------------------------------------------
 
 describe('capability-filter: --tools-only=core', () => {
-  let server: MCPServer;
+  let names: string[];
 
-  beforeEach(() => {
+  beforeAll(async () => {
     const filter: Set<ToolCapability> = new Set(['core']);
-    server = makeServer({ capabilityFilter: filter });
+    const server = makeServer({ capabilityFilter: filter });
     registerAllTools(server);
+    names = await getToolNames(server);
   });
 
-  afterEach(() => {
+  afterAll(() => {
     jest.clearAllMocks();
   });
 
-  test('no workflow_* tools exposed', async () => {
-    const names = await getToolNames(server);
+  test('no workflow_* tools exposed', () => {
     const workflow = names.filter(n => n.startsWith('workflow_'));
     expect(workflow).toEqual([]);
   });
 
-  test('no oc_recording_* tools exposed', async () => {
-    const names = await getToolNames(server);
+  test('no oc_recording_* tools exposed', () => {
     const recording = names.filter(n => n.startsWith('oc_recording_'));
     expect(recording).toEqual([]);
   });
 
-  test('no crawl* tools exposed', async () => {
-    const names = await getToolNames(server);
+  test('no crawl* tools exposed', () => {
     const crawl = names.filter(n => n.startsWith('crawl') || n === 'batch_execute' || n === 'batch_paginate' || n === 'worker_update' || n === 'worker_complete');
     expect(crawl).toEqual([]);
   });
 
-  test('core tools are still present', async () => {
-    const names = await getToolNames(server);
+  test('core tools are still present', () => {
     expect(names).toContain('navigate');
     expect(names).toContain('read_page');
     expect(names).toContain('interact');
@@ -185,7 +182,7 @@ describe('capability-filter: --disable-tools=workflow,recording', () => {
   let defaultNames: string[];
   let filteredNames: string[];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     // Default (no filter)
     const defaultServer = makeServer();
     registerAllTools(defaultServer);
@@ -200,7 +197,7 @@ describe('capability-filter: --disable-tools=workflow,recording', () => {
     filteredNames = await getToolNames(filteredServer);
   });
 
-  afterEach(() => {
+  afterAll(() => {
     jest.clearAllMocks();
   });
 
@@ -342,7 +339,10 @@ describe('lint:tools-capabilities', () => {
     let exitCode = 0;
     let output = '';
     try {
-      output = execFileSync(process.execPath, [lintScript], { encoding: 'utf8' });
+      output = execFileSync(process.execPath, [lintScript], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     } catch (err: unknown) {
       exitCode = (err as { status?: number }).status ?? 1;
       output = (err as { stdout?: string; stderr?: string }).stdout ?? '';

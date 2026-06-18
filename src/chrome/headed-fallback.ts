@@ -33,6 +33,14 @@ function runGlobalCleanup(): void {
   activeCleanup?.();
 }
 
+
+function headedFallbackSettleMs(): number {
+  const raw = process.env.OPENCHROME_HEADED_FALLBACK_SETTLE_MS;
+  if (raw === undefined) return 2000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 2000;
+}
+
 function installGlobalCleanupHandlers(): void {
   if (cleanupHandlersInstalled) return;
   process.on('exit', runGlobalCleanup);
@@ -245,8 +253,9 @@ class HeadedFallbackManager {
         timeout: 30000,
       });
 
-      // Wait a moment for any JS to execute
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait a moment for any JS to execute.
+      const settleMs = headedFallbackSettleMs();
+      if (settleMs > 0) await new Promise(resolve => setTimeout(resolve, settleMs));
 
       const [title, elementCount, blocking] = await Promise.all([
         safeTitle(page as unknown as Page),
@@ -290,8 +299,9 @@ class HeadedFallbackManager {
         timeout: 30000,
       });
 
-      // Wait a moment for any JS to execute
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait a moment for any JS to execute.
+      const settleMs = headedFallbackSettleMs();
+      if (settleMs > 0) await new Promise(resolve => setTimeout(resolve, settleMs));
 
       const [title, elementCount, blocking] = await Promise.all([
         safeTitle(page as unknown as Page),

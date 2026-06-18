@@ -43,8 +43,10 @@ function makeSessionEvent(): LifecycleEvent {
 
 describe('LifecycleEventBus', () => {
   let metrics: MetricsCollector;
+  let stderrWriteSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    stderrWriteSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     resetLifecycleBusForTests();
     metrics = new MetricsCollector();
     metrics.registerCounter(
@@ -56,6 +58,7 @@ describe('LifecycleEventBus', () => {
   });
 
   afterEach(() => {
+    stderrWriteSpy.mockRestore();
     delete process.env.OPENCHROME_LIFECYCLE_BUS;
     delete process.env.OPENCHROME_DEV_HOOKS;
     delete process.env.OPENCHROME_LIFECYCLE_INJECT_THROW;

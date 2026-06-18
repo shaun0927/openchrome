@@ -5,7 +5,7 @@ import {
   TOKEN_EFFICIENCY_CORPUS,
   deterministicExtract,
 } from './fixtures/token-efficiency/corpus';
-import { scoreFixture, runTokenEfficiencyBenchmark } from './run-token-efficiency';
+import { scoreFixture, runTokenEfficiencyMatrix } from './run-token-efficiency';
 import { validateResultEnvelope, buildResultEnvelope } from './utils/result-envelope';
 import { captureEnvironment } from './utils/environment';
 
@@ -63,9 +63,14 @@ describe('scoreFixture', () => {
   });
 });
 
-describe('runTokenEfficiencyBenchmark', () => {
+describe('runTokenEfficiencyMatrix', () => {
+  let rows: ReturnType<typeof runTokenEfficiencyMatrix>;
+
+  beforeAll(() => {
+    rows = runTokenEfficiencyMatrix({ liveAllowed: false, samplesPerCell: 1 });
+  });
+
   test('produces one row per (library, fixture) cell of the matrix', () => {
-    const rows = runTokenEfficiencyBenchmark();
     const libraries = new Set(rows.map((r) => r.library));
     // Every fixture must appear once per library — the matrix shape.
     expect(rows).toHaveLength(TOKEN_EFFICIENCY_CORPUS.length * libraries.size);
@@ -83,7 +88,7 @@ describe('runTokenEfficiencyBenchmark', () => {
       axis: 'token-efficiency',
       environment: captureEnvironment(),
       competitors: [{ name: 'OpenChrome', version: '1.12.0' }],
-      results: runTokenEfficiencyBenchmark(),
+      results: rows,
     });
     expect(validateResultEnvelope(envelope)).toEqual([]);
   });

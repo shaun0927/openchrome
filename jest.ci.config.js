@@ -18,6 +18,11 @@ module.exports = {
     'tests/hints/hint-engine\\.test\\.ts',
     'tests/cli/update-check\\.test\\.ts',
   ],
+  // CI logs are expensive for this suite: many passing tests intentionally
+  // exercise diagnostic paths that write large console.error/console.log streams.
+  // Keep failure assertions visible while suppressing passing-test chatter.
+  verbose: false,
+  silent: true,
   // Disable coverage thresholds in CI (subset of tests)
   coverageThreshold: undefined,
 };
