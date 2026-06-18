@@ -8,13 +8,14 @@
  *
  * Gate families detected (B2-PR1 + B2-PR2 of #1359):
  *
- *   - `captcha`  — reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile, AWS WAF.
- *   - `sso`      — redirect to a known identity provider OR a generic SSO
+ *   - `captcha`   — reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile, AWS WAF.
+ *   - `bot-check` — CDN/WAF verification interstitial without a CAPTCHA widget.
+ *   - `sso`       — redirect to a known identity provider OR a generic SSO
  *                  path (`/sso`, `/saml`, `/oauth`, `/openid`, `/authorize`).
- *   - `paywall`  — visible subscription/metered-content overlay.
- *   - `2fa`      — OTP / one-time-code input is foreground.
+ *   - `paywall`   — visible subscription/metered-content overlay.
+ *   - `2fa`       — OTP / one-time-code input is foreground.
  *
- * Detection order is captcha → SSO → paywall → 2FA. The first positive
+ * Detection order is captcha → bot-check → SSO → paywall → 2FA. The first positive
  * signal wins. Multiple gates can be present in practice, but the host
  * almost always reasons about them in that order anyway.
  *
@@ -79,7 +80,7 @@ export interface OcGateInspectOutput {
 const definition: MCPToolDefinition = {
   name: 'oc_gate_inspect',
   description:
-    'Detect whether the current tab is gated (CAPTCHA, SSO redirect, ' +
+    'Detect whether the current tab is gated (CAPTCHA, bot-check, SSO redirect, ' +
     'paywall, 2FA prompt). Returns facts only — never invokes any solver, ' +
     'never makes a third-party HTTP call, never bypasses the gate. The ' +
     'host agent decides what to do next.',
@@ -171,7 +172,7 @@ const handler: ToolHandler = async (
     return toResult(out);
   }
 
-  // 2. Non-CAPTCHA gates in priority order (sso → paywall → 2fa).
+  // 2. Non-CAPTCHA gates in priority order (bot-check → sso → paywall → 2fa).
   const other = await detectNonCaptchaGate(page);
   if (other) {
     const base: OcGateInspectOutput = {

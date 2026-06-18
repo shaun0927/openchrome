@@ -82,15 +82,18 @@ function botCheckProbe(): { selector: string } | null {
     return { selector: 'title:just-a-moment' };
   }
 
-  if (bodyText.includes('verify you are human') ||
-      bodyText.includes('checking if the site connection is secure') ||
-      bodyText.includes('review the security of your connection') ||
-      bodyText.includes('please stand by, while we are checking your browser') ||
-      bodyText.includes('bot protection') ||
-      bodyText.includes('automated access') ||
-      title.includes('security check') ||
-      title.includes('robot check')) {
-    return { selector: 'text:bot-check' };
+  const hasBotCheckText =
+    bodyText.includes('verify you are human') ||
+    bodyText.includes('checking if the site connection is secure') ||
+    bodyText.includes('review the security of your connection') ||
+    bodyText.includes('please stand by, while we are checking your browser') ||
+    bodyText.includes('bot protection') ||
+    bodyText.includes('automated access');
+  const hasSecurityTitle = title.includes('security check') || title.includes('robot check');
+  const hasWafMarker = html.includes('cloudflare') || html.includes('cf_chl_') || html.includes('challenges.cloudflare.com');
+
+  if (hasSecurityTitle || (hasBotCheckText && hasWafMarker)) {
+    return { selector: hasSecurityTitle ? 'title:bot-check' : 'text:bot-check' };
   }
 
   return null;

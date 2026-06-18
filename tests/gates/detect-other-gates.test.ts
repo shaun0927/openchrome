@@ -35,6 +35,40 @@ describe('detectBotCheck', () => {
     });
   });
 
+  test('detects generic bot-check text only with a WAF marker', async () => {
+    const page = makePage('https://example.com/', (fn: any) => {
+      const previousDocument = (globalThis as any).document;
+      (globalThis as any).document = {
+        title: 'Please wait',
+        body: { innerText: 'Verify you are human before continuing' },
+        documentElement: { innerHTML: '<script src="/cdn-cgi/challenge-platform/cf_chl_js"></script>' },
+      };
+      try {
+        return fn();
+      } finally {
+        (globalThis as any).document = previousDocument;
+      }
+    });
+    expect(await detectBotCheck(page)).toMatchObject({ selector: 'text:bot-check' });
+  });
+
+  test('does not flag ordinary content that merely mentions human verification', async () => {
+    const page = makePage('https://example.com/help', (fn: any) => {
+      const previousDocument = (globalThis as any).document;
+      (globalThis as any).document = {
+        title: 'Account help',
+        body: { innerText: 'Some forms ask you to verify you are human.' },
+        documentElement: { innerHTML: '<article>Some forms ask you to verify you are human.</article>' },
+      };
+      try {
+        return fn();
+      } finally {
+        (globalThis as any).document = previousDocument;
+      }
+    });
+    expect(await detectBotCheck(page)).toBeNull();
+  });
+
   test('returns null when the bot-check probe finds nothing', async () => {
     const page = makePage('https://example.com/', () => null);
     expect(await detectBotCheck(page)).toBeNull();
