@@ -23,6 +23,13 @@ const SAMPLE_REPORT = {
   results: [
     { id: 'node-version', title: 'Node.js version', status: 'ok', durationMs: 1 },
   ],
+  diagnostics: {
+    runtime: {
+      runtime_topology: 'unknown',
+      active_runtime_path: 'unknown',
+      facts: { port: 9222, userDataDir: '~/.openchrome/profile', controllerRole: 'unlocked', lockPath: '~/.openchrome/locks/example.json', autoElectEnabled: false, unsafeSharedAttachEnabled: false },
+    },
+  },
   summary: { ok: 1, warn: 0, fail: 0, skip: 0 },
   exitCode: 0,
 };
@@ -100,6 +107,7 @@ describe('oc_doctor_report tool', () => {
     expect(parsed.report).toBeDefined();
     expect(parsed.report.openchromeVersion).toBe('1.11.0');
     expect(parsed.report.results).toHaveLength(1);
+    expect(parsed.report.diagnostics.runtime.runtime_topology).toBe('unknown');
     expect(parsed.cachedAt).toBeDefined();
     expect(typeof parsed.cachedAt).toBe('number');
   });

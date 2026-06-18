@@ -62,6 +62,7 @@ export const checkChromePort: CheckFn = async () => {
       title: `CDP port ${port}`,
       status: 'ok',
       detail: `Port ${port} is free`,
+      facts: { port, cdpReachable: false, portFree: true },
     };
   }
 
@@ -73,6 +74,7 @@ export const checkChromePort: CheckFn = async () => {
       title: `CDP port ${port}`,
       status: 'ok',
       detail: `CDP endpoint active: ${cdp.browser}`,
+      facts: { port, cdpReachable: true, portFree: false, browser: cdp.browser },
     };
   }
 
@@ -85,5 +87,6 @@ export const checkChromePort: CheckFn = async () => {
     status: 'warn',
     detail: `Port ${port} is in use${pidInfo} but no CDP endpoint found`,
     remediation: `Free port ${port} or set CHROME_PORT to a different port`,
+    facts: { port, cdpReachable: false, portFree: false, ...(pid ? { pid } : {}) },
   };
 };
