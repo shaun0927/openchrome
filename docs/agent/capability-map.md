@@ -39,7 +39,7 @@ Total tools: 118
 - `oc_diff` — Compare two evidence-bundle IDs or paths and return deterministic DOM, screenshot phash, URL, console, and network diff facts.
 - `oc_doctor_report` — Read the most recent openchrome doctor diagnostic report from cache.
 - `oc_evidence_bundle` — Capture a snapshot of the current page state (DOM, screenshot, network slice, console, perceptual hash) and write it to a bundle directory.
-- `oc_gate_inspect` — Detect whether the current tab is gated (CAPTCHA, SSO redirect, paywall, 2FA prompt).
+- `oc_gate_inspect` — Detect whether the current tab is gated (CAPTCHA, bot-check, SSO redirect, paywall, 2FA prompt).
 - `oc_get_connection_info` — Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom).
 - `oc_journal` — Query the tool call journal.
 - `oc_journal_compact` — Compress a sliding window of journal entries into a compact model-friendly summary.
