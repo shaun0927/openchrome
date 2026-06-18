@@ -1093,11 +1093,12 @@ export class ChromeLauncher {
 
     // Poll until Chrome exits
     const startTime = Date.now();
+    const pollIntervalMs = Math.min(500, Math.max(1, timeout));
     while (Date.now() - startTime < timeout) {
       if (!this.isChromeRunning()) {
         return true;
       }
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
     }
 
     console.error(`[ChromeLauncher] Chrome did not exit within ${timeout}ms`);
@@ -1116,11 +1117,12 @@ export class ChromeLauncher {
 
     // Poll until profile lock is released
     const startTime = Date.now();
+    const pollIntervalMs = Math.min(500, Math.max(1, unlockTimeout));
     while (Date.now() - startTime < unlockTimeout) {
       if (!this.isProfileLocked(profileDir)) {
         return true;
       }
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
     }
 
     console.error(`[ChromeLauncher] Profile lock not released within ${unlockTimeout}ms`);

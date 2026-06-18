@@ -22,6 +22,7 @@ import { getEncoding, type Tiktoken } from 'js-tiktoken';
 export const TOKENIZER_ENCODING = 'cl100k_base' as const;
 
 let encoder: Tiktoken | null = null;
+const tokenCountCache = new Map<string, number>();
 
 function getEncoder(): Tiktoken {
   if (encoder === null) {
@@ -38,7 +39,13 @@ export function countTokens(text: string | null | undefined): number {
   if (typeof text !== 'string' || text.length === 0) {
     return 0;
   }
-  return getEncoder().encode(text).length;
+  const cached = tokenCountCache.get(text);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const tokens = getEncoder().encode(text).length;
+  tokenCountCache.set(text, tokens);
+  return tokens;
 }
 
 /**

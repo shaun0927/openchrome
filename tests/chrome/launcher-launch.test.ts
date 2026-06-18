@@ -173,6 +173,7 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
     } else {
       process.env.CHROME_LAUNCH_TIMEOUT_MS = savedEnv;
     }
+    delete process.env.OPENCHROME_LAUNCH_MODE;
     mockSpawn.mockReset();
   });
 
@@ -184,7 +185,8 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
     });
 
     it('should track spawned process as pendingProcess on launch timeout', async () => {
-      process.env.CHROME_LAUNCH_TIMEOUT_MS = '1000';
+      process.env.CHROME_LAUNCH_TIMEOUT_MS = '1';
+      process.env.OPENCHROME_LAUNCH_MODE = 'isolated';
 
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc as any);
@@ -247,7 +249,7 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
         (launcher as any).pendingProcess = proc;
 
         // Second call: should detect pending process and reuse it (port is already open)
-        process.env.CHROME_LAUNCH_TIMEOUT_MS = '5000';
+        process.env.CHROME_LAUNCH_TIMEOUT_MS = '50';
         const instance = await launcher.ensureChrome({ autoLaunch: true });
 
         // spawn should NOT have been called (reused pending process)
@@ -271,7 +273,7 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
         // Simulate: previous pending process already exited
         (launcher as any).pendingProcess = createMockProcess({ exitCode: 1 });
 
-        process.env.CHROME_LAUNCH_TIMEOUT_MS = '5000';
+        process.env.CHROME_LAUNCH_TIMEOUT_MS = '50';
         const instance = await launcher.ensureChrome({ autoLaunch: true });
 
         expect(instance.wsEndpoint).toContain('ws://');
@@ -286,7 +288,8 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
 
   describe('configurable timeout', () => {
     it('should use CHROME_LAUNCH_TIMEOUT_MS env var', async () => {
-      process.env.CHROME_LAUNCH_TIMEOUT_MS = '1500';
+      process.env.CHROME_LAUNCH_TIMEOUT_MS = '1';
+      process.env.OPENCHROME_LAUNCH_MODE = 'isolated';
 
       const proc = createMockProcess();
       mockSpawn.mockReturnValue(proc as any);
@@ -299,14 +302,12 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
       ).rejects.toThrow(/not available after/);
 
       const elapsed = Date.now() - start;
-      // Should have waited ~1.5s for the launch timeout (plus ~5s initial port check)
-      // Total should be ~6.5s, definitely less than old 35s (5s check + 30s launch)
-      expect(elapsed).toBeLessThan(12000);
-      expect(elapsed).toBeGreaterThan(1000);
+      expect(elapsed).toBeLessThan(2000);
     }, 20000);
 
     it('should default to 60000ms when env var not set', async () => {
       delete process.env.CHROME_LAUNCH_TIMEOUT_MS;
+      process.env.OPENCHROME_LAUNCH_MODE = 'isolated';
 
       // We can't actually wait 60s in a test. Instead, verify the code path
       // by checking that the error message contains the timeout value.

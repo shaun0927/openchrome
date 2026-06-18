@@ -183,9 +183,9 @@ export async function staticFetch(
         const n = Number(declaredLen);
         if (Number.isFinite(n) && n > maxBytes) {
           try {
-            await response.arrayBuffer();
+            await response.body?.cancel();
           } catch {
-            // ignore drain errors
+            // ignore cancel errors
           }
           throw new StaticFetchError(
             `response too large: ${n} > ${maxBytes}`,
