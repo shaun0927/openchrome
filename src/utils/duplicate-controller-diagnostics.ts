@@ -12,7 +12,9 @@ export interface OpenChromeProcessInfo {
   port: number;
   userDataDir: string;
   source: 'global' | 'npx' | 'local' | 'unknown';
+  role: 'direct-controller' | 'broker-client';
 }
+
 
 export interface DuplicateControllerGroup {
   port: number;
@@ -81,6 +83,7 @@ export function inferOpenChromeProcess(pid: number, command: string, ppid?: numb
     port: Number.isFinite(port) ? port : DEFAULT_PORT,
     userDataDir: userDataDir === DEFAULT_PROFILE ? DEFAULT_PROFILE : normalizeControllerUserDataDir(userDataDir),
     source,
+    role: tokens.includes('--connect-broker') ? 'broker-client' : 'direct-controller',
   };
 }
 
@@ -106,10 +109,26 @@ export function scanOpenChromeProcesses(): OpenChromeProcessInfo[] {
   }
 }
 
+function controllerKey(proc: OpenChromeProcessInfo): string {
+  return `${proc.port}\u0000${proc.userDataDir}`;
+}
+
+function isWrapperProcess(proc: OpenChromeProcessInfo): boolean {
+  return /npm exec|npx|_npx|openchrome-mcp@/.test(proc.command);
+}
+
+export function normalizeControllerProcesses(processes: OpenChromeProcessInfo[]): OpenChromeProcessInfo[] {
+  return processes.filter((proc) => {
+    if (proc.role === 'broker-client') return false;
+    if (!isWrapperProcess(proc)) return true;
+    return !processes.some((child) => child.ppid === proc.pid && child.role === 'direct-controller' && controllerKey(child) === controllerKey(proc));
+  });
+}
+
 export function findDuplicateControllerGroups(processes: OpenChromeProcessInfo[]): DuplicateControllerGroup[] {
   const groups = new Map<string, OpenChromeProcessInfo[]>();
-  for (const proc of processes) {
-    const key = `${proc.port}\u0000${proc.userDataDir}`;
+  for (const proc of normalizeControllerProcesses(processes)) {
+    const key = controllerKey(proc);
     groups.set(key, [...(groups.get(key) ?? []), proc]);
   }
   return Array.from(groups.values())
@@ -206,6 +225,7 @@ export function getCurrentControllerTopology(options: { port?: number; userDataD
   userDataDir: string;
   lockPath: string;
   ownerPid?: number;
+  ownerCommand?: string[];
   remediation?: string;
 } {
   const port = options.port ?? parseInt(process.env.CHROME_PORT ?? String(DEFAULT_PORT), 10);
@@ -224,7 +244,7 @@ export function getCurrentControllerTopology(options: { port?: number; userDataD
     const raw = fs.readFileSync(lockPath, 'utf8');
     const parsed = JSON.parse(raw) as { pid?: number };
     if (typeof parsed.pid === 'number' && isPidAlive(parsed.pid)) {
-      return { role: parsed.pid === process.pid ? 'owner' : 'unknown', port, userDataDir, lockPath, ownerPid: parsed.pid };
+      return { role: parsed.pid === process.pid ? 'owner' : 'unknown', port, userDataDir, lockPath, ownerPid: parsed.pid, ownerCommand: Array.isArray((parsed as { command?: unknown }).command) ? (parsed as { command: string[] }).command : undefined };
     }
     return { role: 'unlocked', port, userDataDir, lockPath };
   } catch {
