@@ -235,7 +235,7 @@ program
   .option('--user-data-dir <dir>', 'Chrome user data directory for generated serve args')
   .option('--profile-directory <name>', 'Chrome profile directory name for generated serve args')
   .option('--launch-mode <mode>', 'Chrome launch mode: auto, attach, or isolated')
-  .option('--topology <preset>', 'Topology preset: single-owner, isolated, ci-headless, or dev-profile')
+  .option('--topology <preset>', 'Topology preset: auto-elect (default), single-owner, broker-owner, broker-client, isolated, ci-headless, or dev-profile')
   .option('-s, --scope <scope>', 'Installation scope: "user" (global, default) or "project" (current project only)', 'user')
   .action(async (options: { client?: string; dashboard?: boolean; autoLaunch?: boolean; port?: string; userDataDir?: string; profileDirectory?: string; launchMode?: string; topology?: string; scope?: string }) => {
     const requestedClient = options.client || 'claude';
@@ -261,7 +261,7 @@ program
       userDataDir: options.userDataDir,
       profileDirectory: options.profileDirectory,
       launchMode: options.launchMode,
-      topology: options.topology as undefined | 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile',
+      topology: options.topology as undefined | 'auto-elect' | 'single-owner' | 'broker-owner' | 'broker-client' | 'isolated' | 'ci-headless' | 'dev-profile',
     };
     const topologyWarning = getTopologyWarning(serveArgOptions);
     if (topologyWarning) {
@@ -429,7 +429,7 @@ program
   .option('--user-data-dir <dir>', 'Chrome user data directory for generated serve args')
   .option('--profile-directory <name>', 'Chrome profile directory name for generated serve args')
   .option('--launch-mode <mode>', 'Chrome launch mode: auto, attach, or isolated')
-  .option('--topology <preset>', 'Topology preset: single-owner, isolated, ci-headless, or dev-profile')
+  .option('--topology <preset>', 'Topology preset: auto-elect (default), single-owner, broker-owner, broker-client, isolated, ci-headless, or dev-profile')
   .action((options: { client: string; dashboard?: boolean; autoLaunch?: boolean; port?: string; userDataDir?: string; profileDirectory?: string; launchMode?: string; topology?: string }) => {
     if (!isSupportedMCPClient(options.client)) {
       console.error(`❌ Invalid client. Use one of: ${getSupportedMCPClients().join(', ')}`);
@@ -443,7 +443,7 @@ program
       userDataDir: options.userDataDir,
       profileDirectory: options.profileDirectory,
       launchMode: options.launchMode,
-      topology: options.topology as undefined | 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile',
+      topology: options.topology as undefined | 'auto-elect' | 'single-owner' | 'broker-owner' | 'broker-client' | 'isolated' | 'ci-headless' | 'dev-profile',
     };
     const topologyWarning = getTopologyWarning(serveArgOptions);
     if (topologyWarning) {
