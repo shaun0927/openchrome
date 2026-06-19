@@ -79,11 +79,11 @@ made sharing a deliberate act.
 
 #### Amendment — auto-elect coordinated sharing path (Q1′, 2026-06-08)
 
-**Superseded target for the `serve --auto-launch` path: OpenChrome should converge
-on coordinated auto-elect sharing instead of fail-fast surplus sessions.** The
-initial implementation is intentionally guarded by `--auto-elect` /
-`OPENCHROME_AUTO_ELECT=1`; flipping that path to the default remains a separate
-release decision after S2–S4 validation. Recorded after the parallel-session
+**Default for the direct `serve --auto-launch` path: OpenChrome uses coordinated
+auto-elect sharing instead of fail-fast surplus sessions.** Operators can still
+force the legacy direct-owner behavior with `--no-auto-elect` /
+`OPENCHROME_AUTO_ELECT=0`, or choose explicit broker roles with `--broker` /
+`--connect-broker`. Recorded after the parallel-session
 regression report ([#1474](https://github.com/shaun0927/openchrome/issues/1474))
 and root-cause tracking ([#1480](https://github.com/shaun0927/openchrome/issues/1480)).
 
@@ -98,9 +98,9 @@ names the safe end-state explicitly:
 > "Multiple sessions may share a Chrome/profile, but they must do so through **one
 > coordinated owner/broker**, not through multiple independent controllers."
 
-Auto-elect *is* that end-state. The #1480 implementation first wires it as an
-explicit opt-in (`--auto-elect`) so the behavior can be validated before any
-default flip:
+Auto-elect *is* that end-state. The #1480 rollout first wired it as an explicit
+opt-in (`--auto-elect`), then flipped the direct `serve --auto-launch` path after
+real two-client and N-client verification:
 
 - The `--auto-launch` process that **wins** the controller lock becomes the broker
   **owner** (it alone runs Chrome lifecycle, the watchdog, and CDP cleanup) and
@@ -138,14 +138,12 @@ hidden host-specific behavior** — election is host-neutral, decided purely by 
 outcome (owner / client / takeover / refusal) is surfaced over portable MCP
 surfaces, not host-coded.
 
-> **Status:** decided as the target topology; implementation in flight under #1480.
-> The controller lock, broker discovery, and stdio proxy primitives are already on
-> `develop`; the S2 owner auto-publish → S3 client auto-connect → S4 re-election
-> wiring is stacked on the #1474 reliability fixes (#1477 → #1478 → #1479). Until
-> an explicit default-flip PR lands, plain `serve --auto-launch` remains fail-fast
-> and coordinated sharing requires `--auto-elect` (or manual `--broker` /
-> `--connect-broker`). Treat this section as the normative target and rollout plan,
-> not as a claim that the default has already flipped.
+> **Status:** shipped as the default topology for direct `serve --auto-launch`.
+> The controller lock, broker discovery, stdio proxy, owner self-release,
+> default-flip, setup/config, diagnostics, and local N-client verification gates
+> have landed. `--auto-elect` remains an explicit force-enable flag,
+> `--no-auto-elect` preserves the old direct-owner fail-fast behavior, and manual
+> `--broker` / `--connect-broker` remains the explicit daemon topology.
 
 ### Local discovery mechanism (Q2)
 
