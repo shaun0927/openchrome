@@ -9,29 +9,43 @@
  *   - a process that LOSES to a healthy owner becomes a coordinated CLIENT
  *     (`--connect-broker` proxy) instead of failing fast.
  *
- * The behavior is gated behind an explicit opt-in (`--auto-elect` /
- * `OPENCHROME_AUTO_ELECT=1`). With the flag unset, the default path is byte-for-
- * byte unchanged (fail-fast single owner), so this module's wiring has zero blast
- * radius until an operator opts in. See docs/roadmap/ssot-decisions.md (D3 Q1′)
- * for the policy and the eventual default-flip plan.
- *
- * Keeping the decisions here (rather than inline in src/index.ts) makes the
- * election rules unit-testable without booting a server or Chrome.
+ * The default applies only to the direct `serve --auto-launch` path. Operators
+ * can still opt out (`--no-auto-elect` / `OPENCHROME_AUTO_ELECT=0`) or choose an
+ * explicit role (`--broker` / `--connect-broker`), and the unsafe shared attach
+ * escape hatch remains separate. Keeping the decisions here (rather than inline
+ * in src/index.ts) makes the election rules unit-testable without booting a
+ * server or Chrome.
  */
 
 /** Offset from the CDP port used for the elected owner's broker HTTP endpoint. */
 export const BROKER_HTTP_PORT_OFFSET = 200;
 
+export interface AutoElectDecisionContext {
+  /** Commander value for --auto-elect / --no-auto-elect. false is explicit opt-out. */
+  autoElect?: boolean;
+  /** This process owns Chrome lifecycle and participates in controller-lock election. */
+  autoLaunch?: boolean;
+  /** Explicit broker owner role. Explicit roles take precedence over auto-elect. */
+  broker?: boolean;
+  /** Explicit broker client role. Explicit roles take precedence over auto-elect. */
+  connectBroker?: boolean;
+}
+
 /**
- * Is auto-elect enabled for this process?
+ * Is coordinated auto-elect enabled for this process?
  *
- * True when the operator passed `--auto-elect` or set `OPENCHROME_AUTO_ELECT=1`.
+ * Default true only for the direct `serve --auto-launch` path. Explicit opt-outs
+ * win (`--no-auto-elect`, `OPENCHROME_AUTO_ELECT=0`), and explicit broker/client
+ * roles are not auto-election decisions.
  */
 export function isAutoElectEnabled(
-  opts: { autoElect?: boolean },
+  opts: AutoElectDecisionContext,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return Boolean(opts.autoElect) || env.OPENCHROME_AUTO_ELECT === '1';
+  if (env.OPENCHROME_AUTO_ELECT === '0' || opts.autoElect === false) return false;
+  if (opts.broker || opts.connectBroker) return false;
+  if (opts.autoElect === true || env.OPENCHROME_AUTO_ELECT === '1') return true;
+  return opts.autoLaunch === true;
 }
 
 /**

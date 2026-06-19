@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   findDuplicateControllerGroups,
+  normalizeControllerProcesses,
   getCurrentControllerTopology,
   inferOpenChromeProcess,
   parsePsOutput,
@@ -40,17 +41,38 @@ describe('duplicate controller diagnostics', () => {
     expect(globalProc?.userDataDir).toBe(path.resolve('/tmp/shared'));
   });
 
-  test('groups duplicate processes by port and profile', () => {
+  test('groups only independent direct controllers by port and profile', () => {
     const processes = parsePsOutput([
       '100 1 openchrome serve --port 9222 --user-data-dir /tmp/shared',
       '101 1 npm exec openchrome-mcp@latest -- openchrome serve --port 9222 --user-data-dir /tmp/shared',
-      '102 1 openchrome serve --port 9223 --user-data-dir /tmp/shared',
+      '102 1 openchrome serve --connect-broker --port 9222 --user-data-dir /tmp/shared',
+      '103 1 openchrome serve --port 9223 --user-data-dir /tmp/shared',
     ].join('\n'));
 
     const groups = findDuplicateControllerGroups(processes);
 
     expect(groups).toHaveLength(1);
     expect(groups[0].processes.map((proc) => proc.pid)).toEqual([100, 101]);
+  });
+
+  test('collapses wrapper parent and child for the same direct controller', () => {
+    const processes = parsePsOutput([
+      '200 1 npm exec openchrome-mcp@latest -- openchrome serve --port 9222 --user-data-dir /tmp/shared',
+      '201 200 node /tmp/_npx/openchrome-mcp/dist/index.js serve --port 9222 --user-data-dir /tmp/shared',
+      '202 1 openchrome serve --connect-broker --port 9222 --user-data-dir /tmp/shared',
+    ].join('\n'));
+
+    expect(normalizeControllerProcesses(processes).map((proc) => proc.pid)).toEqual([201]);
+    expect(findDuplicateControllerGroups(processes)).toEqual([]);
+  });
+
+  test('does not collapse a non-wrapper direct parent and child', () => {
+    const processes = parsePsOutput([
+      '300 1 openchrome serve --port 9222 --user-data-dir /tmp/shared',
+      '301 300 node custom-direct-controller.js openchrome serve --port 9222 --user-data-dir /tmp/shared',
+    ].join('\n'));
+
+    expect(findDuplicateControllerGroups(processes)[0].processes.map((proc) => proc.pid)).toEqual([300, 301]);
   });
 
   test('detects stale Codex mcp.json and mixed registrations', () => {

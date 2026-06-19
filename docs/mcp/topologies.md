@@ -4,7 +4,7 @@ OpenChrome currently supports one safe direct-controller rule:
 
 > Run at most one direct `openchrome serve --auto-launch` process for the same Chrome debug port and user-data directory.
 
-Multiple MCP clients can still run in parallel today. When they need to share one Chrome user data directory, run a single broker owner (`openchrome serve --broker --auto-launch`) and point the other clients at it with `--connect-broker`; otherwise give each client its own isolated port and user-data directory.
+Multiple MCP clients can still run in parallel today. New `openchrome setup` / `openchrome config` output defaults to the auto-elect topology (`openchrome serve --auto-launch --auto-elect`): one process wins the Chrome/CDP owner lock and publishes broker metadata; surplus same-profile clients proxy through that broker. For explicit shared-profile deployments, run a single broker owner (`openchrome serve --broker --auto-launch`) and point the other clients at it with `--connect-broker`; otherwise give each client its own isolated port and user-data directory.
 
 ## After upgrading OpenChrome
 
@@ -23,25 +23,38 @@ or opaque `-32000` startup failures:
 3. restart the MCP host session. Active sessions usually load their MCP tool
    namespace at startup and will not hot-reload a changed config.
 
-Until an auto-elect topology is explicitly shipped and enabled by the release
-notes, use either isolated per-client profiles or the explicit broker owner /
-`--connect-broker` topology below. Maintainers can reuse the release-note wording
-in [`docs/releases/action-required-config-migration.md`](../releases/action-required-config-migration.md)
-when a release requires host config migration.
+For existing host configs, package update alone is not a migration. Rerun `openchrome setup --client <host>` or edit the host config manually, then restart the MCP host. Maintainers can reuse the release-note wording in [`docs/releases/action-required-config-migration.md`](../releases/action-required-config-migration.md) when a release requires host config migration.
 
-## Single-owner default
+## Auto-elect default
 
-Use this when one MCP client owns OpenChrome on the default Chrome port/profile.
+Use this for new Codex, OpenCode, or Claude Code configs unless you have a reason to pin an older topology.
 
 ```bash
 openchrome config --client codex
 openchrome config --client claude
+openchrome config --client opencode
 ```
 
 Generated configs use:
 
 ```bash
-openchrome serve --auto-launch
+openchrome serve --auto-launch --auto-elect
+```
+
+For one `(port, userDataDir)`, exactly one process remains the direct Chrome/CDP owner. Surplus sessions attach as broker clients instead of becoming unsafe second direct controllers.
+
+## Legacy single-owner explicit preset
+
+Use this only when exactly one MCP host/session will use the generated config:
+
+```bash
+openchrome config --client codex --topology single-owner
+```
+
+Generated configs use:
+
+```bash
+openchrome serve --auto-launch --no-auto-elect
 ```
 
 Do not install this same direct config in multiple clients at the same time.
@@ -79,7 +92,7 @@ openchrome config --client claude --topology dev-profile
 ## Shared-profile broker trust model
 
 Broker mode is the only supported way for more than one MCP client to share a
-single Chrome user data directory. The broker process is the sole CDP owner for
+single Chrome user data directory without auto-elect. The broker process is the sole CDP owner for
 that `(port, userDataDir)` pair; every other client must use `--connect-broker`
 so it forwards stdio JSON-RPC over the broker's HTTP endpoint instead of opening
 its own Chrome/CDP connection.
@@ -105,15 +118,16 @@ screenshot, DOM, or extracted page payloads across tenant boundaries.
 
 ```bash
 # Terminal 1: the single Chrome/CDP owner
+openchrome config --client codex --topology broker-owner --port 9222 \
+  --user-data-dir ~/.openchrome/shared-profile
 openchrome serve --broker --auto-launch --http 3100 --port 9222 \
   --user-data-dir ~/.openchrome/shared-profile
 
 # Terminal 2+: stdio MCP clients. When the broker has an auth token, share it
 # via OPENCHROME_AUTH_TOKEN (the proxy auto-discovers the broker's authTokenEnv
 # hint and uses that bearer for every forwarded JSON-RPC request).
-openchrome serve --connect-broker --port 9222 \
+openchrome config --client claude --topology broker-client --port 9222 \
   --user-data-dir ~/.openchrome/shared-profile
-
 openchrome serve --connect-broker --port 9222 \
   --user-data-dir ~/.openchrome/shared-profile
 ```
@@ -140,3 +154,14 @@ multi-client shared-profile behavior.
 | A client lost connection but Chrome stayed open | Expected proxy disconnect behavior | Reconnect the stdio proxy; do not start a second direct owner. |
 | Cross-tenant resource denial | The MCP session is bound to a different tenant | Use the matching tenant credentials or an isolated profile. |
 | Memory pressure from too many tabs | Shared profile accumulates all clients' tabs | Close unused sessions/tabs or split clients across isolated profiles. |
+
+## Verification
+
+Maintainers can verify the local auto-elect topology without touching user MCP configs or the real Chrome profile:
+
+```bash
+npm run build
+npm run verify:parallel-auto-elect
+```
+
+The script uses a temp Chrome user-data-dir and temp broker registry, starts at least three stdio MCP clients against one `(port, userDataDir)`, and asserts one direct owner plus broker/proxy clients that complete `initialize` and `tools/list`.
