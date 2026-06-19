@@ -57,8 +57,8 @@ Install and point your MCP client at it — one command:
 npm install -g openchrome-mcp
 
 openchrome setup                       # Claude Code
-openchrome setup --client codex        # Codex CLI
-npx openchrome-mcp setup --client opencode   # OpenCode
+openchrome setup --client codex        # Codex CLI (auto-elect topology)
+npx openchrome-mcp setup --client opencode   # OpenCode (auto-elect topology)
 ```
 
 Restart your MCP client. That's it — Chrome auto-launches on first tool call.
@@ -67,7 +67,7 @@ Restart your MCP client. That's it — Chrome auto-launches on first tool call.
 updates the OpenChrome binary, but it does not rewrite existing Claude Code,
 Codex CLI, OpenCode, or other MCP host registrations. If a release note asks you
 to move to a new topology (for example isolated profiles, broker mode, or a
-future auto-elect mode), rerun `openchrome setup --client <host> ...` or update
+legacy single-owner or manual broker topology), rerun `openchrome setup --client <host> ...` or update
 the host config manually, then restart that host session so the MCP namespace is
 loaded from the new config.
 
@@ -82,7 +82,7 @@ and add the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
   "mcpServers": {
     "openchrome": {
       "command": "openchrome",
-      "args": ["serve", "--auto-launch"]
+      "args": ["serve", "--auto-launch", "--auto-elect"]
     }
   }
 }
