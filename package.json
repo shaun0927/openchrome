@@ -71,7 +71,8 @@
     "bench:full:live": "ts-node tests/benchmark/run-full-benchmark.ts --mode live",
     "bench:full:recorded": "ts-node tests/benchmark/run-full-benchmark.ts --mode recorded",
     "bench:api-key-readiness": "ts-node tests/benchmark/benchmark-readiness.ts --api-key-only",
-    "lint:skill-tools": "node scripts/lint-skill-tool-refs.mjs skills/openchrome/SKILL.md"
+    "lint:skill-tools": "node scripts/lint-skill-tool-refs.mjs skills/openchrome/SKILL.md",
+    "verify:auto-elect-smoke": "node scripts/verify/auto-elect-two-client-smoke.mjs"
   },
   "keywords": [
     "openchrome",

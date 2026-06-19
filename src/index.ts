@@ -271,12 +271,14 @@ program
       process.exit(2);
     }
 
-    // #1480 auto-elect (D3 Q1′): PR A defines the default decision helper and
-    // opt-out flags, but keeps the live serve path on the previously validated
-    // explicit opt-in until PR B adds the real two-client smoke. Intentionally
-    // omit autoLaunch from this call; PR B is the scoped runtime default flip.
+    // #1480 auto-elect (D3 Q1′): direct `serve --auto-launch` defaults to
+    // coordinated broker election; explicit broker/client roles and opt-outs
+    // still take precedence inside the decision helper.
     const autoElect = isAutoElectEnabled({
       autoElect: options.autoElect,
+      // Keep the default flip scoped to direct `serve --auto-launch`; server-mode
+      // can still opt in with --auto-elect / OPENCHROME_AUTO_ELECT=1.
+      autoLaunch: options.autoLaunch === true,
       broker: options.broker,
       connectBroker: options.connectBroker,
     });
