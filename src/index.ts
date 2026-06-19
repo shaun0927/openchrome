@@ -122,7 +122,8 @@ program
   .option('--transport <mode>', 'Transport mode: stdio, http, or both (default: stdio)')
   .option('--broker', 'Run as the shared-profile broker owner (HTTP daemon plus broker discovery metadata)')
   .option('--connect-broker', 'Proxy stdio MCP requests to the discovered broker instead of attaching to Chrome directly')
-  .option('--auto-elect', 'Coordinated sharing (#1480): the --auto-launch process that wins the controller lock becomes the broker owner and surplus sessions auto-attach as clients instead of failing fast. Also: OPENCHROME_AUTO_ELECT=1. Off by default.')
+  .option('--auto-elect', 'Coordinated sharing (#1480): force-enable auto-election for compatible serve paths (also: OPENCHROME_AUTO_ELECT=1).')
+  .option('--no-auto-elect', 'Disable coordinated auto-election and preserve fail-fast duplicate-controller behavior (also: OPENCHROME_AUTO_ELECT=0).')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
   .option('--slim', 'Expose only core tools (alias for --tools-only core).')
@@ -270,12 +271,15 @@ program
       process.exit(2);
     }
 
-    // #1480 auto-elect (D3 Q1′): the --auto-launch lock winner elects itself the
-    // broker owner so surplus sessions attach as coordinated clients instead of
-    // failing fast. Opt-in (off by default) — when disabled, every branch below
-    // is byte-for-byte the prior fail-fast behavior. Explicit --broker/
-    // --connect-broker always take precedence over auto-elect.
-    const autoElect = isAutoElectEnabled(options);
+    // #1480 auto-elect (D3 Q1′): PR A defines the default decision helper and
+    // opt-out flags, but keeps the live serve path on the previously validated
+    // explicit opt-in until PR B adds the real two-client smoke. Intentionally
+    // omit autoLaunch from this call; PR B is the scoped runtime default flip.
+    const autoElect = isAutoElectEnabled({
+      autoElect: options.autoElect,
+      broker: options.broker,
+      connectBroker: options.connectBroker,
+    });
     const electBrokerOwner = shouldElectBrokerOwner({
       autoElect,
       autoLaunch,
