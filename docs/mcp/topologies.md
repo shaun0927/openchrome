@@ -154,3 +154,14 @@ multi-client shared-profile behavior.
 | A client lost connection but Chrome stayed open | Expected proxy disconnect behavior | Reconnect the stdio proxy; do not start a second direct owner. |
 | Cross-tenant resource denial | The MCP session is bound to a different tenant | Use the matching tenant credentials or an isolated profile. |
 | Memory pressure from too many tabs | Shared profile accumulates all clients' tabs | Close unused sessions/tabs or split clients across isolated profiles. |
+
+## Verification
+
+Maintainers can verify the local auto-elect topology without touching user MCP configs or the real Chrome profile:
+
+```bash
+npm run build
+npm run verify:parallel-auto-elect
+```
+
+The script uses a temp Chrome user-data-dir and temp broker registry, starts at least three stdio MCP clients against one `(port, userDataDir)`, and asserts one direct owner plus broker/proxy clients that complete `initialize` and `tools/list`.
