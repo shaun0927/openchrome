@@ -1,7 +1,7 @@
 export type SupportedMCPClient = 'claude' | 'codex' | 'opencode';
 export type SetupScope = 'user' | 'project';
 
-export type TopologyPreset = 'single-owner' | 'isolated' | 'ci-headless' | 'dev-profile';
+export type TopologyPreset = 'auto-elect' | 'single-owner' | 'broker-owner' | 'broker-client' | 'isolated' | 'ci-headless' | 'dev-profile';
 
 export const HOST_CONFIG_MIGRATION_NOTE = 'Package updates do not rewrite existing MCP host registrations; rerun setup or edit host config, then restart the host to activate topology changes.';
 
@@ -13,6 +13,9 @@ export interface ServeArgOptions {
   profileDirectory?: string;
   launchMode?: string;
   topology?: TopologyPreset;
+  autoElect?: boolean;
+  broker?: boolean;
+  connectBroker?: boolean;
 }
 
 export interface MCPServerConfig {
@@ -65,6 +68,11 @@ export function getServeArgs(options: ServeArgOptions = {}): string[] {
     serveArgs.push('--auto-launch');
   }
 
+  if (resolved.autoElect === true) serveArgs.push('--auto-elect');
+  if (resolved.autoElect === false) serveArgs.push('--no-auto-elect');
+  if (resolved.broker) serveArgs.push('--broker');
+  if (resolved.connectBroker) serveArgs.push('--connect-broker');
+
   if (resolved.port !== undefined) {
     serveArgs.push('--port', String(resolved.port));
   }
@@ -91,6 +99,23 @@ export function getServeArgs(options: ServeArgOptions = {}): string[] {
 export function resolveTopologyOptions(options: ServeArgOptions = {}): ServeArgOptions {
   const next: ServeArgOptions = { ...options };
   switch (options.topology) {
+    case 'broker-owner':
+      next.autoLaunch = true;
+      next.broker = true;
+      break;
+    case 'broker-client':
+      next.autoLaunch = false;
+      next.connectBroker = true;
+      break;
+    case 'single-owner':
+      next.autoLaunch ??= true;
+      next.autoElect ??= false;
+      break;
+    case 'auto-elect':
+    case undefined:
+      next.autoLaunch ??= true;
+      if (next.autoLaunch !== false) next.autoElect ??= true;
+      break;
     case 'isolated':
       next.port ??= 9223;
       next.userDataDir ??= '~/.openchrome/profiles/isolated';
@@ -105,18 +130,13 @@ export function resolveTopologyOptions(options: ServeArgOptions = {}): ServeArgO
       next.port ??= 9225;
       next.userDataDir ??= '~/.openchrome/profiles/dev';
       break;
-    case 'single-owner':
-    case undefined:
-      break;
   }
   return next;
 }
 
 export function getTopologyWarning(options: ServeArgOptions = {}): string | null {
-  const resolved = resolveTopologyOptions(options);
-  const usingDefaultPortProfile = resolved.port === undefined && !resolved.userDataDir;
-  if (!usingDefaultPortProfile) return null;
-  return `Topology note: this config uses the default single-owner Chrome port/profile. Do not install the same direct config in multiple MCP clients at once; choose --topology isolated, explicit --port + --user-data-dir, or the broker topology for shared profiles. ${HOST_CONFIG_MIGRATION_NOTE}`;
+  if (options.topology !== 'single-owner') return null;
+  return `Topology note: --topology single-owner generates the legacy direct-owner config. Do not install the same direct config in multiple MCP clients at once; prefer the default auto-elect topology, choose --topology isolated, explicit --port + --user-data-dir, or the broker topology for shared profiles. ${HOST_CONFIG_MIGRATION_NOTE}`;
 }
 
 export function getCodexServerConfig(options: ServeArgOptions = {}): MCPServerConfig {

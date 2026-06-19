@@ -12,6 +12,7 @@ export type ActiveRuntimePath =
   | 'isolated-profile'
   | 'attach-mode'
   | 'unsafe-secondary-attach'
+  | 'stale-broker-metadata'
   | 'blocked-by-owner'
   | 'unknown';
 
@@ -32,6 +33,7 @@ export interface RuntimeDiagnostics {
     autoElectEnabled: boolean;
     unsafeSharedAttachEnabled: boolean;
     launchMode?: string;
+    ownerCommand?: string[];
   };
 }
 
@@ -70,11 +72,14 @@ export function classifyRuntimePath(params: {
     return 'unsafe-secondary-attach';
   }
   if (params.launchMode === 'attach') return 'attach-mode';
-  if (params.brokerPid && params.brokerPidAlive) {
-    if (params.autoElectEnabled) {
-      return params.ownerPid === params.brokerPid ? 'auto-elect-owner' : 'auto-elect-client';
+  if (params.brokerPid) {
+    if (params.brokerPidAlive === false) return 'stale-broker-metadata';
+    if (params.brokerPidAlive) {
+      if (params.autoElectEnabled) {
+        return params.ownerPid === params.brokerPid ? 'auto-elect-owner' : 'auto-elect-client';
+      }
+      return params.ownerPid === params.brokerPid ? 'broker-owner' : 'broker-client';
     }
-    return params.ownerPid === params.brokerPid ? 'broker-owner' : 'broker-client';
   }
   if (params.controllerRole === 'owner') return 'direct-owner';
   if (params.controllerRole === 'unknown' && params.ownerPid) return 'blocked-by-owner';
@@ -82,11 +87,18 @@ export function classifyRuntimePath(params: {
   return 'unknown';
 }
 
+function commandEnablesAutoElect(command?: string[]): boolean {
+  if (!command) return false;
+  if (command.includes('--no-auto-elect')) return false;
+  if (command.includes('--auto-elect')) return true;
+  return command.includes('serve') && command.includes('--auto-launch') && !command.includes('--server-mode');
+}
+
 export function collectDoctorDiagnostics(): DoctorDiagnostics {
   const topology = getCurrentControllerTopology();
   const broker = readBrokerMetadata(topology.port, topology.userDataDir);
   const brokerPidAlive = broker?.pid !== undefined ? isPidAlive(broker.pid) : undefined;
-  const autoElectEnabled = process.env.OPENCHROME_AUTO_ELECT === '1';
+  const autoElectEnabled = process.env.OPENCHROME_AUTO_ELECT === '1' || (process.env.OPENCHROME_AUTO_ELECT !== '0' && commandEnablesAutoElect(topology.ownerCommand));
   const unsafeSharedAttachEnabled = process.env.OPENCHROME_ALLOW_UNSAFE_SHARED_ATTACH === '1';
   const launchMode = process.env.OPENCHROME_LAUNCH_MODE;
 
@@ -116,6 +128,7 @@ export function collectDoctorDiagnostics(): DoctorDiagnostics {
         autoElectEnabled,
         unsafeSharedAttachEnabled,
         ...(launchMode ? { launchMode } : {}),
+        ...(topology.ownerCommand ? { ownerCommand: topology.ownerCommand } : {}),
       },
     },
   };

@@ -15,21 +15,46 @@ import {
 } from '../src/broker/auto-elect';
 
 describe('isAutoElectEnabled', () => {
-  test('false by default (no flag, no env)', () => {
-    expect(isAutoElectEnabled({}, {})).toBe(false);
+  test('true by default for direct serve --auto-launch path', () => {
+    expect(isAutoElectEnabled({ autoLaunch: true }, {})).toBe(true);
   });
 
-  test('true when --auto-elect flag set', () => {
+  test('false by default when process is not an auto-launch controller', () => {
+    expect(isAutoElectEnabled({}, {})).toBe(false);
+    expect(isAutoElectEnabled({ autoLaunch: false }, {})).toBe(false);
+  });
+
+  test('caller can defer the runtime default by omitting autoLaunch context', () => {
+    expect(isAutoElectEnabled({ autoElect: undefined, broker: false, connectBroker: false }, {})).toBe(false);
+  });
+
+  test('explicit --auto-elect still enables compatible paths', () => {
     expect(isAutoElectEnabled({ autoElect: true }, {})).toBe(true);
   });
 
-  test('true when OPENCHROME_AUTO_ELECT=1', () => {
+  test('--no-auto-elect hard-disables the default', () => {
+    expect(isAutoElectEnabled({ autoLaunch: true, autoElect: false }, {})).toBe(false);
+  });
+
+  test('OPENCHROME_AUTO_ELECT=0 hard-disables the default', () => {
+    expect(isAutoElectEnabled({ autoLaunch: true }, { OPENCHROME_AUTO_ELECT: '0' })).toBe(false);
+    expect(isAutoElectEnabled({ autoLaunch: true, autoElect: true }, { OPENCHROME_AUTO_ELECT: '0' })).toBe(false);
+  });
+
+  test('OPENCHROME_AUTO_ELECT=1 explicitly enables compatible paths', () => {
     expect(isAutoElectEnabled({}, { OPENCHROME_AUTO_ELECT: '1' })).toBe(true);
   });
 
-  test('env values other than "1" do not enable', () => {
-    expect(isAutoElectEnabled({}, { OPENCHROME_AUTO_ELECT: 'true' })).toBe(false);
-    expect(isAutoElectEnabled({}, { OPENCHROME_AUTO_ELECT: '0' })).toBe(false);
+  test('env values other than "0" do not accidentally disable the default', () => {
+    expect(isAutoElectEnabled({ autoLaunch: true }, { OPENCHROME_AUTO_ELECT: 'true' })).toBe(true);
+    expect(isAutoElectEnabled({ autoLaunch: true }, { OPENCHROME_AUTO_ELECT: '' })).toBe(true);
+  });
+
+  test('explicit broker roles take precedence over auto-elect', () => {
+    expect(isAutoElectEnabled({ autoLaunch: true, broker: true }, {})).toBe(false);
+    expect(isAutoElectEnabled({ autoLaunch: true, connectBroker: true }, {})).toBe(false);
+    expect(isAutoElectEnabled({ autoElect: true, broker: true }, {})).toBe(false);
+    expect(isAutoElectEnabled({ autoElect: true, connectBroker: true }, {})).toBe(false);
   });
 });
 
