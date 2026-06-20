@@ -16,6 +16,7 @@ export interface ServeArgOptions {
   autoElect?: boolean;
   broker?: boolean;
   connectBroker?: boolean;
+  minimal?: boolean;
 }
 
 export interface MCPServerConfig {
@@ -69,6 +70,7 @@ export function getServeArgs(options: ServeArgOptions = {}): string[] {
   }
 
   if (resolved.autoElect === true) serveArgs.push('--auto-elect');
+  if (resolved.minimal !== false) serveArgs.push('--minimal');
   if (resolved.autoElect === false) serveArgs.push('--no-auto-elect');
   if (resolved.broker) serveArgs.push('--broker');
   if (resolved.connectBroker) serveArgs.push('--connect-broker');

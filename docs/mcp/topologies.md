@@ -4,7 +4,7 @@ OpenChrome currently supports one safe direct-controller rule:
 
 > Run at most one direct `openchrome serve --auto-launch` process for the same Chrome debug port and user-data directory.
 
-Multiple MCP clients can still run in parallel today. New `openchrome setup` / `openchrome config` output defaults to the auto-elect topology (`openchrome serve --auto-launch --auto-elect`): one process wins the Chrome/CDP owner lock and publishes broker metadata; surplus same-profile clients proxy through that broker. For explicit shared-profile deployments, run a single broker owner (`openchrome serve --broker --auto-launch`) and point the other clients at it with `--connect-broker`; otherwise give each client its own isolated port and user-data directory.
+Multiple MCP clients can still run in parallel today. New `openchrome setup` / `openchrome config` output defaults to the auto-elect topology (`openchrome serve --auto-launch --auto-elect --minimal`): one process wins the Chrome/CDP owner lock and publishes broker metadata; surplus same-profile clients proxy through that broker. For explicit shared-profile deployments, run a single broker owner (`openchrome serve --broker --auto-launch`) and point the other clients at it with `--connect-broker`; otherwise give each client its own isolated port and user-data directory.
 
 ## After upgrading OpenChrome
 
@@ -38,7 +38,7 @@ openchrome config --client opencode
 Generated configs use:
 
 ```bash
-openchrome serve --auto-launch --auto-elect
+openchrome serve --auto-launch --auto-elect --minimal
 ```
 
 For one `(port, userDataDir)`, exactly one process remains the direct Chrome/CDP owner. Surplus sessions attach as broker clients instead of becoming unsafe second direct controllers.

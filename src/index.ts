@@ -114,6 +114,7 @@ program
   .option('--audit-log', 'Enable security audit logging (default: false)')
   .option('--no-sanitize-content', 'Disable content sanitization for prompt injection defense (default: enabled)')
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
+  .option('--minimal', 'Expose only the minimal browser-essential startup tool surface. Advanced tools remain available through expand_tools.')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
   .option('--http-host <host>', 'Bind address for HTTP transport (default: 127.0.0.1, use 0.0.0.0 for external access)')
@@ -134,7 +135,7 @@ program
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
   .option('--codegen <mode>', 'Opt-in replay artifact generation: off, puppeteer, playwright, or mcp-replay. Default: off (no response shape changes). Also: OPENCHROME_CODEGEN.')
-  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; autoElect?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; minimal?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; autoElect?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
     const { normalizeCodegenMode, setCodegenMode } = await import('./core/codegen');
     const codegenMode = normalizeCodegenMode(options.codegen ?? process.env.OPENCHROME_CODEGEN);
     setCodegenMode(codegenMode);
@@ -592,12 +593,19 @@ program
 
     // Tool tier configuration
     const envTier = parseInt(process.env.OPENCHROME_TOOL_TIER || '', 10);
+    if (options.allTools && options.minimal) {
+      console.error('[openchrome] Error: --minimal and --all-tools are mutually exclusive');
+      process.exit(2);
+    }
     if (options.allTools || envTier >= 3) {
       mcpOptions.initialToolTier = 3 as ToolTier;
       console.error('[openchrome] All tools exposed from startup');
     } else if (envTier === 2) {
       mcpOptions.initialToolTier = 2 as ToolTier;
       console.error('[openchrome] Tier 2 tools exposed from startup');
+    } else if (options.minimal) {
+      mcpOptions.initialToolTier = 1 as ToolTier;
+      console.error('[openchrome] Minimal startup tool surface enabled');
     }
 
     // Capability filter configuration (#829, #847)

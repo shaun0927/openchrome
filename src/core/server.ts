@@ -88,7 +88,7 @@ export interface CreateServerOptions {
   };
 
   pilot?: boolean;
-  tools?: { allTools?: boolean };
+  tools?: { allTools?: boolean; minimal?: boolean };
   security?: { blockedDomains?: string[]; auditLog?: boolean; sanitizeContent?: boolean };
   idleTimeoutMs?: number;
   parentPid?: number;
@@ -258,10 +258,15 @@ class OpenChromeServerImpl implements OpenChromeServer {
 
     // Tool tiers
     const envTier = parseInt(process.env.OPENCHROME_TOOL_TIER || '', 10);
+    if (opts.tools?.allTools && opts.tools?.minimal) {
+      throw new Error('[openchrome] --minimal and --all-tools are mutually exclusive');
+    }
     if (opts.tools?.allTools || envTier >= 3) {
       setMCPServerOptions({ initialToolTier: 3 as ToolTier });
     } else if (envTier === 2) {
       setMCPServerOptions({ initialToolTier: 2 as ToolTier });
+    } else if (opts.tools?.minimal) {
+      setMCPServerOptions({ initialToolTier: 1 as ToolTier });
     }
 
     // Transport
