@@ -15,11 +15,11 @@ import {
 
 describe('cli/mcp-client-config', () => {
   test('getServeArgs enables auto-launch by default', () => {
-    expect(getServeArgs()).toEqual(['serve', '--auto-launch', '--auto-elect']);
+    expect(getServeArgs()).toEqual(['serve', '--auto-launch', '--auto-elect', '--minimal']);
   });
 
   test('getServeArgs includes dashboard when requested', () => {
-    expect(getServeArgs({ dashboard: true })).toEqual(['serve', '--auto-launch', '--auto-elect', '--dashboard']);
+    expect(getServeArgs({ dashboard: true })).toEqual(['serve', '--auto-launch', '--auto-elect', '--minimal', '--dashboard']);
   });
 
   test('getServeArgs preserves explicit port and profile topology', () => {
@@ -32,6 +32,7 @@ describe('cli/mcp-client-config', () => {
       'serve',
       '--auto-launch',
       '--auto-elect',
+      '--minimal',
       '--port',
       '9333',
       '--user-data-dir',
@@ -44,15 +45,15 @@ describe('cli/mcp-client-config', () => {
   });
 
   test('single-owner topology preset preserves the legacy direct owner explicitly', () => {
-    expect(getServeArgs({ topology: 'single-owner' })).toEqual(['serve', '--auto-launch', '--no-auto-elect']);
+    expect(getServeArgs({ topology: 'single-owner' })).toEqual(['serve', '--auto-launch', '--minimal', '--no-auto-elect']);
   });
 
   test('broker topology presets generate owner and client roles', () => {
     expect(getServeArgs({ topology: 'broker-owner', port: 9222, userDataDir: '/tmp/shared' })).toEqual([
-      'serve', '--auto-launch', '--broker', '--port', '9222', '--user-data-dir', '/tmp/shared',
+      'serve', '--auto-launch', '--minimal', '--broker', '--port', '9222', '--user-data-dir', '/tmp/shared',
     ]);
     expect(getServeArgs({ topology: 'broker-client', port: 9222, userDataDir: '/tmp/shared' })).toEqual([
-      'serve', '--connect-broker', '--port', '9222', '--user-data-dir', '/tmp/shared',
+      'serve', '--minimal', '--connect-broker', '--port', '9222', '--user-data-dir', '/tmp/shared',
     ]);
   });
 
@@ -60,6 +61,7 @@ describe('cli/mcp-client-config', () => {
     expect(getServeArgs({ topology: 'isolated' })).toEqual([
       'serve',
       '--auto-launch',
+      '--minimal',
       '--port',
       '9223',
       '--user-data-dir',
@@ -70,13 +72,18 @@ describe('cli/mcp-client-config', () => {
   });
 
   test('getServeArgs omits auto-launch when explicitly disabled', () => {
-    expect(getServeArgs({ autoLaunch: false })).toEqual(['serve']);
+    expect(getServeArgs({ autoLaunch: false })).toEqual(['serve', '--minimal']);
+  });
+
+
+  test('getServeArgs can opt out of generated minimal mode', () => {
+    expect(getServeArgs({ minimal: false })).toEqual(['serve', '--auto-launch', '--auto-elect']);
   });
 
   test('getCodexServerConfig uses the installed openchrome binary', () => {
     expect(getCodexServerConfig()).toEqual({
       command: 'openchrome',
-      args: ['serve', '--auto-launch', '--auto-elect'],
+      args: ['serve', '--auto-launch', '--auto-elect', '--minimal'],
     });
   });
 
@@ -92,6 +99,7 @@ describe('cli/mcp-client-config', () => {
       'serve',
       '--auto-launch',
       '--auto-elect',
+      '--minimal',
       '--dashboard',
     ]);
     expect(command).not.toContain('remove');
@@ -100,7 +108,7 @@ describe('cli/mcp-client-config', () => {
   test('getClaudeManualServerConfig uses the installed openchrome binary', () => {
     expect(getClaudeManualServerConfig()).toEqual({
       command: 'openchrome',
-      args: ['serve', '--auto-launch', '--auto-elect'],
+      args: ['serve', '--auto-launch', '--auto-elect', '--minimal'],
     });
   });
 
@@ -116,6 +124,7 @@ describe('cli/mcp-client-config', () => {
       'serve',
       '--auto-launch',
       '--auto-elect',
+      '--minimal',
       '--dashboard',
     ]);
   });
@@ -142,7 +151,7 @@ describe('cli/mcp-client-config', () => {
         },
         openchrome: {
           command: 'openchrome',
-          args: ['serve', '--auto-launch', '--auto-elect'],
+          args: ['serve', '--auto-launch', '--auto-elect', '--minimal'],
         },
       },
     });
@@ -153,7 +162,7 @@ describe('cli/mcp-client-config', () => {
       mcpServers: {
         openchrome: {
           command: 'openchrome',
-          args: ['serve', '--auto-launch', '--auto-elect'],
+          args: ['serve', '--auto-launch', '--auto-elect', '--minimal'],
         },
       },
     });
@@ -164,7 +173,7 @@ describe('cli/mcp-client-config', () => {
       [
         '[mcp_servers.openchrome]',
         'command = "openchrome"',
-        'args = ["serve", "--auto-launch", "--auto-elect"]',
+        'args = ["serve", "--auto-launch", "--auto-elect", "--minimal"]',
       ].join('\n')
     );
   });
@@ -173,7 +182,7 @@ describe('cli/mcp-client-config', () => {
     const options = { port: 9333, userDataDir: '/tmp/openchrome-codex' };
 
     expect(formatCodexMCPServerConfigSnippet('openchrome', getCodexServerConfig(options))).toContain(
-      'args = ["serve", "--auto-launch", "--auto-elect", "--port", "9333", "--user-data-dir", "/tmp/openchrome-codex"]'
+      'args = ["serve", "--auto-launch", "--auto-elect", "--minimal", "--port", "9333", "--user-data-dir", "/tmp/openchrome-codex"]'
     );
     expect(getClaudeSetupCommand('user', options)).toEqual([
       'mcp',
@@ -186,6 +195,7 @@ describe('cli/mcp-client-config', () => {
       'serve',
       '--auto-launch',
       '--auto-elect',
+      '--minimal',
       '--port',
       '9333',
       '--user-data-dir',
@@ -201,6 +211,7 @@ describe('cli/mcp-client-config', () => {
         'serve',
         '--auto-launch',
         '--auto-elect',
+        '--minimal',
         '--port',
         '9444',
         '--user-data-dir',

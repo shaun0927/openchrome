@@ -82,7 +82,7 @@ and add the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
   "mcpServers": {
     "openchrome": {
       "command": "openchrome",
-      "args": ["serve", "--auto-launch", "--auto-elect"]
+      "args": ["serve", "--auto-launch", "--auto-elect", "--minimal"]
     }
   }
 }
