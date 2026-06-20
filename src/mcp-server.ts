@@ -304,6 +304,7 @@ const PROGRESSIVE_DISCLOSURE_CLIENTS = new Set([
   'cline',
   'zed',
   'continue',
+  'opencode',
 ]);
 
 const RECONNECTION_GUIDANCE =
@@ -1320,8 +1321,11 @@ export class MCPServer {
 
     // Detect client identity for progressive disclosure decisions
     const clientInfo = params?.clientInfo as { name?: string; version?: string } | undefined;
+    const clientCapabilities = params?.capabilities as { tools?: { listChanged?: boolean }; notifications?: { tools?: { listChanged?: boolean } } } | undefined;
     const rawName = clientInfo?.name ?? '';
     const nameLower = rawName.toLowerCase();
+    const supportsToolListChanged = clientCapabilities?.tools?.listChanged === true
+      || clientCapabilities?.notifications?.tools?.listChanged === true;
 
     // Idempotency: only detect client on first initialize (reconnects preserve state)
     if (!this.clientDetected) {
@@ -1334,14 +1338,15 @@ export class MCPServer {
           nameLower.includes(known)
         );
 
-        if (!isKnownClient) {
+        if (!isKnownClient && !supportsToolListChanged) {
           // Unknown or absent client: expose all tools immediately (no progressive disclosure)
           this.exposedTier = 3;
           this.clientSupportsListChanged = false;
           console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" — progressive disclosure disabled, exposing all tools`);
         } else {
-          // Known client: keep progressive disclosure enabled
-          console.error(`[openchrome] Client "${rawName}" supports tool list changes — progressive disclosure enabled`);
+          // Known/capable client: keep progressive disclosure enabled.
+          const source = supportsToolListChanged && !isKnownClient ? 'capability' : 'known-client';
+          console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" supports tool list changes (${source}) — progressive disclosure enabled`);
         }
       }
     }
