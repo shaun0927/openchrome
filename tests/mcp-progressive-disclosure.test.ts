@@ -92,6 +92,20 @@ describe('MCP progressive disclosure client detection', () => {
     expect(tools.length).toBeLessThan(118);
   });
 
+
+  test('explicit minimal mode keeps unknown clients on the small startup surface', async () => {
+    const mockSM = createMockSessionManager();
+    (getSessionManager as jest.Mock).mockReturnValue(mockSM);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const server = new MCPServer(mockSM as any, { initialToolTier: 1 });
+    registerAllTools(server);
+
+    const { tools } = await initializeAndList(server, 'unknown-editor');
+
+    expect(tools).toContain('expand_tools');
+    expect(tools.length).toBeLessThanOrEqual(16);
+  });
+
   test('unknown clients without list_changed support keep legacy all-tools behavior', async () => {
     const { init, tools } = await initializeAndList(makeServer(), 'unknown-editor');
 
