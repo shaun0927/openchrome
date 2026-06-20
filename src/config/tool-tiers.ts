@@ -2,7 +2,7 @@
  * Tool Tier Configuration
  *
  * Controls which tools are exposed by default vs on-demand.
- * Tier 1: Always exposed (core tools for every session)
+ * Tier 1: Always exposed (small browser essentials for every session)
  * Tier 2: Exposed on demand (specialist/niche tools)
  * Tier 3: Orchestration only (workflow lifecycle tools)
  */
@@ -11,98 +11,132 @@ export type ToolTier = 1 | 2 | 3;
 
 /** Map of tool name → tier assignment */
 export const TOOL_TIERS: Record<string, ToolTier> = {
-  // Tier 1: Core (always exposed)
+  // Tier 1: Browser essentials (always exposed)
   navigate: 1,
-  page_reload: 1,
   computer: 1,
-  interact: 1,
-  find: 1,
-  form_input: 1,
-  fill_form: 1,
   read_page: 1,
-  oc_observe: 1,              // src/tools/oc-observe.ts — compact observable action map (#866)
-  element_pick: 1,             // src/tools/element-pick.ts — in-page picker facts (#899)
-  inspect: 1,
+  find: 1,
   query_dom: 1,
-  oc_query: 1, // src/tools/oc-query.ts — semantic refs for interaction workflows (#1045)
-  javascript_tool: 1,
+  interact: 1,
+  form_input: 1,
   tabs_context: 1,
   tabs_create: 1,
   tabs_close: 1,
-  cookies: 1,
-  storage: 1,
   wait_for: 1,
-  memory: 1,
-  lightweight_scroll: 1,
-  console_capture: 1,         // src/tools/console-capture.ts — surfaces page errors during validation (#token-efficiency)
+  page_screenshot: 1,
+  oc_connection_health: 1,
   oc_stop: 1,
-  oc_profile_status: 1,
-  oc_session_snapshot: 1,
-  oc_session_resume: 1,
-  oc_journal: 1,
-  oc_get_connection_info: 1,
-  oc_copy_to_clipboard: 1,
-  oc_open_host_settings: 1,
-  act: 1,                     // src/tools/act.ts — composite NL action API (#578)
-  validate_page: 1,           // src/tools/validate-page.ts — composite page-health check (#token-efficiency)
-  oc_reap_orphans: 1,         // src/tools/reap-orphans.ts — manual lifecycle recovery sweep
-  oc_assert: 1,               // src/tools/oc-assert.ts — Outcome Contracts single-call verifier (#784)
-  oc_evidence_bundle: 1,      // src/tools/oc-evidence-bundle.ts — Outcome Contracts evidence bundle capture (#792)
-  oc_skill_record: 1,         // src/tools/oc-skill-record.ts — skill memory write surface (#785)
-  oc_skill_recall: 1,         // src/tools/oc-skill-recall.ts — skill memory read surface (#785)
-  oc_output_fetch: 1,         // src/tools/oc-output-fetch.ts — 2-stage fetch for large-output tools (#887)
 
   // Tier 2: Specialist (on demand)
-  extract_data: 2,              // src/tools/extract-data.ts — structured extraction (#571)
-  oc_totp_generate: 2,
-  drag_drop: 2,
+  javascript_tool: 2,
   network: 2,
-  request_intercept: 2,
-  http_auth: 2,
+  page_reload: 2,
+  cookies: 2,
+  page_content: 2,
+  storage: 2,
   user_agent: 2,
   geolocation: 2,
   emulate_device: 2,
   page_pdf: 2,
-  page_screenshot: 2,
-  page_content: 2,
+  console_capture: 2,
   performance_metrics: 2,
+  request_intercept: 2,
+  network_capture_lite: 2,
+  network_capture_full: 2,
   file_upload: 2,
+  http_auth: 2,
+  drag_drop: 2,
+  fill_form: 2,
   batch_execute: 2,
+  lightweight_scroll: 2,
   batch_paginate: 2,
-  crawl: 2,
-  crawl_sitemap: 2,
+  inspect: 2,
   vision_find: 2,
-  oc_context_export: 2,
-  oc_context_import: 2,
-
-  // Session recording tools (#572) — opt-in, not needed for every session
+  memory: 2,
+  oc_query: 2,
+  oc_reap_orphans: 2,
+  oc_profile_status: 2,
+  list_profiles: 2,
+  oc_session_snapshot: 2,
+  oc_session_resume: 2,
+  oc_journal: 2,
+  oc_reflect: 2,
+  oc_policy: 2,
+  oc_checkpoint: 2,
+  oc_get_connection_info: 2,
+  oc_copy_to_clipboard: 2,
+  oc_open_host_settings: 2,
   oc_recording_start: 2,
   oc_recording_stop: 2,
   oc_recording_status: 2,
   oc_recording_list: 2,
   oc_recording_export: 2,
-
-  // Internal/diagnostic tools (exposed at Tier 1 but explicitly declared)
-  // Names must match the 'name' field in each tool's definition
-  oc_connection_health: 1,  // src/tools/connection-health.ts
-  oc_policy: 1,             // src/tools/oc-policy.ts
-  oc_checkpoint: 1,         // src/tools/checkpoint.ts
-  list_profiles: 1,         // src/tools/list-profiles.ts
-  oc_devtools_url: 1,       // src/tools/oc-devtools-url.ts (#860) — gated by env
+  crawl: 2,
+  crawl_sitemap: 2,
+  crawl_start: 2,
+  crawl_status: 2,
+  crawl_cancel: 2,
+  act: 2,
+  validate_page: 2,
+  extract_data: 2,
+  oc_totp_generate: 2,
+  oc_assert: 2,
+  oc_journal_compact: 2,
+  image_qa: 2,
+  oc_gate_inspect: 2,
+  oc_normalize_action: 2,
+  oc_progress_status: 2,
+  oc_vitals: 2,
+  oc_output_fetch: 2,
+  oc_evidence_bundle: 2,
+  oc_diff: 2,
+  oc_skill_record: 2,
+  oc_skill_recall: 2,
+  oc_skill_export: 2,
+  oc_doctor_report: 2,
+  oc_performance_insights: 2,
+  oc_performance_analyze: 2,
+  oc_observe: 2,
+  element_pick: 2,
+  oc_devtools_url: 2,
+  oc_context_export: 2,
+  oc_context_import: 2,
 
   // Tier 3: Orchestration only
+  worker: 3,
   workflow_init: 3,
   workflow_status: 3,
   workflow_collect: 3,
   workflow_collect_partial: 3,
   workflow_cleanup: 3,
-  worker: 3,
   worker_update: 3,
   worker_complete: 3,
   execute_plan: 3,
+  oc_task_start: 3,
+  oc_task_list: 3,
+  oc_task_get: 3,
+  oc_task_cancel: 3,
+  oc_task_wait: 3,
+  oc_task_update: 3,
+  oc_task_finish: 3,
+  oc_lane_create: 3,
+  oc_lane_list: 3,
+  oc_lane_get: 3,
+  oc_lane_close: 3,
+  oc_run_start: 3,
+  oc_run_status: 3,
+  oc_run_events: 3,
+  oc_run_finish: 3,
+  oc_task_run_start: 3,
+  oc_task_run_update: 3,
+  oc_task_run_checkpoint: 3,
+  oc_task_run_needs_help: 3,
+  oc_task_run_complete: 3,
+  oc_task_run_get: 3,
+  oc_task_run_list: 3,
 };
 
-/** Get the tier for a tool (defaults to 1 if not configured) */
+/** Get the tier for a tool (defaults to on-demand so new tools do not bloat startup). */
 export function getToolTier(toolName: string): ToolTier {
-  return TOOL_TIERS[toolName] ?? 1;
+  return TOOL_TIERS[toolName] ?? 2;
 }
