@@ -157,7 +157,8 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       expect(toolNames).toContain('expand_tools');
 
       const nonExpandTools = tier1Tools.filter((t: any) => t.name !== 'expand_tools');
-      expect(nonExpandTools.length).toBeGreaterThanOrEqual(46);
+      expect(nonExpandTools.length).toBeGreaterThanOrEqual(14);
+      expect(nonExpandTools.length).toBeLessThanOrEqual(15);
       expect(new Set(toolNames).size).toBe(toolNames.length);
     });
 
@@ -171,25 +172,20 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
     test('Tier 1 contains expected core tools', () => {
       const names = tier1Tools.map((t: any) => t.name);
       const expectedCore = [
-        'navigate', 'page_reload', 'computer', 'interact', 'find',
-        'form_input', 'fill_form', 'read_page', 'oc_observe', 'inspect', 'query_dom',
-        'javascript_tool', 'tabs_context', 'tabs_create', 'tabs_close',
-        'cookies', 'storage', 'wait_for', 'memory', 'lightweight_scroll',
-        'oc_stop', 'oc_profile_status', 'oc_session_snapshot', 'oc_session_resume',
-        'oc_journal',
-        'oc_get_connection_info', 'oc_copy_to_clipboard', 'oc_open_host_settings',
-        'act',
+        'navigate', 'computer', 'interact', 'find', 'form_input',
+        'read_page', 'query_dom', 'tabs_context', 'tabs_create', 'tabs_close',
+        'wait_for', 'page_screenshot', 'oc_connection_health', 'oc_stop',
       ];
       for (const tool of expectedCore) {
         expect(names).toContain(tool);
       }
     });
 
-    test('Tier 1 also contains diagnostic tools (oc_connection_health, oc_checkpoint, list_profiles)', () => {
+    test('Tier 1 omits specialist diagnostics until expansion', () => {
       const names = tier1Tools.map((t: any) => t.name);
       expect(names).toContain('oc_connection_health');
-      expect(names).toContain('oc_checkpoint');
-      expect(names).toContain('list_profiles');
+      expect(names).not.toContain('oc_checkpoint');
+      expect(names).not.toContain('list_profiles');
     });
 
     test('expand_tools(tier=2) → Tier 2 tools appear + notification sent', async () => {
@@ -210,9 +206,11 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       const expectedTier2 = [
         'extract_data', 'drag_drop', 'network',
         'request_intercept', 'http_auth', 'user_agent', 'geolocation',
-        'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
+        'emulate_device', 'page_pdf', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
-        'batch_execute', 'batch_paginate',
+        'batch_execute', 'batch_paginate', 'javascript_tool', 'page_reload',
+        'cookies', 'storage', 'fill_form', 'inspect', 'memory', 'oc_query',
+        'oc_checkpoint', 'list_profiles',
         'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       ];
       for (const tool of expectedTier2) {
