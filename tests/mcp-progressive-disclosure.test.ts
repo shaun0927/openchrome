@@ -33,7 +33,7 @@ function makeServer(): MCPServer {
   return server;
 }
 
-async function initializeAndList(server: MCPServer, clientName: string, capabilities: Record<string, unknown> = {}): Promise<{ init: TestResponse; tools: string[] }> {
+async function initializeAndList(server: MCPServer, clientName: string, capabilities: Record<string, unknown> = {}): Promise<{ init: TestResponse; toolDefs: Array<{ name: string }>; tools: string[] }> {
   const init = await server.handleRequest({
     jsonrpc: '2.0',
     id: 1,
@@ -52,18 +52,36 @@ async function initializeAndList(server: MCPServer, clientName: string, capabili
     params: {},
   }) as TestResponse;
 
-  return { init, tools: (listed.result?.tools ?? []).map(t => t.name) };
+  const toolDefs = listed.result?.tools ?? [];
+  return { init, toolDefs, tools: toolDefs.map(t => t.name) };
 }
 
 describe('MCP progressive disclosure client detection', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('OpenCode gets progressive disclosure instead of all tools', async () => {
-    const { init, tools } = await initializeAndList(makeServer(), 'opencode');
+  test('OpenCode gets a small progressive startup surface', async () => {
+    const { init, toolDefs, tools } = await initializeAndList(makeServer(), 'opencode');
 
     expect(init.result?.capabilities?.tools?.listChanged).toBe(true);
     expect(tools).toContain('expand_tools');
-    expect(tools.length).toBeLessThan(118);
+    expect(tools.length).toBeLessThanOrEqual(16);
+    expect(JSON.stringify(toolDefs).length).toBeLessThanOrEqual(40000);
+    expect(tools).toEqual(expect.arrayContaining([
+      'navigate',
+      'computer',
+      'read_page',
+      'find',
+      'query_dom',
+      'interact',
+      'form_input',
+      'tabs_context',
+      'tabs_create',
+      'tabs_close',
+      'wait_for',
+      'page_screenshot',
+      'oc_connection_health',
+      'oc_stop',
+    ]));
   });
 
   test('capability-aware unknown clients get progressive disclosure', async () => {

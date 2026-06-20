@@ -165,7 +165,8 @@ describe('MCPServer', () => {
       expect(server.getToolNames()).toContain('test_tool');
     });
 
-    test('returns registered tools via tools/list', async () => {
+    test('returns registered tools via tools/list when full exposure is requested', async () => {
+      server = new MCPServer(mockSessionManager as any, { initialToolTier: 3 });
       const handler = jest.fn();
       const definition: MCPToolDefinition = {
         name: 'my_tool',
