@@ -11,6 +11,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { FailureEpisodeStore, type FailureEpisode, type FailureEpisodeContext } from './failure-episode-store';
+import {
+  PatternLearnerEventBus,
+  buildAddEvent,
+  buildDeleteEvent,
+  buildNoopEvent,
+  buildUpdateEvent,
+  diffPatterns,
+  type PatternLearnerEvent,
+  type PatternLearnerEventListener,
+  type PatternLearnerNoopReason,
+} from './pattern-learner-events';
 
 export interface LearnedPattern {
   id: string;
@@ -52,6 +63,12 @@ export class PatternLearner {
   private filePath: string | null = null;
   private dirty = false;
   private episodeStore = new FailureEpisodeStore();
+  /**
+   * mem0-idiom event bus (#25 pack). Emits ADD/UPDATE/DELETE/NOOP on every
+   * mutation. Kept as a plain member so tests and downstream integrations can
+   * subscribe without touching module-level state.
+   */
+  private eventBus = new PatternLearnerEventBus();
 
   static readonly WATCH_WINDOW = 3;
   static readonly PROMOTE_THRESHOLD = 3;
@@ -168,19 +185,38 @@ export class PatternLearner {
     const confidence = bestCount / raw.totalObservations;
 
     if (bestCount < PatternLearner.PROMOTE_THRESHOLD || confidence < PatternLearner.CONFIDENCE_THRESHOLD) {
+      // #25 mem0-idiom NOOP: an observation arrived but the promotion
+      // threshold was not reached. Downstream consumers can log or throttle
+      // reactive work on this signal.
+      const reason: PatternLearnerNoopReason =
+        bestCount < PatternLearner.PROMOTE_THRESHOLD ? 'threshold_not_met' : 'confidence_not_met';
+      this.eventBus.emit(buildNoopEvent(reason, {
+        errorFingerprint: raw.errorFingerprint,
+      }));
       return;
     }
 
     const existing = this.patterns.find(p => p.errorFingerprint === raw.errorFingerprint);
     if (existing) {
+      // Capture before-state for a diff-driven UPDATE event.
+      const before: LearnedPattern = { ...existing, errorTools: [...existing.errorTools] };
       existing.occurrences = bestCount;
       existing.confidence = confidence;
       existing.recoveryTool = bestTool;
       existing.lastSeen = Date.now();
       existing.errorTools = Array.from(raw.errorTools);
       existing.hint = PatternLearner.generateHint(bestTool, bestCount);
+      const changed = diffPatterns(before, existing);
+      const updateEvent = buildUpdateEvent(before, existing);
+      if (!changed || Object.keys(changed).length === 0 || !updateEvent) {
+        this.eventBus.emit(buildNoopEvent('no_change', {
+          errorFingerprint: existing.errorFingerprint,
+        }));
+      } else {
+        this.eventBus.emit(updateEvent);
+      }
     } else {
-      this.patterns.push({
+      const created: LearnedPattern = {
         id: `learned-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         errorFingerprint: raw.errorFingerprint,
         errorTools: Array.from(raw.errorTools),
@@ -190,11 +226,44 @@ export class PatternLearner {
         firstSeen: Date.now(),
         lastSeen: Date.now(),
         hint: PatternLearner.generateHint(bestTool, bestCount),
-      });
+      };
+      this.patterns.push(created);
+      this.eventBus.emit(buildAddEvent(created));
     }
 
     this.dirty = true;
     this.save();
+  }
+
+  /**
+   * Subscribe to mem0-idiom mutation events (#25 pack).
+   * Returns an unsubscribe function.
+   */
+  onPatternEvent(listener: PatternLearnerEventListener): () => void {
+    return this.eventBus.on(listener);
+  }
+
+  /** Test / diagnostic accessor for the event-bus listener count. */
+  patternEventListenerCount(): number {
+    return this.eventBus.listenerCount();
+  }
+
+  /**
+   * Retire a learned pattern by id. Emits a DELETE event on success and a
+   * NOOP with reason `'not_found'` when the id is unknown. Persistence is
+   * flushed on success so the removal survives across sessions.
+   */
+  forgetPattern(patternId: string): boolean {
+    const idx = this.patterns.findIndex((p) => p.id === patternId);
+    if (idx < 0) {
+      this.eventBus.emit(buildNoopEvent('not_found'));
+      return false;
+    }
+    const [removed] = this.patterns.splice(idx, 1);
+    this.eventBus.emit(buildDeleteEvent(removed));
+    this.dirty = true;
+    this.save();
+    return true;
   }
 
   /**

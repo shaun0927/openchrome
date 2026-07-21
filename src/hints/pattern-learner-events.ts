@@ -77,7 +77,8 @@ export type PatternLearnerNoopReason =
   | 'confidence_not_met'
   | 'duplicate_observation'
   | 'watch_window_expired'
-  | 'no_change';
+  | 'no_change'
+  | 'not_found';
 
 /**
  * Compute the diff between two learned patterns and return a change set.
