@@ -23,7 +23,7 @@ import { buildTextMetrics } from '../core/metrics/token-estimate';
 import { isStateHeaderEnabled, prependHeaderText } from './_shared/state-header';
 import {
   ensureRuntimeEnabled,
-  isStealthArtefactEvent,
+  disableRuntime,
   RuntimeEnableRefusedError,
 } from '../stealth/runtime-enable-guard';
 
@@ -202,20 +202,22 @@ const handler: ToolHandler = async (
   let exceptionHandler: ((event: CDPExceptionThrownEvent) => void) | null = null;
 
   // Defensive: some test doubles of getSessionManager do not implement the
-  // full surface. isStealthTarget is optional there — default to false
-  // (non-stealth) so the guard is a passthrough.
+  // full surface. isStealthTarget is optional — default to false so the
+  // guard is a passthrough.
   const isStealth = typeof sessionManager.isStealthTarget === 'function'
-    ? sessionManager.isStealthTarget(tabId)
+    ? sessionManager.isStealthTarget(tabId!)
     : false;
   try {
     cdpSession = await page.createCDPSession();
-    // Stealth targets go through the runtime-enable guard so vendor
-    // detection scripts do not see Runtime.enable side effects (see P6 /
-    // patchright idiom in stealth/runtime-enable-guard.ts).
+    // Stealth targets are routed through the runtime-enable guard so the
+    // opt-in is audited. The guard does NOT shield the renderer-side
+    // Runtime.enable leak — validate_page must open a minimal enable
+    // window and disable immediately after captureConsoleMs elapses.
+    // See src/stealth/runtime-enable-guard.ts for the honest scope.
     try {
       await ensureRuntimeEnabled(cdpSession, {
         isStealthTarget: isStealth,
-        stealthMode: isStealth ? 'shield' : 'allow',
+        stealthMode: 'allow',
         callerId: 'validate_page',
       });
     } catch (err) {
@@ -234,8 +236,6 @@ const handler: ToolHandler = async (
     }
 
     consoleHandler = (event: CDPConsoleAPICalledEvent) => {
-      // Stealth mode: drop events the shield flagged as CDP artefacts.
-      if (isStealth && isStealthArtefactEvent(event)) return;
       if (!CAPTURED_TYPES.has(event.type)) return;
       const text = event.args.map(argText).join(' ').slice(0, 300);
       const location = event.stackTrace?.callFrames?.[0]?.url;
@@ -311,7 +311,7 @@ const handler: ToolHandler = async (
       if (exceptionHandler) {
         cdpSession.off('Runtime.exceptionThrown', exceptionHandler as (...args: unknown[]) => void);
       }
-      await cdpSession.send('Runtime.disable').catch(() => {});
+      await disableRuntime(cdpSession, { callerId: 'validate_page' });
       await cdpSession.detach().catch(() => {});
     } catch {
       // Ignore — page might be gone

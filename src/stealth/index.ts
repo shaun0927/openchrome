@@ -20,10 +20,10 @@ export {
 
 export {
   ensureRuntimeEnabled,
-  installRuntimeHookHiding,
-  isStealthArtefactEvent,
-  payloadMatchesArtefact,
+  disableRuntime,
+  getGuardStats,
   RuntimeEnableRefusedError,
   type EnsureRuntimeEnabledOptions,
   type StealthEnableMode,
+  type GuardStats,
 } from './runtime-enable-guard';

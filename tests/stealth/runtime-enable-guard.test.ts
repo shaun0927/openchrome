@@ -1,17 +1,20 @@
 /// <reference types="jest" />
 
 /**
- * Unit tests for the stealth Runtime.enable leak guard.
- * Origin idiom: patchright (Apache-2.0). Clean-room implementation.
+ * Unit tests for the stealth Runtime.enable audit guard.
+ *
+ * Honest scope: the guard does NOT shield the renderer-side Runtime.enable
+ * leak. It provides a single choke point, refuse-by-default in stealth,
+ * paired disable, and audit counters. Tests assert exactly that.
  */
 
 import { EventEmitter } from 'events';
 import {
   ensureRuntimeEnabled,
-  installRuntimeHookHiding,
-  isStealthArtefactEvent,
-  payloadMatchesArtefact,
+  disableRuntime,
+  getGuardStats,
   RuntimeEnableRefusedError,
+  __resetGuardStatsForTest,
 } from '../../src/stealth/runtime-enable-guard';
 
 interface FakeCDPSession extends EventEmitter {
@@ -29,110 +32,83 @@ function makeFakeSession(): FakeCDPSession {
   return emitter;
 }
 
+beforeEach(() => __resetGuardStatsForTest());
+
 describe('ensureRuntimeEnabled', () => {
   test('non-stealth targets always enable Runtime (passthrough)', async () => {
     const session = makeFakeSession();
-    await ensureRuntimeEnabled(session as never, {
-      isStealthTarget: false,
-      callerId: 'test',
-    });
+    await ensureRuntimeEnabled(session as never, { isStealthTarget: false, callerId: 'test' });
     expect(session.sent).toEqual(['Runtime.enable']);
+    expect(getGuardStats().enableCalls).toBe(1);
+    expect(getGuardStats().byCaller.test.enables).toBe(1);
   });
 
-  test('stealth targets refuse by default', async () => {
+  test('stealth targets refuse by default (no Runtime.enable is sent)', async () => {
     const session = makeFakeSession();
     await expect(
-      ensureRuntimeEnabled(session as never, {
-        isStealthTarget: true,
-        callerId: 'console_capture',
-      }),
+      ensureRuntimeEnabled(session as never, { isStealthTarget: true, callerId: 'console_capture' }),
     ).rejects.toBeInstanceOf(RuntimeEnableRefusedError);
-    // Runtime.enable must NOT have been sent when we refused.
     expect(session.sent).toEqual([]);
+    expect(getGuardStats().refusals).toBe(1);
+    expect(getGuardStats().byCaller.console_capture.refusals).toBe(1);
   });
 
-  test('stealth mode=allow bypasses the shield', async () => {
+  test('stealth mode=allow sends Runtime.enable and records the audit event', async () => {
     const session = makeFakeSession();
     await ensureRuntimeEnabled(session as never, {
       isStealthTarget: true,
       stealthMode: 'allow',
-      callerId: 'test',
+      callerId: 'validate_page',
     });
     expect(session.sent).toEqual(['Runtime.enable']);
+    expect(getGuardStats().enableCalls).toBe(1);
+    expect(getGuardStats().byCaller.validate_page.enables).toBe(1);
   });
 
-  test('stealth mode=shield installs the filter BEFORE Runtime.enable', async () => {
-    const session = makeFakeSession();
-    // Prove ordering: the shield listener is attached before the send
-    // resolves so it can see the very first consoleAPICalled event.
-    (session.send as jest.Mock).mockImplementation(async (method: string) => {
-      session.sent.push(method);
-      // At the moment Runtime.enable is sent, the shield listener must
-      // already be attached.
-      expect(session.listenerCount('Runtime.consoleAPICalled')).toBeGreaterThan(0);
-      return {};
-    });
-    await ensureRuntimeEnabled(session as never, {
-      isStealthTarget: true,
-      stealthMode: 'shield',
-      callerId: 'test',
-    });
-    expect(session.sent).toEqual(['Runtime.enable']);
-  });
-
-  test('RuntimeEnableRefusedError names the caller for debuggability', () => {
+  test('RuntimeEnableRefusedError names the caller and states no shield is provided', () => {
     const err = new RuntimeEnableRefusedError('validate_page');
     expect(err.message).toContain('validate_page');
+    expect(err.message).toContain('does not shield');
     expect(err.code).toBe('runtime_enable_refused');
   });
 });
 
-describe('installRuntimeHookHiding + payloadMatchesArtefact', () => {
-  test('tags payloads that contain CDP artefact patterns', async () => {
+describe('disableRuntime', () => {
+  test('sends Runtime.disable and increments audit counter', async () => {
     const session = makeFakeSession();
-    await installRuntimeHookHiding(session as never);
-
-    const event = {
-      type: 'debug',
-      args: [{ type: 'string', value: 'pptr:evaluate result' }],
-    };
-    session.emit('Runtime.consoleAPICalled', event);
-
-    expect(isStealthArtefactEvent(event)).toBe(true);
+    await disableRuntime(session as never, { callerId: 'console_capture' });
+    expect(session.sent).toEqual(['Runtime.disable']);
+    expect(getGuardStats().disableCalls).toBe(1);
+    expect(getGuardStats().byCaller.console_capture.disables).toBe(1);
   });
 
-  test('leaves clean payloads untagged', async () => {
+  test('swallows send errors so cleanup paths never throw', async () => {
     const session = makeFakeSession();
-    await installRuntimeHookHiding(session as never);
+    (session.send as jest.Mock).mockRejectedValueOnce(new Error('detached'));
+    await expect(disableRuntime(session as never, { callerId: 'x' })).resolves.toBeUndefined();
+    // No disable counted because send failed.
+    expect(getGuardStats().disableCalls).toBe(0);
+  });
+});
 
-    const event = {
-      type: 'log',
-      args: [{ type: 'string', value: 'user log' }],
-    };
-    session.emit('Runtime.consoleAPICalled', event);
-
-    expect(isStealthArtefactEvent(event)).toBe(false);
+describe('audit counters', () => {
+  test('each enable is expected to be paired with a disable', async () => {
+    const session = makeFakeSession();
+    await ensureRuntimeEnabled(session as never, {
+      isStealthTarget: true, stealthMode: 'allow', callerId: 'console_capture',
+    });
+    await disableRuntime(session as never, { callerId: 'console_capture' });
+    const s = getGuardStats();
+    expect(s.enableCalls).toBe(s.disableCalls);
+    expect(s.byCaller.console_capture.enables).toBe(s.byCaller.console_capture.disables);
   });
 
-  test('payloadMatchesArtefact matches known vendor fingerprints', () => {
-    const patterns = ['__pptr__', 'evaluateOnNewDocument', 'DevTools'];
-    expect(payloadMatchesArtefact({ x: '__pptr__ wrapper' }, patterns)).toBe(true);
-    expect(payloadMatchesArtefact({ trace: 'at evaluateOnNewDocument' }, patterns)).toBe(true);
-    expect(payloadMatchesArtefact({ msg: 'DevTools opened' }, patterns)).toBe(true);
-    expect(payloadMatchesArtefact({ ok: 'user click' }, patterns)).toBe(false);
-  });
-
-  test('payloadMatchesArtefact tolerates unserialisable payloads', () => {
-    const circular: Record<string, unknown> = {};
-    circular['self'] = circular;
-    expect(payloadMatchesArtefact(circular, ['x'])).toBe(false);
-  });
-
-  test('isStealthArtefactEvent guards nullish and non-object inputs', () => {
-    expect(isStealthArtefactEvent(null)).toBe(false);
-    expect(isStealthArtefactEvent(undefined)).toBe(false);
-    expect(isStealthArtefactEvent(42)).toBe(false);
-    expect(isStealthArtefactEvent('string')).toBe(false);
-    expect(isStealthArtefactEvent({})).toBe(false);
+  test('__resetGuardStatsForTest clears all counters', async () => {
+    const session = makeFakeSession();
+    await ensureRuntimeEnabled(session as never, { isStealthTarget: false, callerId: 't' });
+    __resetGuardStatsForTest();
+    const s = getGuardStats();
+    expect(s.enableCalls).toBe(0);
+    expect(s.byCaller).toEqual({});
   });
 });

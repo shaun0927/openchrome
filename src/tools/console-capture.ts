@@ -19,7 +19,7 @@ import { paginate } from '../utils/paginate';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 import {
   ensureRuntimeEnabled,
-  isStealthArtefactEvent,
+  disableRuntime,
   RuntimeEnableRefusedError,
 } from '../stealth/runtime-enable-guard';
 
@@ -353,9 +353,9 @@ const handler: ToolHandler = async (
         //
         // Stealth targets (opened via session-manager stealth navigation)
         // route through ensureRuntimeEnabled so operators must consciously
-        // accept the leak trade-off. Non-stealth targets are unaffected —
-        // ensureRuntimeEnabled is a passthrough. See P6 in the
-        // openchrome contribution plan for the patchright-derived rationale.
+        // accept the Runtime.enable leak. Non-stealth targets are unaffected
+        // — the guard is a passthrough. See src/stealth/runtime-enable-guard.ts
+        // for the honest scope (audit + refuse-by-default, no shielding).
         const cdpSession = await page.createCDPSession();
         const isStealth = typeof sessionManager.isStealthTarget === 'function'
           ? sessionManager.isStealthTarget(tabId)
@@ -363,10 +363,11 @@ const handler: ToolHandler = async (
         try {
           await ensureRuntimeEnabled(cdpSession, {
             isStealthTarget: isStealth,
-            // Default 'shield' on stealth: give operators live console events
-            // but wrap the payloads through the CDP-artefact filter so
-            // vendor detection scripts do not see pptr:evaluate markers.
-            stealthMode: isStealth ? 'shield' : 'allow',
+            // Stealth: 'allow' — console_capture cannot function without
+            // Runtime enabled; operators who reach this path have already
+            // decided they need the events. Guard still records the enable
+            // for audit and pairs it with disableRuntime on stop.
+            stealthMode: 'allow',
             callerId: 'console_capture',
           });
         } catch (err) {
@@ -414,11 +415,6 @@ const handler: ToolHandler = async (
         };
 
         state.consoleHandler = (event: CDPConsoleAPICalledEvent) => {
-          // Stealth mode: skip events the shield tagged as CDP-artefact
-          // payloads (see runtime-enable-guard). Non-stealth captures ignore
-          // the tag because it is never set outside 'shield' mode.
-          if (isStealth && isStealthArtefactEvent(event)) return;
-
           const logType = mapType(event.type);
 
           // Apply filter if specified
@@ -532,7 +528,7 @@ const handler: ToolHandler = async (
         // Remove CDP listeners and detach session
         state.cdpSession.off('Runtime.consoleAPICalled', state.consoleHandler as any);
         state.cdpSession.off('Runtime.exceptionThrown', state.exceptionHandler as any);
-        await state.cdpSession.send('Runtime.disable').catch(() => {});
+        await disableRuntime(state.cdpSession, { callerId: 'console_capture' });
         await state.cdpSession.detach().catch(() => {});
         const logCount = state.logs.stats().retained;
         const duration = Date.now() - state.startedAt;
