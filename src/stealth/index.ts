@@ -17,3 +17,13 @@ export {
   getStealthFingerprintDefenseScript,
   getStealthStackSanitizationScript,
 } from './fingerprint-defense';
+
+export {
+  ensureRuntimeEnabled,
+  installRuntimeHookHiding,
+  isStealthArtefactEvent,
+  payloadMatchesArtefact,
+  RuntimeEnableRefusedError,
+  type EnsureRuntimeEnabledOptions,
+  type StealthEnableMode,
+} from './runtime-enable-guard';
