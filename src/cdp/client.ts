@@ -37,6 +37,7 @@ import { getIdleState } from '../utils/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
 import { applyRegisteredPreloads } from './preload-injector';
 import { TargetPageIndex } from './target-page-index';
+import { assertHostAllowed, RemoteHostRefusedError } from './host-guard';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -68,6 +69,12 @@ export interface CDPClientOptions {
   heartbeatIntervalMs?: number;
   /** If true, auto-launch Chrome when not running (default: false) */
   autoLaunch?: boolean;
+  /**
+   * If true, permit `browserWSEndpoint` values that resolve to non-loopback
+   * hostnames. Default: false (host guard refuses). Also honours env
+   * `OPENCHROME_ALLOW_REMOTE_CDP=1`.
+   */
+  allowRemote?: boolean;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -111,6 +118,7 @@ export class CDPClient {
   private consecutiveHeartbeatSuccesses = 0;
   private checkConnectionInFlight = false;
   private autoLaunch: boolean;
+  private allowRemote: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
   private targetIdIndex = new TargetPageIndex();
@@ -169,6 +177,9 @@ export class CDPClient {
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? parseEnvInt('OPENCHROME_HEARTBEAT_INTERVAL_MS', DEFAULT_HEARTBEAT_INTERVAL_MS);
     // Use explicit option if provided, otherwise use global config
     this.autoLaunch = options.autoLaunch !== undefined ? options.autoLaunch : globalConfig.autoLaunch;
+    // Host-guard opt-in — default refuse non-loopback. Env override applied in
+    // assertHostAllowed() so a runtime env change is picked up per-attempt.
+    this.allowRemote = options.allowRemote === true;
   }
 
   /**
@@ -714,6 +725,20 @@ export class CDPClient {
       const instance = await launcher.ensureChrome({ autoLaunch });
       if (!this.isCurrentConnectionGeneration(generation)) {
         return false;
+      }
+
+      // Host guard — refuse non-loopback `browserWSEndpoint` unless the caller
+      // opted in. This runs on every attempt so a stale endpoint that flips
+      // hostname mid-retry (e.g. via env change) is re-evaluated.
+      try {
+        assertHostAllowed(instance.wsEndpoint, { allowRemote: this.allowRemote });
+      } catch (guardErr) {
+        if (guardErr instanceof RemoteHostRefusedError) {
+          // Do not retry — a non-loopback endpoint is a policy decision, not a
+          // transient failure. Surface immediately as the connect() error.
+          throw guardErr;
+        }
+        throw guardErr;
       }
 
       const wsTimeoutMs = budgetDriven
