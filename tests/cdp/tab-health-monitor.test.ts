@@ -191,6 +191,75 @@ describe('TabHealthMonitor', () => {
     monitor.stopAll();
   });
 
+  test('attempts one self-heal reload between unhealthy and eviction', async () => {
+    const reload = jest.fn().mockResolvedValue(undefined);
+    const evaluate = jest.fn().mockRejectedValue(new Error('renderer crashed'));
+    const page = { evaluate, reload } as unknown as Page;
+
+    monitor = new TabHealthMonitor({
+      probeIntervalMs: 30,
+      probeTimeoutMs: 10,
+      unhealthyThreshold: 2,
+      selfHealThreshold: 3,
+      evictionThreshold: 5,
+      selfHealTimeoutMs: 200,
+    });
+
+    const selfHealHandler = jest.fn();
+    const evictHandler = jest.fn();
+    monitor.on('tab-self-heal', selfHealHandler);
+    monitor.on('tab-evict', evictHandler);
+
+    monitor.monitorTab('tab1', page);
+
+    // Wait for self-heal to fire (at strike 3), then eviction (at strike 5).
+    await waitFor(() => selfHealHandler.mock.calls.length > 0);
+    expect(selfHealHandler).toHaveBeenCalledTimes(1);
+    // reload should have been called by attemptSelfHeal.
+    await waitFor(() => reload.mock.calls.length > 0);
+
+    // Even as failures continue, self-heal must not re-fire (one shot per streak).
+    await waitFor(() => evictHandler.mock.calls.length > 0);
+    expect(selfHealHandler).toHaveBeenCalledTimes(1);
+    expect(evictHandler).toHaveBeenCalledTimes(1);
+
+    monitor.stopAll();
+  });
+
+  test('self-heal budget resets after a successful probe', async () => {
+    // Fail 3 times → self-heal fires → next probe succeeds → tab healthy.
+    // If failures resume, self-heal must fire again (new streak).
+    let calls = 0;
+    const reload = jest.fn().mockResolvedValue(undefined);
+    const evaluate = jest.fn().mockImplementation(async () => {
+      calls++;
+      // Fail 3, succeed 1, then fail forever.
+      if (calls <= 3) throw new Error('crashed');
+      if (calls === 4) return 1;
+      throw new Error('crashed again');
+    });
+    const page = { evaluate, reload } as unknown as Page;
+
+    monitor = new TabHealthMonitor({
+      probeIntervalMs: 20,
+      probeTimeoutMs: 10,
+      unhealthyThreshold: 2,
+      selfHealThreshold: 3,
+      evictionThreshold: 6,
+      selfHealTimeoutMs: 200,
+    });
+
+    const selfHealHandler = jest.fn();
+    monitor.on('tab-self-heal', selfHealHandler);
+
+    monitor.monitorTab('tab1', page);
+    // First streak → self-heal, then recovery, then second streak → self-heal again.
+    await waitFor(() => selfHealHandler.mock.calls.length >= 2, { timeoutMs: 5000 });
+    expect(selfHealHandler.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    monitor.stopAll();
+  });
+
   test('probe timeout detects hanging renderer', async () => {
     monitor = new TabHealthMonitor({
       probeIntervalMs: 30,

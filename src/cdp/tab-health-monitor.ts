@@ -45,6 +45,19 @@ export interface TabHealthMonitorOptions {
   evictionThreshold?: number;
   /** Idle-state source. Defaults to the process-global singleton. */
   idleState?: IdleState;
+  /**
+   * Consecutive failures before attempting an in-place `page.reload()`
+   * self-heal, sitting between `unhealthyThreshold` and `evictionThreshold`.
+   * Set to 0 to disable self-heal entirely (revert to the historical
+   * unhealthy → evict progression). Default: `unhealthyThreshold + 1`
+   * (i.e. one attempt to reload before we start counting toward eviction).
+   *
+   * Inspired by real-browser-mcp (MIT) which retries the failing surface
+   * once before tearing it down, and by the Stagehand self-heal loop.
+   */
+  selfHealThreshold?: number;
+  /** Timeout for the self-heal `page.reload()` call (ms). Default: 10000 (10s). */
+  selfHealTimeoutMs?: number;
 }
 
 interface TabMonitorState {
@@ -61,7 +74,11 @@ export class TabHealthMonitor extends EventEmitter {
   private readonly probeTimeoutMs: number;
   private readonly unhealthyThreshold: number;
   private readonly evictionThreshold: number;
+  private readonly selfHealThreshold: number;
+  private readonly selfHealTimeoutMs: number;
   private readonly idleState: IdleState;
+  /** Per-tab flag: have we already tried a self-heal reload this failure streak. */
+  private readonly selfHealAttempted: Map<string, boolean> = new Map();
 
   /**
    * Per-tab timestamp (ms) when retainedBytes first exceeded the pressure
@@ -78,6 +95,14 @@ export class TabHealthMonitor extends EventEmitter {
     this.probeTimeoutMs = opts?.probeTimeoutMs ?? 5000;
     this.unhealthyThreshold = opts?.unhealthyThreshold ?? 3;
     this.evictionThreshold = opts?.evictionThreshold ?? 5;
+    // selfHealThreshold sits strictly between unhealthy and eviction: at
+    // exactly this failure count we attempt one page.reload() before further
+    // failures push the tab into eviction. Set to 0 to disable.
+    const requestedSelfHeal = opts?.selfHealThreshold ?? (this.unhealthyThreshold + 1);
+    this.selfHealThreshold = requestedSelfHeal > 0
+      ? Math.min(Math.max(requestedSelfHeal, this.unhealthyThreshold + 1), this.evictionThreshold - 1)
+      : 0;
+    this.selfHealTimeoutMs = opts?.selfHealTimeoutMs ?? 10_000;
     this.idleState = opts?.idleState ?? getIdleState();
   }
 
@@ -115,6 +140,7 @@ export class TabHealthMonitor extends EventEmitter {
     this.health.delete(targetId);
     this.pressureOnsetAt.delete(targetId);
     this.pressureFired.delete(targetId);
+    this.selfHealAttempted.delete(targetId);
   }
 
   /**
@@ -174,6 +200,9 @@ export class TabHealthMonitor extends EventEmitter {
       info.status = 'healthy';
       info.consecutiveFailures = 0;
       info.lastHealthyAt = now;
+      // Recovering to healthy resets the self-heal budget so a future streak
+      // can attempt reload again.
+      this.selfHealAttempted.delete(targetId);
       this.emit('tab-healthy', { targetId });
       this.checkBufferPressure(targetId, now);
     } catch (error) {
@@ -186,6 +215,20 @@ export class TabHealthMonitor extends EventEmitter {
         // to prevent zombie renderer processes in Chrome.
         this.emit('tab-evict', { targetId, consecutiveFailures: info.consecutiveFailures });
         this.unmonitorTab(targetId); // stop monitoring evicted tab
+      } else if (
+        this.selfHealThreshold > 0
+        && info.consecutiveFailures >= this.selfHealThreshold
+        && !this.selfHealAttempted.get(targetId)
+      ) {
+        // Between unhealthy and eviction we get one shot at recovering the tab
+        // in-place via page.reload() (real-browser-mcp idiom). The attempt is
+        // async but non-blocking for the probe loop — we mark the tab so we
+        // do not retry on every subsequent probe, and let the next probe
+        // observe whether the reload made the renderer responsive again.
+        this.selfHealAttempted.set(targetId, true);
+        console.error(`[TabHealthMonitor] Tab ${targetId} attempting self-heal reload (strike ${info.consecutiveFailures}/${this.evictionThreshold})`);
+        this.emit('tab-self-heal', { targetId, failures: info.consecutiveFailures });
+        void this.attemptSelfHeal(targetId, page);
       } else if (info.consecutiveFailures >= this.unhealthyThreshold) {
         info.status = 'unhealthy';
         console.error(`[TabHealthMonitor] Tab ${targetId} marked unhealthy (${info.consecutiveFailures} failures)`);
@@ -194,6 +237,31 @@ export class TabHealthMonitor extends EventEmitter {
         console.error(`[TabHealthMonitor] Tab ${targetId} probe failed (strike ${info.consecutiveFailures}/${this.unhealthyThreshold}):`,
           error instanceof Error ? error.message : String(error));
       }
+    }
+  }
+
+  /**
+   * Attempt one in-place recovery of a failing tab via `page.reload()`.
+   * Errors are swallowed intentionally — the next probe will observe whether
+   * the renderer became responsive again. If reload throws, the failure count
+   * simply keeps climbing toward the eviction threshold.
+   */
+  private async attemptSelfHeal(targetId: string, page: Page): Promise<void> {
+    let tid: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        page.reload({ timeout: this.selfHealTimeoutMs }).finally(() => { if (tid) clearTimeout(tid); }),
+        new Promise<never>((_, reject) => {
+          tid = setTimeout(
+            () => reject(new Error(`self-heal reload timeout after ${this.selfHealTimeoutMs}ms`)),
+            this.selfHealTimeoutMs,
+          );
+        }),
+      ]);
+      console.error(`[TabHealthMonitor] Tab ${targetId} self-heal reload completed; waiting for next probe to confirm health.`);
+    } catch (err) {
+      console.error(`[TabHealthMonitor] Tab ${targetId} self-heal reload failed:`,
+        err instanceof Error ? err.message : String(err));
     }
   }
 
