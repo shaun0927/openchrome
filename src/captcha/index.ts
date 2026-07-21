@@ -11,3 +11,17 @@ export { handleCaptcha, checkDomainCaptchaHistory } from './handler';
 export type { CaptchaHandleResult } from './handler';
 export { injectSolution } from './inject-solution';
 export type { CaptchaType, CaptchaDetectionResult, CaptchaSiteKey } from '../types/captcha';
+export {
+  ChallengeCookieStore,
+  classifyCookieName,
+  deriveRegistrableDomain,
+  extractChallengeCookies,
+  toChallengeCookie,
+} from './cf-clearance';
+export type {
+  ChallengeCookie,
+  ChallengeCookieKind,
+  ChallengeCookieStoreOptions,
+  ChallengeCookieStoreSnapshot,
+  RawCookie,
+} from './cf-clearance';
