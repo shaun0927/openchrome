@@ -135,11 +135,21 @@ program
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
   .option('--codegen <mode>', 'Opt-in replay artifact generation: off, puppeteer, playwright, or mcp-replay. Default: off (no response shape changes). Also: OPENCHROME_CODEGEN.')
-  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; minimal?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; autoElect?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
+  .option('--launch-on-first-use', 'Defer Chrome spawn until the first tool call — combined with --auto-launch, Chrome is not started at server boot but only when a caller actually needs a browser. Also: OPENCHROME_LAUNCH_ON_FIRST_USE=1. (#P3 pack)')
+  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; minimal?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; autoElect?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string; launchOnFirstUse?: boolean }) => {
     const { normalizeCodegenMode, setCodegenMode } = await import('./core/codegen');
     const codegenMode = normalizeCodegenMode(options.codegen ?? process.env.OPENCHROME_CODEGEN);
     setCodegenMode(codegenMode);
     process.env.OPENCHROME_CODEGEN = codegenMode;
+
+    // #P3 pack wiring: expose --launch-on-first-use as the CLI-facing alias
+    // for the pre-existing OPENCHROME_LAUNCH_ON_FIRST_USE env flag. Setting
+    // the env var here means downstream consumers (src/core/server.ts,
+    // src/cdp/client.ts, launch-gate.ts) pick up the opt-in without any
+    // additional plumbing.
+    if (options.launchOnFirstUse) {
+      process.env.OPENCHROME_LAUNCH_ON_FIRST_USE = '1';
+    }
 
     // --introspect-tools-list: print tools/list JSON and exit, NO Chrome/CDP/transport startup.
     if (options.introspectToolsList) {
