@@ -76,6 +76,11 @@ export interface GlobalConfig extends WindowBoundsConfig {
       intervalMs?: number;
     };
   };
+  /** Stealth policy settings — see src/cdp/raw-cdp-mode.ts */
+  stealth?: {
+    /** Raw-CDP mode level (default: 'off'). Overridable via OPENCHROME_RAW_CDP_LEVEL. */
+    rawCdpLevel?: 'off' | 'lean' | 'strict';
+  };
   /** Response compression settings */
   compression?: {
     /** Enable compression (default: true) */

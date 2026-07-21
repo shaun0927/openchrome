@@ -155,3 +155,89 @@ export function withRawCdpAudit(
     explain: mode.explain,
   };
 }
+
+/**
+ * Resolve the active raw-CDP level from (in precedence order):
+ *   1. `OPENCHROME_RAW_CDP_LEVEL` env var (`off` | `lean` | `strict`)
+ *   2. `globalConfig.stealth?.rawCdpLevel`
+ *   3. `off` (preserves current openchrome behaviour)
+ *
+ * Kept as a small pure function so tests can inject any config shape without
+ * importing the global config module.
+ */
+export function resolveRawCdpLevel(
+  envValue: string | undefined,
+  configValue: RawCdpLevel | undefined,
+): RawCdpLevel {
+  const normalize = (v: string | undefined): RawCdpLevel | undefined => {
+    if (v === 'off' || v === 'lean' || v === 'strict') return v;
+    return undefined;
+  };
+  return normalize(envValue) ?? configValue ?? 'off';
+}
+
+let cachedMode: RawCdpMode | null = null;
+let cachedLevel: RawCdpLevel | null = null;
+
+/**
+ * Global accessor used by the CDP call sites. Reads env + global config on
+ * every call but memoises the underlying policy object per-level so hot paths
+ * stay allocation-free.
+ */
+export function getRawCdpMode(
+  envValue: string | undefined,
+  configValue: RawCdpLevel | undefined,
+): RawCdpMode {
+  const level = resolveRawCdpLevel(envValue, configValue);
+  if (cachedMode && cachedLevel === level) return cachedMode;
+  cachedMode = createRawCdpMode({ level });
+  cachedLevel = level;
+  return cachedMode;
+}
+
+/**
+ * TEST-ONLY. Drops the memoised mode so subsequent `getRawCdpMode` calls
+ * re-read env/config. Never called from production code paths.
+ */
+export function __resetRawCdpModeCacheForTests(): void {
+  cachedMode = null;
+  cachedLevel = null;
+}
+
+/**
+ * Minimal shape of a CDP session that the guard needs — matches puppeteer's
+ * `CDPSession.send` without pinning the whole type.
+ */
+export interface GuardedSession {
+  send(method: string, params?: unknown): Promise<unknown>;
+}
+
+/**
+ * Send a CDP command through the raw-CDP mode policy. When the mode blocks
+ * the method, the call is skipped and a `blocked:<reason>` sentinel string is
+ * returned instead of the CDP result. Callers that need the real result must
+ * handle that sentinel (or use `source: 'user-action'` to bypass strict).
+ *
+ * This is the actual wiring seam — replacing `session.send('Runtime.enable')`
+ * with `sendGuarded(session, 'Runtime.enable', undefined, 'auto-attach')`
+ * means that under strict mode the domain is never enabled on the wire, which
+ * is the fingerprint delta nodriver documents.
+ */
+export async function sendGuarded(
+  session: GuardedSession,
+  method: string,
+  params: unknown,
+  source: RawCdpSource,
+  mode?: RawCdpMode,
+): Promise<unknown> {
+  // Lazy require to avoid pulling global config into this pure module at
+  // load time (and to keep the module tree-shakeable when only the pure
+  // policy is imported).
+  const activeMode =
+    mode ?? (require('./raw-cdp-runtime') as typeof import('./raw-cdp-runtime')).getActiveRawCdpMode();
+  const decision = activeMode.explain(method, { source });
+  if (!decision.allowed) {
+    return `blocked:${decision.reason}`;
+  }
+  return session.send(method, params);
+}

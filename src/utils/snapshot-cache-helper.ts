@@ -32,6 +32,7 @@ import {
   type SnapshotViewportRect,
 } from '../core/perception/snapshot-cache';
 import { getTargetId } from './puppeteer-helpers';
+import { sendGuarded, type GuardedSession } from '../cdp/raw-cdp-mode';
 
 const FLAG_ENV_VAR = 'OPENCHROME_SNAPSHOT_CACHE';
 
@@ -317,8 +318,12 @@ function attachEvictionSubscribersOnce(
       session = (await target.createCDPSession()) as CDPSessionLike;
 
       // Subscribe to relevant CDP domains. Errors enabling are non-fatal.
-      await session.send('DOM.enable').catch(() => undefined);
-      await session.send('Page.enable').catch(() => undefined);
+      // Route through raw-CDP mode: this is an auto-attach path (the snapshot
+      // cache latches on transparently to any target the tools touch), so
+      // strict mode legitimately suppresses these enables — the cache then
+      // falls back to on-demand snapshotting without the fingerprint.
+      await sendGuarded(session as GuardedSession, 'DOM.enable', undefined, 'auto-attach').catch(() => undefined);
+      await sendGuarded(session as GuardedSession, 'Page.enable', undefined, 'auto-attach').catch(() => undefined);
 
       const handleDocUpdated = (): void => {
         cache.evictFrame(mainFrameId(page), 'document_updated');

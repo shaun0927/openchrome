@@ -8,6 +8,7 @@
  */
 
 import { CDPSession } from 'puppeteer-core';
+import { sendGuarded } from '../cdp/raw-cdp-mode';
 import * as crypto from 'crypto';
 import { MCPServer } from '../mcp-server';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
@@ -346,7 +347,10 @@ const handler: ToolHandler = async (
         // rebrowser-puppeteer-core skips Runtime.enable by default,
         // so Puppeteer's page.on('console') never fires.
         const cdpSession = await page.createCDPSession();
-        await cdpSession.send('Runtime.enable');
+        // Route through raw-CDP mode gate. console-capture is a user-invoked
+        // tool, so Runtime.enable is legitimate even under `strict` — mark as
+        // `user-action`. Under `lean`/`off` this is a no-op wrapper.
+        await sendGuarded(cdpSession, 'Runtime.enable', undefined, 'user-action');
 
         const ringBuffer = createConsoleRingBuffer<ConsoleLogEntry>(
           { maxLines: maxLogs, maxBytes },

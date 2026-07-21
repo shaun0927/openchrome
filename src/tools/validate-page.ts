@@ -12,6 +12,7 @@
  */
 
 import type { CDPSession, Page } from 'puppeteer-core';
+import { sendGuarded } from '../cdp/raw-cdp-mode';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
@@ -198,7 +199,9 @@ const handler: ToolHandler = async (
 
   try {
     cdpSession = await page.createCDPSession();
-    await cdpSession.send('Runtime.enable');
+    // validate-page is a user-invoked tool; console/exception capture
+    // legitimately needs Runtime.enable even under strict.
+    await sendGuarded(cdpSession, 'Runtime.enable', undefined, 'user-action');
 
     consoleHandler = (event: CDPConsoleAPICalledEvent) => {
       if (!CAPTURED_TYPES.has(event.type)) return;
