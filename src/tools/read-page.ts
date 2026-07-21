@@ -46,6 +46,7 @@ async function formatNodeRefsBlock(
   page: import('puppeteer-core').Page,
   cdpClient: { send: (page: import('puppeteer-core').Page, method: string, params?: Record<string, unknown>) => Promise<unknown> },
   backendNodeIds: number[],
+  stableRefs?: Map<number, string>,
 ): Promise<string> {
   if (backendNodeIds.length === 0) {
     return '\n\n[node_refs]\n(empty)\n';
@@ -66,7 +67,13 @@ async function formatNodeRefsBlock(
         uid = null;
       }
     }
-    lines.push(`${backendNodeId}=${uid ?? 'null'}`);
+    // P14: append the reload-stable content-addressed ref alongside the
+    // per-load uid. Downstream consumers cache plans against `stable=@e<hash>`
+    // so a page reload (which churns backendNodeId and uid) no longer
+    // invalidates every reference.
+    const stable = stableRefs?.get(backendNodeId);
+    const stableSuffix = stable ? ` stable=@e${stable}` : '';
+    lines.push(`${backendNodeId}=${uid ?? 'null'}${stableSuffix}`);
   }
   lines.push('');
   return lines.join('\n');
@@ -952,6 +959,7 @@ const handler: ToolHandler = async (
           page,
           cdpClient,
           result.emittedBackendNodeIds ?? [],
+          result.emittedStableRefs,
         );
 
         // Delta compression: cache DOM and return diff if applicable
@@ -1325,6 +1333,7 @@ const handler: ToolHandler = async (
           page,
           cdpClient,
           domResult.emittedBackendNodeIds ?? [],
+          domResult.emittedStableRefs,
         );
 
         const fallbackNote =

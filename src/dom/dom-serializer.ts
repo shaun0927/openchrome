@@ -6,6 +6,7 @@ import type { Page } from 'puppeteer-core';
 import { MAX_OUTPUT_CHARS, DEFAULT_MAX_SERIALIZER_NODES } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
 import { formatAffordancePrefix } from '../utils/element-affordance';
+import { computeStableRef } from './stable-ref';
 
 export interface DOMSerializerOptions {
   maxDepth?: number;                    // default: -1 (unlimited)
@@ -425,6 +426,40 @@ interface SerializeContext {
    * order is preserved so the output map mirrors the visual order of lines.
    */
   emittedBackendNodeIds: Set<number>;
+  /**
+   * P14: stable content-addressed ref for each emitted backendNodeId.
+   * Computed from tag+role+name+ancestor chain+sibling index so the ref
+   * survives page reloads where backendNodeId churns.
+   */
+  emittedStableRefs: Map<number, string>;
+}
+
+/** P14: build a stable ref for a node given walk state. */
+function mintStableRefForNode(
+  node: DOMNode,
+  attrMap: Map<string, string>,
+  ancestorTags: readonly string[],
+  siblingIndex: number,
+): string {
+  const tagName = node.localName || node.nodeName.toLowerCase();
+  const explicitId = attrMap.get('id');
+  const testId = attrMap.get('data-testid') || attrMap.get('data-cy')
+    || attrMap.get('data-qa') || attrMap.get('data-id');
+  // Prefer test-hook > name attr > non-generated-looking id
+  const looksGeneratedId = explicitId
+    ? /^(?:[a-z]+[-_])?[0-9a-f]{6,}$|^:r[0-9a-z]+:$|^\d+$/i.test(explicitId)
+    : true;
+  const stableAttr = testId
+    || attrMap.get('name')
+    || (explicitId && !looksGeneratedId ? explicitId : undefined);
+  return computeStableRef({
+    tag: tagName,
+    role: attrMap.get('role'),
+    name: attrMap.get('aria-label') || attrMap.get('alt') || attrMap.get('title'),
+    ancestorTags,
+    siblingIndex,
+    stableAttr,
+  });
 }
 
 function createChildPathMap(children: DOMNode[], parentPath: string): Map<DOMNode, string> {
@@ -463,6 +498,8 @@ function serializeNode(
   depth: number,
   ctx: SerializeContext,
   path = 'd',
+  ancestorTags: readonly string[] = [],
+  siblingIndex = 0,
 ): void {
   if (ctx.truncated) return;
 
@@ -480,8 +517,11 @@ function serializeNode(
   if (node.nodeType === NODE_TYPE_DOCUMENT) {
     if (node.children) {
       const childPaths = createChildPathMap(node.children, path);
+      let dIdx = 0;
       for (const child of node.children) {
-        serializeNode(child, depth, ctx, childPaths.get(child) ?? path);
+        const idx = child.nodeType === NODE_TYPE_ELEMENT ? dIdx++ : dIdx;
+        serializeNode(child, depth, ctx, childPaths.get(child) ?? path,
+          ancestorTags, idx);
         if (ctx.truncated) return;
       }
     }
@@ -511,11 +551,20 @@ function serializeNode(
       const line = formatElement(node, attrMap, indent, fallbackText, interactive, customHints, ctx.planningProfile, ctx.referencedIds);
       if (!appendBoundedLine(ctx, line + '\n')) return;
       ctx.emittedBackendNodeIds.add(node.backendNodeId);
+      ctx.emittedStableRefs.set(node.backendNodeId,
+        mintStableRefForNode(node, attrMap, ancestorTags, siblingIndex));
     }
     // Omit decorative media wrappers without fallback text, but still inspect
     // descendants so meaningful labels inside <picture> survive.
+    const childAncestors = [...ancestorTags, tagName];
+    let childIdx = 0;
     for (const child of node.children || []) {
-      serializeNode(child, depth + 1, ctx);
+      if (child.nodeType === NODE_TYPE_ELEMENT) {
+        serializeNode(child, depth + 1, ctx, path, childAncestors, childIdx);
+        childIdx++;
+      } else {
+        serializeNode(child, depth + 1, ctx, path, childAncestors, childIdx);
+      }
       if (ctx.truncated) return;
     }
     return;
@@ -552,14 +601,30 @@ function serializeNode(
       // Track every backendNodeId emitted in this collapsed chain so the
       // #844 [node_refs] block can mint stable uids for the entire visible
       // DOM tree (chain ancestors + leaf), not just leaves.
-      for (const chainNode of chain) ctx.emittedBackendNodeIds.add(chainNode.backendNodeId);
+      // P14: stable refs for the collapsed chain. Ancestors extend as we
+      // descend the chain; each chain link is a single child.
+      let chainAncestors: readonly string[] = ancestorTags;
+      for (const chainNode of chain) {
+        ctx.emittedBackendNodeIds.add(chainNode.backendNodeId);
+        const chainNodeAttrs = parseAttributes(chainNode.attributes);
+        ctx.emittedStableRefs.set(chainNode.backendNodeId,
+          mintStableRefForNode(chainNode, chainNodeAttrs, chainAncestors, 0));
+        chainAncestors = [...chainAncestors, (chainNode.localName || chainNode.nodeName.toLowerCase())];
+      }
       ctx.emittedBackendNodeIds.add(leaf.backendNodeId);
+      ctx.emittedStableRefs.set(leaf.backendNodeId,
+        mintStableRefForNode(leaf, leafAttrMap, chainAncestors, 0));
 
       // Recurse into leaf's children
       if (leaf.children) {
         const childPaths = createChildPathMap(leaf.children, leafPath);
+        const leafChildAncestors = [...chainAncestors,
+          (leaf.localName || leaf.nodeName.toLowerCase())];
+        let elIdx = 0;
         for (const child of leaf.children) {
-          serializeNode(child, depth + 1, ctx, childPaths.get(child) ?? leafPath);
+          const idx = child.nodeType === NODE_TYPE_ELEMENT ? elIdx++ : elIdx;
+          serializeNode(child, depth + 1, ctx, childPaths.get(child) ?? leafPath,
+            leafChildAncestors, idx);
           if (ctx.truncated) return;
         }
       }
@@ -582,6 +647,9 @@ function serializeNode(
     // #844: track this node's backendNodeId so the [node_refs] block can
     // mint a stable uid for it.
     ctx.emittedBackendNodeIds.add(node.backendNodeId);
+    // P14: mint reload-stable content-addressed ref for this node.
+    ctx.emittedStableRefs.set(node.backendNodeId,
+      mintStableRefForNode(node, attrMap, ancestorTags, siblingIndex));
   }
 
   // Handle iframe content document
@@ -593,7 +661,8 @@ function serializeNode(
       ctx.lines.push(separator);
       ctx.totalChars += separator.length;
     }
-    serializeNode(node.contentDocument, depth + 1, ctx, `${path}/f`);
+    serializeNode(node.contentDocument, depth + 1, ctx, `${path}/f`,
+      [...ancestorTags, tagName], 0);
     return; // children are inside contentDocument
   }
 
@@ -621,8 +690,12 @@ function serializeNode(
       if (shadowRoot.children) {
         const shadowPath = `${path}/s:${node.shadowRoots.indexOf(shadowRoot)}`;
         const childPaths = createChildPathMap(shadowRoot.children, shadowPath);
+        const shadowAncestors = [...ancestorTags, tagName, '#shadow'];
+        let sIdx = 0;
         for (const child of shadowRoot.children) {
-          serializeNode(child, depth + 2, ctx, childPaths.get(child) ?? shadowPath);
+          const idx = child.nodeType === NODE_TYPE_ELEMENT ? sIdx++ : sIdx;
+          serializeNode(child, depth + 2, ctx, childPaths.get(child) ?? shadowPath,
+            shadowAncestors, idx);
           if (ctx.truncated) return;
         }
       }
@@ -630,6 +703,7 @@ function serializeNode(
   }
 
   // Recurse into children
+  const childAncestorTags = [...ancestorTags, tagName];
   if (node.children && ctx.compression !== 'none') {
     const childPaths = createChildPathMap(node.children, path);
     const groups = groupConsecutiveSiblings(node.children);
@@ -637,13 +711,12 @@ function serializeNode(
       ? SIBLING_COLLAPSE_THRESHOLD_AGGRESSIVE
       : SIBLING_COLLAPSE_THRESHOLD_LIGHT;
 
+    let childElIdx = 0;
     for (const group of groups) {
       if (ctx.truncated) return;
 
       if (ctx.planningProfile === 'stable' && group.nodes.every(isDecorativeMediaNode)) {
-        // A purely decorative media run contributes no planning signal. Skip it
-        // as a group instead of visiting every omitted leaf and exhausting the
-        // serializer node budget on ad/image-heavy pages.
+        childElIdx += group.nodes.length;
         continue;
       }
 
@@ -655,7 +728,8 @@ function serializeNode(
         // Emit first SIBLING_SAMPLE_COUNT with full detail
         const samples = group.nodes.slice(0, SIBLING_SAMPLE_COUNT);
         for (const sampleNode of samples) {
-          serializeNode(sampleNode, depth + 1, ctx, childPaths.get(sampleNode) ?? path);
+          serializeNode(sampleNode, depth + 1, ctx, childPaths.get(sampleNode) ?? path,
+            childAncestorTags, childElIdx++);
           if (ctx.truncated) return;
         }
 
@@ -673,17 +747,35 @@ function serializeNode(
           // can refer to the range bounds without a fresh DOM read.
           ctx.emittedBackendNodeIds.add(firstRef);
           ctx.emittedBackendNodeIds.add(lastRef);
+          // P14: stable refs for the two summary endpoints (idempotent).
+          const _firstNode = group.nodes[0];
+          const _lastNode = group.nodes[group.nodes.length - 1];
+          if (!ctx.emittedStableRefs.has(firstRef)) {
+            ctx.emittedStableRefs.set(firstRef, mintStableRefForNode(
+              _firstNode, parseAttributes(_firstNode.attributes),
+              childAncestorTags, 0));
+          }
+          if (!ctx.emittedStableRefs.has(lastRef)) {
+            ctx.emittedStableRefs.set(lastRef, mintStableRefForNode(
+              _lastNode, parseAttributes(_lastNode.attributes),
+              childAncestorTags, group.nodes.length - 1));
+          }
         }
 
+        // Skip counter past unrendered middle nodes.
+        childElIdx += Math.max(0, group.nodes.length - SIBLING_SAMPLE_COUNT - 1);
         // Emit last node if not already shown
         if (group.nodes.length > SIBLING_SAMPLE_COUNT) {
           const lastNode = group.nodes[group.nodes.length - 1];
-          serializeNode(lastNode, depth + 1, ctx, childPaths.get(lastNode) ?? path);
+          serializeNode(lastNode, depth + 1, ctx, childPaths.get(lastNode) ?? path,
+            childAncestorTags, childElIdx++);
         }
       } else {
         // Small group — emit all normally
         for (const groupNode of group.nodes) {
-          serializeNode(groupNode, depth + 1, ctx, childPaths.get(groupNode) ?? path);
+          serializeNode(groupNode, depth + 1, ctx, childPaths.get(groupNode) ?? path,
+            childAncestorTags, childElIdx);
+          if (groupNode.nodeType === NODE_TYPE_ELEMENT) childElIdx++;
           if (ctx.truncated) return;
         }
       }
@@ -699,8 +791,11 @@ function serializeNode(
   } else if (node.children) {
     // Original behavior when compression is 'none'
     const childPaths = createChildPathMap(node.children, path);
+    let idx = 0;
     for (const child of node.children) {
-      serializeNode(child, depth + 1, ctx, childPaths.get(child) ?? path);
+      const cIdx = child.nodeType === NODE_TYPE_ELEMENT ? idx++ : idx;
+      serializeNode(child, depth + 1, ctx, childPaths.get(child) ?? path,
+        childAncestorTags, cIdx);
       if (ctx.truncated) return;
     }
   }
@@ -824,6 +919,12 @@ export async function serializeDOM(
    * mapping block for the response.
    */
   emittedBackendNodeIds: number[];
+  /**
+   * P14: content-addressed stable ref per emitted backendNodeId. Callers
+   * feed this to the `[node_refs]` renderer so downstream consumers get a
+   * ref that survives page reloads (backendNodeId does not).
+   */
+  emittedStableRefs: Map<number, string>;
 }> {
   const maxDepth = options?.maxDepth ?? -1;
   const maxOutputChars = options?.maxOutputChars ?? MAX_OUTPUT_CHARS;
@@ -904,6 +1005,7 @@ export async function serializeDOM(
     maxNodes: DEFAULT_MAX_SERIALIZER_NODES,
     customInteractiveHints,
     emittedBackendNodeIds: new Set<number>(),
+    emittedStableRefs: new Map<number, string>(),
   };
 
   // Add page stats header through the same bounded append path as DOM lines.
@@ -928,5 +1030,6 @@ export async function serializeDOM(
     pageStats,
     truncated: ctx.truncated,
     emittedBackendNodeIds: Array.from(ctx.emittedBackendNodeIds),
+    emittedStableRefs: ctx.emittedStableRefs,
   };
 }

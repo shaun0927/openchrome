@@ -1,79 +1,48 @@
 ---
 doc_kind: project-material
 status: working
-version: 2026-07-21_v1
-canonical_path: /home/elite/projects/tools/references/openchrome-fork-b2/docs/recipes/stable-a11y-refs.md
+version: 2026-07-21_v2
 ---
 
 # Stable a11y-refs across reloads
 
-Openchrome's DOM serializer prefixes each node with `backendNodeId`
-(`[123]<button ... />`). That id is stable inside a single page load
-but churns on reload, back/forward, or client-side re-hydration. Any
-plan the agent cached against `[123]` is stale the next tick.
+`read_page` (DOM mode) emits a `[node_refs]` block. Each line is now:
 
-This recipe uses `src/dom/stable-ref.ts` to mint content-addressed
-refs that survive reload as long as the target element's identity
-signature stays the same.
+    <backendNodeId>=<per-load-uid> stable=@e<hash>
 
-## When to use
+`stable=@e<hash>` is the reload-stable content-addressed ref. Two
+identical elements at the same DOM slot hash to the same `@e<hash>`
+across page reloads, back/forward navigation, and client-side
+re-hydration; the per-load uid and `backendNodeId` do not.
 
-- The agent is executing a plan across multiple page loads (login →
-  checkout → confirmation).
-- You want to reuse a `storage_state` snapshot and have the "same"
-  refs on the reloaded page as on the original.
-- Two identical-looking siblings (list rows, product cards) need to
-  be told apart deterministically.
+## Where it comes from
 
-## Minting refs
-
-```ts
-import { mintPageRefs } from 'openchrome-mcp/dist/dom/stable-ref';
-
-const refs = mintPageRefs([
-  { tag: 'button', role: 'button', name: 'Sign in',
-    ancestorTags: ['html', 'body', 'form'], siblingIndex: 0 },
-  { tag: 'input', role: 'textbox', name: 'Email',
-    ancestorTags: ['html', 'body', 'form'], siblingIndex: 1,
-    stableAttr: 'email-input' },
-]);
-
-// refs[0].display === '@e' + 6-hex-char hash
-// refs[1] shares hash even after reload — stableAttr dominates
-```
+`src/dom/dom-serializer.ts` walks the DOM, tracks each node's tag,
+role, name, ancestor tag chain, and sibling index, and calls
+`computeStableRef()` (`src/dom/stable-ref.ts`). Test-hook attributes
+(`data-testid`, `data-cy`, `data-qa`, `data-id`, `name`, and
+non-generated-looking `id`) dominate the hash so a labelled element
+keeps its ref even when re-parented.
 
 ## Storage-state reuse
 
-Persist `{ url, ref }` alongside the storage_state snapshot; look up
-with `refKey({ url, ref })`. Query strings and hash fragments are
-stripped so the same element on `/checkout?ref=abc` and `/checkout`
-resolves to the same key.
+Cache plans against `stable=@e<hash>`, not `backendNodeId`. Use
+`refKey({ url, ref })` from `src/dom/stable-ref.ts` as the composite
+lookup key; query strings and hash fragments are stripped.
 
-```ts
-import { refKey } from 'openchrome-mcp/dist/dom/stable-ref';
+## Notes
 
-const key = refKey({ url: page.url(), ref: refs[0].hash });
-// key === 'https://x.com/checkout#<hash>'
-storageState.pins[key] = { selector: 'button[type=submit]', role: 'button' };
-```
-
-## Design notes
-
-- Hash is truncated SHA-256, default 6 hex chars (~24 bits). Collisions
-  are resolved by `mintPageRefs()` with deterministic suffixes
-  (`b`, `c`, `d`..., wrapping to two letters after 25).
-- `stableAttr` (data-testid, non-generated `id`, `name`) dominates the
-  hash. When present, tree coordinates are secondary — the ref survives
-  DOM reorganisation.
-- Reserved ARIA roles (`generic`, `none`, `presentation`, empty) are
-  collapsed to empty so the browser's role-computation choice doesn't
-  perturb the hash.
+- Hash is truncated SHA-256, default 6 hex chars (~24 bits). Measured
+  collision rate on 200 realistic-mix nodes: 0% (see
+  `tests/dom/stable-ref-integration.test.ts`).
+- Reserved ARIA roles (`generic`, `none`, `presentation`, empty)
+  collapse to empty so browser role-computation drift doesn't perturb
+  the hash.
 - Unicode whitespace (nbsp, zero-width space) is normalised so a
   browser that inserts `&nbsp;` on one load and a space on the next
-  still produces the same ref.
+  produces the same ref.
 
 ## Origin credit
 
 Shared idiom from playwright-mcp (Apache-2.0, `aria-ref`) and Vercel's
-agent-browser (Apache-2.0, `@e*`). Clean-room implementation in
-`src/dom/stable-ref.ts`.
+agent-browser (Apache-2.0, `@e*`). Clean-room implementation.
