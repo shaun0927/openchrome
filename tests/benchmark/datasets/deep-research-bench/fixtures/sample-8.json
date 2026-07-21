@@ -1,0 +1,90 @@
+[
+  {
+    "task_id": "drb-en-001",
+    "language": "en",
+    "domain": "Science",
+    "query": "Summarise the current evidence on the safety of CRISPR-Cas13 in adult liver cells.",
+    "expected_sources": [
+      "https://www.nature.com/articles/s41587-021-01000-8",
+      "https://pubmed.ncbi.nlm.nih.gov/34741029/"
+    ],
+    "reference_steps": 8
+  },
+  {
+    "task_id": "drb-en-002",
+    "language": "en",
+    "domain": "Finance",
+    "query": "Compare the fee structures of the three largest US actively managed small-cap ETFs.",
+    "expected_sources": [
+      "https://www.morningstar.com/",
+      "https://www.etf.com/"
+    ],
+    "reference_steps": 10
+  },
+  {
+    "task_id": "drb-en-003",
+    "language": "en",
+    "domain": "Technology",
+    "query": "What are the notable Kubernetes 1.30 API deprecations that break existing manifests?",
+    "expected_sources": [
+      "https://kubernetes.io/docs/reference/using-api/deprecation-guide/",
+      "https://kubernetes.io/blog/2024/04/17/kubernetes-v1-30-release/"
+    ],
+    "reference_steps": 6
+  },
+  {
+    "task_id": "drb-en-004",
+    "language": "en",
+    "domain": "Law",
+    "query": "How has the EU AI Act's high-risk classification evolved between the 2021 draft and the final text?",
+    "expected_sources": [
+      "https://eur-lex.europa.eu/",
+      "https://artificialintelligenceact.eu/"
+    ],
+    "reference_steps": 12
+  },
+  {
+    "task_id": "drb-zh-001",
+    "language": "zh",
+    "domain": "Policy",
+    "query": "中国2024年新能源汽车补贴政策相比2023年的主要变化。",
+    "expected_sources": [
+      "http://www.gov.cn/",
+      "https://www.miit.gov.cn/"
+    ],
+    "reference_steps": 9
+  },
+  {
+    "task_id": "drb-zh-002",
+    "language": "zh",
+    "domain": "Science",
+    "query": "中科院近三年在钙钛矿太阳能电池稳定性方向的关键突破。",
+    "expected_sources": [
+      "https://www.cas.cn/",
+      "https://www.nsfc.gov.cn/"
+    ],
+    "reference_steps": 7
+  },
+  {
+    "task_id": "drb-en-005",
+    "language": "en",
+    "domain": "History",
+    "query": "Trace the changing consensus on the cause of the 1918 influenza pandemic's high mortality.",
+    "expected_sources": [
+      "https://www.cdc.gov/flu/pandemic-resources/1918-pandemic-h1n1.html",
+      "https://www.who.int/"
+    ],
+    "reference_steps": 8
+  },
+  {
+    "task_id": "drb-en-006",
+    "language": "en",
+    "domain": "Medicine",
+    "query": "Summarise phase-3 trial outcomes for GLP-1 receptor agonists in patients without diabetes.",
+    "expected_sources": [
+      "https://www.nejm.org/",
+      "https://jamanetwork.com/"
+    ],
+    "reference_steps": 11
+  }
+]
