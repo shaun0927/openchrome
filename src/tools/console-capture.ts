@@ -17,6 +17,11 @@ import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '.
 import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
 import { paginate } from '../utils/paginate';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
+import {
+  ensureRuntimeEnabled,
+  isStealthArtefactEvent,
+  RuntimeEnableRefusedError,
+} from '../stealth/runtime-enable-guard';
 
 /**
  * Validate caller-supplied cap values. Used to reject `maxLogs`/`maxBytes`
@@ -345,8 +350,45 @@ const handler: ToolHandler = async (
         // so we receive consoleAPICalled and exceptionThrown events.
         // rebrowser-puppeteer-core skips Runtime.enable by default,
         // so Puppeteer's page.on('console') never fires.
+        //
+        // Stealth targets (opened via session-manager stealth navigation)
+        // route through ensureRuntimeEnabled so operators must consciously
+        // accept the leak trade-off. Non-stealth targets are unaffected —
+        // ensureRuntimeEnabled is a passthrough. See P6 in the
+        // openchrome contribution plan for the patchright-derived rationale.
         const cdpSession = await page.createCDPSession();
-        await cdpSession.send('Runtime.enable');
+        const isStealth = typeof sessionManager.isStealthTarget === 'function'
+          ? sessionManager.isStealthTarget(tabId)
+          : false;
+        try {
+          await ensureRuntimeEnabled(cdpSession, {
+            isStealthTarget: isStealth,
+            // Default 'shield' on stealth: give operators live console events
+            // but wrap the payloads through the CDP-artefact filter so
+            // vendor detection scripts do not see pptr:evaluate markers.
+            stealthMode: isStealth ? 'shield' : 'allow',
+            callerId: 'console_capture',
+          });
+        } catch (err) {
+          if (err instanceof RuntimeEnableRefusedError) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    tabId,
+                    action: 'start',
+                    status: 'refused_stealth',
+                    message: err.message,
+                    code: err.code,
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          throw err;
+        }
 
         const ringBuffer = createConsoleRingBuffer<ConsoleLogEntry>(
           { maxLines: maxLogs, maxBytes },
@@ -372,6 +414,11 @@ const handler: ToolHandler = async (
         };
 
         state.consoleHandler = (event: CDPConsoleAPICalledEvent) => {
+          // Stealth mode: skip events the shield tagged as CDP-artefact
+          // payloads (see runtime-enable-guard). Non-stealth captures ignore
+          // the tag because it is never set outside 'shield' mode.
+          if (isStealth && isStealthArtefactEvent(event)) return;
+
           const logType = mapType(event.type);
 
           // Apply filter if specified

@@ -21,6 +21,11 @@ import { safeTitle } from '../utils/safe-title';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { buildTextMetrics } from '../core/metrics/token-estimate';
 import { isStateHeaderEnabled, prependHeaderText } from './_shared/state-header';
+import {
+  ensureRuntimeEnabled,
+  isStealthArtefactEvent,
+  RuntimeEnableRefusedError,
+} from '../stealth/runtime-enable-guard';
 
 interface ConsoleLogEntry {
   type: string;
@@ -196,11 +201,41 @@ const handler: ToolHandler = async (
   let consoleHandler: ((event: CDPConsoleAPICalledEvent) => void) | null = null;
   let exceptionHandler: ((event: CDPExceptionThrownEvent) => void) | null = null;
 
+  // Defensive: some test doubles of getSessionManager do not implement the
+  // full surface. isStealthTarget is optional there — default to false
+  // (non-stealth) so the guard is a passthrough.
+  const isStealth = typeof sessionManager.isStealthTarget === 'function'
+    ? sessionManager.isStealthTarget(tabId)
+    : false;
   try {
     cdpSession = await page.createCDPSession();
-    await cdpSession.send('Runtime.enable');
+    // Stealth targets go through the runtime-enable guard so vendor
+    // detection scripts do not see Runtime.enable side effects (see P6 /
+    // patchright idiom in stealth/runtime-enable-guard.ts).
+    try {
+      await ensureRuntimeEnabled(cdpSession, {
+        isStealthTarget: isStealth,
+        stealthMode: isStealth ? 'shield' : 'allow',
+        callerId: 'validate_page',
+      });
+    } catch (err) {
+      if (err instanceof RuntimeEnableRefusedError) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: ${err.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      throw err;
+    }
 
     consoleHandler = (event: CDPConsoleAPICalledEvent) => {
+      // Stealth mode: drop events the shield flagged as CDP artefacts.
+      if (isStealth && isStealthArtefactEvent(event)) return;
       if (!CAPTURED_TYPES.has(event.type)) return;
       const text = event.args.map(argText).join(' ').slice(0, 300);
       const location = event.stackTrace?.callFrames?.[0]?.url;
