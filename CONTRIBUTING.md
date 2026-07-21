@@ -242,6 +242,96 @@ The hint engine (`src/hints/`) currently has 21 static rules. Areas to improve:
 - **Tutorials**: Step-by-step guides (e.g., "Automate your CI dashboard")
 - **Troubleshooting guide**: Common issues and solutions per platform
 
+## Contribution Principles
+
+### Adapter first, fork last
+
+Before you patch `src/` core files to wire in a new backend (a new stealth
+engine, a new extraction library, a new vision model, a new captcha solver),
+try to land the integration as an **adapter** behind an existing extension
+point. Adapters keep the core surface small, isolate third-party licence and
+release cadence risk, and let the core CI stay green when the vendor changes
+its API.
+
+Fork the core (edit files under `src/actions/`, `src/cdp/`, `src/chrome/`
+etc.) only when the adapter surface genuinely cannot express what you need.
+When in doubt, open an issue describing the extension point you wish existed
+before writing the fork.
+
+#### Existing extension points
+
+| Extension point | Where | Add a new backend by |
+|---|---|---|
+| Stealth injection scripts | `src/stealth/fingerprint-defense.ts`, `human-behavior.ts` | Adding a named script generator that returns a self-contained closure and wiring it into the stealth registry. |
+| Captcha providers | `src/captcha/providers/` | Implementing the provider interface (detect + solve) and registering it in `solver-registry.ts`. |
+| Extraction strategies | `src/extraction/strategies.ts` | Adding a strategy that consumes the shared `ExtractionRequest` and returns a `ExtractionResult`. |
+| Vision grounding | `src/vision/` | Implementing the grounding tier interface and adding a fallback rung in the tier chain. |
+| Auth backends | `src/auth/credential-store.ts` | Implementing the credential store interface (get/set/list) against a new backend (OS keychain, KMS, HashiCorp Vault). |
+| Recovery hooks | `src/recovery/` | Adding a `RecoveryTrajectoryLedger` consumer that reads outcomes and emits corrective actions. |
+| Hint rules | `src/hints/rules/` | Following the existing rule shape (match + response) and registering the rule. |
+| MCP tools | `src/tools/` + `src/tools/index.ts` | Implementing the tool contract and registering it in the tool index. |
+
+#### Adapter contract
+
+Every adapter should:
+
+1. **Declare its scope** — one exported interface that names what the adapter
+   does. Do not re-export third-party types; wrap them so vendor breakage does
+   not become a `src/` breakage.
+2. **Be self-contained** — no imports from other adapter directories. Two
+   adapters must never call each other; they meet only at the interface the
+   core defines.
+3. **Fail closed** — throw a typed error (e.g. `ExtractionError`,
+   `StealthUnavailableError`) rather than a generic `Error`. The core routes
+   typed errors into the failure classifier (`src/failure/classifier.ts`).
+4. **Ship its own tests** — under `tests/<domain>/<adapter-name>/`. If the
+   adapter cannot be tested without hitting the network or spawning Chrome,
+   add a mock/fake sibling that satisfies the interface for integration tests.
+5. **License-tag the origin** — if the adapter mirrors an idiom from an
+   upstream open-source project, note the project name, licence, and source
+   file at the top of the adapter module (see
+   `src/chrome/auto-connect.ts` for the pattern openchrome uses today).
+
+#### Example: adding a new extraction backend
+
+Suppose you want to add [trafilatura](https://github.com/adbar/trafilatura)
+(Apache-2.0) as a body-text extractor. The adapter path avoids touching
+`src/extraction/mode.ts` or `src/extraction/plan.ts`:
+
+```ts
+// src/extraction/strategies/trafilatura.ts
+import type { ExtractionRequest, ExtractionResult, ExtractionStrategy } from '../types';
+
+/**
+ * trafilatura-backed extractor. Origin: adbar/trafilatura (Apache-2.0).
+ * Runs the trafilatura CLI out-of-process so the vendor lifecycle stays
+ * isolated from the Node.js core.
+ */
+export const trafilaturaStrategy: ExtractionStrategy = {
+  name: 'trafilatura',
+  async extract(req: ExtractionRequest): Promise<ExtractionResult> {
+    // ... call trafilatura, wrap result, throw ExtractionError on failure.
+  },
+};
+```
+
+Then register the strategy in `src/extraction/strategies/index.ts` — one
+line. No core file changes, no cross-adapter coupling, and if trafilatura
+disappears tomorrow the strategy file is the only thing that needs replacing.
+
+#### When forking core is the right call
+
+Some changes cannot ship as adapters and legitimately need core patches:
+
+- Fixing a bug in the CDP client, launcher, or session manager.
+- Adding a new MCP protocol capability or resource.
+- Adding a new lifecycle mode (attach / launch / auto) or launch guard.
+- Refactoring a shared type or contract.
+
+For those, open an issue that names the invariant you are changing before you
+send the PR. Core changes go through a stricter review because they affect
+every adapter downstream.
+
 ### Good First Issues
 
 If you're new to the project, these are good starting points:
