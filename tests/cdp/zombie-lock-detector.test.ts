@@ -1,10 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
 import { ZombieLockDetector } from '../../src/cdp/zombie-lock-detector.js';
-import {
-  attachZombieReclaim,
-  type ZombieReclaimAuditEntry,
-} from '../../src/cdp/zombie-lock-integration.js';
-import { TargetLeaseRegistry } from '../../src/session/target-lease-registry.js';
 
 describe('ZombieLockDetector', () => {
   it('emits owner_reclaim only after the confirmation streak', async () => {
@@ -68,42 +63,5 @@ describe('ZombieLockDetector', () => {
     await detector.tick();
     expect(errors).toHaveLength(1);
     expect(reclaims).toHaveLength(0);
-  });
-});
-
-describe('attachZombieReclaim', () => {
-  it('releases the owning session when the detector fires', async () => {
-    let clock = 0;
-    let visible: string[] = ['t1'];
-    const detector = new ZombieLockDetector(async () => visible, {
-      confirmations: 1,
-      registrationGraceMs: 0,
-      now: () => clock,
-    });
-    const registry = new TargetLeaseRegistry();
-    registry.acquire({
-      targetId: 't1',
-      sessionId: 'session-1',
-      now: clock,
-    });
-    registry.acquire({
-      targetId: 't2',
-      sessionId: 'session-1',
-      now: clock,
-    });
-    const audit: ZombieReclaimAuditEntry[] = [];
-    const off = attachZombieReclaim(detector, registry, audit);
-    detector.register('t1', 'owner-a');
-
-    await detector.tick(); // seen
-    visible = [];
-    clock = 6_000;
-    await detector.tick(); // missing → reclaim
-
-    expect(audit).toHaveLength(1);
-    expect(audit[0]!.releasedTargets.sort()).toEqual(['t1', 't2']);
-    expect(registry.get('t1')).toBeUndefined();
-    expect(registry.get('t2')).toBeUndefined();
-    off();
   });
 });

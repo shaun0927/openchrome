@@ -1,31 +1,12 @@
 /**
- * Zombie lock detector for CDP controller leases.
+ * Zombie lock detector for CDP controller leases (#1474).
  *
- * Addresses upstream issue #1474: an owner may hold a controller lock long
- * after it has crashed, disconnected, or otherwise stopped servicing its
- * targets. Without an active liveness probe those locks look "healthy" to the
- * broker but cannot be reclaimed until the idle TTL expires. On long-running
- * agents that TTL is measured in minutes, which manifests as new sessions
- * hanging on `TargetLeaseConflictError` for no observable reason.
- *
- * This module is clean-room. It borrows the *idea* — periodic liveness probes
- * plus an explicit reclaim event — from the general CDP self-heal literature
- * (see the census entries for real-browser-mcp A17 and trycua A18), but does
- * not copy code. It is intentionally decoupled from `TargetLeaseRegistry` so
- * it can be wired in as a sidecar and unit-tested in isolation.
- *
- * Contract:
- *   1. Callers register each active lease via {@link register}.
- *   2. Callers set a heartbeat probe that resolves to the raw
- *      `Target.getTargets` frame identifiers currently visible on the
- *      controller. The detector diffs those against the leased targetIds.
- *   3. If a lease's target vanishes from the heartbeat *and* stays gone across
- *      {@link ZombieLockOptions.confirmations} probes, the detector emits an
- *      `owner_reclaim` event so the broker can drop the lock without waiting
- *      for the TTL.
- *
- * The detector never *performs* the reclaim — that is the broker's job. It
- * only decides "this owner is a zombie" and surfaces the decision.
+ * Owners can hold a controller lock after crashing/disconnecting, so new
+ * sessions hang on `TargetLeaseConflictError` until the idle TTL expires.
+ * This module runs a periodic heartbeat probe against the raw CDP target
+ * list; if a leased target is missing for `confirmations` consecutive
+ * probes it emits `owner_reclaim` so the broker can release the lock.
+ * The detector never performs the reclaim itself — see zombie-lock-wiring.
  */
 
 import { EventEmitter } from 'node:events';
@@ -34,23 +15,11 @@ import { EventEmitter } from 'node:events';
 export type HeartbeatProbe = () => Promise<readonly string[]>;
 
 export interface ZombieLockOptions {
-  /**
-   * How often to poll the heartbeat probe.
-   * Defaults to 5s — enough to catch a crashed owner in one benchmark tick
-   * without generating meaningful CDP overhead.
-   */
+  /** Heartbeat poll interval (ms). Default 5_000. */
   intervalMs?: number;
-  /**
-   * Number of consecutive "missing" observations required before the lease is
-   * flagged as a zombie. Defaults to 2 to survive a single flaky probe.
-   */
+  /** Consecutive misses before reclaim. Default 2 (survives one flaky probe). */
   confirmations?: number;
-  /**
-   * Grace period (ms) after {@link ZombieLockDetector.register}. During this
-   * window the lease is ignored even if the target is not visible yet —
-   * Chrome sometimes reports a new target on the following tick. Defaults to
-   * 1_500ms.
-   */
+  /** Grace window (ms) after register() during which misses are ignored. Default 1_500. */
   registrationGraceMs?: number;
   /** Injected clock, primarily for tests. */
   now?: () => number;
@@ -78,15 +47,7 @@ const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_CONFIRMATIONS = 2;
 const DEFAULT_REGISTRATION_GRACE_MS = 1_500;
 
-/**
- * Zombie lock detector.
- *
- * Emits:
- *   - `owner_reclaim` — an owner has been declared a zombie. Payload is
- *     {@link OwnerReclaimEvent}.
- *   - `probe-error` — the heartbeat probe threw. Payload is the raw Error.
- *     Consumers should log; a probe error alone does not reclaim.
- */
+/** Emits `owner_reclaim` (zombie confirmed) and `probe-error` (probe threw). */
 export class ZombieLockDetector extends EventEmitter {
   private readonly entries = new Map<string, ZombieLockEntry>();
   private readonly probe: HeartbeatProbe;

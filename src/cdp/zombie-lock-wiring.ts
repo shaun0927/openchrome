@@ -1,24 +1,16 @@
 /**
- * Runtime wiring for {@link ZombieLockDetector} + {@link attachZombieReclaim}.
- *
- * The detector and reclaim helper are intentionally decoupled from the
- * session-manager so they can be unit-tested in isolation. This module is the
- * thin adapter that turns the two side-effect-free primitives into a real
- * broker-side liveness probe: it wires the heartbeat probe to
- * `CDPClient.getTargets()`, registers every lease acquisition/release with the
- * detector, and asks {@link attachZombieReclaim} to release the affected
- * session on `owner_reclaim`.
- *
- * Opt-in only. Enabled via `OPENCHROME_ZOMBIE_LOCK_DETECTOR=1` so no runtime
- * behaviour changes by default. Failing to set the flag leaves the previous
- * idle-TTL path intact.
- *
- * The wiring is exposed as a factory so callers (session-manager, tests) can
- * construct and dispose an instance without touching module-level state.
+ * Runtime wiring for ZombieLockDetector (#1474).
+ * Turns `owner_reclaim` events into real `TargetLeaseRegistry.releaseSession`
+ * calls, adapts CDPClient.getTargets() into the heartbeat probe, and keeps
+ * an audit ledger. Opt-in via OPENCHROME_ZOMBIE_LOCK_DETECTOR=1.
+ * SessionManager.acquireTargetLease is the broker call site.
  */
 
-import { ZombieLockDetector, type ZombieLockOptions } from './zombie-lock-detector.js';
-import { attachZombieReclaim, type ZombieReclaimAuditEntry } from './zombie-lock-integration.js';
+import {
+  ZombieLockDetector,
+  type OwnerReclaimEvent,
+  type ZombieLockOptions,
+} from './zombie-lock-detector.js';
 import type { TargetLeaseRegistry } from '../session/target-lease-registry.js';
 
 /** Minimal CDPClient surface the wiring needs. */
@@ -26,10 +18,20 @@ export interface ZombieLockWiringCdp {
   getTargets(): Array<{ _targetId?: string } | unknown>;
 }
 
+/** One audit entry per `owner_reclaim` event. Read by ops via the wiring handle. */
+export interface ZombieReclaimAuditEntry {
+  targetId: string;
+  ownerId: string;
+  sessionId?: string;
+  reason: OwnerReclaimEvent['reason'];
+  detectedAt: number;
+  missingStreak: number;
+  releasedTargets: readonly string[];
+}
+
 /** Extract targetId from a puppeteer Target-like object without importing puppeteer here. */
 function extractTargetId(t: unknown): string | undefined {
   if (!t || typeof t !== 'object') return undefined;
-  // puppeteer Target exposes _targetInfo.targetId. Fall back to `.id` for stubs.
   const anyT = t as { _targetInfo?: { targetId?: string }; id?: string };
   return anyT._targetInfo?.targetId ?? anyT.id;
 }
@@ -46,16 +48,11 @@ export interface ZombieLockWiringHandle {
 }
 
 export interface ZombieLockWiringOptions extends ZombieLockOptions {
-  /**
-   * Override the detector construction — used by tests. When set, the wiring
-   * skips constructing a probe from `cdp` and uses the injected detector.
-   */
+  /** Override the detector construction — used by tests. */
   detector?: ZombieLockDetector;
 }
 
-/**
- * Feature-flag check. Exposed for tests.
- */
+/** Feature-flag check. Exposed for tests. */
 export function isZombieLockDetectorEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.OPENCHROME_ZOMBIE_LOCK_DETECTOR;
   if (raw === undefined) return false;
@@ -63,11 +60,45 @@ export function isZombieLockDetectorEnabled(env: NodeJS.ProcessEnv = process.env
   return lowered === '1' || lowered === 'true' || lowered === 'yes' || lowered === 'on';
 }
 
+/** Bind an `owner_reclaim` handler that releases the session + appends audit. Returns unsub. */
+export function attachZombieReclaim(
+  detector: ZombieLockDetector,
+  registry: TargetLeaseRegistry,
+  audit: ZombieReclaimAuditEntry[] = [],
+): () => void {
+  const handler = (event: OwnerReclaimEvent) => {
+    const lease = registry.get(event.targetId);
+    if (!lease) {
+      audit.push({
+        targetId: event.targetId,
+        ownerId: event.ownerId,
+        reason: event.reason,
+        detectedAt: event.detectedAt,
+        missingStreak: event.missingStreak,
+        releasedTargets: [],
+      });
+      return;
+    }
+    const released = registry.releaseSession(lease.sessionId);
+    audit.push({
+      targetId: event.targetId,
+      ownerId: event.ownerId,
+      sessionId: lease.sessionId,
+      reason: event.reason,
+      detectedAt: event.detectedAt,
+      missingStreak: event.missingStreak,
+      releasedTargets: released,
+    });
+  };
+  detector.on('owner_reclaim', handler);
+  return () => detector.off('owner_reclaim', handler);
+}
+
 /**
- * Wire a zombie-lock detector to a CDPClient and a TargetLeaseRegistry.
- *
- * Returns a handle exposing `registerLease` / `unregisterLease` so the
- * session-manager can keep the detector's view in sync with real leases.
+ * Wire a detector to a CDPClient + TargetLeaseRegistry.
+ * SessionManager.acquireTargetLease calls the returned handle's registerLease
+ * on every acquisition; the reclaim handler calls registry.releaseSession
+ * when the detector fires. This is the real broker path.
  */
 export function wireZombieLockDetector(
   cdp: ZombieLockWiringCdp,
