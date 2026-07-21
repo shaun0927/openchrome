@@ -68,7 +68,16 @@ export interface BoundedLoopStepInput<TState> {
 }
 
 export interface BoundedLoopRunInput<TState> {
-  initialState?: TState;
+  /**
+   * Starting state. Required — the loop reads it on the first `isDone`
+   * check, so leaving it undefined lets `answer` in the final result be
+   * `undefined` even though its declared type is `TState`. Codex review of
+   * P22 flagged this contract mismatch; making it required removes the
+   * hole without changing the runtime semantics for any real caller. If
+   * `TState` is a union that includes `undefined`, callers can still pass
+   * `undefined` explicitly.
+   */
+  initialState: TState;
   step: (input: BoundedLoopStepInput<TState>) => Promise<TState>;
   isDone: (state: TState) => boolean;
 }
@@ -101,7 +110,7 @@ export function createBoundedLoop<TState>(
   return {
     async run(input) {
       const startedAt = now();
-      let state = input.initialState as TState;
+      let state: TState = input.initialState;
       let stepsUsed = 0;
       let wallMsUsed = 0;
 
