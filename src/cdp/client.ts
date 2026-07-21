@@ -68,6 +68,23 @@ export interface CDPClientOptions {
   heartbeatIntervalMs?: number;
   /** If true, auto-launch Chrome when not running (default: false) */
   autoLaunch?: boolean;
+  /**
+   * Upper bound (ms) on the exponential backoff delay between reconnect
+   * attempts. When omitted, defaults to 30_000 ms for bounded reconnection
+   * (`maxReconnectAttempts` finite) and 60_000 ms for infinite reconnection.
+   *
+   * Inspired by real-browser-mcp (MIT), which exposes the cap so long-running
+   * headed sessions can lengthen the ceiling without recompiling. See
+   * `OPENCHROME_RECONNECT_BACKOFF_CAP_MS` for the env-var equivalent.
+   */
+  reconnectBackoffCapMs?: number;
+  /**
+   * Jitter ratio (0.0-1.0) applied on top of the exponential delay. `0`
+   * disables jitter (fully deterministic backoff — useful for tests). Default
+   * `0.5` matches the historical implementation (`random(0..baseDelay/2)`).
+   * Env override: `OPENCHROME_RECONNECT_JITTER_RATIO`.
+   */
+  reconnectJitterRatio?: number;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -77,6 +94,17 @@ export interface ConnectionEvent {
   timestamp: number;
   attempt?: number;
   error?: string;
+  /**
+   * When emitted for a `reconnecting` event, the estimated wall-clock time
+   * (ms since epoch) at which the *next* reconnect attempt will run after
+   * this one fails. Observers can use it to render a countdown UI or gate
+   * user-facing "still trying" messages without polling `estimatedRetryMs()`.
+   *
+   * Omitted for terminal events (`connected`, `reconnected`, `reconnect_failed`).
+   */
+  nextRetryAt?: number;
+  /** For `reconnecting` events, the backoff delay (ms) that produced `nextRetryAt`. */
+  backoffMs?: number;
 }
 
 
@@ -95,12 +123,56 @@ function parseEnvInt(name: string, fallback: number): number {
   return parsed;
 }
 
+/**
+ * Parse a float in [0, 1] from an env var. Falls back on parse error or
+ * out-of-range value. Used by the reconnect jitter ratio knob.
+ */
+function parseEnvRatio(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    console.error(`[CDPClient] Invalid value for ${name}="${raw}" (must be 0..1), using default ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
+ * Compute the exponential backoff delay for a given reconnect attempt.
+ *
+ * Contract:
+ *   - Attempt 1 uses `base * 2^0 = base` (no penalty on the first retry).
+ *   - The exponent is clamped to 6 so `Number` never overflows even in
+ *     infinite-reconnect mode (2^6 = 64× base).
+ *   - Jitter is `random(0..base*jitterRatio)`. Passing `jitterRatio=0`
+ *     yields a deterministic sequence, which lets tests assert exact ms.
+ *   - The final value is clamped to `cap`.
+ *
+ * Exported for unit tests; not part of the public API.
+ */
+export function computeReconnectBackoffMs(
+  attempt: number,
+  base: number,
+  cap: number,
+  jitterRatio: number,
+  random: () => number = Math.random,
+): number {
+  const safeAttempt = Math.max(1, Math.floor(attempt));
+  const exponent = Math.min(safeAttempt - 1, 6);
+  const jitter = jitterRatio > 0 ? Math.floor(random() * base * jitterRatio) : 0;
+  const raw = base * Math.pow(2, exponent) + jitter;
+  return Math.min(raw, cap);
+}
+
 export class CDPClient {
   private browser: Browser | null = null;
   private sessions: Map<string, CDPSession> = new Map();
   private port: number;
   private maxReconnectAttempts: number;
   private reconnectDelayMs: number;
+  private reconnectBackoffCapMs: number | null;
+  private reconnectJitterRatio: number;
   private heartbeatIntervalMs: number;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private connectionState: ConnectionState = 'disconnected';
@@ -166,6 +238,18 @@ export class CDPClient {
     this.port = options.port || globalConfig.port;
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? parseEnvInt('OPENCHROME_MAX_RECONNECT_ATTEMPTS', DEFAULT_MAX_RECONNECT_ATTEMPTS);
     this.reconnectDelayMs = options.reconnectDelayMs ?? parseEnvInt('OPENCHROME_RECONNECT_DELAY_MS', DEFAULT_RECONNECT_DELAY_MS);
+    // Backoff cap: explicit option > env var > sentinel (null = "use mode default").
+    // The mode-default (bounded=30s, infinite=60s) is resolved in the reconnect
+    // loop so a caller can flip maxReconnectAttempts at runtime without stale caps.
+    if (options.reconnectBackoffCapMs !== undefined) {
+      this.reconnectBackoffCapMs = options.reconnectBackoffCapMs;
+    } else if (process.env['OPENCHROME_RECONNECT_BACKOFF_CAP_MS'] !== undefined) {
+      this.reconnectBackoffCapMs = parseEnvInt('OPENCHROME_RECONNECT_BACKOFF_CAP_MS', 30_000);
+    } else {
+      this.reconnectBackoffCapMs = null;
+    }
+    this.reconnectJitterRatio = options.reconnectJitterRatio
+      ?? parseEnvRatio('OPENCHROME_RECONNECT_JITTER_RATIO', 0.5);
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? parseEnvInt('OPENCHROME_HEARTBEAT_INTERVAL_MS', DEFAULT_HEARTBEAT_INTERVAL_MS);
     // Use explicit option if provided, otherwise use global config
     this.autoLaunch = options.autoLaunch !== undefined ? options.autoLaunch : globalConfig.autoLaunch;
@@ -639,15 +723,28 @@ export class CDPClient {
         console.error(`[CDPClient] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
 
         if (this.maxReconnectAttempts === Infinity || this.reconnectAttempts < this.maxReconnectAttempts) {
-          // Exponential backoff with jitter: baseDelay * 2^(attempt-1) + random(0..baseDelay/2)
-          // Exponent capped at 6 to prevent Number overflow on high attempt counts (infinite mode)
-          const backoffCap = this.maxReconnectAttempts === Infinity ? 60000 : 30000;
-          const backoffDelay = Math.min(
-            this.reconnectDelayMs * Math.pow(2, Math.min(this.reconnectAttempts - 1, 6)) + Math.floor(Math.random() * this.reconnectDelayMs / 2),
-            backoffCap,
+          // Exponential backoff with jitter — factored into computeReconnectBackoffMs
+          // so tests can pin the formula and callers can override cap/jitter via
+          // CDPClientOptions (see #real-browser-mcp idiom).
+          const modeDefaultCap = this.maxReconnectAttempts === Infinity ? 60_000 : 30_000;
+          const cap = this.reconnectBackoffCapMs ?? modeDefaultCap;
+          const backoffDelay = computeReconnectBackoffMs(
+            this.reconnectAttempts,
+            this.reconnectDelayMs,
+            cap,
+            this.reconnectJitterRatio,
           );
           this.reconnectNextRetryAt = Date.now() + backoffDelay;
-          console.error(`[CDPClient] Waiting ${backoffDelay}ms before next attempt (exponential backoff)...`);
+          // Advertise the next-attempt ETA before we sleep so observers can render
+          // a countdown without polling estimatedRetryMs().
+          this.emitConnectionEvent({
+            type: 'reconnecting',
+            timestamp: Date.now(),
+            attempt: this.reconnectAttempts + 1,
+            nextRetryAt: this.reconnectNextRetryAt,
+            backoffMs: backoffDelay,
+          });
+          console.error(`[CDPClient] Waiting ${backoffDelay}ms before next attempt (exponential backoff, cap=${cap}ms, jitter=${this.reconnectJitterRatio})...`);
           await new Promise(resolve => setTimeout(resolve, backoffDelay));
           if (this.disconnectRequested) {
             return;
