@@ -256,3 +256,107 @@ export function getStealthStackSanitizationScript(): string {
     }
   })();`;
 }
+
+// ---------------------------------------------------------------------------
+// Joint-distribution fingerprint injection (#P8 pack wiring)
+//
+// The base `getStealthFingerprintDefenseScript()` above only patches
+// invariants (WebGL renderer, canvas noise, hardware minimums). It does not
+// vary the *identity* fields (UA, timezone, screen, hardware totals) across
+// sessions, which is exactly the "small static table" signal that the
+// browserforge/fingerprint-suite idiom is designed to remove.
+//
+// The sampler in `fingerprint-sampler.ts` produces a coherent
+// {UA, platform, language, timezone, screen, cpu, memory} tuple. This helper
+// turns that tuple into a companion evaluateOnNewDocument script that
+// overrides the corresponding navigator/screen fields. Register it *before*
+// the base defense script so the base's "if unset, default to 8" guards do
+// not clobber the sampled hardwareConcurrency value.
+// ---------------------------------------------------------------------------
+
+import type { FingerprintSample } from './fingerprint-sampler';
+
+/**
+ * Return a JS source string that overrides UA / language / timezone /
+ * screen / hardware fields with values from `sample`. Safe to inject via
+ * `page.evaluateOnNewDocument()` because every property definer is wrapped
+ * in try/catch — a hostile page cannot break the override host by
+ * pre-defining a non-configurable getter.
+ */
+export function getFingerprintSampleOverrideScript(sample: FingerprintSample): string {
+  // Only stringify values we control; never interpolate raw page-supplied data.
+  const encoded = JSON.stringify(sample);
+  return `(function(){
+    'use strict';
+    try {
+      var s = ${encoded};
+      try {
+        Object.defineProperty(Navigator.prototype, 'userAgent', {
+          get: function() { return s.userAgent; }, configurable: true,
+        });
+      } catch(e) {}
+      try {
+        Object.defineProperty(Navigator.prototype, 'platform', {
+          get: function() { return s.platform; }, configurable: true,
+        });
+      } catch(e) {}
+      try {
+        Object.defineProperty(Navigator.prototype, 'language', {
+          get: function() { return s.language; }, configurable: true,
+        });
+      } catch(e) {}
+      try {
+        Object.defineProperty(Navigator.prototype, 'languages', {
+          get: function() { return Object.freeze(s.languages.slice()); }, configurable: true,
+        });
+      } catch(e) {}
+      try {
+        Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
+          get: function() { return s.hardwareConcurrency; }, configurable: true,
+        });
+      } catch(e) {}
+      try {
+        Object.defineProperty(Navigator.prototype, 'deviceMemory', {
+          get: function() { return s.deviceMemoryGB; }, configurable: true,
+        });
+      } catch(e) {}
+      try {
+        Object.defineProperty(Screen.prototype, 'width', {
+          get: function() { return s.screen.width; }, configurable: true,
+        });
+        Object.defineProperty(Screen.prototype, 'height', {
+          get: function() { return s.screen.height; }, configurable: true,
+        });
+      } catch(e) {}
+      try {
+        Object.defineProperty(window, 'devicePixelRatio', {
+          get: function() { return s.screen.devicePixelRatio; }, configurable: true,
+        });
+      } catch(e) {}
+      // Timezone spoof — the Intl fallback fools most fingerprinting probes.
+      try {
+        var _DTF = Intl.DateTimeFormat;
+        Intl.DateTimeFormat = function(locale, opts) {
+          var patched = opts ? Object.assign({}, opts) : {};
+          if (!patched.timeZone) patched.timeZone = s.timezone;
+          return new _DTF(locale, patched);
+        };
+        Intl.DateTimeFormat.prototype = _DTF.prototype;
+        var _resolved = _DTF.prototype.resolvedOptions;
+        _DTF.prototype.resolvedOptions = function() {
+          var out = _resolved.call(this);
+          out.timeZone = s.timezone;
+          return out;
+        };
+      } catch(e) {}
+    } catch(e) {}
+  })();`;
+}
+
+/** Env-flag check for the sampler wiring. Off by default. */
+export function isFingerprintSamplerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.OPENCHROME_FINGERPRINT_SAMPLER;
+  if (raw === undefined) return false;
+  const lowered = raw.toLowerCase();
+  return lowered === '1' || lowered === 'true' || lowered === 'yes' || lowered === 'on';
+}

@@ -32,7 +32,13 @@ import { Budget, isLegacyBudgetMode } from '../utils/budget';
 import { withTimeout } from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
-import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
+import {
+  getFingerprintSampleOverrideScript,
+  getStealthFingerprintDefenseScript,
+  getStealthStackSanitizationScript,
+  isFingerprintSamplerEnabled,
+} from '../stealth/fingerprint-defense';
+import { sampleFingerprint } from '../stealth/fingerprint-sampler';
 import { getIdleState } from '../utils/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
 import { applyRegisteredPreloads } from './preload-injector';
@@ -1842,6 +1848,20 @@ export class CDPClient {
     await applyRegisteredPreloads(page);
 
     // Stealth-only fingerprint defenses (WebGL, Canvas, Audio, hardware, screen, webdriver)
+    // #P8 wiring: opt-in joint-distribution fingerprint override. Injected
+    // BEFORE the base defense script so the base's "default to 8" guards
+    // do not clobber the sampled hardwareConcurrency / deviceMemory values.
+    if (isFingerprintSamplerEnabled()) {
+      try {
+        // Seed by targetId so the same tab keeps a stable fingerprint across
+        // navigations, matching real-user behaviour.
+        const sample = sampleFingerprint(targetId);
+        const overrideScript = getFingerprintSampleOverrideScript(sample);
+        await page.evaluateOnNewDocument(overrideScript).catch(() => {});
+      } catch (err) {
+        console.error(`[CDPClient] fingerprint sampler injection failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     const fpScript = getStealthFingerprintDefenseScript();
     const stackScript = getStealthStackSanitizationScript();
     await page.evaluateOnNewDocument(fpScript).catch(() => {});
