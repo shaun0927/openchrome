@@ -13,3 +13,26 @@ export { EXTRACTION_MODES, EXTRACTION_MODE_BUDGETS, parseExtractionMode } from '
 export type { ExtractionMode, ExtractionModeBudget } from './mode';
 export { SEMANTIC_DEFAULT_MAX_CHARS, SEMANTIC_HARD_MAX_CHARS, buildSemanticHostExtractionPayload } from './semantic';
 export type { SemanticExtractionPayload } from './semantic';
+export {
+  CRAWL_MODES,
+  SimpleUrlMapper,
+  compileUrlPattern,
+  extractLinksFromHtml,
+  filterUrls,
+  finaliseExtractResult,
+  validateExtractSchema,
+  validateMapOptions,
+} from './map-extract-mode';
+export type {
+  CrawlMode,
+  ExtractModeOptions,
+  ExtractModeResult,
+  ExtractSchema,
+  ExtractSchemaField,
+  MapModeOptions,
+  MapModeResult,
+  MapUrlSource,
+  StructuredExtractor,
+  UrlMapper,
+  ValidationResult as MapExtractValidationResult,
+} from './map-extract-mode';
