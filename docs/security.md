@@ -1,5 +1,18 @@
 # Security policy notes
 
+## DevTools attach boundary (`--auto-connect`)
+
+`--auto-connect` binds only to `127.0.0.1`. The wsEndpoint returned by
+`discoverActiveDevToolsPort` is always `ws://127.0.0.1:<port><target-path>`
+regardless of what the `DevToolsActivePort` file's second line contains, and
+the pre-return probe dials loopback before the endpoint is handed back.
+
+Remote attach is intentionally out of scope. If you need to bridge the debug
+port across hosts, terminate the tunnel in front of openchrome (SSH tunnel,
+`socat`, Cloudflare Tunnel); do not point `--auto-connect` at a remote
+user-data dir. See `docs/auto-connect.md` for the full contract, including
+the forbidden-port list and the attach recipe.
+
 ## Page-origin boundary markers
 
 OpenChrome wraps page-origin text in `<oc:*>` blocks so host agents can

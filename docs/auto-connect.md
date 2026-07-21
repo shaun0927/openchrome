@@ -122,3 +122,81 @@ openchrome and is only valid in launch mode.
 `--auto-connect` always sets the lifecycle mode to `attach` (#661). openchrome
 will **not** kill the Chrome it attached to during shutdown — your existing
 window survives `oc_stop`, SIGTERM, and process-exit handlers.
+
+## Security: localhost-only guard
+
+`--auto-connect` only ever binds to `127.0.0.1`. Every code path that touches
+the discovered DevTools port normalises the host to loopback:
+
+- `AutoConnectResult.wsEndpoint` is always `ws://127.0.0.1:<port><target-path>`
+  — the second line of `DevToolsActivePort` is treated as a URL path, never a
+  host override.
+- The pre-return TCP probe (`probePort` in `src/chrome/auto-connect.ts`) dials
+  `127.0.0.1:<port>` and only returns a bound endpoint if loopback answers.
+- Downstream CDP fetches (`src/chrome/devtools-info.ts`) rebuild the WS URL
+  from the loopback host, so a hostile `DevToolsActivePort` file cannot rewrite
+  the target to a remote address.
+
+If you need to bridge the DevTools port to another host, do it in front of
+openchrome (SSH tunnel, `socat`, Cloudflare Tunnel) — do not point
+`--auto-connect` at a remote user-data dir. Remote attach is intentionally
+out of scope; see the same design note in `docs/security.md`.
+
+### Forbidden ports
+
+Chrome's remote debugging channel accepts any TCP port, but a few are unsafe
+regardless of loopback binding and openchrome refuses to keep them:
+
+| Range | Why |
+|---|---|
+| `0` | Chrome uses `0` to mean "pick a port". Only valid on the launch side; a written `DevToolsActivePort` value of `0` is a malformed file and is rejected as `devtools_active_port_malformed`. |
+| Anything below `1024` | Privileged ports; a stray `sudo`-launched Chrome could listen here, but openchrome refuses to attach because binding a debug protocol to a well-known port is almost certainly a misconfiguration. Pass `--allow-privileged-port` (future flag; tracked in P2) if you truly need it. |
+| Blocked-by-Chrome ports | Chrome itself refuses to serve DevTools on ports it blocks for outbound traffic (see `net::ERR_UNSAFE_PORT`). If Chrome wrote one of these into `DevToolsActivePort`, the file is corrupt and openchrome surfaces `port_not_bound`. |
+
+The port validator lives in `parseDevToolsActivePort` — it rejects non-digit
+port lines and any value outside `1..65535` so `parseInt`'s partial-number
+tolerance (`"9222junk" -> 9222`) cannot misroute the attach.
+
+## Attach recipe: switch a running Chrome into openchrome mid-session
+
+Sometimes you already have a Chrome window open with the state you care about
+(logged into GitHub, a partially-filled form, an SSO session) and you want an
+agent to drive it without losing that state. The steps below take you from a
+stock Chrome window to an openchrome-controlled session in about a minute.
+
+```bash
+# 1. Pick a user-data dir Chrome will actually write to. Reuse your daily
+#    profile if you accept the security tradeoff, or spin up a scratch dir.
+USER_DATA_DIR="${HOME}/.cache/openchrome-attach-demo"
+mkdir -p "$USER_DATA_DIR"
+
+# 2. Launch (or relaunch) Chrome with remote debugging on port 0. Port 0 lets
+#    Chrome pick a free port and write it to DevToolsActivePort.
+google-chrome \
+  --remote-debugging-port=0 \
+  --user-data-dir="$USER_DATA_DIR" \
+  https://example.com &
+
+# 3. Wait until Chrome writes the file (usually < 1 second on cold start).
+timeout 10 bash -c "until test -s \"$USER_DATA_DIR/DevToolsActivePort\"; do sleep 0.1; done"
+cat "$USER_DATA_DIR/DevToolsActivePort"
+# 53187
+# /devtools/browser/9b0e...
+
+# 4. Hand the dir to openchrome. It reads the file, probes 127.0.0.1:<port>,
+#    and attaches. No --port flag needed — the discovery lives in
+#    src/chrome/auto-connect.ts.
+openchrome serve --auto-connect="$USER_DATA_DIR"
+```
+
+Verify the attach worked by calling `mcp__openchrome__oc_get_connection_info`
+and confirming `mode` is `auto-connect` and `wsEndpoint` starts with
+`ws://127.0.0.1:` — that pair is your proof that openchrome bound to loopback
+on the port Chrome advertised.
+
+### Detach without killing Chrome
+
+`--auto-connect` implies `--launch-mode=attach`, so `oc_stop` and SIGTERM
+detach the CDP client and leave the Chrome window alive. To close the window
+too, quit Chrome yourself — openchrome will not do it for you when you owned
+the launch.
