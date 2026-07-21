@@ -10,6 +10,7 @@ import { TargetOwnershipRegistry } from './session/target-registry';
 import { TargetLeaseConflictError, TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
 import { TargetQueueManager } from './session/target-command-queue';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
+import { isZombieLockDetectorEnabled, wireZombieLockDetector, type ZombieLockWiringHandle } from './cdp/zombie-lock-wiring';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
 import {
@@ -124,6 +125,11 @@ export class SessionManager {
   private targetToWorker = new TargetOwnershipRegistry();
   private targetLeases = new TargetLeaseRegistry();
   /**
+   * Optional zombie-lock detector wiring (#1474). Only initialised when
+   * `OPENCHROME_ZOMBIE_LOCK_DETECTOR=1` is set. Null in the default path.
+   */
+  private zombieLockWiring: ZombieLockWiringHandle | null = null;
+  /**
    * Maps targetId → `{browser, name}` for the owning named context (#848).
    * Targets opened in the default Chrome context are not present here;
    * tools can treat absence as `'default'`. The browser is recorded so the
@@ -229,6 +235,22 @@ export class SessionManager {
     if (this.config.storageState?.enabled) {
       this.storageStateConfig = this.config.storageState;
     }
+
+    // #1474 zombie-lock detector (opt-in). Wires a heartbeat probe onto the
+    // CDPClient's target list and asks the lease registry to release sessions
+    // whose targets have vanished. See src/cdp/zombie-lock-wiring.ts for the
+    // env-flag contract.
+    if (isZombieLockDetectorEnabled()) {
+      try {
+        this.zombieLockWiring = wireZombieLockDetector(
+          { getTargets: () => this.cdpClient.getTargets() },
+          this.targetLeases,
+        );
+      } catch (err) {
+        console.error('[SessionManager] Failed to initialise zombie-lock detector:', err);
+        this.zombieLockWiring = null;
+      }
+    }
   }
 
   /**
@@ -276,10 +298,12 @@ export class SessionManager {
     const configuredTtl = this.config.targetLeaseTtl;
     const ttlMs = sessionId === DEFAULT_SESSION_ID || !configuredTtl ? undefined : configuredTtl;
     if (parentTargetId && this.targetLeases.inherit(targetId, parentTargetId, { sessionId, workerId, contextName, ttlMs })) {
+      this.zombieLockWiring?.registerLease(targetId, workerId ?? sessionId);
       return;
     }
     try {
       this.targetLeases.acquire({ targetId, sessionId, workerId, contextName, ttlMs });
+      this.zombieLockWiring?.registerLease(targetId, workerId ?? sessionId);
     } catch (err) {
       // #1359 backlog item 3: a conflicting lease means a stale or rogue
       // owner still holds the registry entry — log loudly so operators see
@@ -292,7 +316,9 @@ export class SessionManager {
           `[SessionManager] Target ${targetId.slice(0, 8)} lease conflict: previous owner session=${err.existing.sessionId} worker=${err.existing.workerId ?? 'unknown'}; transferring to session=${sessionId} worker=${workerId}`,
         );
         this.targetLeases.release(targetId);
+        this.zombieLockWiring?.unregisterLease(targetId);
         this.targetLeases.acquire({ targetId, sessionId, workerId, contextName, ttlMs });
+        this.zombieLockWiring?.registerLease(targetId, workerId ?? sessionId);
         return;
       }
       throw err;
@@ -393,6 +419,12 @@ export class SessionManager {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
+    }
+    // #1474 also tear down the opt-in zombie-lock detector so its poll timer
+    // does not keep the process alive after cleanup.
+    if (this.zombieLockWiring) {
+      this.zombieLockWiring.dispose();
+      this.zombieLockWiring = null;
     }
   }
 
@@ -1862,6 +1894,7 @@ export class SessionManager {
 
         this.targetToWorker.delete(targetId);
         this.targetLeases.release(targetId, ownerInfo.sessionId);
+        this.zombieLockWiring?.unregisterLease(targetId);
         this.targetQueueManager.cancelTarget(targetId);
         this.stealthTargets.delete(targetId);
         this.lastRoutingByTarget.delete(targetId);
