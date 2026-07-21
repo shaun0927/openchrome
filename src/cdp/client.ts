@@ -37,6 +37,7 @@ import { getIdleState } from '../utils/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
 import { applyRegisteredPreloads } from './preload-injector';
 import { TargetPageIndex } from './target-page-index';
+import { resolveEffectiveAutoLaunch } from '../chrome/launch-gate';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -68,6 +69,14 @@ export interface CDPClientOptions {
   heartbeatIntervalMs?: number;
   /** If true, auto-launch Chrome when not running (default: false) */
   autoLaunch?: boolean;
+  /**
+   * When true, treat `autoLaunch` as `false` for `ensureChrome()` calls that
+   * happen **before** the process-wide launch gate is armed (typically by
+   * MCP tool dispatch). This defers Chrome spawn from server-boot time to
+   * first-tool-call time. Default: false. Also honours env
+   * `OPENCHROME_LAUNCH_ON_FIRST_USE=1`.
+   */
+  launchOnFirstUse?: boolean;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -111,6 +120,7 @@ export class CDPClient {
   private consecutiveHeartbeatSuccesses = 0;
   private checkConnectionInFlight = false;
   private autoLaunch: boolean;
+  private launchOnFirstUse: boolean;
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
   private targetIdIndex = new TargetPageIndex();
@@ -169,6 +179,10 @@ export class CDPClient {
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? parseEnvInt('OPENCHROME_HEARTBEAT_INTERVAL_MS', DEFAULT_HEARTBEAT_INTERVAL_MS);
     // Use explicit option if provided, otherwise use global config
     this.autoLaunch = options.autoLaunch !== undefined ? options.autoLaunch : globalConfig.autoLaunch;
+    // Launch-gate opt-in — when true, defer physical Chrome spawn from
+    // startup-time `ensureChrome()` to first-tool-call time. See
+    // src/chrome/launch-gate.ts.
+    this.launchOnFirstUse = options.launchOnFirstUse === true;
   }
 
   /**
@@ -710,8 +724,13 @@ export class CDPClient {
         budget!.requireRemaining(DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS, 'connectInternal.attempt-gate');
       }
 
-      // Re-fetch instance on each attempt — Chrome may have regenerated its UUID
-      const instance = await launcher.ensureChrome({ autoLaunch });
+      // Re-fetch instance on each attempt — Chrome may have regenerated its UUID.
+      // Route autoLaunch through the launch-gate translator so `--launch-on-first-use`
+      // callers see `false` until MCP has armed the gate on first tool call.
+      const effectiveAutoLaunch = resolveEffectiveAutoLaunch(autoLaunch, {
+        launchOnFirstUse: this.launchOnFirstUse,
+      });
+      const instance = await launcher.ensureChrome({ autoLaunch: effectiveAutoLaunch });
       if (!this.isCurrentConnectionGeneration(generation)) {
         return false;
       }

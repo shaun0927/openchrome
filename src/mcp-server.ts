@@ -36,6 +36,7 @@ import { formatError } from './utils/format-error';
 import { getCDPConnectionPool } from './cdp/connection-pool';
 import { getCDPClient, ConnectionEvent } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
+import { arm as launchGateArm } from './chrome/launch-gate';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from './config/defaults';
@@ -1617,6 +1618,12 @@ export class MCPServer {
     if (!toolName) {
       throw new Error('Missing tool name');
     }
+
+    // Arm the launch-gate on first tool call. Idempotent — subsequent calls
+    // are no-ops. Callers that opted into `launchOnFirstUse` (per client, or
+    // via OPENCHROME_LAUNCH_ON_FIRST_USE=1) block Chrome spawn until this
+    // point; every other call site is unaffected.
+    launchGateArm();
 
     // Session-tenant binding (api-key mode only): reject if the session was
     // already claimed by a different tenant. First api-key caller to COMPLETE

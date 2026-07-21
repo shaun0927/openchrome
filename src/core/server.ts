@@ -205,6 +205,11 @@ class OpenChromeServerImpl implements OpenChromeServer {
 
     console.error(`[openchrome] Chrome debugging port: ${port}`);
     console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
+    // Launch-gate mode is opt-in via env (or the per-client option). When on,
+    // physical Chrome spawn is deferred until the first MCP tool call.
+    if (process.env.OPENCHROME_LAUNCH_ON_FIRST_USE) {
+      console.error('[openchrome] Launch-on-first-use: ON (Chrome will spawn on first tool call)');
+    }
 
     // Headless resolution
     let headless: boolean;
