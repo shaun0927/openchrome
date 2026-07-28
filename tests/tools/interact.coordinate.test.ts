@@ -281,4 +281,140 @@ describe('interact tool — coordinate mode', () => {
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toMatch(/Clicked coordinate \(100, 200\)/);
   });
+
+  test('coordinate click reports opener-correlated tabs without changing the no-tab contract', async () => {
+    (mockSessionManager.getTargetWorkerId as jest.Mock).mockReturnValue('default');
+    (mockSessionManager.getTargetCreationCursor as jest.Mock).mockReturnValue(10);
+    (mockSessionManager.getOpenedTabsAfter as jest.Mock).mockReturnValue({
+      total: 1,
+      truncated: false,
+      pendingCount: 0,
+      tabs: [{
+        tabId: 'popup-1',
+        workerId: 'default',
+        url: 'https://example.com/next',
+        title: 'Next',
+        status: 'ready',
+      }],
+    });
+
+    const result = await callInteract({
+      tabId: 'tab-1',
+      mode: 'coordinate',
+      coordinate: { x: 100, y: 200 },
+    }) as any;
+
+    expect(result.openedTabCount).toBe(1);
+    expect(result.openedTabsTruncated).toBe(false);
+    expect(result.openedTabs[0]).toMatchObject({ tabId: 'popup-1', status: 'ready' });
+    expect(result.content[0].text).toContain('[Opened tabs]');
+  });
+
+  test('coordinate no-child response has no optional opened-tab fields', async () => {
+    (mockSessionManager.getTargetWorkerId as jest.Mock).mockReturnValue('default');
+    (mockSessionManager.getOpenedTabsAfter as jest.Mock).mockReturnValue({
+      total: 0,
+      truncated: false,
+      pendingCount: 0,
+      tabs: [],
+    });
+
+    const result = await callInteract({
+      tabId: 'tab-1',
+      mode: 'coordinate',
+      coordinate: { x: 100, y: 200 },
+    }) as any;
+
+    expect(result.content[0].text).toBe('Clicked coordinate (100, 200) via CDP');
+    expect(result).not.toHaveProperty('openedTabCount');
+    expect(result).not.toHaveProperty('openedTabs');
+  });
+
+  test('hover moves without clicking, querying, or reporting opened tabs', async () => {
+    (mockSessionManager.getTargetWorkerId as jest.Mock).mockReturnValue('default');
+
+    const result = await callInteract({
+      tabId: 'tab-1',
+      mode: 'coordinate',
+      action: 'hover',
+      coordinate: { x: 100, y: 200 },
+    }) as any;
+    const coordinateInput = await import('../../src/cdp/input');
+
+    expect(mockPage.mouse.move).toHaveBeenCalledWith(100, 200);
+    expect(coordinateInput.dispatchCoordinateClick).not.toHaveBeenCalled();
+    expect(mockSessionManager.getTargetCreationCursor).not.toHaveBeenCalled();
+    expect(result.content[0].text).toBe('Hovered coordinate (100, 200) via CDP');
+    expect(result).not.toHaveProperty('openedTabCount');
+  });
+
+  test('type focuses the coordinate and enters text without opened-tab confirmation', async () => {
+    (mockSessionManager.getTargetWorkerId as jest.Mock).mockReturnValue('default');
+
+    const result = await callInteract({
+      tabId: 'tab-1',
+      mode: 'coordinate',
+      action: 'type',
+      value: 'hello',
+      coordinate: { x: 100, y: 200 },
+    }) as any;
+    const coordinateInput = await import('../../src/cdp/input');
+
+    expect(coordinateInput.dispatchCoordinateClick).toHaveBeenCalledWith(
+      expect.anything(),
+      mockPage,
+      { x: 100, y: 200, button: 'left', clickCount: 1, modifiers: [] },
+    );
+    expect(mockPage.keyboard.type).toHaveBeenCalledWith('hello');
+    expect(mockSessionManager.getTargetCreationCursor).not.toHaveBeenCalled();
+    expect(result.content[0].text).toBe('Typed into coordinate (100, 200) via CDP');
+    expect(result).not.toHaveProperty('openedTabCount');
+  });
+
+  test('double_click dispatches two clicks and observes opener-correlated tabs', async () => {
+    (mockSessionManager.getTargetWorkerId as jest.Mock).mockReturnValue('default');
+    (mockSessionManager.getTargetCreationCursor as jest.Mock).mockReturnValue(10);
+    (mockSessionManager.getOpenedTabsAfter as jest.Mock).mockReturnValue({
+      total: 1,
+      truncated: false,
+      pendingCount: 0,
+      tabs: [{
+        tabId: 'popup-1',
+        workerId: 'default',
+        url: 'https://example.com/next',
+        title: 'Next',
+        status: 'ready',
+      }],
+    });
+
+    const result = await callInteract({
+      tabId: 'tab-1',
+      mode: 'coordinate',
+      action: 'double_click',
+      coordinate: { x: 100, y: 200 },
+    }) as any;
+    const coordinateInput = await import('../../src/cdp/input');
+
+    expect(coordinateInput.dispatchCoordinateClick).toHaveBeenCalledWith(
+      expect.anything(),
+      mockPage,
+      { x: 100, y: 200, button: 'left', clickCount: 2, modifiers: [] },
+    );
+    expect(result.content[0].text).toContain('Double-clicked coordinate (100, 200) via CDP');
+    expect(result.openedTabCount).toBe(1);
+  });
+
+  test('queue-close races preserve the structured Interact error contract', async () => {
+    (mockSessionManager.validateTargetOwnership as jest.Mock).mockReturnValue(true);
+    (mockSessionManager.runTargetExclusive as jest.Mock).mockRejectedValueOnce(new Error('target closed while queued'));
+
+    const result = await callInteract({
+      tabId: 'tab-1',
+      mode: 'coordinate',
+      coordinate: { x: 100, y: 200 },
+    }) as any;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe('Interact error: target closed while queued');
+  });
 });
