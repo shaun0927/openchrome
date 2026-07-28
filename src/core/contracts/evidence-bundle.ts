@@ -9,9 +9,9 @@
  * This module is intentionally standalone: it does NOT depend on the pilot
  * contract runtime (#749), the live browser, or any third-party archiver.
  * Inputs arrive as a plain JS object (see `EvidenceBundleSnapshot`) supplied
- * by the caller — today the MCP tool surfaces it directly; a future PR will
- * have `oc_assert` produce an `evidence_handle` that materializes to one of
- * these snapshots.
+ * by the caller. Durable `oc_assert` evaluator artifacts are stored and
+ * retrieved separately through `oc_evidence_get`; this bundle writer remains
+ * the explicit path for caller-selected DOM/screenshot/network parts.
  *
  * Why flat layout instead of a ZIP archive?
  *   The repo intentionally avoids a hard `archiver` dependency for this

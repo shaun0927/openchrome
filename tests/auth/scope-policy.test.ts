@@ -12,6 +12,11 @@ describe('requiredScope', () => {
     expect(requiredScope('navigate')).toBe('write');
   });
 
+  it('durable evidence write/read tools use write/read scopes respectively', () => {
+    expect(requiredScope('oc_assert')).toBe('write');
+    expect(requiredScope('oc_evidence_get')).toBe('read');
+  });
+
   it('unknown tool defaults to write (least-privilege fail-safe)', () => {
     // New/unclassified tools require 'write' so that composite tools added
     // after PR2 cannot be invoked by read-only keys by default.

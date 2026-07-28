@@ -97,6 +97,7 @@ import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-
 import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 import { shouldInitializeBrowserSession } from './mcp/session-init-policy';
+import { getAssertEvidenceStore } from './core/contracts/assert-evidence-store';
 
 const MCP_TRANSPORT_SESSION_PREFIX = 'mcp-';
 
@@ -528,6 +529,7 @@ export class MCPServer {
         if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
           getTaskDriftLedger().cleanupSession(event.sessionId);
+          getAssertEvidenceStore().evictSession(event.sessionId);
         } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
           getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);
         }
@@ -926,6 +928,7 @@ export class MCPServer {
             this.rateLimiter.removeSession(mcpSessionId);
             this.rateLimiter.removeSession(browserSessionId);
           }
+          getAssertEvidenceStore().evictSession(browserSessionId);
           this.sessionTenants.delete(browserSessionId);
           if (typeof this.sessionManager.deleteSession === 'function') {
             void this.sessionManager.deleteSession(browserSessionId).catch((error) => {
@@ -2875,6 +2878,7 @@ export class MCPServer {
     }
 
     await this.sessionManager.deleteSession(sessionId);
+    getAssertEvidenceStore().evictSession(sessionId);
     // Release the binding so sessionId (notably 'default') can be reclaimed
     // by a subsequent tenant after MCP-level deletion.
     this.sessionTenants.delete(sessionId);

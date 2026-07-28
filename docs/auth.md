@@ -66,8 +66,8 @@ Each key is issued with one or more scopes. Scopes are additive; `write` implies
 
 | Scope | Allows |
 |---|---|
-| `read` | `screenshot`, `read_page`, `query_dom`, `inspect`, `find`, `wait_for`, `tabs_context`, and all other non-mutating tools |
-| `write` | All of `read`, plus: `act`, `interact`, `click`, `type`, `press`, `scroll`, `drag_drop`, `lightweight_scroll`, `fill_form`, `form_input`, `file_upload`, `select_option`, `navigate`, `page_reload`, `tabs_activate`, `tabs_create`, `tabs_close`, `javascript_tool`, `cookies`, `storage`, `http_auth`, `network`, `request_intercept`, `emulate_device`, `user_agent`, `geolocation`, `oc_stop`, `oc_session_resume`, `oc_session_snapshot`, `oc_checkpoint`, `workflow_init`, `workflow_cleanup`, `worker_update`, `worker_complete`, `execute_plan`, `oc_recording_start`, `oc_recording_stop`, `computer`, `batch_execute`, `batch_paginate`, `crawl`, `crawl_sitemap` |
+| `read` | `screenshot`, `read_page`, `query_dom`, `inspect`, `find`, `wait_for`, `tabs_context`, `oc_evidence_get`, and all other non-mutating tools |
+| `write` | All of `read`, plus: `act`, `interact`, `click`, `type`, `press`, `scroll`, `drag_drop`, `lightweight_scroll`, `fill_form`, `form_input`, `file_upload`, `select_option`, `navigate`, `page_reload`, `tabs_activate`, `tabs_create`, `tabs_close`, `javascript_tool`, `cookies`, `storage`, `http_auth`, `network`, `request_intercept`, `emulate_device`, `user_agent`, `geolocation`, `oc_assert`, `oc_stop`, `oc_session_resume`, `oc_session_snapshot`, `oc_checkpoint`, `workflow_init`, `workflow_cleanup`, `worker_update`, `worker_complete`, `execute_plan`, `oc_recording_start`, `oc_recording_stop`, `computer`, `batch_execute`, `batch_paginate`, `crawl`, `crawl_sitemap` |
 | `admin` | All tools. Reserved for server-internal tools; currently no tools require `admin` scope exclusively. |
 | `headless-only` | Additional constraint (AND-combined with the key's other scopes): the tool call is only permitted when the server is running in headless mode. |
 

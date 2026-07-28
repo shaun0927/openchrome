@@ -42,6 +42,7 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'oc_policy',
   'oc_journal',
   'oc_devtools_url',
+  'oc_evidence_get',
 
   // Diagnostics / metrics
   'performance_metrics',
@@ -104,6 +105,7 @@ export const WRITE_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'oc_session_resume',
   'oc_session_snapshot',
   'oc_checkpoint',
+  'oc_assert',
 
   // Orchestration (spawns workers, mutates workflow state)
   'workflow_init',

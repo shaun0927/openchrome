@@ -7,9 +7,9 @@
  * the caller can locate the produced files.
  *
  * The tool is intentionally standalone: it does NOT depend on the pilot
- * contract runtime (#749). The `oc_assert` tool (#784) already returns an
- * `evidence_handle` placeholder; a follow-up PR will let this tool consume
- * those handles to produce a bundle from previously recorded evidence.
+ * contract runtime (#749). Durable `oc_assert` evaluator artifacts use the
+ * authorized `oc_evidence_get` path; this tool remains the explicit snapshot
+ * bundle writer for DOM, screenshot, network, console, and related parts.
  *
  * See `src/core/contracts/evidence-bundle.ts` for the capture helpers.
  */

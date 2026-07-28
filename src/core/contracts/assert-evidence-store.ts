@@ -1,0 +1,481 @@
+/** Durable, owner-scoped evidence artifacts produced by oc_assert. */
+
+import { createHash, randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import { redactValue } from '../trace/redactor';
+
+export const ASSERT_EVIDENCE_SCHEMA_VERSION = 1;
+export const DEFAULT_ASSERT_EVIDENCE_TTL_MS = 30 * 60 * 1000;
+export const DEFAULT_ASSERT_EVIDENCE_SWEEP_INTERVAL_MS = 60 * 1000;
+
+const ASSERT_EVIDENCE_STORAGE_VERSION = 1;
+
+const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const HANDLE_RE = new RegExp(`^ev_${UUID_SOURCE}$`, 'i');
+const ARTIFACT_FILE_RE = new RegExp(`^ev_${UUID_SOURCE}\\.json$`, 'i');
+const TEMP_FILE_RE = new RegExp(`^ev_${UUID_SOURCE}\\.json\\.\\d+\\.${UUID_SOURCE}\\.tmp$`, 'i');
+
+export type AssertEvidenceVerdict = 'pass' | 'fail' | 'inconclusive';
+export type AssertEvidenceStoreErrorCode =
+  | 'malformed_handle'
+  | 'not_found'
+  | 'expired'
+  | 'forbidden'
+  | 'corrupt';
+
+export interface AssertEvidenceTraceUnavailable {
+  status: 'unavailable';
+  reason: string;
+}
+
+export interface AssertEvidenceProvenance {
+  session_id: string;
+  tenant_id: string;
+  target_id?: string;
+  worker_id?: string;
+  page_url?: string;
+  captured_at?: string;
+  contract_source: 'inline' | 'registry';
+  contract_id?: string;
+  verified_at: string;
+  verdict: AssertEvidenceVerdict;
+}
+
+export interface AssertEvidenceArtifact {
+  schema_version: typeof ASSERT_EVIDENCE_SCHEMA_VERSION;
+  evidence_handle: string;
+  created_at: string;
+  expires_at: string;
+  provenance: AssertEvidenceProvenance;
+  assertion: unknown;
+  result: Record<string, unknown>;
+  trace: AssertEvidenceTraceUnavailable;
+}
+
+export interface AssertEvidencePersistInput {
+  sessionId: string;
+  tenantId: string;
+  verdict: AssertEvidenceVerdict;
+  contractSource: 'inline' | 'registry';
+  contractId?: string;
+  targetId?: string;
+  workerId?: string;
+  pageUrl?: string;
+  capturedAt?: string;
+  assertion: unknown;
+  result: Record<string, unknown>;
+  trace: AssertEvidenceTraceUnavailable;
+}
+
+export interface AssertEvidenceHandle {
+  evidence_handle: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface AssertEvidenceOwner {
+  sessionId: string;
+  tenantId: string;
+}
+
+export interface AssertEvidenceStoreOptions {
+  rootDir?: string;
+  ttlMs?: number;
+  now?: () => number;
+  sweepIntervalMs?: number;
+}
+
+interface StoredAssertEvidenceRecord {
+  storage_version: typeof ASSERT_EVIDENCE_STORAGE_VERSION;
+  owner: {
+    session_sha256: string;
+    tenant_sha256: string;
+  };
+  artifact: AssertEvidenceArtifact;
+}
+
+interface StoredAssertEvidenceEnvelope {
+  storage_version: typeof ASSERT_EVIDENCE_STORAGE_VERSION;
+  owner: StoredAssertEvidenceRecord['owner'];
+  artifact: unknown;
+}
+
+export class AssertEvidenceStoreError extends Error {
+  constructor(
+    public readonly code: AssertEvidenceStoreErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AssertEvidenceStoreError';
+  }
+}
+
+export function defaultAssertEvidenceRootDir(): string {
+  if (process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID) {
+    return path.join(os.tmpdir(), `openchrome-assert-evidence-${process.pid}`);
+  }
+  return path.join(os.homedir(), '.openchrome', 'evidence', 'assertions');
+}
+
+export class AssertEvidenceStore {
+  private readonly rootDir: string;
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+  private readonly sweepIntervalMs?: number;
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(options: AssertEvidenceStoreOptions = {}) {
+    this.rootDir = options.rootDir ?? defaultAssertEvidenceRootDir();
+    this.ttlMs = normalizeTtl(options.ttlMs);
+    this.now = options.now ?? Date.now;
+    this.sweepIntervalMs = normalizeSweepInterval(options.sweepIntervalMs);
+  }
+
+  persist(input: AssertEvidencePersistInput): AssertEvidenceHandle {
+    if (!input.sessionId) throw new Error('AssertEvidenceStore.persist: sessionId is required');
+    if (!input.tenantId) throw new Error('AssertEvidenceStore.persist: tenantId is required');
+    this.ensureSweepStarted();
+    this.cleanupExpired();
+    this.ensureRoot();
+
+    const nowMs = this.now();
+    const handle = `ev_${randomUUID()}`;
+    const createdAt = new Date(nowMs).toISOString();
+    const expiresAt = new Date(nowMs + this.ttlMs).toISOString();
+    const artifact = redactArtifact({
+      schema_version: ASSERT_EVIDENCE_SCHEMA_VERSION,
+      evidence_handle: handle,
+      created_at: createdAt,
+      expires_at: expiresAt,
+      provenance: {
+        session_id: input.sessionId,
+        tenant_id: input.tenantId,
+        ...(input.targetId ? { target_id: input.targetId } : {}),
+        ...(input.workerId ? { worker_id: input.workerId } : {}),
+        ...(input.pageUrl ? { page_url: input.pageUrl } : {}),
+        ...(input.capturedAt ? { captured_at: input.capturedAt } : {}),
+        contract_source: input.contractSource,
+        ...(input.contractId ? { contract_id: input.contractId } : {}),
+        verified_at: createdAt,
+        verdict: input.verdict,
+      },
+      assertion: input.assertion,
+      result: input.result,
+      trace: input.trace,
+    });
+    const record: StoredAssertEvidenceRecord = {
+      storage_version: ASSERT_EVIDENCE_STORAGE_VERSION,
+      owner: ownerDigest(input.sessionId, input.tenantId),
+      artifact,
+    };
+
+    const target = this.filePath(handle);
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(record, null, 2), {
+        encoding: 'utf8',
+        mode: 0o600,
+        flag: 'wx',
+      });
+      fs.renameSync(temporary, target);
+    } catch (error) {
+      safeUnlink(temporary);
+      throw error;
+    }
+
+    return {
+      evidence_handle: handle,
+      created_at: createdAt,
+      expires_at: expiresAt,
+    };
+  }
+
+  loadAuthorized(handle: string, owner: AssertEvidenceOwner): AssertEvidenceArtifact {
+    this.ensureSweepStarted();
+    const record = this.readEnvelope(handle);
+    const expectedOwner = ownerDigest(owner.sessionId, owner.tenantId);
+    if (
+      record.owner.session_sha256 !== expectedOwner.session_sha256
+      || record.owner.tenant_sha256 !== expectedOwner.tenant_sha256
+    ) {
+      throw new AssertEvidenceStoreError('forbidden', 'Evidence is owned by another session or tenant');
+    }
+
+    if (!isArtifact(record.artifact, handle)) {
+      throw new AssertEvidenceStoreError('corrupt', 'Evidence artifact has an invalid schema');
+    }
+    const artifact = record.artifact;
+    if (Date.parse(artifact.expires_at) <= this.now()) {
+      safeUnlink(this.filePath(handle));
+      throw new AssertEvidenceStoreError('expired', 'Evidence handle has expired');
+    }
+
+    return redactArtifact(artifact, owner);
+  }
+
+  evictSession(sessionId: string): number {
+    if (!sessionId || !fs.existsSync(this.rootDir)) return 0;
+    let removed = 0;
+    const sessionDigest = hashOwnerPart('session', sessionId);
+    for (const file of this.artifactFiles()) {
+      const filePath = path.join(this.rootDir, file);
+      try {
+        const record = this.readEnvelopeFile(filePath);
+        if (record.owner.session_sha256 !== sessionDigest) continue;
+        safeUnlink(filePath);
+        removed += 1;
+      } catch {
+        safeUnlink(filePath);
+      }
+    }
+    return removed;
+  }
+
+  cleanupExpired(): number {
+    if (!fs.existsSync(this.rootDir)) return 0;
+    let removed = 0;
+    const nowMs = this.now();
+    for (const file of this.artifactFiles()) {
+      const filePath = path.join(this.rootDir, file);
+      try {
+        const record = this.readRecordFile(filePath, file.slice(0, -'.json'.length));
+        if (Date.parse(record.artifact.expires_at) > nowMs) continue;
+        safeUnlink(filePath);
+        removed += 1;
+      } catch {
+        safeUnlink(filePath);
+        removed += 1;
+      }
+    }
+    for (const file of this.temporaryFiles()) {
+      const filePath = path.join(this.rootDir, file);
+      try {
+        if (fs.statSync(filePath).mtimeMs + this.ttlMs > nowMs) continue;
+        safeUnlink(filePath);
+        removed += 1;
+      } catch {
+        safeUnlink(filePath);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  private ensureRoot(): void {
+    fs.mkdirSync(this.rootDir, { recursive: true, mode: 0o700 });
+    try {
+      fs.chmodSync(this.rootDir, 0o700);
+    } catch {
+      // Best-effort on filesystems that do not expose POSIX modes.
+    }
+  }
+
+  stopSweep(): void {
+    if (!this.sweepTimer) return;
+    clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
+  }
+
+  private ensureSweepStarted(): void {
+    if (!this.sweepIntervalMs || this.sweepTimer) return;
+    this.sweepTimer = setInterval(() => {
+      try {
+        this.cleanupExpired();
+      } catch (error) {
+        console.error(
+          '[AssertEvidenceStore] Failed to sweep expired artifacts:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }, this.sweepIntervalMs);
+    this.sweepTimer.unref?.();
+  }
+
+  private artifactFiles(): string[] {
+    return fs.readdirSync(this.rootDir).filter((file) => ARTIFACT_FILE_RE.test(file));
+  }
+
+  private temporaryFiles(): string[] {
+    return fs.readdirSync(this.rootDir).filter((file) => TEMP_FILE_RE.test(file));
+  }
+
+  private filePath(handle: string): string {
+    assertSafeHandle(handle);
+    return path.join(this.rootDir, `${handle}.json`);
+  }
+
+  private readEnvelope(handle: string): StoredAssertEvidenceEnvelope {
+    const filePath = this.filePath(handle);
+    if (!fs.existsSync(filePath)) {
+      throw new AssertEvidenceStoreError('not_found', 'Evidence handle was not found');
+    }
+    return this.readEnvelopeFile(filePath);
+  }
+
+  private readEnvelopeFile(filePath: string): StoredAssertEvidenceEnvelope {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+      throw new AssertEvidenceStoreError('corrupt', 'Evidence artifact is corrupt');
+    }
+    if (!isStoredEnvelope(parsed)) {
+      throw new AssertEvidenceStoreError('corrupt', 'Evidence artifact has an invalid schema');
+    }
+    return parsed;
+  }
+
+  private readRecordFile(filePath: string, expectedHandle?: string): StoredAssertEvidenceRecord {
+    const record = this.readEnvelopeFile(filePath);
+    if (!isArtifact(record.artifact, expectedHandle)) {
+      throw new AssertEvidenceStoreError('corrupt', 'Evidence artifact has an invalid schema');
+    }
+    return record as StoredAssertEvidenceRecord;
+  }
+}
+
+function normalizeTtl(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_ASSERT_EVIDENCE_TTL_MS;
+  }
+  return Math.floor(value);
+}
+
+function normalizeSweepInterval(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+function assertSafeHandle(handle: string): void {
+  if (!HANDLE_RE.test(handle)) {
+    throw new AssertEvidenceStoreError('malformed_handle', 'Evidence handle is malformed');
+  }
+}
+
+function ownerDigest(sessionId: string, tenantId: string): StoredAssertEvidenceRecord['owner'] {
+  return {
+    session_sha256: hashOwnerPart('session', sessionId),
+    tenant_sha256: hashOwnerPart('tenant', tenantId),
+  };
+}
+
+function hashOwnerPart(kind: 'session' | 'tenant', value: string): string {
+  return createHash('sha256')
+    .update(`openchrome/assert-evidence/v1/${kind}\0`, 'utf8')
+    .update(value, 'utf8')
+    .digest('hex');
+}
+
+function redactArtifact(
+  artifact: AssertEvidenceArtifact,
+  owner?: AssertEvidenceOwner,
+): AssertEvidenceArtifact {
+  const redacted = redactValue(artifact) as AssertEvidenceArtifact;
+  const ownerProvenance = owner
+    ? redactValue({ session_id: owner.sessionId, tenant_id: owner.tenantId }) as {
+      session_id: string;
+      tenant_id: string;
+    }
+    : undefined;
+  return {
+    ...redacted,
+    schema_version: artifact.schema_version,
+    evidence_handle: artifact.evidence_handle,
+    created_at: artifact.created_at,
+    expires_at: artifact.expires_at,
+    provenance: {
+      ...redacted.provenance,
+      ...(ownerProvenance ?? {}),
+      contract_source: artifact.provenance.contract_source,
+      verified_at: artifact.provenance.verified_at,
+      verdict: artifact.provenance.verdict,
+    },
+    result: {
+      ...redacted.result,
+      verdict: artifact.provenance.verdict,
+    },
+    trace: {
+      ...redacted.trace,
+      status: 'unavailable',
+    },
+  };
+}
+
+function isStoredEnvelope(value: unknown): value is StoredAssertEvidenceEnvelope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Partial<StoredAssertEvidenceEnvelope>;
+  if (record.storage_version !== ASSERT_EVIDENCE_STORAGE_VERSION) return false;
+  if (!record.owner || typeof record.owner !== 'object' || Array.isArray(record.owner)) return false;
+  if (!isSha256(record.owner.session_sha256) || !isSha256(record.owner.tenant_sha256)) return false;
+  return Object.prototype.hasOwnProperty.call(record, 'artifact');
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
+}
+
+function isArtifact(value: unknown, expectedHandle?: string): value is AssertEvidenceArtifact {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const artifact = value as Partial<AssertEvidenceArtifact>;
+  if (artifact.schema_version !== ASSERT_EVIDENCE_SCHEMA_VERSION) return false;
+  if (typeof artifact.evidence_handle !== 'string' || !HANDLE_RE.test(artifact.evidence_handle)) return false;
+  if (expectedHandle && artifact.evidence_handle !== expectedHandle) return false;
+  if (typeof artifact.created_at !== 'string' || !Number.isFinite(Date.parse(artifact.created_at))) return false;
+  if (typeof artifact.expires_at !== 'string' || !Number.isFinite(Date.parse(artifact.expires_at))) return false;
+  if (Date.parse(artifact.expires_at) <= Date.parse(artifact.created_at)) return false;
+  if (!artifact.provenance || typeof artifact.provenance !== 'object' || Array.isArray(artifact.provenance)) return false;
+  const provenance = artifact.provenance;
+  if (typeof provenance.session_id !== 'string' || provenance.session_id.length === 0) return false;
+  if (typeof provenance.tenant_id !== 'string' || provenance.tenant_id.length === 0) return false;
+  if (provenance.target_id !== undefined && typeof provenance.target_id !== 'string') return false;
+  if (provenance.worker_id !== undefined && typeof provenance.worker_id !== 'string') return false;
+  if (provenance.page_url !== undefined && typeof provenance.page_url !== 'string') return false;
+  if (
+    provenance.captured_at !== undefined
+    && (typeof provenance.captured_at !== 'string' || !Number.isFinite(Date.parse(provenance.captured_at)))
+  ) return false;
+  if (provenance.contract_source !== 'inline' && provenance.contract_source !== 'registry') return false;
+  if (provenance.contract_source === 'registry' && typeof provenance.contract_id !== 'string') return false;
+  if (provenance.contract_id !== undefined && typeof provenance.contract_id !== 'string') return false;
+  if (typeof provenance.verified_at !== 'string' || !Number.isFinite(Date.parse(provenance.verified_at))) return false;
+  if (provenance.verified_at !== artifact.created_at) return false;
+  if (!isVerdict(provenance.verdict)) return false;
+  if (!Object.prototype.hasOwnProperty.call(artifact, 'assertion')) return false;
+  if (!artifact.trace || artifact.trace.status !== 'unavailable' || typeof artifact.trace.reason !== 'string') return false;
+  if (!artifact.result || typeof artifact.result !== 'object' || Array.isArray(artifact.result)) return false;
+  if (artifact.result.verdict !== provenance.verdict) return false;
+  return true;
+}
+
+function isVerdict(value: unknown): value is AssertEvidenceVerdict {
+  return value === 'pass' || value === 'fail' || value === 'inconclusive';
+}
+
+function safeUnlink(filePath: string): void {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // File may already be absent.
+  }
+}
+
+let singleton: AssertEvidenceStore | null = null;
+
+export function getAssertEvidenceStore(): AssertEvidenceStore {
+  if (!singleton) {
+    singleton = new AssertEvidenceStore({
+      sweepIntervalMs: DEFAULT_ASSERT_EVIDENCE_SWEEP_INTERVAL_MS,
+    });
+  }
+  return singleton;
+}
+
+export function setAssertEvidenceStoreForTests(store: AssertEvidenceStore | null): void {
+  singleton?.stopSweep();
+  singleton = store;
+}

@@ -35,6 +35,7 @@ const SESSION_INIT_EXEMPT_TOOLS = new Set([
   'oc_assert',
   'oc_diff',
   'oc_evidence_bundle',
+  'oc_evidence_get',
   'oc_journal_compact',
   'oc_output_fetch',
   'oc_performance_analyze',
