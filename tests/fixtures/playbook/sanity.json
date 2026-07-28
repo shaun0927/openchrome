@@ -7,12 +7,12 @@
   "steps": [
     { "navigate": { "url": "${url}" } },
     { "assert": { "kind": "dom_text", "selector": "h1", "pattern": "${heading}" } },
-    { "interact": { "ref": "More information…" } },
-    { "wait_for": { "condition": "navigation" } },
+    { "interact": { "query": "More information…" } },
+    { "wait_for": { "type": "navigation" } },
     { "assert": { "kind": "url", "pattern": "iana\\.org" } },
     { "page_screenshot": { "path": "/tmp/sanity.png" } },
     { "read_page": { "mode": "ax" } },
     { "javascript_tool": { "code": "document.title" } },
-    { "act": { "action": "scroll down" } }
+    { "act": { "instruction": "scroll down" } }
   ]
 }

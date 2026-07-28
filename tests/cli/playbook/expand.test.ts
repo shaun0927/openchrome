@@ -16,15 +16,15 @@ describe('expandStep', () => {
   });
 
   test('interact → interact tool, args pass-through', () => {
-    const result = expandStep('interact', { ref: 'Submit button' });
+    const result = expandStep('interact', { query: 'Submit button' });
     expect(result.tool).toBe('interact');
-    expect(result.callArgs).toEqual({ ref: 'Submit button' });
+    expect(result.callArgs).toEqual({ query: 'Submit button' });
   });
 
   test('act → act tool, args pass-through', () => {
-    const result = expandStep('act', { action: 'scroll down' });
+    const result = expandStep('act', { instruction: 'scroll down' });
     expect(result.tool).toBe('act');
-    expect(result.callArgs).toEqual({ action: 'scroll down' });
+    expect(result.callArgs).toEqual({ instruction: 'scroll down' });
   });
 
   test('fill_form → fill_form tool, args pass-through', () => {
@@ -34,9 +34,9 @@ describe('expandStep', () => {
   });
 
   test('wait_for → wait_for tool, args pass-through', () => {
-    const result = expandStep('wait_for', { condition: 'navigation' });
+    const result = expandStep('wait_for', { type: 'navigation' });
     expect(result.tool).toBe('wait_for');
-    expect(result.callArgs).toEqual({ condition: 'navigation' });
+    expect(result.callArgs).toEqual({ type: 'navigation' });
   });
 
   test('page_screenshot → page_screenshot tool, args pass-through', () => {

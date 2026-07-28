@@ -145,8 +145,8 @@ program
     if (options.introspectToolsList) {
       const { MCPServer } = await import('./mcp-server');
       const { registerAllTools } = await import('./tools');
-      const server = new MCPServer(undefined, { initialToolTier: 3 });
-      registerAllTools(server);
+      const server = new MCPServer(undefined, { initialToolTier: 3, manifestOnly: true });
+      registerAllTools(server, { runtimeSideEffects: false });
       const manifest = server.getToolManifest();
       const output = JSON.stringify(manifest.tools) + '\n';
       for (let offset = 0; offset < output.length; offset += 16_384) {

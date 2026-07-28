@@ -414,6 +414,11 @@ export interface MCPServerOptions {
   dashboardRefreshInterval?: number;
   initialToolTier?: ToolTier;
   /**
+   * Registration-only mode for manifest introspection. Skips session wiring,
+   * resources, runtime telemetry, journals, and other persistent state.
+   */
+  manifestOnly?: boolean;
+  /**
    * Capability filter derived from --tools-only / --disable-tools CLI flags.
    * When set, only tools whose `capability` is in this set are exposed.
    * When undefined, all capabilities are exposed (default, P2-compliant).
@@ -520,7 +525,9 @@ export class MCPServer {
   private clientCapabilitiesBySession: Map<string, { roots?: object; sampling?: object; elicitation?: object }> = new Map();
 
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
-    this.sessionManager = sessionManager || getSessionManager();
+    this.sessionManager = sessionManager || (
+      options.manifestOnly ? {} as SessionManager : getSessionManager()
+    );
     this.options = options;
 
     if (options.initialToolTier) {
@@ -529,6 +536,10 @@ export class MCPServer {
 
     if (options.capabilityFilter) {
       this.capabilityFilter = options.capabilityFilter;
+    }
+
+    if (options.manifestOnly) {
+      return;
     }
 
     // Release the tenant binding as soon as the underlying session is

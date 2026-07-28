@@ -6,4 +6,4 @@ steps:
       kind: url
       pattern: "WILL_NOT_MATCH"
   - interact:
-      ref: "should be skipped"
+      query: "should be skipped"

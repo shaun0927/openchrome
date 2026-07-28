@@ -1129,9 +1129,8 @@ export function registerNavigateTool(server: MCPServer): void {
   // Snapshot-cache (#879): bump docEpoch after a successful navigation
   // (loaderId change) so the next read recomputes against the new page.
   // Wrap the dynamic-skills `wrappedHandler` so both behaviours layer.
-  const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(wrappedHandler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid, undefined, 'navigate') : Promise.resolve(null),
+    tid ? getSessionManager().getPage(sid, tid, undefined, 'navigate') : Promise.resolve(null),
   );
   server.registerTool('navigate', wrapped, definition, { timeoutRecoverable: true });
 }
