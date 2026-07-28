@@ -13,7 +13,7 @@ import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAS
 import type { WindowBoundsConfig } from '../config/window-bounds';
 import { getHeadedWindowArgs } from './launcher-window-args';
 import { findChromeHeadlessShell, findChromePath } from './launcher-chrome-paths';
-import { checkDebugPort, waitForDebugPort } from './launcher-debug-port';
+import { checkDebugPort, DebugPortTimeoutError, waitForDebugPort } from './launcher-debug-port';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';
@@ -713,7 +713,15 @@ export class ChromeLauncher {
       diagnostics.push('  - Port conflict: another process is bound to port ' + port);
       diagnostics.push('  - Firewall/antivirus blocking localhost connections');
       diagnostics.push('  - Chrome 136+: requires --user-data-dir with --remote-debugging-port');
-      throw new Error(diagnostics.join('\n'));
+      const diagnosticMessage = diagnostics.join('\n');
+      if (err instanceof DebugPortTimeoutError) {
+        // Preserve the timeout type so startup policy can distinguish a slow,
+        // still-running Chrome from a terminal spawn failure while retaining
+        // the launcher diagnostics operators rely on.
+        err.message = diagnosticMessage;
+        throw err;
+      }
+      throw new Error(diagnosticMessage);
     }
     this.pendingProcess = null; // Success — no longer pending
 
