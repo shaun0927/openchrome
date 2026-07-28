@@ -361,6 +361,10 @@ describe('Headed Tool Interop (#485)', () => {
           returnByValue: false,
           awaitPromise: true,
         }),
+        expect.objectContaining({
+          timeoutMs: 30_250,
+          reserveRuntimeEvaluateResponseGrace: true,
+        }),
       );
     });
 

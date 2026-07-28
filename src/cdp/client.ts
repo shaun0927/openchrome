@@ -29,9 +29,14 @@ import {
   DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS,
 } from '../config/defaults';
 import { Budget, isLegacyBudgetMode } from '../utils/budget';
-import { withTimeout } from '../utils/with-timeout';
+import {
+  addTimeoutResponseGraceMs,
+  reserveTimeoutResponseGraceMs,
+  withTimeout,
+} from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
+import { OpenChromeTimeoutError } from '../errors/timeout';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 import { getIdleState } from '../utils/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
@@ -68,6 +73,17 @@ export interface CDPClientOptions {
   heartbeatIntervalMs?: number;
   /** If true, auto-launch Chrome when not running (default: false) */
   autoLaunch?: boolean;
+}
+
+export interface CDPSendOptions {
+  /** Per-command guard. Overrides both Puppeteer's protocol timer and OpenChrome's send timer. */
+  timeoutMs?: number;
+  /** Absolute parent deadline shared by session acquisition and command dispatch. */
+  deadlineAt?: number;
+  /** Abort session acquisition or prevent dispatch after HTTP/request cancellation. */
+  signal?: AbortSignal;
+  /** Keep Runtime.evaluate's requested timeout exact when there is room, otherwise reserve response grace. */
+  reserveRuntimeEvaluateResponseGrace?: boolean;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -2289,8 +2305,26 @@ export class CDPClient {
   async send<T = unknown>(
     page: Page,
     method: string,
-    params?: Record<string, unknown>
+    params?: Record<string, unknown>,
+    options?: CDPSendOptions,
   ): Promise<T> {
+    const requestedTimeoutMs = options?.timeoutMs ?? DEFAULT_CDP_SEND_TIMEOUT_MS;
+    if (!Number.isFinite(requestedTimeoutMs) || requestedTimeoutMs <= 0) {
+      throw new Error('CDP send timeout must be a positive finite number');
+    }
+    if (options?.deadlineAt !== undefined && !Number.isFinite(options.deadlineAt)) {
+      throw new Error('CDP send deadline must be finite');
+    }
+    if (options?.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new Error(String(options.signal.reason ?? 'Aborted'));
+    }
+    const commandDeadlineAt = Date.now() + requestedTimeoutMs;
+    const effectiveDeadlineAt = options?.deadlineAt === undefined
+      ? commandDeadlineAt
+      : Math.min(commandDeadlineAt, options.deadlineAt);
+
     // Fail fast if the target is no longer valid (browser may have reconnected)
     const targetId = getTargetId(page.target());
     if (targetId && !this.targetIdIndex.has(targetId)) {
@@ -2302,10 +2336,62 @@ export class CDPClient {
       );
     }
 
-    const session = await this.getCDPSession(page);
+    const sessionWaitStartedAt = Date.now();
+    const sessionTimeoutMs = Math.max(0, effectiveDeadlineAt - sessionWaitStartedAt);
+    if (sessionTimeoutMs <= 0) {
+      throw new OpenChromeTimeoutError(`CDP ${method}`, 0, false, true);
+    }
+
+    let session: CDPSession;
+    try {
+      session = await withTimeout(
+        this.getCDPSession(page),
+        sessionTimeoutMs,
+        `CDP ${method} session acquisition`,
+        {
+          startTime: sessionWaitStartedAt,
+          deadlineMs: sessionTimeoutMs,
+          signal: options?.signal,
+        },
+      );
+    } catch (error) {
+      if (error instanceof OpenChromeTimeoutError) {
+        throw new OpenChromeTimeoutError(`CDP ${method}`, 0, false, true);
+      }
+      throw error;
+    }
+
+    if (options?.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new Error(String(options.signal.reason ?? 'Aborted'));
+    }
+
+    const timeoutMs = Math.max(0, effectiveDeadlineAt - Date.now());
+    if (timeoutMs <= 0) {
+      throw new OpenChromeTimeoutError(`CDP ${method}`, 0, false, true);
+    }
+
+    let commandParams = params;
+    if (
+      options?.reserveRuntimeEvaluateResponseGrace &&
+      method === 'Runtime.evaluate' &&
+      typeof params?.timeout === 'number'
+    ) {
+      const requestedExecutionTimeoutMs = params.timeout;
+      if (!Number.isFinite(requestedExecutionTimeoutMs) || requestedExecutionTimeoutMs <= 0) {
+        throw new Error('Runtime.evaluate timeout must be a positive finite number');
+      }
+      const requiredHostTimeoutMs = addTimeoutResponseGraceMs(requestedExecutionTimeoutMs);
+      const executionTimeoutMs = timeoutMs >= requiredHostTimeoutMs
+        ? requestedExecutionTimeoutMs
+        : reserveTimeoutResponseGraceMs(timeoutMs);
+      commandParams = { ...params, timeout: executionTimeoutMs };
+    }
+
     return withTimeout(
-      session.send(method as any, params as any) as Promise<T>,
-      DEFAULT_CDP_SEND_TIMEOUT_MS,
+      session.send(method as any, commandParams as any, { timeout: timeoutMs }) as Promise<T>,
+      timeoutMs,
       `CDP ${method}`
     );
   }

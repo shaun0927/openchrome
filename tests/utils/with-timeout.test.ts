@@ -1,9 +1,83 @@
 /// <reference types="jest" />
-import { withTimeout } from '../../src/utils/with-timeout';
+import {
+  addTimeoutResponseGraceMs,
+  getEffectiveTimeoutMs,
+  getRemainingTimeoutMs,
+  getTimeoutDeadlineAt,
+  getTimeoutResponseGraceMs,
+  reserveTimeoutResponseGraceMs,
+  withTimeout,
+} from '../../src/utils/with-timeout';
 import { OpenChromeTimeoutError } from '../../src/errors/timeout';
 import { ToolContext } from '../../src/types/mcp';
 
 describe('withTimeout', () => {
+  describe('response grace helpers', () => {
+    test('preserves the requested inner timeout when the host budget adds grace', () => {
+      expect(getTimeoutResponseGraceMs(250)).toBe(50);
+      expect(addTimeoutResponseGraceMs(250)).toBe(300);
+      expect(addTimeoutResponseGraceMs(30_000)).toBe(30_250);
+    });
+
+    test('reserves bounded response time inside a tighter outer deadline', () => {
+      expect(reserveTimeoutResponseGraceMs(600)).toBe(480);
+      expect(reserveTimeoutResponseGraceMs(1)).toBe(1);
+      expect(reserveTimeoutResponseGraceMs(0)).toBe(0);
+    });
+  });
+
+  describe('getEffectiveTimeoutMs', () => {
+    test('returns the requested timeout without a ToolContext', () => {
+      expect(getEffectiveTimeoutMs(5_000)).toBe(5_000);
+    });
+
+    test('caps the timeout to the remaining ToolContext budget', () => {
+      const context: ToolContext = {
+        startTime: Date.now() - 750,
+        deadlineMs: 1_000,
+      };
+
+      const effective = getEffectiveTimeoutMs(5_000, context);
+      expect(effective).toBeGreaterThan(0);
+      expect(effective).toBeLessThanOrEqual(250);
+    });
+
+    test('returns zero when the ToolContext budget is exhausted', () => {
+      const context: ToolContext = {
+        startTime: Date.now() - 2_000,
+        deadlineMs: 1_000,
+      };
+
+      expect(getEffectiveTimeoutMs(5_000, context)).toBe(0);
+    });
+  });
+
+  describe('absolute timeout deadlines', () => {
+    test('shares one deadline across sequential phases', () => {
+      jest.useFakeTimers({ now: 10_000 });
+      try {
+        const deadlineAt = getTimeoutDeadlineAt(300);
+        expect(deadlineAt).toBe(10_300);
+        jest.advanceTimersByTime(250);
+        expect(getRemainingTimeoutMs(deadlineAt)).toBe(50);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('uses the earlier parent deadline', () => {
+      jest.useFakeTimers({ now: 20_000 });
+      try {
+        expect(getTimeoutDeadlineAt(5_000, {
+          startTime: 19_500,
+          deadlineMs: 1_000,
+        })).toBe(20_500);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
   test('should resolve when promise completes before timeout', async () => {
     const result = await withTimeout(Promise.resolve('ok'), 1000, 'test');
     expect(result).toBe('ok');
