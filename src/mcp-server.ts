@@ -96,6 +96,7 @@ export { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-
 import { estimateOutputTokensFromChars, extractCacheStatus } from './mcp/output-observability';
 import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
+import { shouldInitializeBrowserSession } from './mcp/session-init-policy';
 
 function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   if (toolName === 'wait_for' && args.type === 'function' && typeof args.value === 'string') {
@@ -230,37 +231,6 @@ export function isConnectionError(error: unknown): boolean {
   const lowerMessage = message.toLowerCase();
   return patterns.some(pattern => lowerMessage.includes(pattern));
 }
-
-/** Lifecycle tools that must work even when the CDP connection is broken (e.g., after
- *  sleep/wake). Skip session initialization so recovery handlers can always run.
- *
- *  Task ledger tools (`oc_task_*`) are also listed here because they are pure
- *  ledger operations (or, for `oc_task_start`, just persist a meta row before
- *  background work begins). They never touch the browser themselves, so they
- *  must not trigger Chrome auto-launch on malformed input (#1034).
- *
- *  Run-harness tools (`oc_run_*`) and `oc_progress_status` are pure read /
- *  bookkeeping calls landed on develop after this PR branched — also skip. */
-const SKIP_SESSION_INIT_TOOLS = new Set([
-  'oc_stop',
-  'oc_reap_orphans',
-  'oc_profile_status',
-  'oc_session_snapshot',
-  'oc_session_resume',
-  'oc_journal',
-  'oc_task_start',
-  'oc_task_list',
-  'oc_task_get',
-  'oc_task_cancel',
-  'oc_task_wait',
-  'oc_task_update',
-  'oc_task_finish',
-  'oc_run_start',
-  'oc_run_status',
-  'oc_run_events',
-  'oc_run_finish',
-  'oc_progress_status',
-]);
 
 const RUN_HARNESS_LONG_TASK_TOOLS = new Set([
   'execute_plan',
@@ -1895,10 +1865,20 @@ export class MCPServer {
       }
     }
 
+    const requiresBrowserSession = shouldInitializeBrowserSession(toolName, substitutedArgs);
+    if (requiresBrowserSession) {
+      try {
+        getCDPClient().markManagedBrowserDemand();
+      } catch {
+        // CDP client may not be initialized yet; session initialization below
+        // still owns the actual connection attempt.
+      }
+    }
+
     // Reconnection wait — if Chrome is reconnecting, wait for it to complete
     // instead of rejecting immediately. This is server-level resilience, not orchestration.
     // Allow lifecycle tools that must work during disconnection (oc_stop, oc_session_resume, etc.)
-    if (!SKIP_SESSION_INIT_TOOLS.has(toolName)) try {
+    if (requiresBrowserSession) try {
       const cdpClient = getCDPClient();
       if (cdpClient.isReconnecting()) {
         console.error(`[MCPServer] Tool call "${toolName}" arrived during reconnection, waiting...`);
@@ -2003,7 +1983,7 @@ export class MCPServer {
       // Ensure session exists.
       // Use a longer timeout when autoLaunch is enabled because Chrome launch (up to 30s)
       // + puppeteer.connect (up to 15s) can exceed the default 30s session init timeout.
-      if (sessionId && !SKIP_SESSION_INIT_TOOLS.has(toolName)) {
+      if (sessionId && requiresBrowserSession) {
         const globalConfig = getGlobalConfig();
         const sessionInitTimeout = globalConfig.autoLaunch
           ? DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS

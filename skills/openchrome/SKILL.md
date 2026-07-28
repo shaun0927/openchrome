@@ -41,7 +41,7 @@ openchrome setup               # Claude Code
 openchrome setup --client codex   # Codex CLI
 ```
 
-Restart your MCP client. Chrome auto-launches on the first tool call.
+Restart your MCP client. Chrome auto-launches on the first browser/CDP-requiring tool call; initialize, tools/list, and browser-free diagnostics do not launch it.
 
 ## First tool by intent
 

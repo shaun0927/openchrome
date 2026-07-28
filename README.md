@@ -61,7 +61,8 @@ openchrome setup --client codex        # Codex CLI (auto-elect topology)
 npx openchrome-mcp setup --client opencode   # OpenCode (auto-elect topology)
 ```
 
-Restart your MCP client. That's it — Chrome auto-launches on first tool call.
+Restart your MCP client. That's it — Chrome auto-launches on the first browser/CDP-requiring tool call. Protocol startup, tool discovery, and browser-free diagnostics stay launch-free.
+An already-open Chrome is reused only when it exposes the configured remote-debugging port; a normal Chrome without that CDP endpoint remains separate from the managed browser.
 
 **Updating is not configuration migration.** `npm install -g openchrome-mcp@latest`
 updates the OpenChrome binary, but it does not rewrite existing Claude Code,
