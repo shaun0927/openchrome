@@ -28,7 +28,8 @@ name: <string>           # optional — appears in reports
 vars:                    # optional — key/value defaults; CLI --vars override these
   KEY: value
 steps:
-  - <verb>:              # exactly one verb per step
+  - id: <string>         # optional stable author-supplied step label
+    <verb>:              # exactly one verb per step
       <arg>: <value>     # verb-specific args (see table below)
 ```
 
@@ -36,7 +37,8 @@ steps:
 
 ```yaml
 steps:
-  - navigate:
+  - id: open_home
+    navigate:
       url: https://example.com
 ```
 
@@ -48,9 +50,11 @@ vars:
   url: https://example.com
   heading: Example
 steps:
-  - navigate:
+  - id: open_home
+    navigate:
       url: ${url}
-  - assert:
+  - id: verify_heading
+    assert:
       kind: dom_text
       selector: h1
       pattern: ${heading}
@@ -70,6 +74,26 @@ steps:
   - act:
       action: "scroll down"
 ```
+
+## Stable step IDs
+
+Each step may include an optional author-supplied `id` alongside exactly one
+verb. IDs make reports and failure diagnostics stable when earlier steps are
+inserted or reordered.
+
+Rules:
+
+- IDs must match `^[a-z][a-z0-9_-]{0,63}$`.
+- IDs must be unique within one playbook.
+- IDs use lowercase ASCII and are compared exactly.
+- IDs are metadata and are never forwarded to MCP tool arguments.
+- Numeric `index` remains 0-based and is always present in run results.
+- A missing ID remains absent; OpenChrome does not synthesize IDs from indexes.
+- IDs do not create graph edges, jumps, dependencies, or control flow.
+
+Legacy playbooks without IDs continue to parse and run unchanged. Plain and
+Markdown reports also preserve their previous layout when no step has an ID;
+the Markdown `ID` column appears only when at least one result carries an ID.
 
 ---
 
@@ -178,15 +202,17 @@ The playbook executes **sequentially**. When a step fails:
 2. All subsequent steps are marked `skipped` — their MCP tools are **not** called.
 3. The runner disconnects and exits with code `1`.
 
-Example output (`--json`) after step 1 fails in a 3-step playbook:
+Abbreviated output (`--json`) after step 1 fails in a 3-step playbook. The
+complete schema also includes `tool`, `args`, and optional `result` fields as
+documented below:
 
 ```json
 {
   "name": "fail-fast fixture",
   "steps": [
     { "index": 0, "verb": "navigate", "status": "ok",      "durationMs": 45 },
-    { "index": 1, "verb": "assert",   "status": "failed",  "durationMs": 12, "error": "Step 1 (assert): assert verdict=\"fail\"" },
-    { "index": 2, "verb": "interact", "status": "skipped", "durationMs": 0  }
+    { "index": 1, "id": "verify_heading", "verb": "assert", "status": "failed", "durationMs": 12, "error": "Step 1 [verify_heading] (assert): assert verdict=\"fail\"" },
+    { "index": 2, "verb": "interact", "status": "skipped", "durationMs": 0 }
   ],
   "summary": { "ok": false, "total": 3, "passed": 1, "failed": 1, "skipped": 1 }
 }
@@ -227,6 +253,7 @@ Options:
   name: string | undefined,
   steps: Array<{
     index:      number,           // 0-based
+    id?:        string,           // optional stable author-supplied label
     verb:       string,           // playbook verb (e.g. "navigate")
     tool:       string,           // MCP tool name (e.g. "oc_assert")
     args:       object,           // args sent to the MCP tool
@@ -256,8 +283,8 @@ The same parser accepts `.json` files using the identical top-level shape:
   "name": "example.com sanity (JSON)",
   "vars": { "url": "https://example.com" },
   "steps": [
-    { "navigate": { "url": "${url}" } },
-    { "assert": { "kind": "dom_text", "selector": "h1", "pattern": "Example" } }
+    { "id": "open_home", "navigate": { "url": "${url}" } },
+    { "id": "verify_heading", "assert": { "kind": "dom_text", "selector": "h1", "pattern": "Example" } }
   ]
 }
 ```
