@@ -10,9 +10,9 @@ steps:
       selector: h1
       pattern: ${heading}
   - interact:
-      ref: "More information…"
+      query: "More information…"
   - wait_for:
-      condition: "navigation"
+      type: "navigation"
   - assert:
       kind: url
       pattern: "iana\\.org"
@@ -23,4 +23,4 @@ steps:
   - javascript_tool:
       code: "document.title"
   - act:
-      action: "scroll down"
+      instruction: "scroll down"

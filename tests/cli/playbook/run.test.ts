@@ -66,7 +66,7 @@ const sanityPlaybook: Playbook = {
   steps: [
     { verb: 'navigate', args: { url: '${url}' } },
     { verb: 'assert', args: { kind: 'dom_text', selector: 'h1', pattern: 'Example' } },
-    { verb: 'interact', args: { ref: 'More information…' } },
+    { verb: 'interact', args: { query: 'More information…' } },
   ],
 };
 
@@ -75,7 +75,7 @@ const failFastPlaybook: Playbook = {
   steps: [
     { verb: 'navigate', args: { url: 'https://example.com' } },
     { verb: 'assert', args: { kind: 'url', pattern: 'WILL_NOT_MATCH' } },
-    { verb: 'interact', args: { ref: 'should be skipped' } },
+    { verb: 'interact', args: { query: 'should be skipped' } },
   ],
 };
 
@@ -113,7 +113,7 @@ describe('runPlaybook — call ordering', () => {
 
     // Step 2: interact → tool 'interact', args pass-through
     expect(calls[2].tool).toBe('interact');
-    expect(calls[2].args).toEqual({ ref: 'More information…' });
+    expect(calls[2].args).toEqual({ query: 'More information…' });
   });
 
   test('calls disconnect after run regardless of outcome', async () => {

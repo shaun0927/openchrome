@@ -1,6 +1,6 @@
 # oc playbook — Declarative YAML Scenario Runner
 
-`oc playbook run` executes a declarative YAML (or JSON) scenario file against the OpenChrome MCP server. Each step maps to exactly one MCP tool call; the runner is a thin client, not a new orchestration tier.
+`oc playbook run` executes a declarative YAML (or JSON) scenario file against the OpenChrome MCP server. `oc playbook validate` checks the same expanded calls against the current package's registered MCP tool schemas without executing browser actions or starting Chrome. The playbook layer remains a thin client, not a new orchestration tier.
 
 Inspired by [Midscene's YAML scripting](https://midscenejs.com/). Unlike Midscene, OpenChrome's substrate is deterministic, so each step carries an inline **Outcome Contract** assertion instead of an LLM judgement.
 
@@ -11,6 +11,9 @@ Inspired by [Midscene's YAML scripting](https://midscenejs.com/). Unlike Midscen
 ```bash
 # One-shot run (spawns a dedicated server child, then terminates it)
 oc playbook run tests/fixtures/playbook/sanity.yaml
+
+# Preflight against the registered MCP tool manifest; no Chrome/CDP startup
+oc playbook validate tests/fixtures/playbook/sanity.yaml
 
 # Reuse a running daemon
 oc playbook run sanity.yaml --reuse --json | jq '.summary'
@@ -59,9 +62,9 @@ steps:
       selector: h1
       pattern: ${heading}
   - interact:
-      ref: "More information…"
+      query: "More information…"
   - wait_for:
-      condition: "navigation"
+      type: "navigation"
   - assert:
       kind: url
       pattern: "iana\\.org"
@@ -72,14 +75,14 @@ steps:
   - javascript_tool:
       code: "document.title"
   - act:
-      action: "scroll down"
+      instruction: "scroll down"
 ```
 
 ## Stable step IDs
 
 Each step may include an optional author-supplied `id` alongside exactly one
-verb. IDs make reports and failure diagnostics stable when earlier steps are
-inserted or reordered.
+verb. IDs make reports and run/validation diagnostics stable when earlier steps
+are inserted or reordered.
 
 Rules:
 
@@ -102,12 +105,12 @@ the Markdown `ID` column appears only when at least one result carries an ID.
 | Verb | MCP tool | Key args | Notes |
 |------|----------|----------|-------|
 | `navigate` | `navigate` | `url` | Navigates the active tab |
-| `interact` | `interact` | `ref` | Clicks/activates an element by accessibility label |
-| `act` | `act` | `action` | Free-form action string (e.g. `"scroll down"`) |
+| `interact` | `interact` | `query` | Clicks/activates an element by human-readable target; use `ref` only for a snapshot ref ID |
+| `act` | `act` | `instruction` | Free-form action instruction (e.g. `"scroll down"`) |
 | `fill_form` | `fill_form` | `fields` | Fills multiple form fields at once |
-| `wait_for` | `wait_for` | `condition` | Waits for a condition (e.g. `"navigation"`, `"networkidle"`) |
+| `wait_for` | `wait_for` | `type`, `value` | Waits for a supported condition such as `navigation`, `selector`, `function`, or `url_match` |
 | `page_screenshot` | `page_screenshot` | `path` | Captures a screenshot to disk |
-| `read_page` | `read_page` | `mode` | Reads page content (`"ax"` for accessibility tree, `"html"` for raw HTML) |
+| `read_page` | `read_page` | `mode` | Reads page content (`"ax"`, `"dom"`, `"css"`, `"semantic"`, or `"markdown"`) |
 | `javascript_tool` | `javascript_tool` | `code` | Evaluates JavaScript in the page context and returns the result |
 | `assert` | `oc_assert` | `kind`, `pattern`, … | Inline Outcome Contract assertion; see [Assertions](#assertions) |
 
@@ -222,6 +225,23 @@ A `--continue-on-error` flag (to collect all failures before stopping) is tracke
 
 ---
 
+## Registered schema validation
+
+`oc playbook validate <file>` parses variables and expands all steps exactly like the runner, then invokes the existing registration-only `serve --introspect-tools-list` path once and validates the expanded arguments against each registered tool's `inputSchema`. It does not open an MCP session, issue `tools/call`, start Chrome, connect CDP, initialize runtime journals, write `.openchrome` state, or execute playbook actions.
+
+```bash
+oc playbook validate sanity.yaml
+oc playbook validate sanity.yaml --vars url=https://iana.org --json
+```
+
+Validation reports missing tools, required properties, wrong types, enum/combinator failures, object and array constraints, and open-schema warnings. Diagnostics include step indexes, optional stable IDs, paths, and schema locations, but never include substituted argument values. Warnings do not fail validation.
+
+This command proves **registered-schema conformance**, not that every tool call will succeed at runtime. Conditional rules implemented only by a tool handler, browser state, selector availability, authentication, or page content can still fail during `playbook run`.
+
+Validation exit codes are `0` for no schema errors, `1` for schema or missing-tool errors, `2` for usage/parse/variable errors, and `3` for manifest discovery or parsing failures.
+
+---
+
 ## Exit codes
 
 | Code | Meaning |
@@ -244,7 +264,16 @@ Options:
   --reuse        Connect to an existing `openchrome serve` daemon instead of
                  spawning a new one-shot server.
   --json         Print the full RunResult as JSON on stdout (see schema below).
+
+oc playbook validate <file> [options]
+
+Options:
+  --vars <k=v>   Variable override (repeatable). CLI values override the vars: block.
+  --reuse        Reserved for session-scoped daemon validation; exits with code 2.
+  --json         Print structured schema diagnostics as JSON on stdout.
 ```
+
+`validate` does not accept `--out` because validation produces diagnostics rather than a run report. Passing the global `--reuse` flag to validation exits with code `2`: daemon-aware validation is deferred until the session-scoped tool-disclosure contract is available on the release branch. Using the registered local manifest avoids mutating a shared daemon's tool visibility.
 
 ### JSON output schema (`--json`)
 
@@ -297,13 +326,15 @@ Dispatch is based on file extension (`.yaml`/`.yml` → YAML parser; `.json` →
 
 Without `--reuse`, the runner spawns its own `openchrome serve --server-mode` child process for the duration of the playbook and terminates it on completion.
 
-With `--reuse`, the runner connects to an existing daemon. The daemon socket path from issue #843 (`oc run`) will be wired here when that PR lands. Until then, `--reuse` falls through to one-shot spawn with a stderr warning.
+For `oc playbook run`, `--reuse` currently falls through to one-shot spawn with a stderr warning until the legacy runner transport is replaced.
+
+`oc playbook validate` intentionally does not reuse a daemon in this release. It reads the local registered manifest through the no-Chrome introspection path.
 
 ---
 
 ## Security caveats
 
-- **`${SECRET:NAME}` masking**: Until issue #834 (secrets layer) merges, secret values are passed through in plaintext. Under `--json` output, secret values will appear unmasked in the `args` field of each step.
+- **Run-report secret exposure**: Until issue #834 (secrets layer) merges, secret values are passed through in plaintext. `oc playbook run --json` includes those values unmasked in each step's `args` field. `oc playbook validate`, including `--json`, omits substituted argument values from diagnostics.
 - **Playbook files in version control**: Treat playbook files like code. Do not embed credentials in the `vars:` block; use `${SECRET:NAME}` references or supply values at runtime via `--vars`.
 - **Untrusted playbooks**: `javascript_tool` steps execute arbitrary JavaScript in the browser context. Only run playbook files from trusted sources.
 - **Scope**: The playbook runner is a client of the MCP server. It does not gain capabilities beyond what `openchrome serve` exposes.
@@ -318,3 +349,4 @@ With `--reuse`, the runner connects to an existing daemon. The daemon socket pat
 - Recording a playbook from a live session
 - Built-in Jest integration
 - Web UI for editing playbooks
+- Validation against a running daemon's session-scoped tool manifest
