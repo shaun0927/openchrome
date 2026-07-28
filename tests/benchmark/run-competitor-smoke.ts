@@ -14,29 +14,36 @@ import { spawnSync } from 'child_process';
 
 import { MCPAdapter } from './benchmark-runner';
 import { buildResultEnvelope, assertValidResultEnvelope } from './utils/result-envelope';
-import { captureEnvironment } from './utils/environment';
+import { captureEnvironment, EnvironmentMetadata } from './utils/environment';
 import { startStaticFixtureServer } from './fixtures/static-server';
 import {
   BrowserUseAdapter,
+  BROWSER_RS_PIN,
+  BrowserRsMcpAdapter,
+  BrowserRsPreflightResult,
+  browserRsPlatformKey,
+  browserRsPlatformPin,
   CrawleeAdapter,
   OpenChromeRealAdapter,
   OpenChromeStubAdapter,
   PlaywrightAdapter,
   PlaywrightMcpAdapter,
   PuppeteerAdapter,
+  preflightBrowserRsBinary,
 } from './adapters';
 
 const OUTPUT_PATH = path.join(process.cwd(), 'benchmark', 'results', 'competitor-smoke.json');
 
-export type SmokeLibrary = 'openchrome' | 'playwright' | 'puppeteer' | 'crawlee' | 'playwright-mcp' | 'browser-use' | 'all';
+export type SmokeLibrary = 'openchrome' | 'playwright' | 'puppeteer' | 'crawlee' | 'playwright-mcp' | 'browser-rs-mcp' | 'browser-use' | 'all';
 export type SmokeStatus = 'passed' | 'failed' | 'skipped';
-export type SmokeSkipCategory = 'none' | 'not_requested' | 'dependency_missing' | 'runtime_missing' | 'not_wired';
-export type SmokeVersionSource = 'package-json' | 'node-resolution' | 'python-importlib' | 'benchmark-registry' | 'unknown';
+export type SmokeSkipCategory = 'none' | 'not_requested' | 'dependency_missing' | 'runtime_missing' | 'unsupported_platform' | 'not_wired';
+export type SmokeVersionSource = 'package-json' | 'node-resolution' | 'python-importlib' | 'benchmark-registry' | 'external-binary' | 'unknown';
 
 export interface CompetitorSmokeOptions {
   includeLive: boolean;
   library: SmokeLibrary;
   timeoutMs: number;
+  rowEnvironment?: Pick<EnvironmentMetadata, 'chromeVersion' | 'os'>;
 }
 
 export interface CompetitorSmokeRow {
@@ -55,6 +62,22 @@ export interface CompetitorSmokeRow {
   payloadChars: number;
   skipReason: string;
   failure: string;
+  commit?: string;
+  license?: string;
+  binaryPath?: string;
+  command?: readonly string[];
+  platformKey?: string;
+  expectedSha256?: string;
+  actualSha256?: string;
+  releaseAsset?: string;
+  chromePath?: string;
+  profilePath?: string;
+  connectPort?: number;
+  connectEndpoint?: string;
+  chromeVersion?: string;
+  os?: string;
+  toolCount?: number;
+  adapterSetupMs?: number;
 }
 
 export interface AdapterSpec {
@@ -62,6 +85,7 @@ export interface AdapterSpec {
   mode: string;
   liveRequired: boolean;
   packageName?: string;
+  externalPreflight?: () => BrowserRsPreflightResult;
   adapterFactory: () => MCPAdapter;
 }
 
@@ -71,7 +95,7 @@ interface VersionInfo {
   dependencyAvailable: boolean;
 }
 
-const LIBRARIES: readonly Exclude<SmokeLibrary, 'all'>[] = ['openchrome', 'playwright', 'puppeteer', 'crawlee', 'playwright-mcp', 'browser-use'];
+const LIBRARIES: readonly Exclude<SmokeLibrary, 'all'>[] = ['openchrome', 'playwright', 'puppeteer', 'crawlee', 'playwright-mcp', 'browser-rs-mcp', 'browser-use'];
 
 const REGISTRY_PINNED_VERSIONS: Readonly<Record<string, string>> = {
   OpenChrome: readRepoVersion(),
@@ -79,6 +103,7 @@ const REGISTRY_PINNED_VERSIONS: Readonly<Record<string, string>> = {
   Puppeteer: '23.10.3',
   Crawlee: '3.16.0',
   'playwright-mcp': '0.0.75',
+  'browser-rs-mcp': BROWSER_RS_PIN.version,
   'browser-use': '0.12.6',
 };
 
@@ -113,6 +138,11 @@ export function parseSmokeArgs(argv: string[]): CompetitorSmokeOptions {
   return { includeLive, library, timeoutMs };
 }
 
+export function browserRsArgsForSharedCdp(cdpEndpoint: string | undefined): readonly string[] {
+  const endpoint = cdpEndpoint?.trim();
+  return endpoint ? ['--connect', endpoint] : [];
+}
+
 function specs(options: CompetitorSmokeOptions): AdapterSpec[] {
   const requested = options.library === 'all' ? LIBRARIES : [options.library];
   // Every CDP-based adapter in the 6-way smoke attaches to the *operator's*
@@ -122,6 +152,7 @@ function specs(options: CompetitorSmokeOptions): AdapterSpec[] {
   // and (b) avoids the failure mode where two adapters race to launch their
   // own Chromium against an identical default user-data-dir.
   const cdpEndpoint = process.env.OPENCHROME_BENCH_CDP_ENDPOINT;
+  const browserRsArgs = browserRsArgsForSharedCdp(cdpEndpoint);
   const all: Record<Exclude<SmokeLibrary, 'all'>, AdapterSpec> = {
     openchrome: options.includeLive
       ? { library: 'OpenChrome', mode: 'dom-live', liveRequired: true, adapterFactory: () => new OpenChromeRealAdapter({ mode: 'dom', cdpEndpoint }) }
@@ -130,6 +161,13 @@ function specs(options: CompetitorSmokeOptions): AdapterSpec[] {
     puppeteer: { library: 'Puppeteer', mode: 'raw-html-cdp', liveRequired: true, packageName: 'puppeteer-core', adapterFactory: () => new PuppeteerAdapter({ browserURL: cdpEndpoint }) },
     crawlee: { library: 'Crawlee', mode: 'cheerio-text', liveRequired: false, packageName: 'crawlee', adapterFactory: () => new CrawleeAdapter() },
     'playwright-mcp': { library: 'playwright-mcp', mode: 'native-mcp', liveRequired: true, packageName: '@playwright/mcp', adapterFactory: () => new PlaywrightMcpAdapter({ serverPath: process.env.PLAYWRIGHT_MCP_SERVER_PATH, cdpEndpoint }) },
+    'browser-rs-mcp': {
+      library: 'browser-rs-mcp',
+      mode: 'a11y-snapshot-stdio',
+      liveRequired: true,
+      externalPreflight: () => preflightBrowserRsBinary({ binaryPath: process.env.BROWSER_RS_BIN, args: browserRsArgs }),
+      adapterFactory: () => new BrowserRsMcpAdapter({ binaryPath: process.env.BROWSER_RS_BIN, args: browserRsArgs }),
+    },
     'browser-use': { library: 'browser-use', mode: 'python-bridge', liveRequired: true, adapterFactory: () => new BrowserUseAdapter({ bridgeScriptPath: process.env.BROWSER_USE_BRIDGE_SCRIPT, python: process.env.BROWSER_USE_PYTHON }) },
   };
   return requested.map((library) => all[library]);
@@ -195,6 +233,9 @@ function versionInfoFor(spec: AdapterSpec): VersionInfo {
   if (spec.library === 'OpenChrome') {
     return { version: readRepoVersion(), source: 'package-json', dependencyAvailable: true };
   }
+  if (spec.library === 'browser-rs-mcp') {
+    return { version: BROWSER_RS_PIN.version, source: 'benchmark-registry', dependencyAvailable: true };
+  }
   if (spec.library === 'browser-use') return browserUseVersion();
   if (spec.packageName) return packageVersion(spec.packageName);
   return { version: REGISTRY_PINNED_VERSIONS[spec.library] ?? 'unknown', source: 'benchmark-registry', dependencyAvailable: false };
@@ -213,6 +254,7 @@ function parseTabId(text: string | undefined): string {
 
 export async function runOne(spec: AdapterSpec, url: string, options: CompetitorSmokeOptions): Promise<CompetitorSmokeRow> {
   const versionInfo = versionInfoFor(spec);
+  const staticMetadata = spec.library === 'browser-rs-mcp' ? rowMetadataForBrowserRsPin(options.rowEnvironment) : {};
   const base = {
     library: spec.library,
     mode: spec.mode,
@@ -223,6 +265,7 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
     versionPinned: isPinnedVersion(versionInfo.version),
     dependencyAvailable: versionInfo.dependencyAvailable,
     sameTaskContract: true,
+    ...staticMetadata,
   };
 
   if (spec.liveRequired && !options.includeLive) {
@@ -234,6 +277,29 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
       payloadChars: 0,
       skipReason: 'live competitor omitted; pass --include-live with required runtime/credentials',
       failure: '',
+    };
+  }
+
+  const externalPreflight = spec.externalPreflight?.();
+  const externalMetadata = externalPreflight ? rowMetadataForBrowserRs(externalPreflight) : {};
+  if (externalPreflight && externalPreflight.status !== 'ok') {
+    const skipCategory = externalPreflight.status === 'unsupported_platform'
+      ? 'unsupported_platform'
+      : externalPreflight.status === 'missing_binary'
+        ? 'dependency_missing'
+        : ['chrome_missing', 'profile_conflict', 'port_conflict'].includes(externalPreflight.status)
+          ? 'runtime_missing'
+        : 'none';
+    return {
+      ...base,
+      ...externalMetadata,
+      dependencyAvailable: externalPreflight.status !== 'missing_binary',
+      status: skipCategory === 'none' ? 'failed' : 'skipped',
+      skipCategory,
+      durationMs: 0,
+      payloadChars: 0,
+      skipReason: skipCategory === 'none' ? '' : externalPreflight.message,
+      failure: skipCategory === 'none' ? externalPreflight.message : '',
     };
   }
 
@@ -258,8 +324,10 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
     const tabId = parseTabId(create.content?.[0]?.text);
     const read = await withTimeout(adapter.callTool('read_page', { tabId }), options.timeoutMs, `${spec.library} read_page`);
     if (read.isError) throw new Error(read.content?.[0]?.text ?? 'read_page failed');
-    await withTimeout(adapter.callTool('tabs_close', { tabId }), options.timeoutMs, `${spec.library} tabs_close`);
+    const close = await withTimeout(adapter.callTool('tabs_close', { tabId }), options.timeoutMs, `${spec.library} tabs_close`);
+    if (close.isError) throw new Error(close.content?.[0]?.text ?? 'tabs_close failed');
     const payload = read.content?.map((entry) => entry.text ?? '').join('\n') ?? '';
+    const runtimeMetadata = { ...externalMetadata, ...adapterMetadata(adapter) };
     // Sanity gate: an adapter that returns the all-three-calls-succeeded shape
     // but ships an empty payload is not actually evidence that the library can
     // observe a page — it just means none of the three calls *threw*. The
@@ -275,6 +343,7 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
         payloadChars: 0,
         skipReason: '',
         failure: 'empty_payload: read_page returned no text content',
+        ...runtimeMetadata,
       };
     }
     return {
@@ -285,6 +354,7 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
       payloadChars: payload.length,
       skipReason: '',
       failure: '',
+      ...runtimeMetadata,
     };
   } catch (err) {
     return {
@@ -295,10 +365,61 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
       payloadChars: 0,
       skipReason: '',
       failure: err instanceof Error ? err.message : String(err),
+      ...externalMetadata,
+      ...adapterMetadata(adapter),
     };
   } finally {
     await adapter.teardown?.().catch(() => undefined);
   }
+}
+
+function rowMetadataForBrowserRsPin(environment?: Pick<EnvironmentMetadata, 'chromeVersion' | 'os'>): Partial<CompetitorSmokeRow> {
+  const pin = browserRsPlatformPin();
+  return {
+    commit: BROWSER_RS_PIN.commit,
+    license: BROWSER_RS_PIN.license,
+    binaryPath: process.env.BROWSER_RS_BIN ?? '',
+    command: process.env.BROWSER_RS_BIN ? [process.env.BROWSER_RS_BIN] : [],
+    platformKey: browserRsPlatformKey(),
+    expectedSha256: pin?.sha256 ?? '',
+    actualSha256: '',
+    releaseAsset: pin?.asset ?? '',
+    chromeVersion: environment?.chromeVersion ?? 'unknown',
+    os: environment?.os ?? 'unknown',
+  };
+}
+
+function rowMetadataForBrowserRs(preflight: BrowserRsPreflightResult): Partial<CompetitorSmokeRow> {
+  return {
+    version: preflight.actualVersion || preflight.expectedVersion,
+    versionSource: preflight.actualVersion ? 'external-binary' : 'benchmark-registry',
+    commit: preflight.commit,
+    license: BROWSER_RS_PIN.license,
+    binaryPath: preflight.binaryPath,
+    command: preflight.command,
+    platformKey: preflight.platformKey,
+    expectedSha256: preflight.expectedSha256,
+    actualSha256: preflight.actualSha256,
+    releaseAsset: preflight.asset,
+    chromePath: preflight.chromePath,
+    profilePath: preflight.profilePath,
+    connectPort: preflight.connectPort,
+    connectEndpoint: preflight.connectEndpoint,
+    chromeVersion: preflight.chromeVersion,
+  };
+}
+
+function adapterMetadata(adapter: MCPAdapter): Partial<CompetitorSmokeRow> {
+  if (adapter instanceof BrowserRsMcpAdapter) {
+    const preflight = adapter.lastPreflight;
+    return {
+      ...(preflight ? rowMetadataForBrowserRs(preflight) : {}),
+      command: adapter.command.length > 0 ? adapter.command : preflight?.command,
+      toolCount: adapter.toolCount,
+      adapterSetupMs: adapter.setupDurationMs,
+    };
+  }
+  return {};
 }
 
 function readRepoVersion(): string {
@@ -310,12 +431,12 @@ function readRepoVersion(): string {
   }
 }
 
-export async function runCompetitorSmokeMatrix(options: CompetitorSmokeOptions): Promise<CompetitorSmokeRow[]> {
+export async function runCompetitorSmokeMatrix(options: CompetitorSmokeOptions, environment = captureEnvironment()): Promise<CompetitorSmokeRow[]> {
   const server = await startStaticFixtureServer();
   try {
     const url = server.url('small');
     const rows: CompetitorSmokeRow[] = [];
-    for (const spec of specs(options)) rows.push(await runOne(spec, url, options));
+    for (const spec of specs(options)) rows.push(await runOne(spec, url, { ...options, rowEnvironment: environment }));
     return rows;
   } finally {
     await server.close();
@@ -340,11 +461,12 @@ function formatReport(rows: readonly CompetitorSmokeRow[]): string {
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const options = parseSmokeArgs(argv);
-  const rows = await runCompetitorSmokeMatrix(options);
+  const environment = captureEnvironment();
+  const rows = await runCompetitorSmokeMatrix(options, environment);
   const competitors = rows.map((row) => ({ name: row.library, version: row.version }));
   const envelope = buildResultEnvelope({
     axis: 'foundation',
-    environment: captureEnvironment(),
+    environment,
     competitors,
     results: rows,
   });

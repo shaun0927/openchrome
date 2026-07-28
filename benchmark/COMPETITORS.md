@@ -33,9 +33,24 @@ they are not reproducible here. See Epic #1254 "Non-goals".
 | Playwright | `playwright` | `1.60.0` | — | 2026-05-18 smoke runtime | #A #C #D #E |
 | Puppeteer | `puppeteer-core` / `rebrowser-puppeteer-core` | `23.10.3` | — | 2026-05-18 smoke runtime | #C #D #E #F |
 | playwright-mcp | `@playwright/mcp` | `0.0.75` | `8116437ffcfee1309cebc07dd30cee37720d2d19` | 2026-05-15 | #A #B #F #1299-future-live |
+| browser-rs-mcp | external binary `browser-rs` via `BROWSER_RS_BIN` | `0.1.13` | `6efa54fe428f1203967a9c760a27d0647d5474ee` | 2026-07-27 release asset, Apache-2.0, SHA-256: linux-x64 `ae0e4f5d2a4e6a90a0f050c50a55fcb86aab7cdda7d1ea2fec1aa54a321e3f1c`; macos-arm64 `618c75dc4f9c3297ba85d4e1ddaa9aaf67a671bc8abb393e1f64523dc084b310` | #A diagnostic smoke only |
 | browser-use | `browser-use` (PyPI) | `0.12.6` | `329c67f069427e928ff81ad52415efdca7692007` | 2026-05-15 | #A #B #D #E |
 | Crawlee | `crawlee` | `3.16.0` | `6c9cd2ff7e7d89ce7685e67f3f919f3cce0fa7a4` | 2026-05-15 | #A #C |
 | Online-Mind2Web | HuggingFace dataset `osunlp/Online-Mind2Web` (CC-BY 4.0) | dataset commit `7ab0fc3b5e0420f6a74c4e0f0faebc1f3eddb0c1` | `7ab0fc3b5e0420f6a74c4e0f0faebc1f3eddb0c1` | TBD-by-runner-PR | #B (future — Part 2 of #1427) |
+
+The `browser-rs-mcp` diagnostic adapter is stdio-only. Before a live row it
+resolves `BROWSER_RS_BIN` to one canonical executable and uses that exact path
+for digest, version, and process launch, with SHA-256 verified before the
+binary is executed. It also forwards the exact approved Chrome/profile through
+browser-rs' `AB_CHROME` / `AB_PROFILE` contract, rejects locked profiles, and
+rejects `--port` / `AB_HTTP` because those settings switch the competitor to
+HTTP instead of the benchmark's MCP stdio contract.
+
+Pinned browser-rs v0.1.13 reduces `--connect <url>` to a local port before it
+attaches. The adapter therefore accepts only an explicit `127.0.0.1` CDP
+endpoint (or a numeric local port), probes that exact endpoint, and rejects
+remote hosts, alternate protocols, credentials, and paths instead of risking
+a smoke run against an unrelated local Chrome.
 
 ## Tokenizer
 
