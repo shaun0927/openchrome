@@ -6,6 +6,9 @@ import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 
+const STARTUP_TIMEOUT_MS = 30_000;
+const STDERR_CAPTURE_LIMIT = 4_096;
+
 export interface MCPResponse {
   jsonrpc: '2.0';
   id: number;
@@ -38,6 +41,35 @@ export class MCPClient {
     this.extraArgs = opts?.args ?? [];
   }
 
+  private rejectPending(error: Error): void {
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private hasExited(child: ChildProcess): boolean {
+    return child.exitCode !== null || child.signalCode !== null;
+  }
+
+  private canSend(child: ChildProcess | null): child is ChildProcess {
+    return child !== null
+      && !child.killed
+      && !this.hasExited(child)
+      && child.stdin !== null
+      && !child.stdin.destroyed
+      && !child.stdin.writableEnded;
+  }
+
+  private getServeArgs(serverPath: string): string[] {
+    const configuredArgs = this.extraEnv.OPENCHROME_E2E_SERVER_ARGS
+      ?? process.env.OPENCHROME_E2E_SERVER_ARGS
+      ?? '';
+    const harnessArgs = configuredArgs.trim() ? configuredArgs.trim().split(/\s+/) : [];
+    return [serverPath, 'serve', '--auto-launch', ...harnessArgs, ...this.extraArgs];
+  }
+
   async start(): Promise<void> {
     const serverPath = path.join(process.cwd(), 'dist', 'index.js');
     if (!fs.existsSync(serverPath)) {
@@ -45,29 +77,82 @@ export class MCPClient {
     }
 
     return new Promise((resolve, reject) => {
-      this.process = spawn('node', [serverPath, 'serve', '--auto-launch', ...this.extraArgs], {
+      const child = spawn('node', this.getServeArgs(serverPath), {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...this.extraEnv },
       });
+      this.process = child;
 
       let ready = false;
+      let startupSettled = false;
+      let stderrBuffer = '';
+      let startupTimer: NodeJS.Timeout | null = null;
 
-      this.process.stderr?.on('data', (data: Buffer) => {
+      const clearStartupTimer = () => {
+        if (startupTimer) {
+          clearTimeout(startupTimer);
+          startupTimer = null;
+        }
+      };
+
+      const rejectStartup = (error: Error) => {
+        clearStartupTimer();
+        if (!startupSettled) {
+          startupSettled = true;
+          reject(error);
+        }
+      };
+
+      const resolveStartup = () => {
+        clearStartupTimer();
+        if (!startupSettled) {
+          startupSettled = true;
+          resolve();
+        }
+      };
+
+      const captureStderr = (msg: string) => {
+        stderrBuffer = (stderrBuffer + msg).slice(-STDERR_CAPTURE_LIMIT);
+      };
+
+      const lifecycleError = (message: string) => {
+        const stderr = stderrBuffer.trim();
+        return new Error(stderr ? `${message}. stderr: ${stderr}` : message);
+      };
+
+      const handleTermination = (error: Error) => {
+        if (this.process === child) {
+          this.process = null;
+          this.buffer = '';
+          this.rejectPending(error);
+        }
+        rejectStartup(error);
+      };
+
+      child.stderr?.on('data', (data: Buffer) => {
         const msg = data.toString();
+        captureStderr(msg);
         if (process.env.DEBUG) process.stderr.write(`[mcp-client] ${msg}`);
         if (!ready && (msg.includes('Ready') || msg.includes('MCP server') || msg.includes('waiting'))) {
           ready = true;
+          clearStartupTimer();
           this.send('initialize', {
             protocolVersion: '2024-11-05',
             capabilities: {},
             clientInfo: { name: 'e2e-harness', version: '1.0.0' },
           })
-            .then(() => resolve())
-            .catch(reject);
+            .then((response) => {
+              if (response.error) {
+                rejectStartup(new Error(`Initialize failed: ${response.error.message}`));
+              } else {
+                resolveStartup();
+              }
+            })
+            .catch(rejectStartup);
         }
       });
 
-      this.process.stdout?.on('data', (data: Buffer) => {
+      child.stdout?.on('data', (data: Buffer) => {
         this.buffer += data.toString();
         const lines = this.buffer.split('\n');
         this.buffer = lines.pop() || '';
@@ -85,40 +170,60 @@ export class MCPClient {
         }
       });
 
-      this.process.on('error', (err) => { if (!ready) reject(err); });
-      this.process.on('exit', (code) => { if (!ready) reject(new Error(`Server exited: ${code}`)); });
+      child.on('error', (err) => {
+        handleTermination(lifecycleError(`Server process error: ${err.message}`));
+      });
+      child.on('exit', (code, signal) => {
+        const detail = code !== null ? `code ${code}` : `signal ${signal ?? 'unknown'}`;
+        handleTermination(lifecycleError(`Server exited with ${detail}${ready ? '' : ' before ready'}`));
+      });
 
-      const timeout = setTimeout(() => { if (!ready) reject(new Error('Server startup timeout (30s)')); }, 30_000);
-      timeout.unref();
+      startupTimer = setTimeout(() => {
+        rejectStartup(lifecycleError(`Server startup timeout (${STARTUP_TIMEOUT_MS}ms)`));
+      }, STARTUP_TIMEOUT_MS);
+      startupTimer.unref();
     });
   }
 
   async stop(): Promise<void> {
-    try { await this.callTool('oc_stop', {}); } catch { /* ignore */ }
-    this.process?.stdin?.end();
-    this.process?.kill('SIGTERM');
+    const child = this.process;
+    if (!child) {
+      this.rejectPending(new Error('Client shutdown'));
+      return;
+    }
+
+    if (this.canSend(child)) {
+      try { await this.callTool('oc_stop', {}); } catch { /* ignore */ }
+    }
+
+    if (this.process !== child || this.hasExited(child)) return;
+
+    child.stdin?.end();
+    child.kill('SIGTERM');
 
     // Wait for exit
-    if (this.process) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          this.process?.kill('SIGKILL');
-          resolve();
-        }, 5000);
-        timer.unref();
-        this.process?.on('exit', () => {
-          clearTimeout(timer);
-          resolve();
-        });
-      });
-    }
+    await new Promise<void>((resolve) => {
+      if (this.hasExited(child)) {
+        resolve();
+        return;
+      }
 
-    this.process = null;
-    for (const [, p] of this.pending) {
-      clearTimeout(p.timer);
-      p.reject(new Error('Client shutdown'));
+      const timer = setTimeout(() => {
+        if (!this.hasExited(child)) child.kill('SIGKILL');
+        resolve();
+      }, 5000);
+      timer.unref();
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+    if (this.process === child) {
+      this.process = null;
+      this.buffer = '';
     }
-    this.pending.clear();
+    this.rejectPending(new Error('Client shutdown'));
   }
 
   /**
@@ -126,15 +231,11 @@ export class MCPClient {
    * Used for E2E-8 compaction resume testing.
    */
   async restart(): Promise<void> {
-    // Force kill
-    this.process?.kill('SIGKILL');
-    this.process = null;
+    const child = this.process;
+    if (child && !this.hasExited(child)) child.kill('SIGKILL');
+    if (this.process === child) this.process = null;
     this.buffer = '';
-    for (const [, p] of this.pending) {
-      clearTimeout(p.timer);
-      p.reject(new Error('Restart'));
-    }
-    this.pending.clear();
+    this.rejectPending(new Error('Restart'));
 
     // Small delay before restart
     await new Promise((r) => setTimeout(r, 1000));
@@ -155,7 +256,8 @@ export class MCPClient {
   }
 
   send(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<MCPResponse> {
-    if (!this.process?.stdin) throw new Error('MCP client not started');
+    const child = this.process;
+    if (!this.canSend(child)) return Promise.reject(new Error('MCP client is not running'));
     const id = ++this.requestId;
     const timeout = timeoutMs ?? this.defaultTimeoutMs;
 
@@ -169,7 +271,23 @@ export class MCPClient {
       timer.unref();
 
       this.pending.set(id, { resolve, reject, timer });
-      this.process!.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      try {
+        child.stdin!.write(
+          JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n',
+          (error) => {
+            if (!error) return;
+            const pending = this.pending.get(id);
+            if (!pending) return;
+            clearTimeout(pending.timer);
+            this.pending.delete(id);
+            pending.reject(error);
+          },
+        );
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -178,6 +296,6 @@ export class MCPClient {
   }
 
   get isRunning(): boolean {
-    return this.process !== null && !this.process.killed;
+    return this.process !== null && !this.process.killed && !this.hasExited(this.process);
   }
 }

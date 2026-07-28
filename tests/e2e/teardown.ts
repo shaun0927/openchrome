@@ -10,18 +10,6 @@ export default async function globalTeardown(): Promise<void> {
 
   try {
     if (fs.existsSync(stateFile)) {
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-
-      // Kill MCP server
-      if (state.mcpPid) {
-        try {
-          process.kill(state.mcpPid, 'SIGTERM');
-          console.error(`[e2e-teardown] Killed MCP server (pid: ${state.mcpPid})`);
-        } catch {
-          // Process may have already exited
-        }
-      }
-
       fs.unlinkSync(stateFile);
     }
   } catch (err) {
