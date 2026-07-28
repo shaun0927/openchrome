@@ -371,6 +371,21 @@ describe('SessionManager TTL and Stats', () => {
       expect(session.lastActivityAt).toBeGreaterThan(initialTime);
     });
   });
+
+  describe('session deletion events', () => {
+    test('emits session:deleting before asynchronous cleanup and session:deleted', async () => {
+      await sessionManager.createSession({ id: 'delete-events' });
+      const listener = jest.fn();
+      sessionManager.addEventListener(listener);
+
+      await sessionManager.deleteSession('delete-events');
+
+      expect(listener.mock.calls.map(([event]) => event.type)).toEqual([
+        'session:deleting',
+        'session:deleted',
+      ]);
+    });
+  });
 });
 
 describe('SessionManager with Connection Pool', () => {

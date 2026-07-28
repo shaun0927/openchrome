@@ -8,7 +8,11 @@ import * as path from 'path';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { getActionRecorder, registerSessionRecorder, unregisterSessionRecorder } from '../recording/action-recorder';
+import {
+  getActiveActionRecorder,
+  getOrCreateActionRecorder,
+  isSessionRecorderRegistered,
+} from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
 import { currentRequestContext } from '../observability/request-id';
@@ -52,23 +56,30 @@ const startHandler: ToolHandler = async (
   sessionId: string,
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
-  const recorder = getActionRecorder();
-
-  if (recorder.isRecording) {
-    return {
-      content: [{ type: 'text', text: `Error: A recording is already active (ID: ${recorder.activeRecordingId}). Call oc_recording_stop first.` }],
-      isError: true,
-    };
-  }
-
   try {
+    const recorder = getOrCreateActionRecorder(sessionId);
+
+    if (recorder.isRecording) {
+      return {
+        content: [{ type: 'text', text: `Error: A recording is already active (ID: ${recorder.activeRecordingId}). Call oc_recording_stop first.` }],
+        isError: true,
+      };
+    }
+
     const startOptions = {
       label: args.label as string | undefined,
       profile: args.profile as string | undefined,
       ...(args.trajectoryBundle === true ? { trajectoryBundle: true } : {}),
     };
     const metadata = await recorder.start(sessionId, startOptions);
-    registerSessionRecorder(sessionId, recorder);
+    if (!isSessionRecorderRegistered(sessionId, recorder)) {
+      try {
+        await recorder.stop();
+      } catch {
+        // Best-effort finalization after the owning session was deleted.
+      }
+      throw new Error('The session ended while recording was starting.');
+    }
 
     const lines = [
       'Recording started.',
@@ -109,12 +120,12 @@ const stopDefinition: MCPToolDefinition = {
 };
 
 const stopHandler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   _args: Record<string, unknown>,
 ): Promise<MCPResult> => {
-  const recorder = getActionRecorder();
+  const recorder = getActiveActionRecorder(sessionId);
 
-  if (!recorder.isRecording) {
+  if (!recorder) {
     return {
       content: [{ type: 'text', text: 'Error: No active recording. Call oc_recording_start first.' }],
       isError: true,
@@ -144,8 +155,6 @@ const stopHandler: ToolHandler = async (
       const report = metadata.trajectoryBundle.report as Record<string, unknown> | undefined;
       if (report) lines.push(`  Events:   ${String(report.total_events ?? 'unknown')}`);
     }
-    unregisterSessionRecorder(metadata.sessionId);
-
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -167,15 +176,15 @@ const statusDefinition: MCPToolDefinition = {
 };
 
 const statusHandler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   _args: Record<string, unknown>,
 ): Promise<MCPResult> => {
-  const recorder = getActionRecorder();
-  const metadata = recorder.activeMetadata;
-  const trajectory = recorder.activeTrajectoryBundle || metadata?.trajectoryBundle;
+  const recorder = getActiveActionRecorder(sessionId);
+  const metadata = recorder?.activeMetadata;
+  const trajectory = recorder?.activeTrajectoryBundle || metadata?.trajectoryBundle;
   const payload = {
-    active: recorder.isRecording,
-    recordingId: recorder.activeRecordingId,
+    active: recorder?.isRecording ?? false,
+    recordingId: recorder?.activeRecordingId ?? null,
     sessionId: metadata?.sessionId,
     actionCount: metadata?.actionCount ?? 0,
     trajectoryBundle: trajectory ?? { enabled: false },
