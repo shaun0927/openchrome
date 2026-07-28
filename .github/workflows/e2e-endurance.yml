@@ -1,0 +1,199 @@
+name: E2E Weekly Endurance
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full commit SHA to test; defaults to the selected ref
+        required: false
+        type: string
+      endurance_hours:
+        description: Bounded hosted-runner endurance duration in hours
+        required: false
+        default: '1'
+        type: choice
+        options:
+          - '0.5'
+          - '1'
+
+env:
+  CI: 'true'
+  DEBUG: '1'
+  OPENCHROME_E2E_SERVER_ARGS: '--server-mode'
+  TIME_SCALE: '1'
+
+jobs:
+  marathon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
+      - name: Verify exact commit
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.commit_sha }}
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -n "$EXPECTED_SHA" && "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "Expected $EXPECTED_SHA but checked out $actual_sha" >&2
+            exit 1
+          fi
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@latest
+        with:
+          chrome-version: stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Run marathon
+        run: |
+          mkdir -p artifacts/e2e/marathon
+          set -o pipefail
+          npm run test:e2e:marathon -- \
+            --json \
+            --outputFile artifacts/e2e/marathon/jest-results.json \
+            2>&1 | tee artifacts/e2e/marathon/jest.log
+      - name: Upload marathon evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-marathon-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/e2e/marathon/
+          if-no-files-found: warn
+          retention-days: 90
+
+  memory-stability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
+      - name: Verify exact commit
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.commit_sha }}
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -n "$EXPECTED_SHA" && "$actual_sha" != "$EXPECTED_SHA" ]]; then exit 1; fi
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@latest
+        with:
+          chrome-version: stable
+      - run: npm ci
+      - run: npm run build
+      - name: Run memory stability
+        run: |
+          mkdir -p artifacts/e2e/memory-stability
+          set -o pipefail
+          npm run test:e2e:memory-stability -- \
+            --json \
+            --outputFile artifacts/e2e/memory-stability/jest-results.json \
+            2>&1 | tee artifacts/e2e/memory-stability/jest.log
+      - name: Upload memory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-memory-stability-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/e2e/memory-stability/
+          if-no-files-found: warn
+          retention-days: 90
+
+  endurance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    env:
+      ENDURANCE_HOURS: ${{ github.event.inputs.endurance_hours || '1' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
+      - name: Verify exact commit
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.commit_sha }}
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -n "$EXPECTED_SHA" && "$actual_sha" != "$EXPECTED_SHA" ]]; then exit 1; fi
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@latest
+        with:
+          chrome-version: stable
+      - run: npm ci
+      - run: npm run build
+      - name: Run bounded endurance
+        run: |
+          mkdir -p artifacts/e2e/endurance
+          set -o pipefail
+          npm run test:e2e:endurance 2>&1 | tee artifacts/e2e/endurance/endurance.log
+      - name: Upload endurance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-endurance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/e2e/endurance/
+            endurance-report-*.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  external-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    env:
+      TIME_SCALE: '0.167'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
+      - name: Verify exact commit
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.commit_sha }}
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -n "$EXPECTED_SHA" && "$actual_sha" != "$EXPECTED_SHA" ]]; then exit 1; fi
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@latest
+        with:
+          chrome-version: stable
+      - run: npm ci
+      - run: npm run build
+      - name: Run external compatibility signal
+        run: |
+          mkdir -p artifacts/e2e/external
+          set -o pipefail
+          npm run test:e2e:external -- \
+            --json \
+            --outputFile artifacts/e2e/external/jest-results.json \
+            2>&1 | tee artifacts/e2e/external/jest.log
+      - name: Upload external evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-external-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/e2e/external/
+          if-no-files-found: warn
+          retention-days: 30

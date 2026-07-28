@@ -31,18 +31,27 @@ describe('E2E-17: Prometheus metrics accuracy', () => {
   test('metrics reflect tool call counts and system gauges', async () => {
     const testUrl = `http://localhost:${fixturePort}/`;
 
-    // Step 1: Make 5 navigate calls
+    // Step 1: Make 5 navigate calls and retain a valid browser target.
     console.error('[e2e-17] Step 1: Making 5 navigate calls');
+    let tabId = '';
     for (let i = 0; i < 5; i++) {
       const url = i === 0 ? testUrl : `http://localhost:${fixturePort}/site-${String.fromCharCode(97 + (i % 3))}`;
-      await server.callTool('navigate', { url });
+      const result = await server.callTool('navigate', { url });
+      expect(result.raw?.isError).not.toBe(true);
+      const tabIdMatch = result.text.match(/"tabId"\s*:\s*"([A-F0-9]{32})"/);
+      tabId = tabIdMatch?.[1] ?? tabId;
     }
+    expect(tabId).toBeTruthy();
     console.error('[e2e-17] Step 1 OK: 5 navigate calls completed');
 
     // Step 2: Make 5 javascript_tool calls
     console.error('[e2e-17] Step 2: Making 5 javascript_tool calls');
     for (let i = 0; i < 5; i++) {
-      await server.callTool('javascript_tool', { code: `"metric-test-${i}"` });
+      const result = await server.callTool('javascript_tool', {
+        tabId,
+        code: `"metric-test-${i}"`,
+      });
+      expect(result.raw?.isError).not.toBe(true);
     }
     console.error('[e2e-17] Step 2 OK: 5 javascript_tool calls completed');
 
@@ -68,8 +77,8 @@ describe('E2E-17: Prometheus metrics accuracy', () => {
       const match = line.match(/\s(\d+(\.\d+)?)$/);
       if (match) totalCalls += parseFloat(match[1]);
     }
-    // We made at least 10 tool calls (5 navigate + 5 javascript_tool), plus the initial navigate
-    // and any internal calls. Should be >= 10.
+    // We made 10 valid tool calls (5 navigate + 5 javascript_tool). Internal
+    // calls may add samples, so this remains a lower-bound assertion.
     console.error(`[e2e-17] Step 4: Total tool calls in metrics: ${totalCalls}`);
     expect(totalCalls).toBeGreaterThanOrEqual(10);
     console.error('[e2e-17] Step 4 OK: openchrome_tool_calls_total correct');

@@ -5,7 +5,6 @@
 import * as path from 'path';
 import * as http from 'http';
 import * as fs from 'fs';
-import { spawn, ChildProcess } from 'child_process';
 
 // Fixture pages for E2E scenarios
 const FIXTURE_PAGES: Record<string, string> = {
@@ -65,10 +64,10 @@ function slowPage(): string {
 }
 
 let fixtureServer: http.Server;
-let mcpProcess: ChildProcess;
 
 export default async function globalSetup(): Promise<void> {
-  // 1. Start fixture HTTP server
+  // Each scenario owns its MCP process. Global setup only owns the shared,
+  // deterministic fixture server so no unused controller competes on port 9222.
   const PORT = 18924;
   fixtureServer = http.createServer((req, res) => {
     const url = req.url?.split('?')[0] || '/';
@@ -102,54 +101,22 @@ export default async function globalSetup(): Promise<void> {
     }
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    fixtureServer.once('error', reject);
     fixtureServer.listen(PORT, () => {
+      fixtureServer.off('error', reject);
       console.error(`[e2e-setup] Fixture server on http://localhost:${PORT}`);
       resolve();
     });
   });
 
-  // 2. Start MCP server as child process
-  const serverPath = path.join(process.cwd(), 'dist', 'index.js');
-  if (!fs.existsSync(serverPath)) {
-    throw new Error(`MCP server not built. Run: npm run build\n  Expected: ${serverPath}`);
-  }
-
-  mcpProcess = spawn('node', [serverPath, 'serve', '--auto-launch'], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env },
-  });
-
-  // Wait for server ready
-  await new Promise<void>((resolve, reject) => {
-    let ready = false;
-    const timeout = setTimeout(() => {
-      if (!ready) reject(new Error('MCP server startup timeout (30s)'));
-    }, 30_000);
-    timeout.unref();
-
-    mcpProcess.stderr?.on('data', (data: Buffer) => {
-      const msg = data.toString();
-      if (process.env.DEBUG) process.stderr.write(`[mcp] ${msg}`);
-      if (!ready && (msg.includes('Ready') || msg.includes('MCP server') || msg.includes('waiting'))) {
-        ready = true;
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
-
-    mcpProcess.on('error', (err) => { if (!ready) reject(err); });
-    mcpProcess.on('exit', (code) => { if (!ready) reject(new Error(`MCP server exited with code ${code}`)); });
-  });
-
-  // Store references for tests and teardown
+  // Store references for tests and teardown.
   (globalThis as Record<string, unknown>).__E2E_FIXTURE_PORT__ = PORT;
-  (globalThis as Record<string, unknown>).__E2E_MCP_PROCESS__ = mcpProcess;
   (globalThis as Record<string, unknown>).__E2E_FIXTURE_SERVER__ = fixtureServer;
 
   // Also write port to a temp file so test files can read it
   const stateFile = path.join(process.cwd(), '.e2e-state.json');
-  fs.writeFileSync(stateFile, JSON.stringify({ port: PORT, mcpPid: mcpProcess.pid }));
+  fs.writeFileSync(stateFile, JSON.stringify({ port: PORT }));
 
-  console.error('[e2e-setup] MCP server ready');
+  console.error('[e2e-setup] Fixture server ready; scenarios will launch isolated MCP processes');
 }
