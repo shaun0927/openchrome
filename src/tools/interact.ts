@@ -36,6 +36,11 @@ import { isPilotEnabled } from '../harness/flags';
 import { captureBackendNodeReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { applyLaneTarget, recordLaneToolCall } from '../core/browser-lanes';
 import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
+import {
+  resolvePerceptionTarget,
+  type PerceptionTargetFailureReason,
+  type ResolvedPerceptionTarget,
+} from '../vision/perception-target';
 
 
 async function resolveInteractVault(value: unknown): Promise<{ value: unknown; token?: string; plaintext?: string; error?: MCPResult }> {
@@ -67,6 +72,129 @@ function attachVerifyReport(result: MCPResult, report: VerifyReport | undefined)
   return { ...result, verify: report };
 }
 
+type PerceptionExecutionFailureReason =
+  | PerceptionTargetFailureReason
+  | 'backend_node_unavailable'
+  | 'backend_node_not_clickable'
+  | 'invalid_live_bbox'
+  | 'viewport_unavailable';
+
+function boundedPerceptionText(value: unknown, maxLength = 120): string {
+  const text = typeof value === 'string' ? value : String(value ?? '');
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
+}
+
+function boundedPerceptionDetails(
+  reason: PerceptionExecutionFailureReason,
+  details?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!details) return undefined;
+  if (reason === 'malformed_snapshot' && Array.isArray(details.errors)) {
+    return {
+      errors: details.errors.slice(0, 10).map((error) => boundedPerceptionText(error, 200)),
+      truncated: details.truncated === true,
+    };
+  }
+  if (reason === 'snapshot_stale') {
+    return {
+      snapshotAgeMs: details.snapshotAgeMs,
+      maxAgeMs: details.maxAgeMs,
+    };
+  }
+  if (reason === 'viewport_mismatch') {
+    return {
+      snapshotViewport: details.snapshotViewport,
+      liveViewport: details.liveViewport,
+    };
+  }
+  return undefined;
+}
+
+function perceptionFailure(
+  code: 'INVALID_PERCEPTION_TARGET' | 'STALE_PERCEPTION_TARGET',
+  reason: PerceptionExecutionFailureReason,
+  message: string,
+  details?: Record<string, unknown>,
+): MCPResult {
+  const boundedDetails = boundedPerceptionDetails(reason, details);
+  const error = {
+    code,
+    reason,
+    message: boundedPerceptionText(message, 240),
+    ...(boundedDetails ? { details: boundedDetails } : {}),
+  };
+  return {
+    content: [{ type: 'text', text: `${code}: ${error.message} [reason=${reason}]` }],
+    isError: true,
+    error,
+    structuredContent: { mode: 'perception', error },
+  };
+}
+
+function perceptionSchemaFailure(code: 'INVALID_SCHEMA' | 'UNSUPPORTED_PERCEPTION_ACTION', message: string): MCPResult {
+  const error = { code, message: boundedPerceptionText(message, 240) };
+  return {
+    content: [{ type: 'text', text: `${code}: ${error.message}` }],
+    isError: true,
+    error,
+    structuredContent: { mode: 'perception', error },
+  };
+}
+
+async function getLiveViewport(page: any): Promise<{ width: number; height: number } | null> {
+  const viewport = page.viewport?.();
+  if (viewport && Number.isFinite(viewport.width) && viewport.width > 0 && Number.isFinite(viewport.height) && viewport.height > 0) {
+    return { width: viewport.width, height: viewport.height };
+  }
+  const evaluated = await page.evaluate(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })).catch(() => null);
+  if (!evaluated || !Number.isFinite(evaluated.width) || evaluated.width <= 0 || !Number.isFinite(evaluated.height) || evaluated.height <= 0) {
+    return null;
+  }
+  return evaluated;
+}
+
+function resolveLiveBoxCenter(
+  content: unknown,
+  viewport: { width: number; height: number },
+): { x: number; y: number } | null {
+  if (!Array.isArray(content) || content.length < 8) return null;
+  const quad = content.slice(0, 8);
+  if (!quad.every((value) => typeof value === 'number' && Number.isFinite(value))) return null;
+  const xs = [quad[0], quad[2], quad[4], quad[6]] as number[];
+  const ys = [quad[1], quad[3], quad[5], quad[7]] as number[];
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  if (maxX <= minX || maxY <= minY) return null;
+  const x = Math.round((minX + maxX) / 2);
+  const y = Math.round((minY + maxY) / 2);
+  if (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) return null;
+  return { x, y };
+}
+
+function perceptionProvenance(
+  target: ResolvedPerceptionTarget,
+  action: string,
+  point: { x: number; y: number },
+): Record<string, unknown> {
+  return {
+    mode: 'perception',
+    action,
+    perception: {
+      provider: boundedPerceptionText(target.snapshot.provider),
+      elementId: boundedPerceptionText(target.element.id),
+      source: boundedPerceptionText(target.element.source),
+      resolution: target.resolution,
+      snapshotAgeMs: target.snapshotAgeMs,
+      coordinates: point,
+    },
+  };
+}
+
 const definition: MCPToolDefinition = {
   name: 'interact',
   description: 'Find element by natural language; click/hover/double_click it; wait for DOM settle; return state.\n\nWhen to use: One described element action, with coordinate fallback for Shadow DOM/canvas/iframes.\nWhen NOT to use: Use act for multi-step flows; computer for general coordinate clicks.',
@@ -86,9 +214,9 @@ const definition: MCPToolDefinition = {
       },
       mode: {
         type: 'string',
-        enum: ['ref', 'coordinate'],
+        enum: ['ref', 'coordinate', 'perception'],
         default: 'ref',
-        description: 'Dispatch mode. "ref" (default) resolves the element by query; "coordinate" sends a CDP mouse event directly to pixel coordinates.',
+        description: 'Dispatch mode. "ref" resolves by query, "coordinate" sends a pixel event, and "perception" executes one caller-selected snapshot element after provenance validation.',
       },
       coordinate: {
         type: 'object',
@@ -104,6 +232,23 @@ const definition: MCPToolDefinition = {
           },
         },
         required: ['x', 'y'],
+      },
+      perception: {
+        type: 'object',
+        description: 'Caller-selected visual target for perception mode. The snapshot is validated and never echoed in the response.',
+        properties: {
+          snapshot: {
+            type: 'object',
+            description: 'Provider-neutral viewport-mode PerceptionSnapshot returned by vision_find format="snapshot".',
+          },
+          elementId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 160,
+            description: 'Exact snapshot-local element ID selected by the caller.',
+          },
+        },
+        required: ['snapshot', 'elementId'],
       },
       action: {
         type: 'string',
@@ -242,12 +387,13 @@ const coreHandler: ToolHandler = async (
   const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
   const coordinateArg = args.coordinate as Record<string, unknown> | undefined;
+  const perceptionArg = args.perception as Record<string, unknown> | undefined;
   const action = (args.action as string) || 'click';
   const rawValue = args.value;
-  const vaultValue = await resolveInteractVault(rawValue);
+  const vaultValue = mode === 'perception' ? { value: rawValue } : await resolveInteractVault(rawValue);
   if (vaultValue.error) return vaultValue.error;
   const typeValue = vaultValue.value;
-  if (action === 'type' && typeValue === undefined) {
+  if (mode !== 'perception' && action === 'type' && typeValue === undefined) {
     return { content: [{ type: 'text', text: 'Error: value is required when action is type' }], isError: true };
   }
   const waitAfter = Math.min(Math.max((args.waitAfter as number) || 500, 0), 10000);
@@ -335,6 +481,187 @@ const coreHandler: ToolHandler = async (
     if (intent.length > 120) {
       return {
         content: [{ type: 'text', text: 'INVALID_INTENT: intent must be at most 120 characters.' }],
+        isError: true,
+      };
+    }
+  }
+
+  // ─── Mode: perception ───
+  if (mode === 'perception') {
+    if (args.query !== undefined || args.coordinate !== undefined || args.ref !== undefined) {
+      return perceptionSchemaFailure(
+        'INVALID_SCHEMA',
+        '"query", "coordinate", and "ref" must not be provided when mode is "perception".',
+      );
+    }
+    if (!['click', 'double_click', 'hover'].includes(action)) {
+      return perceptionSchemaFailure(
+        'UNSUPPORTED_PERCEPTION_ACTION',
+        'Perception mode only supports click, double_click, and hover.',
+      );
+    }
+    if (!perceptionArg || typeof perceptionArg !== 'object' || Array.isArray(perceptionArg)) {
+      return perceptionSchemaFailure(
+        'INVALID_SCHEMA',
+        '"perception" with snapshot and elementId is required when mode is "perception".',
+      );
+    }
+
+    try {
+      const page = await sessionManager.getPage(sessionId, tabId, undefined, 'interact');
+      await recordLaneToolCall(args, !!page, tabId);
+      if (!page) {
+        return {
+          content: [{ type: 'text', text: `Error: Tab ${tabId} not found or no longer available.` }],
+          isError: true,
+        };
+      }
+
+      const liveViewport = await getLiveViewport(page);
+      if (!liveViewport) {
+        return perceptionFailure(
+          'STALE_PERCEPTION_TARGET',
+          'viewport_unavailable',
+          'Live viewport is unavailable, so perception provenance cannot be validated.',
+        );
+      }
+
+      const initialResolution = resolvePerceptionTarget({
+        snapshot: perceptionArg.snapshot,
+        elementId: perceptionArg.elementId,
+        tabId,
+        url: page.url(),
+        viewport: liveViewport,
+      });
+      if (!initialResolution.ok) {
+        return perceptionFailure(
+          initialResolution.code,
+          initialResolution.reason,
+          initialResolution.message,
+          initialResolution.details,
+        );
+      }
+
+      let target = initialResolution.target;
+      let point = target.point;
+      const cdpClient = sessionManager.getCDPClient();
+      const backendNodeId = target.element.backendDOMNodeId;
+      if (target.resolution === 'backend-node' && backendNodeId !== undefined) {
+        try {
+          await cdpClient.send(page, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+          if (!(await validateBackendNodeClickability(page, backendNodeId, cdpClient))) {
+            return perceptionFailure(
+              'STALE_PERCEPTION_TARGET',
+              'backend_node_not_clickable',
+              'The DOM-backed perception target is no longer visible and clickable.',
+            );
+          }
+          const boxModel = await cdpClient.send(page, 'DOM.getBoxModel', { backendNodeId }) as
+            { model?: { content?: unknown } };
+          const livePoint = resolveLiveBoxCenter(boxModel.model?.content, liveViewport);
+          if (!livePoint) {
+            return perceptionFailure(
+              'STALE_PERCEPTION_TARGET',
+              'invalid_live_bbox',
+              'The DOM-backed perception target no longer has a credible live box.',
+            );
+          }
+          point = livePoint;
+        } catch {
+          return perceptionFailure(
+            'STALE_PERCEPTION_TARGET',
+            'backend_node_unavailable',
+            'The DOM-backed perception target could not be re-resolved through CDP.',
+          );
+        }
+      }
+
+      // Re-check URL, freshness, and visual-only viewport immediately before mutation.
+      const finalViewport = await getLiveViewport(page);
+      if (!finalViewport) {
+        return perceptionFailure(
+          'STALE_PERCEPTION_TARGET',
+          'viewport_unavailable',
+          'Live viewport is unavailable immediately before perception dispatch.',
+        );
+      }
+      const finalResolution = resolvePerceptionTarget({
+        snapshot: perceptionArg.snapshot,
+        elementId: perceptionArg.elementId,
+        tabId,
+        url: page.url(),
+        viewport: finalViewport,
+      });
+      if (!finalResolution.ok) {
+        return perceptionFailure(
+          finalResolution.code,
+          finalResolution.reason,
+          finalResolution.message,
+          finalResolution.details,
+        );
+      }
+      target = finalResolution.target;
+      if (target.resolution === 'snapshot-bbox') point = target.point;
+
+      const isStealth = sessionManager.isStealthTarget(tabId);
+      const { result: perceptionDomResult, verify: perceptionVerifyReport } = await runVerify(
+        page,
+        verifyMode,
+        async () => withDomDelta(page, async () => {
+          if (isStealth) await humanMouseMove(page, point.x, point.y);
+          if (action === 'double_click') await page.mouse.click(point.x, point.y, { clickCount: 2 });
+          else if (action === 'hover') { if (!isStealth) await page.mouse.move(point.x, point.y); }
+          else await page.mouse.click(point.x, point.y);
+        }, { settleMs: Math.max(150, waitAfter) }),
+      );
+
+      if (captureArtifact && action === 'click' && backendNodeId !== undefined) {
+        await captureBackendNodeReplayStep({
+          cdpClient,
+          page,
+          backendNodeId,
+          kind: 'click',
+        });
+      }
+      invalidateAXCache(getTargetId(page.target()));
+
+      const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+      const provenance = perceptionProvenance(target, action, point);
+      const targetInfo = provenance.perception as Record<string, unknown>;
+      const lines = [
+        `${actionVerb} perception target [${targetInfo.elementId}] ` +
+        `[provider=${targetInfo.provider} source=${targetInfo.source} resolution=${targetInfo.resolution} ` +
+        `age=${targetInfo.snapshotAgeMs}ms at=${point.x},${point.y}]`,
+      ];
+      if ((returnFormat === 'dom_delta' || returnFormat === 'both') && perceptionDomResult.delta) {
+        lines.push('', '[DOM Delta]', perceptionDomResult.delta);
+      }
+      if (returnFormat === 'state_summary' || returnFormat === 'both') {
+        lines.push('', `[State Summary] url: ${boundedPerceptionText(page.url(), 300)}`);
+      }
+
+      const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
+        { type: 'text', text: lines.join('\n') },
+      ];
+      if (verifyMode === 'screenshot' || verifyMode === 'both') {
+        try {
+          const screenshotBuf = await withTimeout(
+            page.screenshot({ type: 'webp', quality: 60, encoding: 'base64' }),
+            DEFAULT_SCREENSHOT_TIMEOUT_MS,
+            'verify-screenshot',
+            context,
+          ) as string;
+          resultContent.push(makeImageContent(screenshotBuf, 'image/webp'));
+        } catch { /* screenshot failed, non-fatal */ }
+      }
+
+      return attachVerifyReport({
+        content: resultContent,
+        structuredContent: provenance,
+      }, perceptionVerifyReport);
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
         isError: true,
       };
     }
@@ -444,6 +771,12 @@ const coreHandler: ToolHandler = async (
 
   // ─── Mode: coordinate ───
   if (mode === 'coordinate') {
+    if (perceptionArg) {
+      return {
+        content: [{ type: 'text', text: 'INVALID_SCHEMA: "perception" must not be provided when mode is "coordinate".' }],
+        isError: true,
+      };
+    }
     if (query) {
       return {
         content: [{ type: 'text', text: 'INVALID_SCHEMA: "query" must not be provided when mode is "coordinate". Use "coordinate" block instead.' }],
@@ -539,7 +872,13 @@ const coreHandler: ToolHandler = async (
   // ─── Mode: ref (default) ───
   if (mode !== 'ref') {
     return {
-      content: [{ type: 'text', text: 'INVALID_SCHEMA: mode must be "ref" or "coordinate".' }],
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: mode must be "ref", "coordinate", or "perception".' }],
+      isError: true,
+    };
+  }
+  if (perceptionArg) {
+    return {
+      content: [{ type: 'text', text: 'INVALID_SCHEMA: "perception" must not be provided when mode is "ref".' }],
       isError: true,
     };
   }
