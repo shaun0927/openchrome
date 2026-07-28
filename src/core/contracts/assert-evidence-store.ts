@@ -331,7 +331,8 @@ export class AssertEvidenceStore {
         if (!safeUnlink(filePath)) continue;
         this.removeIndexEntry(handle);
         removed += 1;
-      } catch {
+      } catch (error) {
+        if (!isCorruptEvidenceError(error)) continue;
         if (!safeUnlink(filePath)) continue;
         this.removeIndexEntry(handle);
         removed += 1;
@@ -343,7 +344,7 @@ export class AssertEvidenceStore {
         if (fs.statSync(filePath).mtimeMs + this.ttlMs > nowMs) continue;
         if (safeUnlink(filePath)) removed += 1;
       } catch {
-        if (safeUnlink(filePath)) removed += 1;
+        // A transient stat/read failure does not prove the temporary file is stale.
       }
     }
     return removed;
@@ -360,8 +361,12 @@ export class AssertEvidenceStore {
 
   private ensureIndexInitialized(): void {
     if (this.indexInitialized) return;
-    this.indexInitialized = true;
     const nowMs = this.now();
+    const indexed: Array<{
+      handle: string;
+      record: StoredAssertEvidenceRecord;
+      sizeBytes: number;
+    }> = [];
     for (const file of this.artifactFiles()) {
       const handle = file.slice(0, -'.json'.length);
       const filePath = path.join(this.rootDir, file);
@@ -372,17 +377,27 @@ export class AssertEvidenceStore {
             !safeUnlink(filePath)
             && record.owner.instance_sha256 === this.instanceSha256
           ) {
-            this.addIndexEntry(handle, record, fs.statSync(filePath).size);
+            indexed.push({ handle, record, sizeBytes: fs.statSync(filePath).size });
           }
           continue;
         }
         if (record.owner.instance_sha256 !== this.instanceSha256) continue;
-        const sizeBytes = fs.statSync(filePath).size;
-        this.addIndexEntry(handle, record, sizeBytes);
-      } catch {
-        safeUnlink(filePath);
+        indexed.push({ handle, record, sizeBytes: fs.statSync(filePath).size });
+      } catch (error) {
+        if (isCorruptEvidenceError(error)) {
+          safeUnlink(filePath);
+          continue;
+        }
+        throw error;
       }
     }
+    this.artifactIndex.clear();
+    this.ownerUsage.clear();
+    this.instanceUsage = { bytes: 0, count: 0 };
+    for (const entry of indexed) {
+      this.addIndexEntry(entry.handle, entry.record, entry.sizeBytes);
+    }
+    this.indexInitialized = true;
   }
 
   private pruneExpiredIndexedEntries(): void {
@@ -503,9 +518,10 @@ export class AssertEvidenceStore {
   }
 
   private readEnvelopeFile(filePath: string): StoredAssertEvidenceEnvelope {
+    const serialized = fs.readFileSync(filePath, 'utf8');
     let parsed: unknown;
     try {
-      parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      parsed = JSON.parse(serialized);
     } catch {
       throw new AssertEvidenceStoreError('corrupt', 'Evidence artifact is corrupt');
     }
@@ -676,6 +692,10 @@ function safeUnlink(filePath: string): boolean {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
     return false;
   }
+}
+
+function isCorruptEvidenceError(error: unknown): error is AssertEvidenceStoreError {
+  return error instanceof AssertEvidenceStoreError && error.code === 'corrupt';
 }
 
 let singleton: AssertEvidenceStore | null = null;
