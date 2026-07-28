@@ -4,6 +4,31 @@
 
 The snapshot contract is exported from `src/vision/perception-types.ts` and is intentionally provider-neutral: DOM annotation, future OmniParser-compatible HTTP providers, and tests can all describe visible elements with stable snapshot-local IDs, labels, viewport-relative CSS pixel boxes, normalized ratios, provenance, and bounded warnings.
 
+## Execute a caller-selected target
+
+The MCP host can select one exact snapshot-local element ID and pass the original viewport snapshot to `interact`:
+
+```json
+{
+  "tabId": "target-123",
+  "mode": "perception",
+  "action": "click",
+  "perception": {
+    "snapshot": { "version": 1, "provider": "dom-annotator", "...": "PerceptionSnapshot" },
+    "elementId": "v7"
+  }
+}
+```
+
+OpenChrome does not rank the snapshot or choose the element. It validates the caller's selection, binds it to the live tab and exact URL, and allows only `click`, `double_click`, or `hover`.
+
+Use `vision_find` with its default `mode: "viewport"` for this flow. Tiled snapshots use document-space aggregation and are intentionally not executable through perception mode; capture the target viewport again before interacting.
+
+- DOM-backed elements may be up to 60 seconds old. Their `backendDOMNodeId` is scrolled into view, checked for clickability, and resolved to a fresh CDP box before input.
+- Visual-only elements may be up to 15 seconds old and require an unchanged viewport. Unsafe labels involving deletion, payment, transfer, credentials, MFA, OTP, or secrets fail closed.
+- The response contains only bounded provenance: provider, element ID, source, resolution path, snapshot age, and final coordinates. It does not echo the snapshot or screenshot bytes.
+- Existing `verify`, DOM-delta, stealth movement, `returnAfterState`, and DOM-backed replay capture remain available.
+
 ## Validation expectations
 
 Provider output should pass `validatePerceptionSnapshot` before it is trusted by downstream grounding code. Validation diagnostics are bounded with `maxErrors` so malformed or hostile providers cannot flood MCP responses or model context. A failed validation should be surfaced as an actionable warning or an `isError` tool response instead of an uncaught MCP-server exception.
@@ -17,4 +42,4 @@ Provider output should pass `validatePerceptionSnapshot` before it is trusted by
 
 ## Non-goals
 
-This layer does not add OmniParser, Python, Torch, model weights, persistent screenshot storage, or automatic clicking from visual elements. External perception providers should remain optional and adapt to this contract.
+This layer does not add OmniParser, Python, Torch, model weights, persistent screenshot storage, server-side candidate selection, or an autonomous visual planning loop. External perception providers remain optional and adapt to this contract.
