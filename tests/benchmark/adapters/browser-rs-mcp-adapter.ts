@@ -66,6 +66,20 @@ export interface BrowserRsPlatformPin {
   sha256: string;
 }
 
+export interface BrowserRsConnectTarget {
+  argument: string;
+  endpoint: string;
+  probeUrl: string;
+  port: number;
+}
+
+export interface BrowserRsCdpProbeResult {
+  ok: boolean;
+  endpoint: string;
+  browserVersion: string;
+  message: string;
+}
+
 export type BrowserRsPreflightStatus =
   | 'ok'
   | 'missing_binary'
@@ -88,8 +102,10 @@ export interface BrowserRsPreflightResult {
   asset: string;
   commit: string;
   chromePath: string;
+  chromeVersion: string;
   profilePath: string;
   connectPort?: number;
+  connectEndpoint?: string;
   message: string;
 }
 
@@ -114,6 +130,8 @@ export const BROWSER_RS_PIN = {
 
 const DEFAULT_CALL_TIMEOUT_MS = 30000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+const STOP_GRACE_MS = 500;
+const STDERR_TAIL_CHARS = 16_384;
 
 function textResult(text: string): MCPToolResult {
   return { content: [{ type: 'text', text }] };
@@ -133,6 +151,20 @@ function joinText(result: MCPToolResult): string {
 function extractVersion(output: string): string {
   const match = output.match(/\b(\d+\.\d+\.\d+)\b/);
   return match?.[1] ?? '';
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export function browserRsPlatformKey(platform = process.platform, arch = process.arch): string {
@@ -212,25 +244,45 @@ function optionValue(args: readonly string[], names: readonly string[]): string 
   return undefined;
 }
 
-function configuredConnectPort(args: readonly string[], env: NodeJS.ProcessEnv): number | undefined {
-  const raw = optionValue(args, ['--connect', '--cdp-endpoint']) ?? env.AB_CONNECT;
-  if (!raw) return undefined;
-  const numericPort = /^\d+$/.test(raw) ? Number(raw) : undefined;
-  let urlPort: number | undefined;
-  if (numericPort === undefined) {
-    try {
-      const parsed = new URL(raw.includes('://') ? raw : `http://${raw}`);
-      const inferred = parsed.port || (parsed.protocol === 'https:' || parsed.protocol === 'wss:' ? '443' : '80');
-      urlPort = Number(inferred);
-    } catch {
-      urlPort = undefined;
-    }
+function parseConnectTarget(raw: string): BrowserRsConnectTarget | null {
+  if (/^\d+$/.test(raw)) {
+    const port = Number(raw);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+    const endpoint = `http://127.0.0.1:${port}`;
+    return { argument: raw, endpoint, probeUrl: `${endpoint}/json/version`, port };
   }
-  const port = numericPort ?? urlPort;
-  if (port === undefined || !Number.isInteger(port) || port <= 0 || port > 65535) {
-    return undefined;
+
+  if (!raw.includes('://')) return null;
+  try {
+    const parsed = new URL(raw);
+    const port = Number(parsed.port);
+    if (!parsed.port || !Number.isInteger(port) || port <= 0 || port > 65535) return null;
+    const probe = new URL(parsed.toString());
+    const basePath = probe.pathname.replace(/\/$/, '');
+    probe.pathname = basePath.endsWith('/json/version') ? basePath : `${basePath}/json/version`;
+    return {
+      argument: raw,
+      endpoint: parsed.toString(),
+      probeUrl: probe.toString(),
+      port,
+    };
+  } catch {
+    return null;
   }
-  return port;
+}
+
+function pinnedConnectCompatibilityError(target: BrowserRsConnectTarget): string | null {
+  const endpoint = new URL(target.endpoint);
+  if (endpoint.protocol !== 'http:') {
+    return `browser-rs v${BROWSER_RS_PIN.version} reduces --connect to a local HTTP port; protocol ${endpoint.protocol} cannot be preserved`;
+  }
+  if (endpoint.hostname !== '127.0.0.1') {
+    return `browser-rs v${BROWSER_RS_PIN.version} discards the --connect host and attaches through 127.0.0.1; refusing endpoint ${target.endpoint}`;
+  }
+  if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash || !['', '/'].includes(endpoint.pathname)) {
+    return `browser-rs v${BROWSER_RS_PIN.version} discards --connect credentials, path, query, or fragment; refusing endpoint ${target.endpoint}`;
+  }
+  return null;
 }
 
 function configuredProfilePath(args: readonly string[], env: NodeJS.ProcessEnv): string {
@@ -252,20 +304,51 @@ function profileHasLock(profilePath: string): boolean {
   });
 }
 
-function probeCdpPort(port: number): boolean {
+function probeCdpEndpoint(target: BrowserRsConnectTarget): BrowserRsCdpProbeResult {
   const script = [
-    "const http=require('http');",
-    'const port=Number(process.argv[1]);',
-    "const req=http.get({hostname:'127.0.0.1',port,path:'/json/version',timeout:1000},res=>{",
+    "const endpoint=new URL(process.argv[1]);",
+    "const client=require(endpoint.protocol==='https:'?'https':'http');",
+    'const req=client.get(endpoint,{timeout:1000},res=>{',
     "let body='';res.on('data',c=>body+=c);res.on('end',()=>{",
-    "try{const value=JSON.parse(body);process.exit(res.statusCode===200&&typeof value.webSocketDebuggerUrl==='string'?0:1)}catch{process.exit(1)}})});",
+    "try{const value=JSON.parse(body);if(res.statusCode!==200||typeof value.webSocketDebuggerUrl!=='string'||typeof value.Browser!=='string')process.exit(1);process.stdout.write(JSON.stringify({browserVersion:value.Browser}));}catch{process.exit(1)}})});",
     'req.on(\'error\',()=>process.exit(1));req.on(\'timeout\',()=>{req.destroy();process.exit(1)});',
   ].join('');
   try {
-    execFileSync(process.execPath, ['-e', script, String(port)], { timeout: 2000, stdio: 'ignore' });
-    return true;
+    const output = execFileSync(process.execPath, ['-e', script, target.probeUrl], {
+      encoding: 'utf8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const parsed = JSON.parse(output) as { browserVersion?: unknown };
+    if (typeof parsed.browserVersion !== 'string' || parsed.browserVersion.length === 0) {
+      throw new Error('CDP version response did not identify the browser');
+    }
+    return {
+      ok: true,
+      endpoint: target.endpoint,
+      browserVersion: parsed.browserVersion,
+      message: 'compatible CDP endpoint',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      endpoint: target.endpoint,
+      browserVersion: '',
+      message: `CDP probe failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+function executableVersion(executablePath: string): string | null {
+  try {
+    const output = execFileSync(executablePath, ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return output || null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -279,8 +362,9 @@ export function preflightBrowserRsBinary(options: {
   hashFile?: (binaryPath: string) => string;
   resolveBinary?: (binaryPath: string) => string;
   resolveChrome?: (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => string | null;
+  resolveChromeVersion?: (chromePath: string) => string | null;
   profileConflict?: (profilePath: string) => boolean;
-  connectProbe?: (port: number) => boolean;
+  connectProbe?: (target: BrowserRsConnectTarget) => BrowserRsCdpProbeResult;
 } = {}): BrowserRsPreflightResult {
   const env = options.env ?? process.env;
   const requestedBinaryPath = options.binaryPath ?? env.BROWSER_RS_BIN ?? '';
@@ -300,6 +384,7 @@ export function preflightBrowserRsBinary(options: {
     asset: pin?.asset ?? '',
     commit: BROWSER_RS_PIN.commit,
     chromePath: '',
+    chromeVersion: '',
     profilePath: '',
   };
 
@@ -323,43 +408,43 @@ export function preflightBrowserRsBinary(options: {
   }
   const resolvedBase = { ...base, binaryPath, command: [binaryPath, ...args] };
 
+  let actualSha256 = '';
+  try {
+    actualSha256 = options.hashFile ? options.hashFile(binaryPath) : sha256File(binaryPath);
+  } catch (err) {
+    return { ...resolvedBase, status: 'sha_mismatch', message: `browser-rs SHA-256 check failed: ${(err as Error).message}` };
+  }
+
+  if (actualSha256 !== pin.sha256) {
+    return {
+      ...resolvedBase,
+      actualSha256,
+      status: 'sha_mismatch',
+      message: `browser-rs SHA-256 mismatch: expected ${pin.sha256}, got ${actualSha256}`,
+    };
+  }
+  const digestBase = { ...resolvedBase, actualSha256 };
+
   let versionOutput = '';
   try {
     versionOutput = options.execVersion
       ? options.execVersion(binaryPath)
       : execFileSync(binaryPath, ['--version'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
-    return { ...resolvedBase, status: 'missing_binary', message: `browser-rs --version failed: ${(err as Error).message}` };
+    return { ...digestBase, status: 'missing_binary', message: `verified browser-rs --version failed: ${(err as Error).message}` };
   }
 
   const actualVersion = extractVersion(versionOutput);
   if (actualVersion !== BROWSER_RS_PIN.version) {
     return {
-      ...resolvedBase,
+      ...digestBase,
       actualVersion,
       status: 'version_mismatch',
       message: `browser-rs version mismatch: expected ${BROWSER_RS_PIN.version}, got ${actualVersion || 'unknown'}`,
     };
   }
 
-  let actualSha256 = '';
-  try {
-    actualSha256 = options.hashFile ? options.hashFile(binaryPath) : sha256File(binaryPath);
-  } catch (err) {
-    return { ...resolvedBase, actualVersion, status: 'sha_mismatch', message: `browser-rs SHA-256 check failed: ${(err as Error).message}` };
-  }
-
-  if (actualSha256 !== pin.sha256) {
-    return {
-      ...resolvedBase,
-      actualVersion,
-      actualSha256,
-      status: 'sha_mismatch',
-      message: `browser-rs SHA-256 mismatch: expected ${pin.sha256}, got ${actualSha256}`,
-    };
-  }
-
-  const identityBase = { ...resolvedBase, actualVersion, actualSha256 };
+  const identityBase = { ...digestBase, actualVersion };
   if (optionValue(args, ['--port']) !== undefined || env.AB_HTTP) {
     return {
       ...identityBase,
@@ -368,45 +453,77 @@ export function preflightBrowserRsBinary(options: {
     };
   }
 
-  const connectPort = configuredConnectPort(args, env);
-  if ((optionValue(args, ['--connect', '--cdp-endpoint']) ?? env.AB_CONNECT) && connectPort === undefined) {
-    return { ...identityBase, status: 'port_conflict', message: 'browser-rs connect port is invalid' };
+  const connectValue = optionValue(args, ['--connect', '--cdp-endpoint']) ?? env.AB_CONNECT;
+  const connectTarget = connectValue ? parseConnectTarget(connectValue) : null;
+  if (connectValue && !connectTarget) {
+    return { ...identityBase, status: 'port_conflict', message: `browser-rs connect target is invalid: ${connectValue}` };
   }
-  if (connectPort !== undefined && !(options.connectProbe ?? probeCdpPort)(connectPort)) {
+  if (connectTarget) {
+    const incompatibility = pinnedConnectCompatibilityError(connectTarget);
+    if (incompatibility) {
+      return {
+        ...identityBase,
+        connectPort: connectTarget.port,
+        connectEndpoint: connectTarget.endpoint,
+        status: 'port_conflict',
+        message: incompatibility,
+      };
+    }
+    const probe = (options.connectProbe ?? probeCdpEndpoint)(connectTarget);
+    if (!probe.ok) {
+      return {
+        ...identityBase,
+        connectPort: connectTarget.port,
+        connectEndpoint: connectTarget.endpoint,
+        status: 'port_conflict',
+        message: `browser-rs connect endpoint ${connectTarget.endpoint} is unavailable: ${probe.message}`,
+      };
+    }
     return {
       ...identityBase,
-      connectPort,
-      status: 'port_conflict',
-      message: `browser-rs connect port ${connectPort} does not expose a compatible CDP endpoint`,
+      status: 'ok',
+      connectPort: connectTarget.port,
+      connectEndpoint: connectTarget.endpoint,
+      chromeVersion: probe.browserVersion,
+      message: 'browser-rs binary, configured CDP endpoint, version, and SHA-256 match the pinned benchmark contract',
     };
   }
 
   let chromePath = '';
+  let chromeVersion = '';
   let profilePath = '';
-  if (connectPort === undefined) {
-    chromePath = (options.resolveChrome ?? resolveBrowserRsChrome)(env, platform) ?? '';
-    if (!chromePath) {
-      return {
-        ...identityBase,
-        status: 'chrome_missing',
-        message: 'Chrome/Chromium is required for browser-rs live smoke; set AB_CHROME to a canonical executable path',
-      };
-    }
-    profilePath = configuredProfilePath(args, env);
-    if (!profilePath) {
-      return { ...identityBase, chromePath, status: 'profile_conflict', message: 'browser-rs profile path could not be resolved' };
-    }
-    if ((options.profileConflict ?? profileHasLock)(profilePath)) {
-      return {
-        ...identityBase,
-        chromePath,
-        profilePath,
-        status: 'profile_conflict',
-        message: `browser-rs profile is already locked: ${profilePath}`,
-      };
-    }
+  chromePath = (options.resolveChrome ?? resolveBrowserRsChrome)(env, platform) ?? '';
+  if (!chromePath) {
+    return {
+      ...identityBase,
+      status: 'chrome_missing',
+      message: 'Chrome/Chromium is required for browser-rs live smoke; set AB_CHROME to a canonical executable path',
+    };
   }
-  const environmentBase = { ...identityBase, chromePath, profilePath, connectPort };
+  profilePath = configuredProfilePath(args, env);
+  if (!profilePath) {
+    return { ...identityBase, chromePath, status: 'profile_conflict', message: 'browser-rs profile path could not be resolved' };
+  }
+  if ((options.profileConflict ?? profileHasLock)(profilePath)) {
+    return {
+      ...identityBase,
+      chromePath,
+      profilePath,
+      status: 'profile_conflict',
+      message: `browser-rs profile is already locked: ${profilePath}`,
+    };
+  }
+  chromeVersion = (options.resolveChromeVersion ?? executableVersion)(chromePath) ?? '';
+  if (!chromeVersion) {
+    return {
+      ...identityBase,
+      chromePath,
+      profilePath,
+      status: 'chrome_missing',
+      message: `Chrome version probe failed for approved executable: ${chromePath}`,
+    };
+  }
+  const environmentBase = { ...identityBase, chromePath, chromeVersion, profilePath };
 
   return {
     ...environmentBase,
@@ -415,10 +532,22 @@ export function preflightBrowserRsBinary(options: {
   };
 }
 
-class SubprocessBrowserRsMcpTransport implements BrowserRsMcpTransport {
+export function browserRsSpawnEnv(
+  preflight: BrowserRsPreflightResult,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const spawnEnv = { ...env };
+  if (preflight.chromePath) spawnEnv.AB_CHROME = preflight.chromePath;
+  if (preflight.profilePath) spawnEnv.AB_PROFILE = preflight.profilePath;
+  if (preflight.connectPort !== undefined) spawnEnv.AB_CONNECT = String(preflight.connectPort);
+  return spawnEnv;
+}
+
+export class SubprocessBrowserRsMcpTransport implements BrowserRsMcpTransport {
   private process: ChildProcess | null = null;
   private requestId = 0;
   private buffer = '';
+  private stderrTail = '';
   private readonly pending = new Map<
     number,
     { resolve: (r: MCPResponse) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
@@ -430,24 +559,22 @@ class SubprocessBrowserRsMcpTransport implements BrowserRsMcpTransport {
     private readonly binaryPath: string,
     args: readonly string[],
     private readonly callTimeoutMs: number,
-    private readonly startupTimeoutMs: number,
+    private readonly env: NodeJS.ProcessEnv = process.env,
   ) {
     this.command = [binaryPath, ...args];
   }
 
   async start(): Promise<void> {
+    if (this.process) throw new Error('browser-rs process already started');
     return new Promise((resolve, reject) => {
-      this.process = spawn(this.binaryPath, this.command.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(this.binaryPath, this.command.slice(1), {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: this.env,
+      });
+      this.process = child;
       let settled = false;
-      const startupTimer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          reject(new Error(`browser-rs startup timed out after ${this.startupTimeoutMs}ms`));
-        }
-      }, this.startupTimeoutMs);
-      startupTimer.unref();
 
-      this.process.stdout?.on('data', (data: Buffer) => {
+      child.stdout?.on('data', (data: Buffer) => {
         this.buffer += data.toString();
         const lines = this.buffer.split('\n');
         this.buffer = lines.pop() || '';
@@ -467,31 +594,35 @@ class SubprocessBrowserRsMcpTransport implements BrowserRsMcpTransport {
         }
       });
 
-      this.process.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(startupTimer);
-          reject(err);
-        }
+      child.stderr?.on('data', (data: Buffer) => {
+        this.stderrTail = `${this.stderrTail}${data.toString()}`.slice(-STDERR_TAIL_CHARS);
       });
-      this.process.on('exit', (code) => {
-        for (const [, slot] of this.pending) {
-          clearTimeout(slot.timer);
-          slot.reject(new Error(`browser-rs exited with code ${code}`));
-        }
-        this.pending.clear();
-        if (!settled) {
-          settled = true;
-          clearTimeout(startupTimer);
-          reject(new Error(`browser-rs exited with code ${code} before startup`));
-        }
+      child.stdin?.on('error', (error) => {
+        this.rejectPending(this.diagnosticError(`browser-rs stdin failed: ${error.message}`));
       });
 
-      setImmediate(() => {
+      child.once('spawn', () => {
         if (!settled) {
           settled = true;
-          clearTimeout(startupTimer);
           resolve();
+        }
+      });
+      child.once('error', (error) => {
+        if (this.process === child) this.process = null;
+        const failure = this.diagnosticError(`browser-rs process error: ${error.message}`);
+        this.rejectPending(failure);
+        if (!settled) {
+          settled = true;
+          reject(failure);
+        }
+      });
+      child.once('exit', (code, signal) => {
+        if (this.process === child) this.process = null;
+        const failure = this.diagnosticError(`browser-rs exited with code ${code} signal ${signal}`);
+        this.rejectPending(failure);
+        if (!settled) {
+          settled = true;
+          reject(failure);
         }
       });
     });
@@ -523,25 +654,25 @@ class SubprocessBrowserRsMcpTransport implements BrowserRsMcpTransport {
   }
 
   async stop(): Promise<void> {
-    try {
-      if (this.process?.stdin) await this.send('shutdown', {});
-    } catch {
-      // Best-effort graceful shutdown; process cleanup below is authoritative.
+    const child = this.process;
+    this.process = null;
+    this.rejectPending(new Error('browser-rs transport stopped'));
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+
+    if (child.stdin && !child.stdin.destroyed && child.stdin.writable) {
+      try { child.stdin.end(); } catch { /* process cleanup below is authoritative */ }
     }
-    for (const [, slot] of this.pending) {
-      clearTimeout(slot.timer);
-      slot.reject(new Error('browser-rs transport stopped'));
-    }
-    this.pending.clear();
-    if (this.process) {
-      this.process.stdin?.end();
-      this.process.kill();
-      this.process = null;
-    }
+    if (await this.waitForExit(child, STOP_GRACE_MS)) return;
+    try { child.kill('SIGTERM'); } catch { /* process may have exited between checks */ }
+    if (await this.waitForExit(child, STOP_GRACE_MS)) return;
+    try { child.kill('SIGKILL'); } catch { /* process may have exited between checks */ }
+    await this.waitForExit(child, STOP_GRACE_MS);
   }
 
   private send(method: string, params?: Record<string, unknown>): Promise<MCPResponse> {
-    if (!this.process?.stdin) {
+    const child = this.process;
+    const input = child?.stdin;
+    if (!child || child.exitCode !== null || child.signalCode !== null || !input || input.destroyed || !input.writable) {
       return Promise.reject(new Error('browser-rs process not started'));
     }
     const id = ++this.requestId;
@@ -555,16 +686,58 @@ class SubprocessBrowserRsMcpTransport implements BrowserRsMcpTransport {
       }, this.callTimeoutMs);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
-      this.process!.stdin!.write(JSON.stringify(req) + '\n');
+      input.write(`${JSON.stringify(req)}\n`, (error?: Error | null) => {
+        if (!error) return;
+        const slot = this.pending.get(id);
+        if (!slot) return;
+        clearTimeout(slot.timer);
+        this.pending.delete(id);
+        slot.reject(this.diagnosticError(`browser-rs "${method}" write failed: ${error.message}`));
+      });
     });
   }
 
   private sendNotification(method: string, params?: Record<string, unknown>): Promise<void> {
-    if (!this.process?.stdin) {
+    const child = this.process;
+    const input = child?.stdin;
+    if (!child || child.exitCode !== null || child.signalCode !== null || !input || input.destroyed || !input.writable) {
       return Promise.reject(new Error('browser-rs process not started'));
     }
-    this.process.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
-    return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`, (error?: Error | null) => {
+        if (error) reject(this.diagnosticError(`browser-rs "${method}" write failed: ${error.message}`));
+        else resolve();
+      });
+    });
+  }
+
+  private rejectPending(error: Error): void {
+    for (const [, slot] of this.pending) {
+      clearTimeout(slot.timer);
+      slot.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private diagnosticError(message: string): Error {
+    const diagnostics = this.stderrTail.trim();
+    return new Error(diagnostics ? `${message}\nbrowser-rs stderr tail:\n${diagnostics}` : message);
+  }
+
+  private waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        child.removeListener('exit', onExit);
+        resolve(false);
+      }, timeoutMs);
+      timer.unref();
+      const onExit = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      child.once('exit', onExit);
+    });
   }
 }
 
@@ -605,17 +778,25 @@ export class BrowserRsMcpAdapter implements MCPAdapter {
         preflight.binaryPath,
         this.args,
         this.callTimeoutMs,
-        this.startupTimeoutMs,
+        browserRsSpawnEnv(preflight),
       );
     } else {
       this.transport = this.injectedTransport;
     }
 
-    await this.transport.start();
-    await this.transport.initialize();
-    const tools = await this.transport.listTools();
-    this.toolCountValue = tools.length;
-    this.setupFinishedAt = Date.now();
+    try {
+      await withTimeout((async () => {
+        await this.transport!.start();
+        await this.transport!.initialize();
+      })(), this.startupTimeoutMs, 'browser-rs startup');
+      const tools = await this.transport.listTools();
+      this.toolCountValue = tools.length;
+      this.setupFinishedAt = Date.now();
+    } catch (error) {
+      await this.transport.stop().catch(() => undefined);
+      this.transport = null;
+      throw error;
+    }
   }
 
   async teardown(): Promise<void> {

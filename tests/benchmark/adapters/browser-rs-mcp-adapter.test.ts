@@ -5,6 +5,8 @@ import {
   BROWSER_RS_PIN,
   BrowserRsMcpAdapter,
   BrowserRsMcpTransport,
+  SubprocessBrowserRsMcpTransport,
+  browserRsSpawnEnv,
   preflightBrowserRsBinary,
 } from './browser-rs-mcp-adapter';
 import { MCPToolResult } from '../benchmark-runner';
@@ -141,6 +143,7 @@ describe('preflightBrowserRsBinary', () => {
     profileConflict: () => false,
     execVersion: () => 'browser-rs 0.1.13',
     hashFile: () => goodSha,
+    resolveChromeVersion: () => 'Google Chrome 150.0.7871.187',
   };
 
   test('reports unsupported platform before binary checks', () => {
@@ -171,14 +174,16 @@ describe('preflightBrowserRsBinary', () => {
   });
 
   test('fails closed on SHA mismatch', () => {
+    const execVersion = jest.fn(() => 'browser-rs 0.1.13');
     const result = preflightBrowserRsBinary({
       ...runnableDefaults,
       binaryPath: '/tmp/browser-rs',
-      execVersion: () => 'browser-rs 0.1.13',
+      execVersion,
       hashFile: () => '0'.repeat(64),
     });
     expect(result.status).toBe('sha_mismatch');
     expect(result.expectedSha256).toBe(goodSha);
+    expect(execVersion).not.toHaveBeenCalled();
   });
 
   test('accepts the pinned version and platform digest', () => {
@@ -194,6 +199,7 @@ describe('preflightBrowserRsBinary', () => {
     expect(result.binaryPath).toBe('/canonical/browser-rs');
     expect(result.command).toEqual(['/canonical/browser-rs']);
     expect(result.chromePath).toBe('/canonical/google-chrome');
+    expect(result.chromeVersion).toBe('Google Chrome 150.0.7871.187');
   });
 
   test('uses the same canonical binary path for version, digest, and execution metadata', () => {
@@ -214,8 +220,8 @@ describe('preflightBrowserRsBinary', () => {
     expect(result.status).toBe('ok');
     expect(result.command).toEqual(['/opt/browser-rs/bin/browser-rs']);
     expect(observed).toEqual([
-      'version:/opt/browser-rs/bin/browser-rs',
       'hash:/opt/browser-rs/bin/browser-rs',
+      'version:/opt/browser-rs/bin/browser-rs',
     ]);
   });
 
@@ -234,7 +240,7 @@ describe('preflightBrowserRsBinary', () => {
       ...runnableDefaults,
       binaryPath: '/tmp/browser-rs',
       execVersion: () => 'browser-rs 0.1.12',
-      hashFile: () => '0'.repeat(64),
+      hashFile: () => goodSha,
       resolveChrome: () => null,
     });
     expect(result.status).toBe('version_mismatch');
@@ -267,16 +273,40 @@ describe('preflightBrowserRsBinary', () => {
       ...runnableDefaults,
       binaryPath: '/tmp/browser-rs',
       args: ['--connect', '9222'],
-      connectProbe: () => false,
+      connectProbe: (target) => ({
+        ok: false,
+        endpoint: target.endpoint,
+        browserVersion: '',
+        message: 'unavailable',
+      }),
     });
     expect(result.status).toBe('port_conflict');
     expect(result.connectPort).toBe(9222);
   });
 
+  test('rejects a remote CDP URL that browser-rs would silently replace with loopback', () => {
+    const connectProbe = jest.fn();
+    const result = preflightBrowserRsBinary({
+      ...runnableDefaults,
+      binaryPath: '/tmp/browser-rs',
+      args: ['--connect', 'http://chrome.internal:9333'],
+      connectProbe,
+    });
+    expect(result.status).toBe('port_conflict');
+    expect(result.connectEndpoint).toBe('http://chrome.internal:9333/');
+    expect(result.message).toContain('discards the --connect host');
+    expect(connectProbe).not.toHaveBeenCalled();
+  });
+
   test('uses a configured CDP URL without requiring local Chrome or a profile', () => {
     const resolveChrome = jest.fn(() => null);
     const profileConflict = jest.fn(() => true);
-    const connectProbe = jest.fn(() => true);
+    const connectProbe = jest.fn((target) => ({
+      ok: true,
+      endpoint: target.endpoint,
+      browserVersion: 'Chrome/150.0.7871.187',
+      message: 'ok',
+    }));
     const result = preflightBrowserRsBinary({
       ...runnableDefaults,
       binaryPath: '/tmp/browser-rs',
@@ -287,11 +317,88 @@ describe('preflightBrowserRsBinary', () => {
     });
     expect(result.status).toBe('ok');
     expect(result.connectPort).toBe(9222);
+    expect(result.connectEndpoint).toBe('http://127.0.0.1:9222/');
+    expect(result.chromeVersion).toBe('Chrome/150.0.7871.187');
     expect(result.command).toEqual(['/canonical/browser-rs', '--connect', 'http://127.0.0.1:9222']);
     expect(result.chromePath).toBe('');
     expect(result.profilePath).toBe('');
-    expect(connectProbe).toHaveBeenCalledWith(9222);
+    expect(connectProbe).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: 'http://127.0.0.1:9222/',
+      probeUrl: 'http://127.0.0.1:9222/json/version',
+      port: 9222,
+    }));
     expect(resolveChrome).not.toHaveBeenCalled();
     expect(profileConflict).not.toHaveBeenCalled();
+  });
+
+  test('builds subprocess env from the exact Chrome, profile, and CDP target approved by preflight', () => {
+    const env = browserRsSpawnEnv({
+      status: 'ok',
+      binaryPath: '/canonical/browser-rs',
+      command: ['/canonical/browser-rs', '--connect', 'http://127.0.0.1:9333'],
+      platformKey: 'linux-x64',
+      expectedVersion: '0.1.13',
+      actualVersion: '0.1.13',
+      expectedSha256: goodSha,
+      actualSha256: goodSha,
+      asset: 'browser-rs-linux-x64',
+      commit: BROWSER_RS_PIN.commit,
+      chromePath: '/canonical/google-chrome',
+      chromeVersion: 'Google Chrome 150.0.7871.187',
+      profilePath: '/canonical/browser-rs-profile',
+      connectPort: 9333,
+      connectEndpoint: 'http://127.0.0.1:9333/',
+      message: 'ok',
+    }, { PATH: '/usr/bin' });
+    expect(env).toMatchObject({
+      PATH: '/usr/bin',
+      AB_CHROME: '/canonical/google-chrome',
+      AB_PROFILE: '/canonical/browser-rs-profile',
+      AB_CONNECT: '9333',
+    });
+  });
+});
+
+describe('SubprocessBrowserRsMcpTransport lifecycle', () => {
+  test('drains large stderr output while completing MCP initialization', async () => {
+    const fixture = [
+      "const readline=require('readline');",
+      "const rl=readline.createInterface({input:process.stdin});",
+      "rl.on('line',line=>{const msg=JSON.parse(line);",
+      "if(msg.method==='initialize')process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:msg.id,result:{}})+'\\n');",
+      "if(msg.method==='tools/list')process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:msg.id,result:{tools:[{name:'browser_navigate'}]}})+'\\n');});",
+      "process.stderr.write('x'.repeat(1024*1024));",
+    ].join('');
+    const transport = new SubprocessBrowserRsMcpTransport(process.execPath, ['-e', fixture], 2000);
+    const adapter = new BrowserRsMcpAdapter({ transport, startupTimeoutMs: 2000 });
+    await adapter.setup();
+    expect(adapter.toolCount).toBe(1);
+    await adapter.teardown();
+  });
+
+  test('applies startupTimeoutMs through the initialize handshake', async () => {
+    const transport = new SubprocessBrowserRsMcpTransport(
+      process.execPath,
+      ['-e', 'process.stdin.resume()'],
+      5000,
+    );
+    const adapter = new BrowserRsMcpAdapter({ transport, startupTimeoutMs: 75 });
+    const started = Date.now();
+    await expect(adapter.setup()).rejects.toThrow(/startup timed out after 75ms/);
+    expect(Date.now() - started).toBeLessThan(1000);
+    await expect(adapter.teardown()).resolves.toBeUndefined();
+  });
+
+  test('does not wait for a call timeout when the child exits before teardown', async () => {
+    const transport = new SubprocessBrowserRsMcpTransport(
+      process.execPath,
+      ['-e', 'setTimeout(() => process.exit(7), 20); process.stdin.resume()'],
+      5000,
+    );
+    const adapter = new BrowserRsMcpAdapter({ transport, startupTimeoutMs: 2000 });
+    const started = Date.now();
+    await expect(adapter.setup()).rejects.toThrow(/exited with code 7/);
+    await expect(adapter.teardown()).resolves.toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });

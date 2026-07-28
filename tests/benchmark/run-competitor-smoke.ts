@@ -73,6 +73,7 @@ export interface CompetitorSmokeRow {
   chromePath?: string;
   profilePath?: string;
   connectPort?: number;
+  connectEndpoint?: string;
   chromeVersion?: string;
   os?: string;
   toolCount?: number;
@@ -280,6 +281,7 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
   }
 
   const externalPreflight = spec.externalPreflight?.();
+  const externalMetadata = externalPreflight ? rowMetadataForBrowserRs(externalPreflight) : {};
   if (externalPreflight && externalPreflight.status !== 'ok') {
     const skipCategory = externalPreflight.status === 'unsupported_platform'
       ? 'unsupported_platform'
@@ -290,7 +292,8 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
         : 'none';
     return {
       ...base,
-      ...rowMetadataForBrowserRs(externalPreflight),
+      ...externalMetadata,
+      dependencyAvailable: externalPreflight.status !== 'missing_binary',
       status: skipCategory === 'none' ? 'failed' : 'skipped',
       skipCategory,
       durationMs: 0,
@@ -321,8 +324,10 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
     const tabId = parseTabId(create.content?.[0]?.text);
     const read = await withTimeout(adapter.callTool('read_page', { tabId }), options.timeoutMs, `${spec.library} read_page`);
     if (read.isError) throw new Error(read.content?.[0]?.text ?? 'read_page failed');
-    await withTimeout(adapter.callTool('tabs_close', { tabId }), options.timeoutMs, `${spec.library} tabs_close`);
+    const close = await withTimeout(adapter.callTool('tabs_close', { tabId }), options.timeoutMs, `${spec.library} tabs_close`);
+    if (close.isError) throw new Error(close.content?.[0]?.text ?? 'tabs_close failed');
     const payload = read.content?.map((entry) => entry.text ?? '').join('\n') ?? '';
+    const runtimeMetadata = { ...externalMetadata, ...adapterMetadata(adapter) };
     // Sanity gate: an adapter that returns the all-three-calls-succeeded shape
     // but ships an empty payload is not actually evidence that the library can
     // observe a page — it just means none of the three calls *threw*. The
@@ -338,6 +343,7 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
         payloadChars: 0,
         skipReason: '',
         failure: 'empty_payload: read_page returned no text content',
+        ...runtimeMetadata,
       };
     }
     return {
@@ -348,7 +354,7 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
       payloadChars: payload.length,
       skipReason: '',
       failure: '',
-      ...adapterMetadata(adapter),
+      ...runtimeMetadata,
     };
   } catch (err) {
     return {
@@ -359,6 +365,8 @@ export async function runOne(spec: AdapterSpec, url: string, options: Competitor
       payloadChars: 0,
       skipReason: '',
       failure: err instanceof Error ? err.message : String(err),
+      ...externalMetadata,
+      ...adapterMetadata(adapter),
     };
   } finally {
     await adapter.teardown?.().catch(() => undefined);
@@ -383,6 +391,8 @@ function rowMetadataForBrowserRsPin(environment?: Pick<EnvironmentMetadata, 'chr
 
 function rowMetadataForBrowserRs(preflight: BrowserRsPreflightResult): Partial<CompetitorSmokeRow> {
   return {
+    version: preflight.actualVersion || preflight.expectedVersion,
+    versionSource: preflight.actualVersion ? 'external-binary' : 'benchmark-registry',
     commit: preflight.commit,
     license: BROWSER_RS_PIN.license,
     binaryPath: preflight.binaryPath,
@@ -394,16 +404,19 @@ function rowMetadataForBrowserRs(preflight: BrowserRsPreflightResult): Partial<C
     chromePath: preflight.chromePath,
     profilePath: preflight.profilePath,
     connectPort: preflight.connectPort,
+    connectEndpoint: preflight.connectEndpoint,
+    chromeVersion: preflight.chromeVersion,
   };
 }
 
 function adapterMetadata(adapter: MCPAdapter): Partial<CompetitorSmokeRow> {
   if (adapter instanceof BrowserRsMcpAdapter) {
+    const preflight = adapter.lastPreflight;
     return {
-      command: adapter.command,
+      ...(preflight ? rowMetadataForBrowserRs(preflight) : {}),
+      command: adapter.command.length > 0 ? adapter.command : preflight?.command,
       toolCount: adapter.toolCount,
       adapterSetupMs: adapter.setupDurationMs,
-      actualSha256: adapter.lastPreflight?.actualSha256,
     };
   }
   return {};

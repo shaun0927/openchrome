@@ -40,10 +40,17 @@ they are not reproducible here. See Epic #1254 "Non-goals".
 
 The `browser-rs-mcp` diagnostic adapter is stdio-only. Before a live row it
 resolves `BROWSER_RS_BIN` to one canonical executable and uses that exact path
-for version, digest, and process launch. It also requires a discoverable
-Chrome/Chromium (or a live configured CDP endpoint), rejects locked browser-rs
-profiles, and rejects `--port` / `AB_HTTP` because those settings switch the
-competitor to HTTP instead of the benchmark's MCP stdio contract.
+for digest, version, and process launch, with SHA-256 verified before the
+binary is executed. It also forwards the exact approved Chrome/profile through
+browser-rs' `AB_CHROME` / `AB_PROFILE` contract, rejects locked profiles, and
+rejects `--port` / `AB_HTTP` because those settings switch the competitor to
+HTTP instead of the benchmark's MCP stdio contract.
+
+Pinned browser-rs v0.1.13 reduces `--connect <url>` to a local port before it
+attaches. The adapter therefore accepts only an explicit `127.0.0.1` CDP
+endpoint (or a numeric local port), probes that exact endpoint, and rejects
+remote hosts, alternate protocols, credentials, and paths instead of risking
+a smoke run against an unrelated local Chrome.
 
 ## Tokenizer
 

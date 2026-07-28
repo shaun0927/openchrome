@@ -40,6 +40,8 @@ export {
 
 export {
   BROWSER_RS_PIN,
+  BrowserRsCdpProbeResult,
+  BrowserRsConnectTarget,
   BrowserRsMcpAdapter,
   BrowserRsMcpAdapterOptions,
   BrowserRsMcpTool,

@@ -10,14 +10,17 @@ import {
   runOne,
 } from './run-competitor-smoke';
 
-function fakeAdapter(read: MCPToolResult): MCPAdapter {
+function fakeAdapter(
+  read: MCPToolResult,
+  close: MCPToolResult = { content: [{ type: 'text', text: 'ok' }] },
+): MCPAdapter {
   return {
     name: 'fake',
     mode: 'fake',
     async callTool(tool: string): Promise<MCPToolResult> {
       if (tool === 'tabs_create') return { content: [{ type: 'text', text: JSON.stringify({ tabId: 'tab-1' }) }] };
       if (tool === 'read_page') return read;
-      if (tool === 'tabs_close') return { content: [{ type: 'text', text: 'ok' }] };
+      if (tool === 'tabs_close') return close;
       throw new Error(`unexpected tool ${tool}`);
     },
   };
@@ -87,6 +90,7 @@ describe('competitor smoke matrix', () => {
       expect(['dependency_missing', 'unsupported_platform']).toContain(rows[0].skipCategory);
       if (rows[0].skipCategory === 'dependency_missing') {
         expect(rows[0].skipReason).toContain('BROWSER_RS_BIN');
+        expect(rows[0].dependencyAvailable).toBe(false);
       }
       expect(rows[0].commit).toBe('6efa54fe428f1203967a9c760a27d0647d5474ee');
     } finally {
@@ -112,6 +116,7 @@ describe('competitor smoke matrix', () => {
         asset: 'browser-rs-linux-x64',
         commit: '6efa54fe428f1203967a9c760a27d0647d5474ee',
         chromePath: '/tmp/chrome',
+        chromeVersion: 'Google Chrome 150.0.7871.187',
         profilePath: '/tmp/browser-rs-profile',
         message: 'browser-rs version mismatch: expected 0.1.13, got 0.1.12',
       }),
@@ -142,6 +147,7 @@ describe('competitor smoke matrix', () => {
           asset: 'browser-rs-linux-x64',
           commit: '6efa54fe428f1203967a9c760a27d0647d5474ee',
           chromePath: '',
+          chromeVersion: '',
           profilePath: '/tmp/browser-rs-profile',
           message: `${status} preflight`,
         }),
@@ -172,5 +178,58 @@ describe('competitor smoke matrix', () => {
     expect(row.status).toBe('passed');
     expect(row.payloadChars).toBeGreaterThan(0);
     expect(row.failure).toBe('');
+  });
+
+  test('fails the row when tabs_close returns an MCP tool error', async () => {
+    const spec = specOf(fakeAdapter(
+      { content: [{ type: 'text', text: '<html><body>hi</body></html>' }] },
+      { content: [{ type: 'text', text: 'close rejected' }], isError: true },
+    ));
+    const row = await runOne(spec, 'http://example.local/', { includeLive: false, library: 'all', timeoutMs: 5000 });
+    expect(row.status).toBe('failed');
+    expect(row.failure).toContain('close rejected');
+  });
+
+  test('preserves verified browser-rs evidence when a live tool call fails', async () => {
+    const preflight = {
+      status: 'ok' as const,
+      binaryPath: '/canonical/browser-rs',
+      command: ['/canonical/browser-rs', '--connect', 'http://127.0.0.1:9333'],
+      platformKey: 'linux-x64',
+      expectedVersion: '0.1.13',
+      actualVersion: '0.1.13',
+      expectedSha256: 'a'.repeat(64),
+      actualSha256: 'a'.repeat(64),
+      asset: 'browser-rs-linux-x64',
+      commit: '6efa54fe428f1203967a9c760a27d0647d5474ee',
+      chromePath: '',
+      chromeVersion: 'Chrome/150.0.7871.187',
+      profilePath: '',
+      connectPort: 9333,
+      connectEndpoint: 'http://127.0.0.1:9333/',
+      message: 'ok',
+    };
+    const spec: AdapterSpec = {
+      library: 'browser-rs-mcp',
+      mode: 'a11y-snapshot-stdio',
+      liveRequired: true,
+      externalPreflight: () => preflight,
+      adapterFactory: () => fakeAdapter({
+        content: [{ type: 'text', text: 'snapshot rejected' }],
+        isError: true,
+      }),
+    };
+    const row = await runOne(spec, 'http://example.local/', {
+      includeLive: true,
+      library: 'browser-rs-mcp',
+      timeoutMs: 5000,
+    });
+    expect(row.status).toBe('failed');
+    expect(row.binaryPath).toBe('/canonical/browser-rs');
+    expect(row.versionSource).toBe('external-binary');
+    expect(row.command).toEqual(preflight.command);
+    expect(row.actualSha256).toBe('a'.repeat(64));
+    expect(row.connectEndpoint).toBe('http://127.0.0.1:9333/');
+    expect(row.chromeVersion).toBe('Chrome/150.0.7871.187');
   });
 });
