@@ -1,0 +1,14 @@
+name: intentionally stale schema fixture
+steps:
+  - id: open_home
+    navigate:
+      url: https://example.com
+  - id: wait_navigation
+    wait_for:
+      condition: navigation
+  - id: perform_action
+    act:
+      action: scroll down
+  - id: read_html
+    read_page:
+      mode: html

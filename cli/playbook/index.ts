@@ -1,8 +1,7 @@
 /**
  * Playbook subcommand registration.
  *
- * Registers `oc playbook run <file> [--vars k=v] [--out PATH] [--reuse] [--json]`
- * onto the given Commander program.
+ * Registers playbook run and validation commands onto the given Commander program.
  *
  * Exit codes:
  *   0 — all steps + all asserts pass
@@ -17,7 +16,18 @@ import { loadPlaybook, ParseError } from './parse';
 import { buildVarMap, parseCliVars, VarError } from './vars';
 import { runPlaybook } from './run';
 import { writeReport } from './report';
-import { TransportError } from './stdio-client';
+import { TransportError as PlaybookTransportError } from './stdio-client';
+import {
+  formatValidationResult,
+  validatePlaybook,
+  validationExitCode,
+} from './validate';
+import { ToolManifestError } from './tool-manifest-client';
+
+function collectVar(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
+}
 
 export function registerPlaybookCommand(program: Command): void {
   const playbook = program
@@ -27,7 +37,7 @@ export function registerPlaybookCommand(program: Command): void {
   playbook
     .command('run <file>')
     .description('Execute a playbook file against the MCP server.')
-    .option('--vars <k=v...>', 'Variable overrides (repeatable). CLI values override the vars: block.', (val: string, acc: string[]) => { acc.push(val); return acc; }, [] as string[])
+    .option('--vars <k=v...>', 'Variable overrides (repeatable). CLI values override the vars: block.', collectVar, [] as string[])
     .option('--out <path>', 'Write a Markdown report to this file.')
     .option('--reuse', 'Connect to an existing openchrome serve daemon instead of spawning a new one.', false)
     .option('--json', 'Output the full run report as JSON on stdout.', false)
@@ -67,7 +77,7 @@ export function registerPlaybookCommand(program: Command): void {
           varMap,
         });
       } catch (err) {
-        if (err instanceof TransportError) {
+        if (err instanceof PlaybookTransportError) {
           console.error(`[playbook] Transport error: ${err.message}`);
           process.exit(3);
         }
@@ -89,4 +99,67 @@ export function registerPlaybookCommand(program: Command): void {
 
       process.exit(result.summary.ok ? 0 : 1);
     });
+
+  const validate = playbook
+    .command('validate <file>')
+    .description('Validate a playbook against the registered MCP tool schemas without executing tools.')
+    .option('--vars <k=v...>', 'Variable overrides (repeatable). CLI values override the vars: block.', collectVar, [] as string[])
+    .option('--reuse', 'Reserved for session-scoped daemon validation; not supported yet.', false)
+    .option('--json', 'Output structured validation diagnostics as JSON.', false);
+
+  validate.exitOverride((error) => {
+    process.exit(error.exitCode === 0 ? 0 : 2);
+  });
+
+  validate.action(async (file: string, options: { vars: string[]; reuse: boolean; json: boolean }) => {
+    const filePath = path.resolve(file);
+
+    let parsed;
+    try {
+      parsed = loadPlaybook(filePath);
+    } catch (err) {
+      if (err instanceof ParseError) {
+        const lineInfo = err.line !== undefined ? ` (line ${err.line})` : '';
+        console.error(`[playbook] Parse error${lineInfo}: ${err.message}`);
+      } else {
+        console.error(`[playbook] Failed to load playbook: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      process.exit(2);
+    }
+
+    let cliVars: Record<string, string>;
+    try {
+      cliVars = parseCliVars(options.vars);
+    } catch (err) {
+      console.error(`[playbook] --vars error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(2);
+    }
+
+    const varMap = buildVarMap(parsed.vars, cliVars);
+    try {
+      if (options.reuse === true || program.opts<{ reuse?: boolean }>().reuse === true) {
+        console.error(
+          '[playbook] --reuse is not supported for schema validation yet; ' +
+          'validate against the registered local manifest instead.',
+        );
+        process.exit(2);
+      }
+      const result = await validatePlaybook(parsed, {
+        varMap,
+      });
+      process.stdout.write(formatValidationResult(result, options.json));
+      process.exit(validationExitCode(result));
+    } catch (err) {
+      if (err instanceof VarError) {
+        console.error(`[playbook] Variable error: ${err.message}`);
+        process.exit(2);
+      }
+      if (err instanceof ToolManifestError) {
+        console.error(`[playbook] Manifest error: ${err.message}`);
+        process.exit(3);
+      }
+      console.error(`[playbook] Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(3);
+    }
+  });
 }

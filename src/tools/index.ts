@@ -382,7 +382,16 @@ function makeCapabilityInjectingProxy(server: MCPServer): MCPServer {
 }
 
 
-export function registerAllTools(server: MCPServer): void {
+export interface RegisterAllToolsOptions {
+  /** Skip startup timers, persistence cleanup, and session listeners. */
+  runtimeSideEffects?: boolean;
+}
+
+export function registerAllTools(
+  server: MCPServer,
+  options: RegisterAllToolsOptions = {},
+): void {
+  const runtimeSideEffects = options.runtimeSideEffects !== false;
   // Wrap the real server so every registerTool() call gets a capability tag.
   const proxy = makeCapabilityInjectingProxy(server);
 
@@ -550,13 +559,15 @@ export function registerAllTools(server: MCPServer): void {
 
   // P2 fix (#887): purge expired output handles every 5 minutes.
   // `.unref()` ensures the interval does not prevent clean process exit.
-  const _outputPurgeTimer = setInterval(() => {
-    const removed = getHandleStore().purgeExpired();
-    if (removed > 0) {
-      console.error(`[output-handles] Purged ${removed} expired handle(s)`);
-    }
-  }, 5 * 60 * 1000);
-  _outputPurgeTimer.unref();
+  if (runtimeSideEffects) {
+    const outputPurgeTimer = setInterval(() => {
+      const removed = getHandleStore().purgeExpired();
+      if (removed > 0) {
+        console.error(`[output-handles] Purged ${removed} expired handle(s)`);
+      }
+    }, 5 * 60 * 1000);
+    outputPurgeTimer.unref();
+  }
 
   // Async task ledger (#855) — persistent background task table
   registerOcTaskStartTool(server);
@@ -572,15 +583,17 @@ export function registerAllTools(server: MCPServer): void {
   // once at server start (issue #855 invariant #2) so a crash on a
   // previous boot transitions orphaned rows to FAILED before new
   // tasks are accepted. Best-effort: log and continue on failure.
-  setTaskStartupReapPromise(
-    getTaskStore()
-      .reapOrphans()
-      .then((reaped) => {
-        if (reaped.length > 0) {
-          console.error(`[task-ledger] Reaped ${reaped.length} orphaned task(s) at startup`);
-        }
-      }),
-  );
+  if (runtimeSideEffects) {
+    setTaskStartupReapPromise(
+      getTaskStore()
+        .reapOrphans()
+        .then((reaped) => {
+          if (reaped.length > 0) {
+            console.error(`[task-ledger] Reaped ${reaped.length} orphaned task(s) at startup`);
+          }
+        }),
+    );
+  }
 
   // Doctor report tool (#898) — read cached `openchrome doctor` output
   registerOcDoctorReportTool(proxy);
@@ -591,21 +604,23 @@ export function registerAllTools(server: MCPServer): void {
   if (process.env.OPENCHROME_PERF_INSIGHTS !== '0') {
     registerOcPerformanceInsightsTool(proxy);
     registerOcPerformanceAnalyzeTool(proxy);
-    // Wire session-scoped trace eviction once. The store keeps an
-    // in-memory map of session_id -> trace_ids; on session deletion we
-    // delete every trace file owned by that session.
-    const sm = getSessionManager();
-    const store = getPerfTraceStore();
-    sm.addEventListener((event) => {
-      if (event.type === 'session:deleted' && event.sessionId) {
-        const removed = store.evictSession(event.sessionId);
-        if (removed > 0) {
-          console.error(
-            `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
-          );
+    if (runtimeSideEffects) {
+      // Wire session-scoped trace eviction once. The store keeps an
+      // in-memory map of session_id -> trace_ids; on session deletion we
+      // delete every trace file owned by that session.
+      const sm = getSessionManager();
+      const store = getPerfTraceStore();
+      sm.addEventListener((event) => {
+        if (event.type === 'session:deleted' && event.sessionId) {
+          const removed = store.evictSession(event.sessionId);
+          if (removed > 0) {
+            console.error(
+              `[PerfInsights] Evicted ${removed} trace handle(s) for session ${event.sessionId}`,
+            );
+          }
         }
-      }
-    });
+      });
+    }
   }
   // Pilot-tier: user-supplied proxy hook (#874). Loaded lazily so v1.11
   // behaviour is byte-identical when the family is off — no code from
