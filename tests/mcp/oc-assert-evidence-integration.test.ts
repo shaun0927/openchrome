@@ -15,6 +15,7 @@ import { runWithRequestContext } from '../../src/observability/request-id';
 import { registerOcAssertTool } from '../../src/tools/oc-assert';
 import { registerOcEvidenceGetTool } from '../../src/tools/oc-evidence-get';
 import type { MCPRequest, MCPResponse } from '../../src/types/mcp';
+import type { SessionEvent } from '../../src/types/session';
 import { createMockSessionManager } from '../utils/mock-session';
 
 const tenantAWrite: Principal = {
@@ -267,6 +268,40 @@ describe('oc_assert durable evidence through MCP', () => {
       sessionId: 'shared-logical',
       tenantId: 'tenant-b',
     }).evidence_handle).toBe(tenantB.evidence_handle);
+  });
+
+  test('session lifecycle deletion prefers the authenticated tenant binding over a default event tenant', async () => {
+    const sessionManager = createMockSessionManager();
+    const lifecycleListeners: Array<(event: SessionEvent) => void> = [];
+    sessionManager.addEventListener.mockImplementation((listener: (event: SessionEvent) => void) => {
+      lifecycleListeners.push(listener);
+    });
+    server = new MCPServer(sessionManager as never);
+    registerOcAssertTool(server, undefined, store);
+    registerOcEvidenceGetTool(server, store);
+
+    const asserted = await server.handleMessage(
+      authenticated(toolCall(1, 'oc_assert', {
+        contract: { kind: 'url', pattern: 'example' },
+        evidence: { snapshot: { url: 'https://example.com' } },
+      }), tenantAWrite),
+      undefined,
+      { mcpSessionId: 'client-a' },
+    ) as MCPResponse;
+    const handle = resultPayload(asserted).evidence_handle as string;
+
+    const deletedEvent: SessionEvent = {
+      type: 'session:deleted',
+      sessionId: 'mcp-client-a',
+      tenantId: 'default',
+      timestamp: Date.now(),
+    };
+    for (const listener of lifecycleListeners) listener(deletedEvent);
+
+    expect(() => store.loadAuthorized(handle, {
+      sessionId: 'mcp-client-a',
+      tenantId: 'tenant-a',
+    })).toThrow();
   });
 
   test('missing, expired, and malformed handles return stable MCP error codes', async () => {

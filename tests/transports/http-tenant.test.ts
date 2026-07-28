@@ -280,7 +280,18 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     const mcpSession = first.headers['mcp-session-id'] as string;
     expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
 
-    const del = await request('/mcp', 'DELETE', { 'Mcp-Session-Id': mcpSession });
+    const denied = await request('/mcp', 'DELETE', {
+      'Mcp-Session-Id': mcpSession,
+      'X-Tenant-Id': 'evil',
+    });
+    expect(denied.status).toBe(403);
+    expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
+    expect(deleted).toEqual([]);
+
+    const del = await request('/mcp', 'DELETE', {
+      'Mcp-Session-Id': mcpSession,
+      'X-Tenant-Id': 'acme',
+    });
     expect(del.status).toBe(200);
     expect(transport.getTenantForMcpSession(mcpSession)).toBeUndefined();
     expect(deleted).toEqual([{ sessionId: mcpSession, tenantId: 'acme' }]);

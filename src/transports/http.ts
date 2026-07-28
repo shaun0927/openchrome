@@ -25,10 +25,7 @@ import {
 } from '../observability/request-id';
 import type { ApiKeyStore } from '../auth/api-key-store';
 import { createJwtVerifier, type JwtConfig, type JwtVerifier } from '../auth/jwt-verifier';
-import {
-  isTenantScopedPrincipal,
-  resolveEffectiveTenantId,
-} from '../auth/tenant-principal';
+import { resolveEffectiveTenantId } from '../auth/tenant-principal';
 import {
   authenticate,
   requestPrincipals,
@@ -424,9 +421,12 @@ export class HTTPTransport implements MCPTransport {
           this.handleSSE(req, res, tenantId);
           return;
         }
-        case 'DELETE':
-          this.handleDelete(req, res);
+        case 'DELETE': {
+          const tenantId = this.resolveRequestTenant(req, res, false);
+          if (tenantId === null) return;
+          this.handleDelete(req, res, tenantId);
           return;
+        }
         default:
           res.writeHead(405, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Method not allowed' }));
@@ -452,6 +452,7 @@ export class HTTPTransport implements MCPTransport {
   private resolveRequestTenant(
     req: http.IncomingMessage,
     res: http.ServerResponse,
+    validateSessionBinding = true,
   ): TenantId | null {
     const strict = isStrictTenantIsolationEnabled();
     let tenantId: TenantId;
@@ -479,7 +480,7 @@ export class HTTPTransport implements MCPTransport {
     const principal = requestPrincipals.get(req);
     const effectiveTenantId = resolveEffectiveTenantId(principal, tenantId) ?? tenantId;
     const mcpSessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (mcpSessionId) {
+    if (validateSessionBinding && mcpSessionId) {
       const bound = this.sessionTenants.get(mcpSessionId);
       if (bound !== undefined && bound !== effectiveTenantId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -886,22 +887,21 @@ export class HTTPTransport implements MCPTransport {
   /**
    * DELETE /mcp - Session termination
    */
-  private handleDelete(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleDelete(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    requestTenantId: TenantId,
+  ): void {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (sessionId && this.sessions.has(sessionId)) {
-      const principal = requestPrincipals.get(req);
       const boundTenantId = this.sessionTenants.get(sessionId);
-      if (
-        isTenantScopedPrincipal(principal)
-        && boundTenantId !== undefined
-        && boundTenantId !== principal.tenantId
-      ) {
+      if (boundTenantId !== undefined && boundTenantId !== requestTenantId) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Forbidden', reason: 'tenant_mismatch' }));
         return;
       }
-      const tenantId = resolveEffectiveTenantId(principal, boundTenantId);
+      const tenantId = boundTenantId ?? requestTenantId;
       this.sessions.delete(sessionId);
       this.sessionTenants.delete(sessionId);
 
