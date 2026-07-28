@@ -55,6 +55,7 @@ function createMockBrowser(wsEndpoint = 'ws://localhost:9222/devtools/browser/ab
     on: jest.fn(),
     removeAllListeners: jest.fn(),
     disconnect: jest.fn().mockResolvedValue(undefined),
+    version: jest.fn().mockResolvedValue('Chrome/1'),
     targets: jest.fn().mockReturnValue([]),
     pages: jest.fn().mockResolvedValue([]),
   };
@@ -309,6 +310,169 @@ describe('CDPClient – connection coalescing', () => {
     expect(connectInternalSpy).toHaveBeenCalledTimes(1);
     stopHeartbeat(client);
   });
+
+  test('tracks browser demand only for managed auto-launch calls', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+
+    jest.spyOn(client as any, 'connectInternal').mockImplementation(async () => {
+      (client as any).browser = createMockBrowser();
+      (client as any).connectionState = 'connected';
+    });
+
+    await client.connect({ autoLaunch: false });
+    expect(client.hasBrowserDemandStarted()).toBe(false);
+
+    await client.connect({ autoLaunch: true });
+    expect(client.hasBrowserDemandStarted()).toBe(true);
+    stopHeartbeat(client);
+  });
+
+  test('does not trust an unverified startup-probe attachment as successful first use', async () => {
+    const managedClient = new CDPClient({ port: 9222, autoLaunch: true });
+    const attachOnlyClient = new CDPClient({ port: 9223, autoLaunch: false });
+    const failureHandler = jest.fn().mockResolvedValue(undefined);
+    const logSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    managedClient.setInitialAutoLaunchFailureHandler(failureHandler);
+    (managedClient as any).browser = createMockBrowser();
+    (managedClient as any).connectionState = 'connected';
+
+    managedClient.markManagedBrowserDemand();
+    managedClient.markManagedBrowserDemand();
+    attachOnlyClient.markManagedBrowserDemand();
+
+    expect(managedClient.hasBrowserDemandStarted()).toBe(true);
+    expect(attachOnlyClient.hasBrowserDemandStarted()).toBe(false);
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('normal Chrome without --remote-debugging-port=9222'));
+    logSpy.mockRestore();
+
+    (managedClient as any).browser = null;
+    (managedClient as any).connectionState = 'disconnected';
+    jest.spyOn(managedClient as any, 'connectInternal').mockRejectedValue(new Error('later reconnect failed'));
+
+    await expect(managedClient.connect()).rejects.toThrow('later reconnect failed');
+    expect(failureHandler).toHaveBeenCalledTimes(1);
+  });
+
+  test('coalesced first-use failure invokes startup cleanup exactly once', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+    const failureHandler = jest.fn().mockResolvedValue(undefined);
+    client.setInitialAutoLaunchFailureHandler(failureHandler);
+
+    jest.spyOn(client as any, 'connectInternal').mockRejectedValue(new Error('managed launch failed'));
+
+    const results = await Promise.allSettled(Array.from({ length: 5 }, () => client.connect()));
+
+    expect(results.every((result) => result.status === 'rejected')).toBe(true);
+    expect(client.hasBrowserDemandStarted()).toBe(true);
+    expect(failureHandler).toHaveBeenCalledTimes(1);
+    expect(failureHandler).toHaveBeenCalledWith(expect.objectContaining({ message: 'managed launch failed' }));
+  });
+
+  test('startup probe failure does not consume the managed first-use failure hook', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+    const failureHandler = jest.fn().mockResolvedValue(undefined);
+    client.setInitialAutoLaunchFailureHandler(failureHandler);
+
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockRejectedValueOnce(new Error('startup probe found no Chrome'))
+      .mockRejectedValueOnce(new Error('managed launch failed'));
+
+    await expect(client.connect({ autoLaunch: false })).rejects.toThrow('startup probe found no Chrome');
+    expect(client.hasBrowserDemandStarted()).toBe(false);
+    expect(failureHandler).not.toHaveBeenCalled();
+
+    await expect(client.connect({ autoLaunch: true })).rejects.toThrow('managed launch failed');
+    expect(connectInternalSpy).toHaveBeenCalledTimes(2);
+    expect(failureHandler).toHaveBeenCalledTimes(1);
+  });
+
+  test('retryable first-use cleanup can run again after an inconclusive launch timeout', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+    const failureHandler = jest.fn()
+      .mockResolvedValueOnce('retryable')
+      .mockResolvedValueOnce('consumed');
+    client.setInitialAutoLaunchFailureHandler(failureHandler);
+
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockRejectedValueOnce(new Error('launch timed out'))
+      .mockRejectedValueOnce(new Error('terminal launch failure'));
+
+    await expect(client.connect()).rejects.toThrow('launch timed out');
+    await expect(client.connect()).rejects.toThrow('terminal launch failure');
+
+    expect(connectInternalSpy).toHaveBeenCalledTimes(2);
+    expect(failureHandler).toHaveBeenCalledTimes(2);
+  });
+
+  test('first browser demand replaces a stale startup-probe connection with managed launch', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+    const staleBrowser = createMockBrowser('ws://stale');
+    staleBrowser.version.mockRejectedValue(new Error('stale startup probe'));
+    const managedBrowser = createMockBrowser('ws://managed');
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockImplementationOnce(async () => {
+        (client as any).browser = staleBrowser;
+        (client as any).connectionState = 'connected';
+      })
+      .mockImplementationOnce(async (options?: unknown) => {
+        expect((options as { autoLaunch?: boolean }).autoLaunch).toBe(true);
+        (client as any).browser = managedBrowser;
+        (client as any).connectionState = 'connected';
+      });
+
+    await client.connect({ autoLaunch: false });
+    (client as any).lastVerifiedAt = 0;
+    await client.connect({ autoLaunch: true });
+
+    expect(connectInternalSpy).toHaveBeenCalledTimes(2);
+    expect(staleBrowser.disconnect).toHaveBeenCalled();
+    expect((client as any).browser).toBe(managedBrowser);
+    stopHeartbeat(client);
+  });
+
+  test('failed managed reconnect after a stale startup probe invokes startup cleanup', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+    const failureHandler = jest.fn().mockResolvedValue('consumed');
+    client.setInitialAutoLaunchFailureHandler(failureHandler);
+    const staleBrowser = createMockBrowser('ws://stale');
+    staleBrowser.version.mockRejectedValue(new Error('stale startup probe'));
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockImplementationOnce(async () => {
+        (client as any).browser = staleBrowser;
+        (client as any).connectionState = 'connected';
+      })
+      .mockRejectedValueOnce(new Error('managed reconnect failed'));
+
+    await client.connect({ autoLaunch: false });
+    (client as any).lastVerifiedAt = 0;
+    client.markManagedBrowserDemand();
+    await expect(client.connect({ autoLaunch: true })).rejects.toThrow('managed reconnect failed');
+
+    expect(connectInternalSpy.mock.calls[1][0]).toMatchObject({ autoLaunch: true });
+    expect(failureHandler).toHaveBeenCalledTimes(1);
+  });
+
+  test('a successful managed first use suppresses later startup-failure cleanup', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+    const failureHandler = jest.fn().mockResolvedValue(undefined);
+    client.setInitialAutoLaunchFailureHandler(failureHandler);
+
+    const connectInternalSpy = jest.spyOn(client as any, 'connectInternal')
+      .mockImplementationOnce(async () => {
+        (client as any).browser = createMockBrowser();
+        (client as any).connectionState = 'connected';
+      })
+      .mockRejectedValueOnce(new Error('later reconnect failed'));
+
+    await client.connect();
+    stopHeartbeat(client);
+    (client as any).browser = null;
+    (client as any).connectionState = 'disconnected';
+
+    await expect(client.connect()).rejects.toThrow('later reconnect failed');
+    expect(failureHandler).not.toHaveBeenCalled();
+  });
 });
 
 describe('CDPClient – puppeteer.connect timeout', () => {
@@ -362,6 +526,25 @@ describe('CDPClient – puppeteer.connect timeout', () => {
         protocolTimeout: expect.any(Number),
       })
     );
+  });
+
+  test('transient managed attach failure retries without invalidating the ready Chrome instance', async () => {
+    const client = new CDPClient({ port: 9222, autoLaunch: true });
+    const invalidateInstance = jest.fn();
+    const launcherMock = require('../../src/chrome/launcher');
+    launcherMock.getChromeLauncher.mockReturnValue({
+      ensureChrome: mockEnsureChrome,
+      invalidateInstance,
+    });
+    mockPuppeteerConnect
+      .mockRejectedValueOnce(new Error('Target.getBrowserContexts: Target closed'))
+      .mockResolvedValueOnce(createMockBrowser());
+
+    await (client as any).connectInternal({ autoLaunch: true });
+
+    expect(mockEnsureChrome).toHaveBeenCalledTimes(2);
+    expect(invalidateInstance).not.toHaveBeenCalled();
+    stopHeartbeat(client);
   });
 });
 

@@ -25,7 +25,11 @@ import { getIdleState } from './utils/idle-state';
 import { getVersion } from './version';
 import { bootstrapPilot, logActiveFlags } from './harness/flags';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';
-import { releaseOwnerAfterStartupFailure, wireOwnerSelfRelease } from './chrome/owner-self-release';
+import {
+  releaseOwnerAfterStartupFailure,
+  wireOwnerSelfRelease,
+  type OwnerReleaseAttemptResult,
+} from './chrome/owner-self-release';
 import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
@@ -36,6 +40,7 @@ import { SessionStatePersistence } from './session-state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';
+import { ownerHeartbeatRequiresChrome, resolveChromeStartupPolicy } from './chrome/startup-policy';
 import { ProfileManager } from './chrome/profile-manager';
 import { getBrowserStateManager } from './browser-state';
 import { getListenerErrorStats, installUnhandledRejectionSafetyNet } from './utils/safe-listener';
@@ -46,6 +51,7 @@ import {
   acquireControllerLockWithHealthCheck,
   formatDuplicateControllerMessage,
   startControllerHeartbeat,
+  type ControllerHeartbeatHandle,
   type ControllerLockHandle,
 } from './utils/controller-lock';
 import { fetchJsonVersion } from './chrome/devtools-info';
@@ -311,6 +317,14 @@ program
     }
     const transportMode = validModes.includes(rawMode) ? rawMode : 'stdio';
     const useHttp = transportMode === 'http' || transportMode === 'both';
+    const brokerOwner = Boolean(options.broker) || electBrokerOwner;
+    const startupPolicy = resolveChromeStartupPolicy({
+      autoLaunch,
+      // Ordinary stdio hosts and broker owners defer Chrome until browser
+      // demand. Standalone daemon transports keep the historical /ready
+      // contract that Chrome is available before traffic is admitted.
+      eagerStartup: Boolean(options.serverMode) || (useHttp && !brokerOwner),
+    });
     const lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
 
     // #1359 P3a: the broker is the single CDP owner for a (port, userDataDir).
@@ -413,14 +427,7 @@ program
       }
     }
 
-    // #1474: while we own the lock, periodically refresh its heartbeat whenever
-    // our Chrome/CDP is reachable. This lets a contender distinguish a live
-    // owner that is briefly relaunching Chrome (heartbeat recent) from a true
-    // half-zombie (heartbeat stale beyond the grace), preventing split
-    // ownership during a legitimate relaunch.
-    const controllerHeartbeat = controllerLock
-      ? startControllerHeartbeat(controllerLock, async () => (await fetchJsonVersion(port)) !== null)
-      : null;
+    let controllerHeartbeat: ControllerHeartbeatHandle | null = null;
 
     process.on('exit', () => {
       try { controllerHeartbeat?.stop(); } catch { /* best-effort */ }
@@ -452,6 +459,7 @@ program
 
     console.error(`[openchrome] Chrome debugging port: ${port}`);
     console.error(`[openchrome] Auto-launch Chrome: ${autoLaunch}`);
+    console.error(`[openchrome] Chrome startup policy: ${startupPolicy}`);
     if (userDataDir) {
       console.error(`[openchrome] User data dir: ${userDataDir}`);
     }
@@ -634,6 +642,44 @@ program
 
     const server = getMCPServer();
     await registerAllTools(server);
+    const launcher = getChromeLauncher(port);
+    const cdpClient = getCDPClient();
+    const sessionManager = getSessionManager();
+
+    const releaseStartupOwnership = async (err: unknown): Promise<OwnerReleaseAttemptResult> => {
+      if (!controllerLock) return 'aborted';
+      return releaseOwnerAfterStartupFailure(err, {
+        releaseLock: () => {
+          if (options.broker || electBrokerOwner) removeBrokerMetadata(port, lockUserDataDir);
+          controllerLock?.release();
+          controllerLock = null;
+        },
+        exit: (code) => process.exit(code),
+        probeChromeReachable: async () => (await fetchJsonVersion(port)) !== null,
+      });
+    };
+
+    // Configure lazy first-use failure cleanup before any transport can accept
+    // a tool request. Matching concurrent first-use requests share one CDP
+    // connect promise, and CDPClient invokes this hook once for that attempt.
+    if (controllerLock && startupPolicy === 'lazy') {
+      cdpClient.setInitialAutoLaunchFailureHandler(async (err) => {
+        const result = await releaseStartupOwnership(err);
+        return result === 'inconclusive' ? 'retryable' : 'consumed';
+      });
+    }
+
+    // A lazy owner is healthy before browser demand even though no CDP endpoint
+    // exists yet. Once browser demand starts, heartbeat returns to the strict
+    // CDP reachability contract used for crash/relaunch ownership safety.
+    controllerHeartbeat = controllerLock
+      ? startControllerHeartbeat(controllerLock, async () => {
+          if (!ownerHeartbeatRequiresChrome(startupPolicy, cdpClient.hasBrowserDemandStarted())) {
+            return true;
+          }
+          return (await fetchJsonVersion(port)) !== null;
+        })
+      : null;
 
     // Dev-only hook: artificial delay for the tools component transition.
     // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
@@ -725,6 +771,38 @@ program
     if (process.platform === 'win32') {
       process.on('SIGHUP', () => shutdown('SIGHUP'));
     }
+
+    // Modes with an explicit Chrome-ready startup contract enter this branch.
+    // Ordinary stdio and broker-owner `serve --auto-launch` remain lazy.
+    if (startupPolicy === 'eager') {
+      try {
+        await launcher.ensureChrome({ autoLaunch: true, port, userDataDir });
+      } catch (err) {
+        if (controllerLock) {
+          const releaseResult = await releaseStartupOwnership(err);
+          if (releaseResult === 'reachable') {
+            console.error('[openchrome] Chrome became reachable after the eager startup error; continuing startup.');
+          } else if (releaseResult === 'released') {
+            return;
+          } else {
+            console.error(
+              `[openchrome] Eager Chrome startup did not reach a ready state; refusing to open transports: ` +
+                `${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(1);
+            return;
+          }
+        } else {
+          console.error(
+            `[openchrome] Eager Chrome startup failed before transport startup: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
+          return;
+        }
+      }
+    }
+
     // Resolve auth token: CLI flag takes precedence over env var.
     // Track which source supplied the token so the broker metadata can only
     // advertise `authTokenEnv` when the value actually lives in that env var
@@ -907,26 +985,6 @@ program
     }
 
     // ─── Self-Healing Module Wiring (#354) ──────────────────────────────────
-
-    const launcher = getChromeLauncher(port);
-    const cdpClient = getCDPClient();
-    const sessionManager = getSessionManager();
-
-    if (controllerLock && autoLaunch) {
-      launcher.ensureChrome({ autoLaunch: true, port, userDataDir }).catch((err: unknown) => {
-        releaseOwnerAfterStartupFailure(err, {
-          releaseLock: () => {
-            if (options.broker || electBrokerOwner) removeBrokerMetadata(port, lockUserDataDir);
-            controllerLock?.release();
-            controllerLock = null;
-          },
-          exit: (code) => process.exit(code),
-          probeChromeReachable: async () => (await fetchJsonVersion(port)) !== null,
-        }).catch((releaseErr: unknown) => {
-          console.error('[SelfHealing] Startup owner self-release failed:', releaseErr);
-        });
-      });
-    }
 
     // Readiness: wire chrome component via CDPClient connection events, then
     // proactively connect so daemon /ready probes can become ready before the
