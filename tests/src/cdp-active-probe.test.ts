@@ -258,7 +258,7 @@ describe('CDPClient – connect() active probe', () => {
 
     await client.connect({ budget });
 
-    expect(forceReconnectSpy).toHaveBeenCalledWith({ budget });
+    expect(forceReconnectSpy).toHaveBeenCalledWith({ budget, autoLaunch: false });
     stopHeartbeat(client);
   });
 
