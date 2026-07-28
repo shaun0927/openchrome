@@ -55,4 +55,18 @@ describe('network_capture cursor pagination (#881)', () => {
     expect(result.invalidCursor).toBeDefined();
     expect(result.entries).toEqual([]);
   });
+
+  test('binds filtered network cursors to the selected view', () => {
+    const entries = Array.from({ length: 25 }, (_, i) => entry(i));
+    const first = paginateNetworkCaptureEntries(entries, { pageSize: 10, view: 'failures' });
+
+    const crossView = paginateNetworkCaptureEntries(entries, {
+      pageSize: 10,
+      cursor: first.nextCursor,
+      view: 'all',
+    });
+
+    expect(crossView.staleCursor).toBe(true);
+    expect(crossView.entries).toEqual([]);
+  });
 });

@@ -18,6 +18,20 @@ import { MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { paginate } from '../utils/paginate';
 
+export type NetworkCaptureView = 'all' | 'failures';
+
+const FILTERED_NETWORK_DEFAULT_PAGE_SIZE = 100;
+const FILTERED_NETWORK_ORDERING_VERSION = 'newest-first-v1';
+
+export function matchesNetworkCaptureView(
+  entry: NetworkCaptureEntry,
+  view: Exclude<NetworkCaptureView, 'all'>,
+): boolean {
+  if (view !== 'failures') return true;
+  if (typeof entry.status === 'number' && entry.status >= 400) return true;
+  return entry.failed !== undefined && entry.failed.canceled !== true;
+}
+
 export const NETWORK_CAPTURE_INPUT_SCHEMA = {
   type: 'object' as const,
   properties: {
@@ -52,6 +66,11 @@ export const NETWORK_CAPTURE_INPUT_SCHEMA = {
     cursor: {
       type: 'string',
       description: 'Opaque pagination cursor returned as nextCursor from a prior getLogs call.',
+    },
+    view: {
+      type: 'string',
+      enum: ['all', 'failures'],
+      description: 'getLogs only: all preserves legacy output; failures keeps HTTP 4xx/5xx and non-canceled request failures.',
     },
   },
   required: ['tabId', 'action'],
@@ -99,11 +118,17 @@ export function createNetworkCaptureHandler(captureMode: CaptureMode): ToolHandl
     const keepBodies = args.keepBodies as boolean | undefined;
     const limit = args.limit as number | undefined;
     const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
+    const view = resolveNetworkCaptureView(args.view);
 
     setupCleanupListener();
 
     if (!tabId) return jsonResult({ success: false, error: 'tabId is required' }, true);
     if (!action) return jsonResult({ success: false, error: 'action is required' }, true);
+    if (view === null) return invalidViewResult(args.view);
+    if (action === 'getLogs' && view === 'failures') {
+      const invalidLimit = validateFilteredLimit(limit);
+      if (invalidLimit) return invalidLimit;
+    }
 
     const sessionManager = getSessionManager();
 
@@ -176,6 +201,39 @@ export function createNetworkCaptureHandler(captureMode: CaptureMode): ToolHandl
             });
           }
           const allEntries = recorder.getLogs(0);
+
+          if (view === 'failures') {
+            const pageSize = resolveFilteredNetworkPageSize(limit, allEntries.length);
+            if (typeof pageSize !== 'number') return pageSize;
+
+            const matchedEntries = allEntries.filter((entry) => matchesNetworkCaptureView(entry, view));
+            const page = paginateNetworkCaptureEntries(matchedEntries, { cursor, pageSize, view });
+            if (page.staleCursor) return staleCursorResult();
+            if (page.invalidCursor) return invalidCursorResult(page.invalidCursor);
+            const entries = page.entries;
+            return jsonResult({
+              success: true,
+              action: 'getLogs',
+              mode: captureMode,
+              view,
+              entries,
+              totalEntries: recorder.getEntryCount(),
+              matchedEntries: matchedEntries.length,
+              returned: entries.length,
+              hasMore: page.hasMore,
+              ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+            }, false, {
+              success: true,
+              action: 'getLogs',
+              mode: captureMode,
+              view,
+              requests: entries,
+              total: matchedEntries.length,
+              hasMore: page.hasMore,
+              ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+            });
+          }
+
           const pageSize = resolveNetworkCapturePageSize(limit, allEntries.length);
           const page = paginateNetworkCaptureEntries(allEntries, { cursor, pageSize });
           if (page.staleCursor) return staleCursorResult();
@@ -241,7 +299,7 @@ export function createNetworkCaptureHandler(captureMode: CaptureMode): ToolHandl
 
 export function paginateNetworkCaptureEntries(
   entries: NetworkCaptureEntry[],
-  opts: { cursor?: string; pageSize: number },
+  opts: { cursor?: string; pageSize: number; view?: NetworkCaptureView },
 ): {
   entries: NetworkCaptureEntry[];
   hasMore: boolean;
@@ -254,7 +312,7 @@ export function paginateNetworkCaptureEntries(
     const page = paginate(entries, {
       cursor: opts.cursor,
       pageSize: opts.pageSize,
-      contentHash: hashNetworkCaptureEntries(entries),
+      contentHash: hashNetworkCaptureEntries(entries, opts.view),
     });
     if (page.staleCursor) return { entries: [], hasMore: false, total: page.total, staleCursor: true };
     return {
@@ -273,8 +331,13 @@ function resolveNetworkCapturePageSize(limit: number | undefined, total: number)
   return Math.max(1, Math.floor(limit ?? 100));
 }
 
-function hashNetworkCaptureEntries(entries: NetworkCaptureEntry[]): string {
+function hashNetworkCaptureEntries(entries: NetworkCaptureEntry[], view?: NetworkCaptureView): string {
   const hash = crypto.createHash('sha256');
+  if (view && view !== 'all') {
+    hash
+      .update(`network:${view}:${FILTERED_NETWORK_ORDERING_VERSION}`)
+      .update('\0');
+  }
   for (const entry of entries) {
     hash
       .update(entry.requestId)
@@ -293,6 +356,41 @@ function hashNetworkCaptureEntries(entries: NetworkCaptureEntry[]): string {
       .update('\0');
   }
   return hash.digest('hex');
+}
+
+function resolveFilteredNetworkPageSize(limit: number | undefined, total: number): number | MCPResult {
+  if (limit === undefined) return FILTERED_NETWORK_DEFAULT_PAGE_SIZE;
+  const invalidLimit = validateFilteredLimit(limit);
+  if (invalidLimit) return invalidLimit;
+  if (limit === 0) return Math.max(1, total);
+  return limit;
+}
+
+function validateFilteredLimit(limit: number | undefined): MCPResult | null {
+  if (limit === undefined || (Number.isFinite(limit) && Number.isInteger(limit) && limit >= 0)) {
+    return null;
+  }
+  return invalidLimitResult(limit);
+}
+
+function invalidLimitResult(limit: unknown): MCPResult {
+  const message = `limit must be a finite non-negative integer for filtered views; received ${String(limit)}`;
+  return jsonResult({ error: { code: 'invalid_limit', message } }, true, {
+    error: { code: 'invalid_limit', message },
+  });
+}
+
+function resolveNetworkCaptureView(value: unknown): NetworkCaptureView | null {
+  if (value === undefined || value === 'all') return 'all';
+  if (value === 'failures') return 'failures';
+  return null;
+}
+
+function invalidViewResult(view: unknown): MCPResult {
+  const message = `view must be all or failures when supplied; received ${String(view)}`;
+  return jsonResult({ error: { code: 'invalid_view', message } }, true, {
+    error: { code: 'invalid_view', message },
+  });
 }
 
 function invalidCursorResult(error: unknown): MCPResult {

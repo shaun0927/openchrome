@@ -212,4 +212,19 @@ describe('console_capture cursor pagination (#881)', () => {
     expect(stale.staleCursor).toBe(true);
     expect(stale.logs).toEqual([]);
   });
+
+  test('binds filtered console cursors to the selected view', async () => {
+    const { buildConsoleCapturePagination } = await import('../../src/tools/console-capture');
+    const logs = deduplicateLogs(buildFrozenLogs());
+    const first = buildConsoleCapturePagination(logs, { pageSize: 50, view: 'problems' });
+
+    const crossView = buildConsoleCapturePagination(logs, {
+      pageSize: 50,
+      cursor: first.nextCursor,
+      view: 'errors',
+    });
+
+    expect(crossView.staleCursor).toBe(true);
+    expect(crossView.logs).toEqual([]);
+  });
 });

@@ -15,9 +15,9 @@
  *
  * Cursor encoding: base64url JSON `{ v: 1, offset: number, hash?: string }`.
  * Including an optional content hash lets the server detect cursor reuse on
- * stale data and reject explicitly — a stale cursor returns a JSON-RPC
- * `-32003` error rather than a silent reset (clients should auto-retry from
- * the start instead of surfacing a tool error to the LLM).
+ * stale data and reject explicitly. Adopting tools currently return a
+ * structured `stale_cursor` tool error so clients can auto-retry from the
+ * start rather than silently resetting the offset.
  *
  * The helper is intentionally `T[]`-only at this layer — cursor semantics
  * for char-offset paginated outputs (e.g. `read_page` text) live in the
@@ -35,9 +35,9 @@ export interface PaginateOpts {
   /**
    * Optional content hash of the underlying input set. When supplied, the
    * helper compares it to the cursor's recorded hash; a mismatch surfaces as
-   * `staleCursor: true` so the dispatcher can convert it to a JSON-RPC
-   * `-32003` error. Skip the hash for unstable / streamed datasets — the
-   * cursor becomes a pure offset reference.
+   * `staleCursor: true` so the caller can return a structured stale-cursor
+   * error. Skip the hash for unstable / streamed datasets — the cursor becomes
+   * a pure offset reference.
    */
   contentHash?: string;
 }
@@ -58,8 +58,8 @@ export interface PaginateResult<T> {
   total: number;
   /**
    * Set when the incoming cursor referenced a different content hash than the
-   * current input set. The dispatcher should reject the call with JSON-RPC
-   * code `-32003` (data: `{ code: 'stale_cursor', retry: 'restart_from_no_cursor' }`).
+   * current input set. The caller should reject the call with
+   * `{ code: 'stale_cursor', retry: 'restart_from_no_cursor' }`.
    */
   staleCursor?: true;
 }
@@ -86,8 +86,8 @@ export function encodeCursor(state: { offset: number; hash?: string }): string {
 /**
  * Decode a previously-emitted cursor. Throws `Error('invalid_cursor')` on
  * any structural problem (bad base64, bad JSON, missing/wrong version,
- * non-integer offset). The caller should map that error to JSON-RPC
- * `-32602` (Invalid params).
+ * non-integer offset). The caller should map that error to a structured
+ * invalid-cursor response.
  */
 export function decodeCursor(cursor: string): CursorState {
   let decoded: unknown;

@@ -110,6 +110,20 @@ interface DedupedLogEntry {
   truncatedFrom?: number;
 }
 
+export type ConsoleCaptureView = 'all' | 'problems' | 'errors';
+
+const FILTERED_CONSOLE_DEFAULT_PAGE_SIZE = 200;
+const FILTERED_CONSOLE_ORDERING_VERSION = 'newest-first-v1';
+
+export function matchesConsoleCaptureView(
+  log: Pick<ConsoleLogEntry, 'type'>,
+  view: Exclude<ConsoleCaptureView, 'all'>,
+): boolean {
+  const type = log.type.toLowerCase();
+  if (view === 'errors') return type === 'error' || type === 'assert';
+  return type === 'error' || type === 'warning' || type === 'warn' || type === 'assert';
+}
+
 /**
  * Collapse consecutive identical log messages into single entries with a count.
  * Error and warning types are NEVER deduplicated — always shown individually.
@@ -208,6 +222,11 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'Opaque pagination cursor returned as nextCursor from a prior console_capture get call.',
       },
+      view: {
+        type: 'string',
+        enum: ['all', 'problems', 'errors'],
+        description: 'Get only: all preserves legacy output; problems keeps warning/error/assert; errors keeps error/assert.',
+      },
       maxLogs: {
         type: 'number',
         description: 'Max logs to store. Default: 1000',
@@ -271,6 +290,7 @@ const handler: ToolHandler = async (
   const filter = args.filter as string[] | undefined;
   const limit = args.limit as number | undefined;
   const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
+  const view = resolveConsoleCaptureView(args.view);
   // maxLogs is a backward-compatible alias for maxLines. Defense-in-depth:
   // reject zero / non-positive / non-integer values BEFORE forwarding to
   // createConsoleRingBuffer so a malformed `start` request returns a clear
@@ -312,6 +332,15 @@ const handler: ToolHandler = async (
       content: [{ type: 'text', text: 'Error: action is required' }],
       isError: true,
     };
+  }
+
+  if (view === null) {
+    return invalidViewResult(args.view);
+  }
+
+  if (action === 'get' && view !== 'all') {
+    const invalidLimit = validateFilteredLimit(limit);
+    if (invalidLimit) return invalidLimit;
   }
 
   try {
@@ -525,6 +554,64 @@ const handler: ToolHandler = async (
           };
         }
 
+        if (view !== 'all') {
+          const pageSize = resolveFilteredConsolePageSize(limit, state.logs.stats().retained);
+          if (typeof pageSize !== 'number') return pageSize;
+
+          const retainedLogs = state.logs.drain();
+          const classifiedLogs = retainedLogs.filter((log) => matchesConsoleCaptureView(log, view));
+          const pageableLogs = deduplicateLogs(classifiedLogs).reverse();
+          const pagination = buildConsoleCapturePagination(pageableLogs, {
+            cursor,
+            pageSize,
+            view,
+          });
+          if (pagination.staleCursor) return staleCursorResult();
+          if (pagination.invalidCursor) return invalidCursorResult(pagination.invalidCursor);
+
+          const returnedLogs = pagination.logs.map((log) => ({
+            ...log,
+            text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, log.text) : log.text,
+            args: boundaryMarkers && log.args ? log.args.map((arg) => wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, arg)) : log.args,
+          }));
+          const bufStats = state.logs.stats();
+          const byType: Record<string, number> = {};
+          for (const log of retainedLogs) {
+            byType[log.type] = (byType[log.type] || 0) + 1;
+          }
+          const stats = {
+            total: bufStats.retained,
+            returned: returnedLogs.length,
+            beforeDedup: classifiedLogs.length,
+            matched: pageableLogs.length,
+            byType,
+          };
+          const payload = {
+            action: 'get',
+            status: 'running',
+            view,
+            logs: returnedLogs,
+            stats,
+            durationMs: Date.now() - state.startedAt,
+            bufferStats: bufStats,
+            hasMore: pagination.hasMore,
+            ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
+          };
+
+          return {
+            content: [{ type: 'text', text: JSON.stringify(payload) }],
+            structuredContent: {
+              action: 'get',
+              status: 'running',
+              view,
+              entries: returnedLogs,
+              hasMore: pagination.hasMore,
+              ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
+              total: pageableLogs.length,
+            },
+          };
+        }
+
         const logs: ConsoleLogEntry[] = (limit && limit > 0)
           ? state.logs.tail(limit)
           : state.logs.drain();
@@ -646,7 +733,7 @@ const handler: ToolHandler = async (
 
 export function buildConsoleCapturePagination(
   logs: DedupedLogEntry[],
-  opts: { cursor?: string; pageSize: number },
+  opts: { cursor?: string; pageSize: number; view?: ConsoleCaptureView },
 ): {
   logs: DedupedLogEntry[];
   hasMore: boolean;
@@ -659,7 +746,7 @@ export function buildConsoleCapturePagination(
     const page = paginate(logs, {
       cursor: opts.cursor,
       pageSize: opts.pageSize,
-      contentHash: hashConsoleEntries(logs),
+      contentHash: hashConsoleEntries(logs, opts.view),
     });
     if (page.staleCursor) return { logs: [], hasMore: false, total: page.total, staleCursor: true };
     return {
@@ -673,8 +760,13 @@ export function buildConsoleCapturePagination(
   }
 }
 
-function hashConsoleEntries(logs: DedupedLogEntry[]): string {
+function hashConsoleEntries(logs: DedupedLogEntry[], view?: ConsoleCaptureView): string {
   const hash = crypto.createHash('sha256');
+  if (view && view !== 'all') {
+    hash
+      .update(`console:${view}:${FILTERED_CONSOLE_ORDERING_VERSION}`)
+      .update('\0');
+  }
   for (const log of logs) {
     hash
       .update(log.type)
@@ -689,6 +781,45 @@ function hashConsoleEntries(logs: DedupedLogEntry[]): string {
       .update('\0');
   }
   return hash.digest('hex');
+}
+
+function resolveConsoleCaptureView(value: unknown): ConsoleCaptureView | null {
+  if (value === undefined || value === 'all') return 'all';
+  if (value === 'problems' || value === 'errors') return value;
+  return null;
+}
+
+function resolveFilteredConsolePageSize(limit: number | undefined, total: number): number | MCPResult {
+  if (limit === undefined) return FILTERED_CONSOLE_DEFAULT_PAGE_SIZE;
+  const invalidLimit = validateFilteredLimit(limit);
+  if (invalidLimit) return invalidLimit;
+  if (limit === 0) return Math.max(1, total);
+  return limit;
+}
+
+function validateFilteredLimit(limit: number | undefined): MCPResult | null {
+  if (limit === undefined || (Number.isFinite(limit) && Number.isInteger(limit) && limit >= 0)) {
+    return null;
+  }
+  return invalidLimitResult(limit);
+}
+
+function invalidLimitResult(limit: unknown): MCPResult {
+  const message = `limit must be a finite non-negative integer for filtered views; received ${String(limit)}`;
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_limit', message } }) }],
+    structuredContent: { error: { code: 'invalid_limit', message } },
+  };
+}
+
+function invalidViewResult(view: unknown): MCPResult {
+  const message = `view must be one of all, problems, or errors when supplied; received ${String(view)}`;
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_view', message } }) }],
+    structuredContent: { error: { code: 'invalid_view', message } },
+  };
 }
 
 function invalidCursorResult(error: unknown): MCPResult {
