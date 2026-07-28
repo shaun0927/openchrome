@@ -13,7 +13,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../utils/safe-title';
-import { getActiveActionRecorder } from '../recording/action-recorder';
+import { getActiveActionRecording } from '../recording/action-recorder';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -318,6 +318,9 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
 ): Promise<MCPResult> => {
   const action = args.action as string;
+  const recordingAtDispatch = action === 'save'
+    ? getActiveActionRecording(sessionId)
+    : undefined;
 
   if (action === 'save') {
     if (args.completedSteps !== undefined && !isStringArray(args.completedSteps)) {
@@ -360,7 +363,13 @@ const handler: ToolHandler = async (
     await writeCheckpointTimeline(checkpoint);
 
     try {
-      await getActiveActionRecorder(sessionId)?.appendCheckpoint(checkpoint as unknown as Record<string, unknown>);
+      if (recordingAtDispatch) {
+        const { recorder, recordingId } = recordingAtDispatch;
+        await recorder.appendCheckpointForRecording(
+          recordingId,
+          checkpoint as unknown as Record<string, unknown>,
+        );
+      }
     } catch {
       // Best-effort trajectory linkage must never fail checkpoint save.
     }
