@@ -163,6 +163,17 @@ function resolveRedactionConfig(): RedactionConfig {
   return cachedConfig;
 }
 
+/**
+ * Return the same deep-redacted argument shape used by extended audit logs.
+ * Other persistence surfaces use this to avoid weaker, duplicate policies.
+ */
+export function redactToolArgsForPersistence(
+  tool: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  return redactArgs(tool, args, resolveRedactionConfig()).redacted;
+}
+
 const LEGACY_SENSITIVE_KEYS = ['password', 'cookie', 'token', 'secret', 'auth', 'credential', 'value', 'text'];
 
 function isLegacySensitiveKey(key: string): boolean {
@@ -170,9 +181,10 @@ function isLegacySensitiveKey(key: string): boolean {
   return LEGACY_SENSITIVE_KEYS.some((s) => lower.includes(s));
 }
 
-function summarizeArgsLegacy(args: Record<string, unknown>): string {
+function summarizeArgsLegacy(tool: string, args: Record<string, unknown>): string {
+  const persistedArgs = redactToolArgsForPersistence(tool, args);
   const safe: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(args)) {
+  for (const [key, value] of Object.entries(persistedArgs)) {
     if (isLegacySensitiveKey(key)) {
       safe[key] = '[REDACTED]';
     } else if (typeof value === 'string') {
@@ -226,7 +238,7 @@ export function logAuditEntry(
       tool,
       domain: extractDomain(pageUrl || (args.url as string | undefined)),
       sessionId,
-      args_summary: summarizeArgsLegacy(args),
+      args_summary: summarizeArgsLegacy(tool, args),
     };
     appendLine(logPath, JSON.stringify(legacy) + '\n');
     return;

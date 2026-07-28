@@ -25,6 +25,7 @@ const OBSERVATION_TOOLS = new Set([
   'read_page',
   'find',
   'tabs_context',
+  'tabs_search',
   'tabs_list',
   'tabs_get',
   'inspect',

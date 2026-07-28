@@ -110,6 +110,19 @@ describe('Task evidence digest', () => {
     });
   });
 
+  test('classifies tabs_search events as observations', async () => {
+    const meta = metaFor('browser_task', { objective: 'Find an existing tab' });
+    await store.create(meta);
+    store.appendEvent(meta.task_id, {
+      ts: 1,
+      kind: 'progress',
+      data: { tool: 'tabs_search', summary: 'matched one tab' },
+    });
+
+    expect(buildTaskEvidenceDigest(store, meta.task_id)?.recent_meaningful_events[0].category)
+      .toBe('observation');
+  });
+
   test('bounds summaries and redacts credential-bearing fields', async () => {
     const meta = metaFor('read_page', { objective: 'Inspect token=super-secret-value', url: 'https://example.test' });
     await store.create(meta);

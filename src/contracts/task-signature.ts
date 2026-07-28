@@ -61,7 +61,15 @@ export interface TaskSignatureEvaluationInput {
 const INPUT_TYPES = new Set<TaskSignatureInputType>(['string', 'number', 'boolean']);
 const REDACTIONS = new Set<TaskSignatureInputRedaction>(['secret', 'none']);
 const LOOP_GUARDS = new Set<TaskSignatureLoopGuardKind>(['max_same_tool', 'max_observation_calls', 'max_non_progress_calls']);
-const OBSERVATION_TOOLS = new Set(['read_page', 'screenshot', 'find', 'query_dom', 'extract_data']);
+const OBSERVATION_TOOLS = new Set([
+  'read_page',
+  'screenshot',
+  'find',
+  'query_dom',
+  'extract_data',
+  'tabs_context',
+  'tabs_search',
+]);
 
 export function validateBrowserTaskSignature(input: unknown): ValidationResult<BrowserTaskSignature> {
   const errors: ValidationError[] = [];

@@ -113,6 +113,33 @@ describe('audit-logger extended fields', () => {
     delete process.env.OPENCHROME_AUDIT_EXTENDED;
   });
 
+  test('legacy audit applies deep tool redaction to fill_form maps', async () => {
+    const logPath = makeTmpLogPath();
+    (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;
+    process.env.OPENCHROME_AUDIT_EXTENDED = 'false';
+
+    logAuditEntry('fill_form', 'sess_legacy_form', {
+      fields: {
+        email: 'private@example.com',
+        password: 'hunter2',
+      },
+      refs: { ref_12: 'one-time-code' },
+    });
+    const entry = (await waitForAuditEntries(logPath, 1))[0];
+    const summary = JSON.parse(String(entry.args_summary)) as Record<string, unknown>;
+
+    expect(summary.fields).toEqual({
+      email: '[REDACTED]',
+      password: '[REDACTED]',
+    });
+    expect(summary.refs).toEqual({ ref_12: '[REDACTED]' });
+    expect(entry.args_summary).not.toContain('private@example.com');
+    expect(entry.args_summary).not.toContain('hunter2');
+    expect(entry.args_summary).not.toContain('one-time-code');
+
+    delete process.env.OPENCHROME_AUDIT_EXTENDED;
+  });
+
   test('cookie value is hashed via built-in rules when no external config is reachable', async () => {
     const logPath = makeTmpLogPath();
     (globalThis as { __TEST_AUDIT_PATH?: string }).__TEST_AUDIT_PATH = logPath;

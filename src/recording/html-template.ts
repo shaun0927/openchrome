@@ -13,6 +13,7 @@ const TOOL_CATEGORIES: Record<string, string> = {
   tabs_create: 'navigation',
   tabs_close: 'navigation',
   tabs_context: 'navigation',
+  tabs_search: 'data',
   wait_for: 'navigation',
   interact: 'interaction',
   fill_form: 'interaction',

@@ -45,6 +45,7 @@ Categories below are documentation-only — the runtime source is
 | `read_page`                | Page text/title extraction                           |
 | `page_content`             | HTML content read                                    |
 | `tabs_context`             | Tab list snapshot                                    |
+| `tabs_search`              | Bounded lexical search across logical-session tabs   |
 | `list_profiles`            | Chrome profile enumeration                           |
 | `performance_metrics`      | Page performance read                                |
 | `oc_vitals`                | Web Vitals performance read                          |

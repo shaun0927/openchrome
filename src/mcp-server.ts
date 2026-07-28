@@ -38,7 +38,7 @@ import { getCDPClient, ConnectionEvent } from './cdp/client';
 import { getChromeLauncher } from './chrome/launcher';
 import { getChromePool } from './chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from './types/tool-manifest';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from './config/defaults';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM, TABS_SEARCH_MAX_RESPONSE_BYTES } from './config/defaults';
 import { createBudget, isLegacyBudgetMode } from './utils/budget';
 import { SessionInitBudgetExhausted } from './cdp/errors';
 import { getGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
@@ -47,7 +47,7 @@ import { SessionRateLimiter } from './utils/rate-limiter';
 import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
-import { logAuditEntry } from './security/audit-logger';
+import { logAuditEntry, redactToolArgsForPersistence } from './security/audit-logger';
 import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
 import { isClientDisconnect } from './errors/abort';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
@@ -102,13 +102,80 @@ import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 
 function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  const redacted = redactToolArgsForPersistence(toolName, args);
   if (toolName === 'wait_for' && args.type === 'function' && typeof args.value === 'string') {
-    return { ...args, value: redactPredicateSource(args.value) };
+    return { ...redacted, value: redactPredicateSource(args.value) };
   }
-  if (toolName !== 'act' || !('variables' in args)) {
-    return args;
+  return redacted;
+}
+
+function redactToolResultForPersistence(toolName: string, result: MCPResult): MCPResult {
+  if (toolName !== 'tabs_search') return result;
+
+  let clone: MCPResult;
+  try {
+    clone = JSON.parse(JSON.stringify(result)) as MCPResult;
+  } catch {
+    return {
+      content: [{ type: 'text', text: '[tabs_search result omitted from persistence]' }],
+      ...(result.isError === true ? { isError: true } : {}),
+    };
   }
-  return { ...args, variables: '[redacted]' };
+
+  const structured = clone.structuredContent;
+  if (structured && typeof structured === 'object') {
+    const rawQuery = typeof structured.query === 'string' ? structured.query : undefined;
+    const redactedStructured = redactToolArgsForPersistence('tabs_search', structured);
+    const persistedQuery = typeof redactedStructured.query === 'string'
+      ? redactedStructured.query
+      : undefined;
+    if (rawQuery && persistedQuery) {
+      const replaceQuery = (value: unknown): unknown => {
+        if (typeof value === 'string') return value.split(rawQuery).join(persistedQuery);
+        if (Array.isArray(value)) return value.map(replaceQuery);
+        if (value && typeof value === 'object') {
+          return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+              .map(([key, nested]) => [key, replaceQuery(nested)]),
+          );
+        }
+        return value;
+      };
+      clone = replaceQuery(clone) as MCPResult;
+    }
+    clone.structuredContent = redactedStructured;
+    if (Array.isArray(clone.content) && clone.content[0]?.type === 'text') {
+      clone.content[0].text = JSON.stringify(redactedStructured);
+    }
+  } else if (Array.isArray(clone.content) && clone.content[0]?.type === 'text') {
+    try {
+      const parsed = JSON.parse(clone.content[0].text ?? '') as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        clone.content[0].text = JSON.stringify(redactToolArgsForPersistence(
+          'tabs_search',
+          parsed as Record<string, unknown>,
+        ));
+      }
+    } catch {
+      // Non-JSON errors do not contain the successful query payload.
+    }
+  }
+
+  return clone;
+}
+
+const TABS_SEARCH_SSE_FRAME_PREFIX = 'data: ';
+const TABS_SEARCH_SSE_FRAME_SUFFIX = '\n\n';
+
+function serializeTabsSearchTransportFrame(
+  result: MCPResult,
+  requestId?: number | string,
+): string {
+  return `${TABS_SEARCH_SSE_FRAME_PREFIX}${JSON.stringify({
+    jsonrpc: '2.0',
+    id: requestId ?? null,
+    result,
+  })}${TABS_SEARCH_SSE_FRAME_SUFFIX}`;
 }
 
 function extractNetworkRootCandidateUrls(toolName: string, args: Record<string, unknown>): string[] {
@@ -167,6 +234,35 @@ const SKIP_RECORDING_TOOLS = new Set([
   'oc_recording_export',
 ]);
 
+export const MAX_ACCOUNTING_ERROR_SUMMARY_CHARS = 500;
+
+function sanitizeAccountingErrorSummary(text: string): string {
+  const sanitized = text
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/(Authorization\s*:\s*)Bearer\s+[A-Za-z0-9._~+/=-]+/gi, '$1Bearer [REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /(["'])(password|passwd|token|secret|credential|api[_-]?key|cookie)\1\s*:\s*(["'])(?:\\.|(?!\3).)*\3/gi,
+      (_match, keyQuote: string, key: string, valueQuote: string) => (
+        `${keyQuote}${key}${keyQuote}:${valueQuote}[REDACTED]${valueQuote}`
+      ),
+    )
+    .replace(
+      /(password|passwd|token|secret|credential|api[_-]?key|cookie)\s*[:=]\s*[^\s,;]+/gi,
+      '$1=[REDACTED]',
+    )
+    .replace(/oc_live_[^\s"'\\]+/g, '[REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const redacted = redactSecretString(sanitized);
+  const chars = Array.from(redacted);
+  if (chars.length <= MAX_ACCOUNTING_ERROR_SUMMARY_CHARS) return redacted;
+  const suffix = '...[truncated]';
+  return chars
+    .slice(0, MAX_ACCOUNTING_ERROR_SUMMARY_CHARS - suffix.length)
+    .join('') + suffix;
+}
+
 /**
  * Summarize an MCPResult for journal recording, stripping injected hint text.
  *
@@ -193,7 +289,8 @@ export function summarizeMcpResultForJournal(result: MCPResult): string | undefi
     ? textItems.filter((t) => t !== injectedHint)
     : textItems;
 
-  return filtered[0] ?? textItems[0];
+  const summary = filtered[0] ?? textItems[0];
+  return summary ? sanitizeAccountingErrorSummary(summary) : undefined;
 }
 
 function stringifyResultPayload(result: MCPResult): string {
@@ -318,6 +415,7 @@ const STATE_STABLE_HIGH_FREQ_TOOLS = new Set([
   'wait_for',
   'page_content',
   'tabs_context',
+  'tabs_search',
   'oc_progress_status',
 ]);
 
@@ -529,6 +627,7 @@ const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
   'computer',
   'page_screenshot',
   'tabs_context',
+  'tabs_search',
   'tabs_list',
   'tabs_get',
   'inspect',
@@ -1780,26 +1879,15 @@ export class MCPServer {
         console.error(
           `[MCPServer] tenant binding violation: session=${sessionId} claimedBy=${claimedBy} requestedBy=${principal.tenantId} tool=${toolName}`,
         );
-        try {
-          logAuditEntry(toolName, sessionId, toolArgs, undefined, {
-            keyId: principal.keyId,
-            tenantId: principal.tenantId,
-            scopes: principal.scopes,
-          });
-        } catch {
-          // best-effort
-        }
-        const deniedResult: MCPResult = {
-          content: [
-            {
-              type: 'text',
-              text: `Forbidden: session '${sessionId}' is owned by another tenant.`,
-            },
-          ],
-          isError: true,
-        };
-        this.recordToolOutputObservability(toolName, deniedResult);
-        return deniedResult;
+        return this.recordPreflightToolFailure(
+          toolName,
+          sessionId,
+          toolArgs,
+          telemetryToolArgs,
+          requestId,
+          principal,
+          `Forbidden: session '${sessionId}' is owned by another tenant.`,
+        );
       }
     }
 
@@ -1811,32 +1899,15 @@ export class MCPServer {
       console.error(
         `[MCPServer] scope denied: tool=${toolName} tenant=${principal.tenantId} required=${needed} granted=${principal.scopes.join(',')}`,
       );
-      try {
-        logAuditEntry(
-          toolName,
-          sessionId,
-          toolArgs,
-          undefined,
-          {
-            keyId: principal.keyId,
-            tenantId: principal.tenantId,
-            scopes: principal.scopes,
-          },
-        );
-      } catch {
-        // best-effort
-      }
-      const forbiddenResult: MCPResult = {
-        content: [
-          {
-            type: 'text',
-            text: `Forbidden: tool '${toolName}' requires scope '${needed}'.`,
-          },
-        ],
-        isError: true,
-      };
-      this.recordToolOutputObservability(toolName, forbiddenResult);
-      return forbiddenResult;
+      return this.recordPreflightToolFailure(
+        toolName,
+        sessionId,
+        toolArgs,
+        telemetryToolArgs,
+        requestId,
+        principal,
+        `Forbidden: tool '${toolName}' requires scope '${needed}'.`,
+      );
     }
 
     // Handle the expand_tools meta-tool before normal tool lookup.
@@ -1937,7 +2008,7 @@ export class MCPServer {
         const expandResult: MCPResult = {
           content: [{ type: 'text', text: JSON.stringify(searchResult) }],
         };
-        this.recordToolOutputObservability(toolName, expandResult);
+        this.recordToolOutputObservability(toolName, expandResult, requestId);
         return expandResult;
       }
 
@@ -1968,7 +2039,7 @@ export class MCPServer {
       const expandResult: MCPResult = {
         content: [{ type: 'text', text }],
       };
-      this.recordToolOutputObservability(toolName, expandResult);
+      this.recordToolOutputObservability(toolName, expandResult, requestId);
       return expandResult;
     }
 
@@ -2001,7 +2072,7 @@ export class MCPServer {
           content: [{ type: 'text', text: `Error: Missing required argument(s): ${missing.join(', ')}` }],
           isError: true,
         };
-        this.recordToolOutputObservability(toolName, missingArgsResult);
+        this.recordToolOutputObservability(toolName, missingArgsResult, requestId);
         return missingArgsResult;
       }
     }
@@ -2042,7 +2113,7 @@ export class MCPServer {
       substitutedArgs,
     );
     if (rootsDenial) {
-      this.recordToolOutputObservability(toolName, rootsDenial);
+      this.recordToolOutputObservability(toolName, rootsDenial, requestId);
       return rootsDenial;
     }
 
@@ -2052,7 +2123,7 @@ export class MCPServer {
       substitutedArgs,
     );
     if (fileRootsDenial) {
-      this.recordToolOutputObservability(toolName, fileRootsDenial);
+      this.recordToolOutputObservability(toolName, fileRootsDenial, requestId);
       return fileRootsDenial;
     }
 
@@ -2100,7 +2171,7 @@ export class MCPServer {
           ],
           isError: true,
         };
-        this.recordToolOutputObservability(toolName, rateLimitResult);
+        this.recordToolOutputObservability(toolName, rateLimitResult, requestId);
         return rateLimitResult;
       }
     }
@@ -2150,7 +2221,7 @@ export class MCPServer {
             ],
             isError: true,
           };
-          this.recordToolOutputObservability(toolName, reconnectResultPayload);
+          this.recordToolOutputObservability(toolName, reconnectResultPayload, requestId);
           return reconnectResultPayload;
         }
         console.error(`[MCPServer] Reconnection complete, proceeding with "${toolName}"`);
@@ -2179,7 +2250,7 @@ export class MCPServer {
           session_id: sessionId,
           tab_id: runTabId,
           tool: toolName,
-          args: toolArgs,
+          args: telemetryToolArgs,
         });
         if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
           runStore.appendRunEvent({
@@ -2440,33 +2511,68 @@ export class MCPServer {
         }
       }
 
-      // Audit log successful invocation — correlation/timing fields come from
-      // the active RequestContext + explicit meta, while auth context is added
-      // when this request was authenticated.
+      const decoratedBeforeAccounting = toolName === 'tabs_search';
+      if (decoratedBeforeAccounting) {
+        const replayEnvelope = isCodegenEnabled()
+          ? recordCodegenStep(sessionId, toolName, toolArgs)
+          : undefined;
+        if (replayEnvelope) {
+          (result as Record<string, unknown>).replay = replayEnvelope;
+        }
+        this.decorateTabsSearchBeforeAccounting(result, {
+          sessionId,
+          toolArgs,
+          callId,
+          toolSucceeded: result.isError !== true,
+          toolStartTime,
+        });
+        result = this.enforceToolWireLimit(toolName, redactSecrets(result), requestId);
+      }
+
+      const toolSucceeded = result.isError !== true;
+      const toolStatus = toolSucceeded ? 'success' : 'error';
+      const resultErrorMessage = toolSucceeded
+        ? undefined
+        : summarizeMcpResultForJournal(result) ?? 'Tool returned an error result';
+
+      // Audit the returned MCP result, including handlers that report errors
+      // through `isError` instead of throwing.
       logAuditEntry(toolName, sessionId, toolArgs, undefined, {
         keyId: principal?.keyId,
         tenantId: principal?.tenantId,
         scopes: principal?.scopes,
-        status: 'success',
+        status: toolStatus,
         durationMs: Date.now() - toolStartTime,
+        errorMessage: resultErrorMessage,
+        billable: toolSucceeded,
       });
 
-      // End activity tracking (success)
-      this.activityTracker!.endCall(callId, 'success');
-      const replayEnvelope = isCodegenEnabled() ? recordCodegenStep(sessionId, toolName, toolArgs) : undefined;
-      if (replayEnvelope) {
-        (result as Record<string, unknown>).replay = replayEnvelope;
+      this.activityTracker!.endCall(callId, toolStatus, resultErrorMessage);
+      if (!decoratedBeforeAccounting) {
+        const replayEnvelope = isCodegenEnabled()
+          ? recordCodegenStep(sessionId, toolName, toolArgs)
+          : undefined;
+        if (replayEnvelope) {
+          (result as Record<string, unknown>).replay = replayEnvelope;
+        }
       }
       result = redactSecrets(result);
-      this.recordRecoveryTrajectory(callId, toolName, sessionId, telemetryToolArgs, result.isError ? 'no_progress' : 'success', result);
-      getDashboardState().recordToolEnd(callId, 'success');
+      this.recordRecoveryTrajectory(
+        callId,
+        toolName,
+        sessionId,
+        telemetryToolArgs,
+        result.isError ? 'no_progress' : 'success',
+        redactToolResultForPersistence(toolName, result),
+      );
+      getDashboardState().recordToolEnd(callId, toolStatus, resultErrorMessage);
       this.emitResourceUpdated('oc://dashboard/state');
 
       // Record Prometheus metrics
       try {
         const metrics = getMetricsCollector();
         const durationSec = (Date.now() - toolStartTime) / 1000;
-        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'success' }));
+        metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: toolStatus }));
         metrics.observe('openchrome_tool_duration_seconds', withTenantLabel({ tool: toolName }), durationSec);
       } catch {
         // Best-effort metrics
@@ -2475,8 +2581,14 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const toolSucceeded = (result as MCPResult).isError !== true;
-        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, toolSucceeded);
+        const entry = journal.createEntry(
+          toolName,
+          sessionId,
+          telemetryToolArgs,
+          Date.now() - toolStartTime,
+          toolSucceeded,
+          resultErrorMessage,
+        );
         journal.record(entry);
         this.emitResourceUpdated(journalUri(sessionId));
         this.emitResourceUpdated(journalUri(sessionId));
@@ -2489,9 +2601,14 @@ export class MCPServer {
         if (recordingAtDispatch) {
           const { recorder, recordingId } = recordingAtDispatch;
           const tabId = toolArgs['tabId'] as string | undefined;
-          const summary = (result as Record<string, unknown>)?._summary as string | undefined;
-          const actionSucceeded = result.isError !== true;
-          recorder.recordActionForRecording(recordingId, toolName, telemetryToolArgs, Date.now() - toolStartTime, actionSucceeded, { tabId, summary }).then(() => {
+          const summary = toolSucceeded
+            ? (result as Record<string, unknown>)?._summary as string | undefined
+            : undefined;
+          recorder.recordActionForRecording(recordingId, toolName, telemetryToolArgs, Date.now() - toolStartTime, toolSucceeded, {
+            tabId,
+            summary,
+            error: resultErrorMessage,
+          }).then(() => {
             if (recorder.activeRecordingId === recordingId) this.emitResourceUpdated(recordingUri(recordingId));
           }).catch(() => {});
         }
@@ -2531,7 +2648,7 @@ export class MCPServer {
       const compressionConfig = getGlobalConfig().compression;
       const verbosity = compressionConfig?.verbosity ?? 'normal';
 
-      if (callId) {
+      if (!decoratedBeforeAccounting && callId) {
         const timing = this.activityTracker!.getCall(callId);
         if (timing?.duration !== undefined) {
           if (verbosity === 'verbose') {
@@ -2585,9 +2702,9 @@ export class MCPServer {
       // _hint / _hintMeta are non-standard fields that not all MCP clients
       // surface, so pushing into content[] guarantees the hint reaches the
       // user. Mirrors the error-path injection below for consistency.
-      if (this.hintEngine) {
-        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, false, sessionId, toolArgs, callId);
-        const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, false, hintResult ?? undefined);
+      if (!decoratedBeforeAccounting && this.hintEngine) {
+        const hintResult = this.hintEngine.getHint(toolName, result as Record<string, unknown>, !toolSucceeded, sessionId, toolArgs, callId);
+        const automation = buildAutomationInsight(toolName, result as Record<string, unknown>, !toolSucceeded, hintResult ?? undefined);
         if (automation) {
           (result as Record<string, unknown>)._automation = automation;
         }
@@ -2612,7 +2729,7 @@ export class MCPServer {
         }
       }
 
-      if (compressionConfig?.enabled && compressionConfig?.trackSavings && !(result as Record<string, unknown>)._compression) {
+      if (!decoratedBeforeAccounting && compressionConfig?.enabled && compressionConfig?.trackSavings && !(result as Record<string, unknown>)._compression) {
         (result as Record<string, unknown>)._compression = {
           level: compressionConfig.level ?? 'light',
           verbosity,
@@ -2626,7 +2743,7 @@ export class MCPServer {
         tenantId: principal?.tenantId,
         keyId: principal?.keyId,
         principalMode: principal?.mode,
-        args: toolArgs,
+        args: telemetryToolArgs,
         durationMs: Date.now() - toolStartTime,
         ok: result.isError !== true,
       });
@@ -2641,7 +2758,7 @@ export class MCPServer {
             session_id: sessionId,
             tab_id: runTabId,
             tool: toolName,
-            args: toolArgs,
+            args: telemetryToolArgs,
             ok: !result.isError,
             duration_ms: durationMs,
           });
@@ -2670,8 +2787,8 @@ export class MCPServer {
       // the substituted input, returned it inside a JSON blob, or surfaced
       // it via an error message) with `${SECRET:NAME}` placeholders. No-op
       // when --secrets was not passed.
-      const finalResult = redactSecrets(result);
-      this.recordToolOutputObservability(toolName, finalResult);
+      const finalResult = this.enforceToolWireLimit(toolName, redactSecrets(result), requestId);
+      this.recordToolOutputObservability(toolName, finalResult, requestId);
       return finalResult;
     } catch (error) {
       const message = formatError(error);
@@ -2688,6 +2805,9 @@ export class MCPServer {
       // Audit log failed invocation — same correlation fields as success path.
       try {
         logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+          keyId: principal?.keyId,
+          tenantId: principal?.tenantId,
+          scopes: principal?.scopes,
           status: aborted ? 'aborted' : 'error',
           durationMs: Date.now() - toolStartTime,
           aborted,
@@ -2716,7 +2836,7 @@ export class MCPServer {
       // Record to task journal
       try {
         const journal = getTaskJournal();
-        const entry = journal.createEntry(toolName, sessionId, toolArgs, Date.now() - toolStartTime, false);
+        const entry = journal.createEntry(toolName, sessionId, telemetryToolArgs, Date.now() - toolStartTime, false);
         journal.record(entry);
       } catch {
         // Best-effort journal recording
@@ -2848,7 +2968,7 @@ export class MCPServer {
             session_id: sessionId,
             tab_id: runTabId,
             tool: toolName,
-            args: toolArgs,
+            args: telemetryToolArgs,
             ok: false,
             duration_ms: durationMs,
             message: displayMessage,
@@ -2879,24 +2999,249 @@ export class MCPServer {
         tenantId: principal?.tenantId,
         keyId: principal?.keyId,
         principalMode: principal?.mode,
-        args: toolArgs,
+        args: telemetryToolArgs,
         durationMs: Date.now() - toolStartTime,
         ok: !errorIsError,
       });
 
       // Secrets redaction (#834) — see success path. Error messages can
       // include the literal value (e.g. "type ... failed for value X").
-      const finalErrResult = redactSecrets(errResult);
-      this.recordToolOutputObservability(toolName, finalErrResult);
+      const finalErrResult = this.enforceToolWireLimit(toolName, redactSecrets(errResult), requestId);
+      this.recordToolOutputObservability(toolName, finalErrResult, requestId);
       return finalErrResult;
     }
   }
 
 
-  private recordToolOutputObservability(toolName: string, result: MCPResult): void {
+  private decorateTabsSearchBeforeAccounting(
+    result: MCPResult,
+    options: {
+      sessionId: string;
+      toolArgs: Record<string, unknown>;
+      callId: string;
+      toolSucceeded: boolean;
+      toolStartTime: number;
+    },
+  ): void {
+    const {
+      sessionId,
+      toolArgs,
+      callId,
+      toolSucceeded,
+      toolStartTime,
+    } = options;
+    const compressionConfig = getGlobalConfig().compression;
+    const verbosity = compressionConfig?.verbosity ?? 'normal';
+
+    const timing = this.activityTracker!.getCall(callId);
+    const durationMs = timing?.duration ?? Math.max(0, Date.now() - toolStartTime);
+    if (verbosity === 'verbose') {
+      (result as Record<string, unknown>)._timing = {
+        durationMs,
+        startTime: timing?.startTime ?? toolStartTime,
+        endTime: timing?.endTime ?? Date.now(),
+      };
+    } else if (verbosity === 'normal') {
+      (result as Record<string, unknown>)._timing = { durationMs };
+    }
+
+    if (this.hintEngine) {
+      const hintResult = this.hintEngine.getHint(
+        'tabs_search',
+        result as Record<string, unknown>,
+        !toolSucceeded,
+        sessionId,
+        toolArgs,
+        callId,
+      );
+      const automation = buildAutomationInsight(
+        'tabs_search',
+        result as Record<string, unknown>,
+        !toolSucceeded,
+        hintResult ?? undefined,
+      );
+      if (automation) {
+        (result as Record<string, unknown>)._automation = automation;
+      }
+      if (hintResult) {
+        const injectHint = verbosity !== 'compact' || hintResult.severity === 'critical';
+        if (injectHint) {
+          (result as Record<string, unknown>)._hint = hintResult.hint;
+          (result as Record<string, unknown>)._hintMeta = {
+            severity: hintResult.severity,
+            rule: hintResult.rule,
+            fireCount: hintResult.fireCount,
+            ...(hintResult.suggestion && { suggestion: hintResult.suggestion }),
+            ...(hintResult.context && { context: hintResult.context }),
+          };
+          const content = (result as Record<string, unknown>).content;
+          if (Array.isArray(content)) {
+            content.push({ type: 'text', text: `\n${hintResult.hint}` });
+          }
+        }
+      }
+    }
+
+    if (compressionConfig?.enabled && compressionConfig.trackSavings && !(result as Record<string, unknown>)._compression) {
+      (result as Record<string, unknown>)._compression = {
+        level: compressionConfig.level ?? 'light',
+        verbosity,
+      };
+    }
+  }
+
+  private enforceToolWireLimit(
+    toolName: string,
+    result: MCPResult,
+    requestId?: number | string,
+  ): MCPResult {
+    if (toolName !== 'tabs_search') return result;
+
+    const fits = (candidate: MCPResult): boolean => {
+      try {
+        return Buffer.byteLength(
+          serializeTabsSearchTransportFrame(candidate, requestId),
+          'utf8',
+        ) <= TABS_SEARCH_MAX_RESPONSE_BYTES;
+      } catch {
+        return false;
+      }
+    };
+
+    if (fits(result)) return result;
+
+    const compacted: MCPResult = { ...result };
+    const content = compacted.content;
+    if (Array.isArray(content) && content.length > 1) {
+      compacted.content = content.slice(0, 1);
+    }
+    for (const key of ['_hint', '_hintMeta', '_automation']) {
+      delete compacted[key];
+    }
+    if (fits(compacted)) return compacted;
+
+    for (const key of ['replay', '_compression', '_timing', '_sessionContext', '_profile']) {
+      delete compacted[key];
+      if (fits(compacted)) return compacted;
+    }
+
+    const errorResult: MCPResult = {
+      content: [{
+        type: 'text',
+        text: `Error: tabs_search transport response exceeds the ${TABS_SEARCH_MAX_RESPONSE_BYTES}-byte limit`,
+      }],
+      isError: true,
+    };
+    return errorResult;
+  }
+
+
+  private async recordPreflightToolFailure(
+    toolName: string,
+    sessionId: string,
+    toolArgs: Record<string, unknown>,
+    telemetryToolArgs: Record<string, unknown>,
+    requestId: number | string | undefined,
+    principal: Principal,
+    message: string,
+  ): Promise<MCPResult> {
+    const startedAt = Date.now();
+    const callId = this.activityTracker!.startCall(
+      toolName,
+      sessionId || 'default',
+      telemetryToolArgs,
+      requestId,
+    );
+    getDashboardState().recordToolStart(
+      sessionId || 'default',
+      toolName,
+      telemetryToolArgs,
+      callId,
+    );
+
+    const result: MCPResult = {
+      content: [{ type: 'text', text: message }],
+      isError: true,
+    };
+    const durationMs = Date.now() - startedAt;
+
+    this.activityTracker!.endCall(callId, 'error', message);
+    getDashboardState().recordToolEnd(callId, 'error', message);
+    this.emitResourceUpdated('oc://dashboard/state');
+
+    try {
+      logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+        keyId: principal.keyId,
+        tenantId: principal.tenantId,
+        scopes: principal.scopes,
+        status: 'error',
+        durationMs,
+        errorMessage: message,
+        billable: false,
+      });
+    } catch {
+      // Best-effort audit.
+    }
+
     try {
       const metrics = getMetricsCollector();
-      const payload = stringifyResultPayload(result);
+      metrics.inc('openchrome_tool_calls_total', withTenantLabel({ tool: toolName, status: 'error' }));
+      metrics.observe(
+        'openchrome_tool_duration_seconds',
+        withTenantLabel({ tool: toolName }),
+        durationMs / 1000,
+      );
+    } catch {
+      // Best-effort metrics.
+    }
+
+    try {
+      const journal = getTaskJournal();
+      const entry = journal.createEntry(
+        toolName,
+        sessionId,
+        telemetryToolArgs,
+        durationMs,
+        false,
+        message,
+      );
+      journal.record(entry);
+      this.emitResourceUpdated(journalUri(sessionId));
+    } catch {
+      // Best-effort journal recording.
+    }
+
+    try {
+      await recordTaskToolCall(getTaskStore(), taskEnvelopeIdForTool(toolName, toolArgs), {
+        ts: Date.now(),
+        tool: toolName,
+        sessionId,
+        tenantId: principal.tenantId,
+        keyId: principal.keyId,
+        principalMode: principal.mode,
+        args: telemetryToolArgs,
+        durationMs,
+        ok: false,
+      });
+    } catch {
+      // Best-effort task-envelope accounting.
+    }
+
+    this.recordToolOutputObservability(toolName, result, requestId);
+    return result;
+  }
+
+
+  private recordToolOutputObservability(
+    toolName: string,
+    result: MCPResult,
+    requestId?: number | string,
+  ): void {
+    try {
+      const metrics = getMetricsCollector();
+      const payload = toolName === 'tabs_search'
+        ? serializeTabsSearchTransportFrame(result, requestId)
+        : stringifyResultPayload(result);
       const bytes = Buffer.byteLength(payload, 'utf8');
       metrics.observe('openchrome_tool_output_bytes', withTenantLabel({ tool: toolName }), bytes);
       metrics.observe('openchrome_tool_estimated_tokens', withTenantLabel({ tool: toolName }), estimateOutputTokensFromChars(payload.length));
@@ -2955,6 +3300,9 @@ export class MCPServer {
         keyId: principal.keyId,
         tenantId: principal.tenantId,
         scopes: principal.scopes,
+        status: 'error',
+        errorMessage: `Forbidden: ${text}`,
+        billable: false,
       });
     } catch {
       // best-effort
@@ -3321,7 +3669,7 @@ export class MCPServer {
     if (['read_page', 'find', 'page_content', 'query_dom', 'oc_query'].includes(toolName)) return 'content';
     if (toolName === 'javascript_tool') return 'javascript';
     if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
-    if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
+    if (['tabs_context', 'tabs_search', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
     if (['page_pdf', 'console_capture', 'performance_metrics', 'file_upload'].includes(toolName)) return 'media';
     if (['user_agent', 'geolocation', 'emulate_device'].includes(toolName)) return 'emulation';
     if (['workflow_init', 'workflow_status', 'workflow_collect', 'workflow_collect_partial', 'workflow_cleanup', 'execute_plan'].includes(toolName)) return 'orchestration';

@@ -35,6 +35,7 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
 
   // Tab / session / profile introspection
   'tabs_context',
+  'tabs_search',
   'list_profiles',
   'oc_profile_status',
   'oc_get_connection_info',

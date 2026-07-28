@@ -62,7 +62,7 @@ export interface TaskLedgerUpdateInput {
 
 const MAX_ATTEMPTS = 12;
 const MAX_RECOVERIES = 8;
-const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context', 'oc_progress_status', 'workflow_status']);
+const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context', 'tabs_search', 'oc_progress_status', 'workflow_status']);
 const ERROR_FINGERPRINT_RE = /(?:error|failed|timeout|timed out|not found|stale|captcha|auth|forbidden|blocked)[^\n.]*/i;
 
 function isObservation(toolName: string, args?: Record<string, unknown>): boolean {

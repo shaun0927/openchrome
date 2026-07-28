@@ -26,7 +26,7 @@ const VOLATILE_KEYS = new Set([
  * progress. Identical observation loops are usually wasteful, so they use the
  * normal low advisory thresholds but remain non-blocking.
  */
-const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context', 'find', 'query_dom']);
+const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context', 'tabs_search', 'find', 'query_dom']);
 const SPECIALIZED_LOOP_TOOLS = new Set(['javascript_tool']);
 
 function stableNormalize(value: unknown): unknown {

@@ -70,6 +70,7 @@ const PROGRESS_TOOLS = new Set([
 const OBSERVATION_TOOLS = new Set([
   "read_page",
   "tabs_context",
+  "tabs_search",
   "page_content",
   "page_screenshot",
 ]);

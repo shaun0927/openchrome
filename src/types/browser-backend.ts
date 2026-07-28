@@ -17,6 +17,8 @@ export type ToolRouting = 'chrome-only' | 'prefer-lightpanda';
  *
  *  - `hybrid-disabled`: hybrid mode is off; everything goes to Chrome.
  *  - `visual-tool`: tool is registered as visual-only and bypasses LP.
+ *  - `chrome-only`: tool requires the authenticated Chrome backend for a
+ *    non-visual capability.
  *  - `circuit-open`: LP circuit breaker is open and cooldown has not
  *    elapsed; Chrome is serving in degraded mode.
  *  - `lp-served`: LP page was healthy and served the request.
@@ -26,6 +28,7 @@ export type ToolRouting = 'chrome-only' | 'prefer-lightpanda';
 export type RouteReason =
   | 'hybrid-disabled'
   | 'visual-tool'
+  | 'chrome-only'
   | 'circuit-open'
   | 'lp-served'
   | 'lp-unhealthy';
