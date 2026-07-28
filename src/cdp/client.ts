@@ -80,6 +80,11 @@ export interface ConnectionEvent {
   error?: string;
 }
 
+export type InitialAutoLaunchFailureDisposition = 'consumed' | 'retryable';
+export type InitialAutoLaunchFailureHandler = (
+  error: unknown,
+) => InitialAutoLaunchFailureDisposition | void | Promise<InitialAutoLaunchFailureDisposition | void>;
+
 
 function parseEnvInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -129,6 +134,15 @@ export class CDPClient {
    * the probe's `false` and fail to launch.
    */
   private pendingConnectAutoLaunch: boolean | undefined = undefined;
+  /** True after an actual browser/CDP-requiring call requests managed launch semantics. */
+  private browserDemandStarted = false;
+  /** True after the first managed browser-demand connection succeeds. */
+  private initialAutoLaunchSucceeded = false;
+  /** Ensures startup ownership cleanup is invoked at most once for concurrent first use. */
+  private initialAutoLaunchFailureNotified = false;
+  /** Coalesces concurrent cleanup notifications without consuming retryable outcomes. */
+  private initialAutoLaunchFailureNotification: Promise<void> | null = null;
+  private initialAutoLaunchFailureHandler: InitialAutoLaunchFailureHandler | null = null;
   /** Invalidates stale async connection attempts that resolve after a reconnect. */
   private connectionGeneration = 0;
   /** Timestamp of last successful connection verification (heartbeat or active probe). */
@@ -178,6 +192,64 @@ export class CDPClient {
    */
   getConnectionState(): ConnectionState {
     return this.connectionState;
+  }
+
+  hasBrowserDemandStarted(): boolean {
+    return this.browserDemandStarted;
+  }
+
+  markManagedBrowserDemand(): void {
+    if (this.autoLaunch) {
+      this.beginManagedBrowserDemand();
+    }
+  }
+
+  setInitialAutoLaunchFailureHandler(handler: InitialAutoLaunchFailureHandler | null): void {
+    this.initialAutoLaunchFailureHandler = handler;
+  }
+
+  private beginManagedBrowserDemand(): void {
+    if (this.browserDemandStarted) return;
+    this.browserDemandStarted = true;
+    console.error(
+      `[CDPClient] First browser/CDP-requiring operation requested on port ${this.port}; ` +
+        'reusing a compatible endpoint when present, otherwise starting one managed Chrome. ' +
+        `A normal Chrome without --remote-debugging-port=${this.port} is not compatible and does not prevent the managed launch.`,
+    );
+  }
+
+  private async notifyInitialAutoLaunchFailure(error: unknown): Promise<void> {
+    if (
+      this.initialAutoLaunchSucceeded ||
+      this.initialAutoLaunchFailureNotified ||
+      !this.initialAutoLaunchFailureHandler
+    ) {
+      return;
+    }
+
+    if (this.initialAutoLaunchFailureNotification) {
+      await this.initialAutoLaunchFailureNotification;
+      return;
+    }
+
+    const notification = (async () => {
+      try {
+        const disposition = await this.initialAutoLaunchFailureHandler!(error);
+        if (disposition !== 'retryable') {
+          this.initialAutoLaunchFailureNotified = true;
+        }
+      } catch (handlerError) {
+        console.error('[CDPClient] Initial auto-launch failure handler failed:', handlerError);
+      }
+    })();
+    this.initialAutoLaunchFailureNotification = notification;
+    try {
+      await notification;
+    } finally {
+      if (this.initialAutoLaunchFailureNotification === notification) {
+        this.initialAutoLaunchFailureNotification = null;
+      }
+    }
   }
 
   /**
@@ -777,8 +849,6 @@ export class CDPClient {
           if (budget!.remaining() < DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS) {
             budget!.requireRemaining(DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS, 'connectInternal.post-attempt');
           }
-          // Invalidate launcher cache so next ensureChrome() re-checks via HTTP
-          launcher.invalidateInstance();
           // Backoff: up to 1s, but not more than the remaining budget minus one more attempt.
           const pauseMs = Math.max(0, Math.min(1000, budget!.remaining() - DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS));
           console.error(`[CDPClient] connectInternal attempt ${attempt} failed (budget remaining=${budget!.remaining()}ms), retrying in ${pauseMs}ms: ${lastError.message}`);
@@ -787,9 +857,11 @@ export class CDPClient {
           }
         } else if (attempt < maxConnectRetries) {
           console.error(`[CDPClient] connectInternal attempt ${attempt}/${maxConnectRetries} failed, retrying in 1s: ${lastError.message}`);
-          // Invalidate launcher cache so next ensureChrome() re-checks via HTTP
-          launcher.invalidateInstance();
-          // Brief pause: TCP RST from the timeout needs time to reach Chrome's listener
+          // Keep the launcher instance so a transient Puppeteer/CDP attach
+          // failure retries the same Chrome endpoint instead of spawning a
+          // second managed browser. ensureChrome() still re-probes the cached
+          // endpoint on the next attempt and refreshes it if Chrome restarted.
+          // Brief pause: TCP RST from the timeout needs time to reach Chrome's listener.
           await new Promise(resolve => setTimeout(resolve, 1000));
         } else {
           throw lastError;
@@ -996,9 +1068,13 @@ export class CDPClient {
     // both end up with the same behavior coalesce, callers who would diverge
     // never silently inherit each other's choice.
     const effectiveAutoLaunch = autoLaunch ?? this.autoLaunch;
+    if (effectiveAutoLaunch) {
+      this.beginManagedBrowserDemand();
+    }
     if (this.browser && this.browser.isConnected()) {
       // Skip active probe if recently verified by heartbeat (avoids per-call overhead)
       if (Date.now() - this.lastVerifiedAt < DEFAULT_CONNECT_VERIFY_STALENESS_MS) {
+        if (effectiveAutoLaunch) this.initialAutoLaunchSucceeded = true;
         return;
       }
 
@@ -1018,17 +1094,23 @@ export class CDPClient {
           }),
         ]);
         this.lastVerifiedAt = Date.now();
+        if (effectiveAutoLaunch) this.initialAutoLaunchSucceeded = true;
         return;
       } catch {
         console.error('[CDPClient] Connection probe failed, reconnecting...');
-        // forceReconnect() internally pins connectInternal() to autoLaunch:false
-        // and does not accept an autoLaunch override; the caller's autoLaunch is
-        // intentionally NOT forwarded here. The probe-fail path therefore never
-        // auto-launches Chrome regardless of caller preference — Chrome must be
-        // re-attached by an explicit tool call, not by a heartbeat-triggered
-        // reconnect.
-        await this.forceReconnect({ budget });
-        return;
+        try {
+          // Heartbeat callers still omit autoLaunch and never reopen Chrome.
+          // An explicit browser-demand connect must preserve its managed-launch
+          // preference when a stale startup-probe attachment needs replacement.
+          await this.forceReconnect({ budget, autoLaunch: effectiveAutoLaunch });
+          if (effectiveAutoLaunch) this.initialAutoLaunchSucceeded = true;
+          return;
+        } catch (err) {
+          if (effectiveAutoLaunch) {
+            await this.notifyInitialAutoLaunchFailure(err);
+          }
+          throw err;
+        }
       }
     }
 
@@ -1065,10 +1147,14 @@ export class CDPClient {
         }
         this.lastVerifiedAt = Date.now();
         this.startHeartbeat();
+        if (effectiveAutoLaunch) this.initialAutoLaunchSucceeded = true;
         console.error('[CDPClient] Connected to Chrome');
       } catch (err) {
         if (this.isCurrentConnectionGeneration(generation)) {
           this.connectionState = 'disconnected';
+        }
+        if (effectiveAutoLaunch) {
+          await this.notifyInitialAutoLaunchFailure(err);
         }
         throw err;
       }
@@ -1095,8 +1181,9 @@ export class CDPClient {
    * post-reconnect operations from using orphaned page references that would
    * hang until protocolTimeout (30s).
    */
-  async forceReconnect(options?: { budget?: Budget }): Promise<void> {
+  async forceReconnect(options?: { budget?: Budget; autoLaunch?: boolean }): Promise<void> {
     const budget = options?.budget;
+    const autoLaunch = options?.autoLaunch ?? false;
     const generation = ++this.connectionGeneration;
     // Invalidate any in-flight connect() — we're replacing the connection entirely
     this.pendingConnect = null;
@@ -1131,9 +1218,9 @@ export class CDPClient {
     this.connectionState = 'reconnecting';
     this.lastVerifiedAt = 0;
     try {
-      // Do NOT auto-launch Chrome on heartbeat-triggered reconnect.
-      // If Chrome was closed, stay disconnected until the next tool call.
-      const connected = await this.connectInternal({ autoLaunch: false, budget, generation });
+      // Heartbeat-triggered callers omit autoLaunch and stay attach-only. An
+      // explicit first browser demand may opt into managed launch here.
+      const connected = await this.connectInternal({ autoLaunch, budget, generation });
       if (connected === false) {
         return;
       }
