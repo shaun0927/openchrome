@@ -528,10 +528,12 @@ export class MCPServer {
     if (typeof this.sessionManager.addEventListener === 'function') {
       this.sessionManager.addEventListener((event) => {
         if (event.type === 'session:deleted') {
+          const boundTenantId = this.sessionTenants.get(event.sessionId);
           this.sessionTenants.delete(event.sessionId);
           getTaskDriftLedger().cleanupSession(event.sessionId);
-          if (event.tenantId) {
-            getAssertEvidenceStore().evictSession(event.sessionId, event.tenantId);
+          const ownerTenantId = boundTenantId ?? event.tenantId;
+          if (ownerTenantId) {
+            getAssertEvidenceStore().evictSession(event.sessionId, ownerTenantId);
           }
         } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
           getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);

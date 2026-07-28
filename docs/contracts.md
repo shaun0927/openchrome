@@ -296,7 +296,8 @@ The retention contract is:
 - HTTP `DELETE /mcp`, `sessions/delete`, and SessionManager deletion events
   delete artifacts only for the ended session/tenant owner; real browser
   sessions emit the same tenant-scoped deletion event during TTL cleanup and
-  shutdown;
+  shutdown, and HTTP DELETE rejects a request whose authenticated/header tenant
+  does not match the tenant bound to the MCP session;
 - expired, deleted, malformed, corrupt, and unauthorized handles return stable
   error codes rather than filesystem paths or partial contents;
 - credential-pattern and configured-secret redaction runs before the artifact
