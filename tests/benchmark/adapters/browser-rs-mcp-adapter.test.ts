@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import path from 'node:path';
 import {
   BROWSER_RS_PIN,
   BrowserRsMcpAdapter,
@@ -248,7 +249,7 @@ describe('preflightBrowserRsBinary', () => {
       profileConflict: () => true,
     });
     expect(result.status).toBe('profile_conflict');
-    expect(result.profilePath).toBe('/tmp/home/.browser-rs/profile');
+    expect(result.profilePath).toBe(path.join('/tmp/home', '.browser-rs', 'profile'));
   });
 
   test('rejects HTTP mode because the benchmark adapter requires MCP stdio', () => {
