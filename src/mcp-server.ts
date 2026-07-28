@@ -1363,19 +1363,8 @@ export class MCPServer {
     return this.capabilityFilter.has(capability ?? 'core');
   }
 
-  /**
-   * Handle tools/list request
-   */
-  private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
-    // Signal the hint engine that this session has consumed tool descriptions,
-    // so rules whose guidance is already embedded in description "When to
-    // use / When NOT to use" blocks can suppress themselves without affecting
-    // other browser sessions that have not requested tools/list yet.
-    const sessionId = (params?.sessionId || 'default') as string;
-    if (this.hintEngine) {
-      this.hintEngine.markToolsListServed(sessionId);
-    }
-
+  /** Return the tool definitions visible at the current configured tier. */
+  getVisibleToolDefinitions(): MCPToolDefinition[] {
     const tools: MCPToolDefinition[] = [];
     for (const registry of this.tools.values()) {
       const tier = getToolTier(registry.definition.name);
@@ -1384,9 +1373,6 @@ export class MCPServer {
       }
     }
 
-    // Add hint about additional tools when not fully expanded.
-    // Only inject expand_tools if the client supports notifications/tools/list_changed —
-    // otherwise there's no point since the client can't react to the notification.
     if (this.exposedTier < 3 && this.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
       const hiddenCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) > this.exposedTier &&
@@ -1412,7 +1398,23 @@ export class MCPServer {
       }
     }
 
-    return { tools };
+    return tools;
+  }
+
+  /**
+   * Handle tools/list request
+   */
+  private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
+    // Signal the hint engine that this session has consumed tool descriptions,
+    // so rules whose guidance is already embedded in description "When to
+    // use / When NOT to use" blocks can suppress themselves without affecting
+    // other browser sessions that have not requested tools/list yet.
+    const sessionId = (params?.sessionId || 'default') as string;
+    if (this.hintEngine) {
+      this.hintEngine.markToolsListServed(sessionId);
+    }
+
+    return { tools: this.getVisibleToolDefinitions() };
   }
 
   /**
