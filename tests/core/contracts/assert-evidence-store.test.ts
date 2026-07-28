@@ -239,6 +239,77 @@ describe('AssertEvidenceStore', () => {
     expect(fs.existsSync(tempPath)).toBe(false);
   });
 
+  test('preserves a live artifact when the periodic sweep hits a transient read error', () => {
+    const store = new AssertEvidenceStore({ rootDir });
+    const stored = persist(store);
+    const artifactPath = path.join(rootDir, `${stored.evidence_handle}.json`);
+    const nodeFs = jest.requireActual<typeof import('node:fs')>('node:fs');
+    const realReadFileSync = nodeFs.readFileSync.bind(nodeFs);
+    const read = jest.spyOn(nodeFs, 'readFileSync').mockImplementation(((filePath, ...args: unknown[]) => {
+      if (String(filePath) === artifactPath) {
+        throw Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' });
+      }
+      return realReadFileSync(filePath, ...(args as []));
+    }) as typeof nodeFs.readFileSync);
+
+    try {
+      expect(store.cleanupExpired()).toBe(0);
+      expect(fs.existsSync(artifactPath)).toBe(true);
+    } finally {
+      read.mockRestore();
+    }
+
+    expect(store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    }).evidence_handle).toBe(stored.evidence_handle);
+  });
+
+  test('aborts an incomplete startup quota scan without deleting live evidence', () => {
+    const first = new AssertEvidenceStore({
+      rootDir,
+      instanceId: 'scan-instance',
+      maxOwnerArtifacts: 1,
+    });
+    const stored = persist(first);
+    const artifactPath = path.join(rootDir, `${stored.evidence_handle}.json`);
+    const second = new AssertEvidenceStore({
+      rootDir,
+      instanceId: 'scan-instance',
+      maxOwnerArtifacts: 1,
+    });
+    const nodeFs = jest.requireActual<typeof import('node:fs')>('node:fs');
+    const realReadFileSync = nodeFs.readFileSync.bind(nodeFs);
+    const read = jest.spyOn(nodeFs, 'readFileSync').mockImplementation(((filePath, ...args: unknown[]) => {
+      if (String(filePath) === artifactPath) {
+        throw Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' });
+      }
+      return realReadFileSync(filePath, ...(args as []));
+    }) as typeof nodeFs.readFileSync);
+
+    try {
+      expect(() => persist(second)).toThrow(/EMFILE/);
+      expect(fs.existsSync(artifactPath)).toBe(true);
+    } finally {
+      read.mockRestore();
+    }
+
+    expect(() => persist(second)).toThrow(
+      expect.objectContaining<Partial<AssertEvidencePersistError>>({
+        code: 'owner_quota_exceeded',
+      }),
+    );
+  });
+
+  test('deletes an artifact only after positively identifying corrupt JSON', () => {
+    const store = new AssertEvidenceStore({ rootDir });
+    const corruptPath = path.join(rootDir, 'ev_00000000-0000-0000-0000-000000000000.json');
+    fs.writeFileSync(corruptPath, '{not-json', 'utf8');
+
+    expect(store.cleanupExpired()).toBe(1);
+    expect(fs.existsSync(corruptPath)).toBe(false);
+  });
+
   test('evicts only artifacts owned by the deleted session and tenant', () => {
     const store = new AssertEvidenceStore({ rootDir });
     const owned = persist(store);
