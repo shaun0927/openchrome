@@ -20,8 +20,11 @@ Artifacts expire after 30 minutes and are also deleted when their owner session
 is removed through HTTP `DELETE /mcp`, `sessions/delete`, or a SessionManager
 deletion event. Real browser sessions emit that event during TTL cleanup and
 shutdown. Expired handles fail immediately, and a periodic unref sweep removes
-expired files and crash-left temporary writes from disk. Retrieval failures use
-stable codes:
+expired files and crash-left temporary writes from disk. Persistence is bounded
+to 1 MiB per artifact, 16 MiB or 256 artifacts per session/tenant owner, and
+64 MiB or 1,024 artifacts per OpenChrome process. Quota rejection leaves the
+assertion verdict intact but returns no handle. Retrieval failures use stable
+codes:
 
 - `EVIDENCE_HANDLE_REQUIRED`
 - `EVIDENCE_HANDLE_MALFORMED`
