@@ -1,10 +1,13 @@
 /// <reference types="jest" />
 
 import {
+  BUILT_IN_TEMPLATES,
   DuplicateTemplateError,
   InvalidTemplateError,
   OutcomeTemplate,
   TemplateRegistry,
+  createDefaultTemplateRegistry,
+  isValidTemplateId,
 } from '../../../src/contracts/templates';
 
 function tpl(overrides: Partial<OutcomeTemplate> = {}): OutcomeTemplate {
@@ -72,6 +75,14 @@ describe('TemplateRegistry', () => {
     expect(() => r.register(tpl({ id: 'a-b' }))).not.toThrow();
     expect(() => r.register(tpl({ id: 'public-web.spa-hydrated' }))).not.toThrow();
     expect(() => r.register(tpl({ id: 'ns.sub.leaf' }))).not.toThrow();
+  });
+
+  test('isValidTemplateId mirrors registry id acceptance for lookup callers', () => {
+    expect(isValidTemplateId('public-web.page-meta')).toBe(true);
+    expect(isValidTemplateId('a-b.c')).toBe(true);
+    expect(isValidTemplateId('')).toBe(false);
+    expect(isValidTemplateId('NotKebabCase')).toBe(false);
+    expect(isValidTemplateId('../escape')).toBe(false);
   });
 
   test('rejects malformed version values', () => {
@@ -220,5 +231,20 @@ describe('TemplateRegistry', () => {
     };
     r.register(t);
     expect(r.get(t.id)).toEqual(t);
+  });
+
+  test('default registry is populated from the built-in template catalog', () => {
+    const expectedIds = BUILT_IN_TEMPLATES.map((template) => template.id).sort();
+    const registry = createDefaultTemplateRegistry();
+    expect(expectedIds).toContain('public-web.page-meta');
+    expect(registry.list().map((entry) => entry.id)).toEqual(expectedIds);
+  });
+
+  test('createDefaultTemplateRegistry returns an isolated populated registry', () => {
+    const r = createDefaultTemplateRegistry();
+    expect(r.has('public-web.page-meta')).toBe(true);
+    expect(r.unregister('public-web.page-meta')).toBe(1);
+    expect(r.has('public-web.page-meta')).toBe(false);
+    expect(createDefaultTemplateRegistry().has('public-web.page-meta')).toBe(true);
   });
 });
