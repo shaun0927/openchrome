@@ -41,6 +41,7 @@ import {
   type PerceptionTargetFailureReason,
   type ResolvedPerceptionTarget,
 } from '../vision/perception-target';
+import type { OpenedTabFact } from '../session/target-creation-ledger';
 
 
 async function resolveInteractVault(value: unknown): Promise<{ value: unknown; token?: string; plaintext?: string; error?: MCPResult }> {
@@ -192,6 +193,82 @@ function perceptionProvenance(
       snapshotAgeMs: target.snapshotAgeMs,
       coordinates: point,
     },
+  };
+}
+
+interface OpenedTabCursor {
+  afterSequence: number;
+  workerId: string;
+}
+
+interface OpenedTabsObservation {
+  openedTabCount: number;
+  openedTabsTruncated: boolean;
+  openedTabs: OpenedTabFact[];
+}
+
+async function collectOpenedTabs(
+  sessionManager: ReturnType<typeof getSessionManager>,
+  cursor: OpenedTabCursor | undefined,
+  sessionId: string,
+  openerTargetId: string,
+  waitAfter: number,
+): Promise<OpenedTabsObservation | null> {
+  if (!cursor || typeof sessionManager.getOpenedTabsAfter !== 'function') return null;
+
+  const query = () => sessionManager.getOpenedTabsAfter({
+    afterSequence: cursor.afterSequence,
+    sessionId,
+    workerId: cursor.workerId,
+    openerTargetId,
+    limit: 5,
+  });
+
+  let observed = query();
+  if (observed.total === 0 && observed.pendingCount === 0) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    observed = query();
+  }
+
+  const deadline = Date.now() + Math.min(Math.max(waitAfter, 250), 1000);
+  while (observed.pendingCount > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    observed = query();
+  }
+
+  if (observed.total === 0) return null;
+  return {
+    openedTabCount: observed.total,
+    openedTabsTruncated: observed.truncated,
+    openedTabs: observed.tabs,
+  };
+}
+
+function attachOpenedTabs(result: MCPResult, observation: OpenedTabsObservation | null): MCPResult {
+  if (!observation) return result;
+
+  const details = observation.openedTabs.map((tab) => {
+    const title = tab.title ? ` title=${JSON.stringify(tab.title.slice(0, 80))}` : '';
+    return `tabId=${tab.tabId} status=${tab.status} url=${JSON.stringify(tab.url.slice(0, 160))}${title}`;
+  });
+  const suffix = observation.openedTabsTruncated ? ' | details truncated' : '';
+  const line = `[Opened tabs] ${details.join(' | ')}${suffix}`;
+
+  const content = [...(result.content ?? [])];
+  const textIndex = content.findIndex((item) => item.type === 'text');
+  if (textIndex >= 0) {
+    const item = content[textIndex];
+    content[textIndex] = { ...item, text: `${item.text ?? ''}\n${line}` };
+  } else {
+    content.push({ type: 'text', text: line });
+  }
+
+  return {
+    ...result,
+    content,
+    openedTabCount: observation.openedTabCount,
+    openedTabsTruncated: observation.openedTabsTruncated,
+    openedTabs: observation.openedTabs,
   };
 }
 
@@ -411,6 +488,15 @@ const coreHandler: ToolHandler = async (
 
   const sessionManager = getSessionManager();
   const refIdManager = getRefIdManager();
+  const observeOpenedTabs = action === 'click' || action === 'double_click';
+  const beginOpenedTabObservation = (): OpenedTabCursor | undefined => {
+    if (!observeOpenedTabs || typeof sessionManager.getTargetCreationCursor !== 'function') return undefined;
+    const workerId = sessionManager.getTargetWorkerId(tabId);
+    if (!workerId) return undefined;
+    return { afterSequence: sessionManager.getTargetCreationCursor(), workerId };
+  };
+  const finishOpenedTabObservation = (cursor: OpenedTabCursor | undefined) =>
+    collectOpenedTabs(sessionManager, cursor, sessionId, tabId, waitAfter);
 
   const runLocatorFallbackForPage = async (page: any, trigger: LocatorFallbackTrigger): Promise<MCPResult | null> => {
     if (!locatorFallbackEnabled || !query) return null;
@@ -437,22 +523,39 @@ const coreHandler: ToolHandler = async (
     const x = Math.round(candidate.rect.x);
     const y = Math.round(candidate.rect.y);
     const isStealthFallback = sessionManager.isStealthTarget(tabId);
+    let fallbackOpenedTabCursor: OpenedTabCursor | undefined;
     const { result: fallbackDomResult, verify: fallbackVerifyReport } = await runVerify(
       page,
       verifyMode,
       async () =>
         withDomDelta(page, async () => {
           if (isStealthFallback) await humanMouseMove(page, x, y);
-          if (action === 'double_click') await page.mouse.click(x, y, { clickCount: 2 });
+          if (action === 'double_click') {
+            fallbackOpenedTabCursor = beginOpenedTabObservation();
+            await page.mouse.click(x, y, { clickCount: 2 });
+          }
           else if (action === 'hover') { if (!isStealthFallback) await page.mouse.move(x, y); }
-          else await page.mouse.click(x, y);
+          else if (action === 'type') {
+            await page.mouse.click(x, y);
+            const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+            await page.keyboard.down(modifier);
+            await page.keyboard.press('KeyA');
+            await page.keyboard.up(modifier);
+            await page.keyboard.press('Backspace');
+            await page.keyboard.type(String(typeValue));
+          }
+          else {
+            fallbackOpenedTabCursor = beginOpenedTabObservation();
+            await page.mouse.click(x, y);
+          }
         }, { settleMs: Math.max(150, waitAfter) }),
     );
+    const openedTabs = await finishOpenedTabObservation(fallbackOpenedTabCursor);
     invalidateAXCache(getTargetId(page.target()));
-    const verb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : 'Clicked';
+    const verb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
     const lines = [`${verb} locator fallback candidate "${candidate.label ?? candidate.selector}" [provider=${candidate.provider} confidence=${candidate.confidence}]`];
     if (fallbackDomResult.delta) lines.push('', '[DOM Delta]', fallbackDomResult.delta);
-    return attachVerifyReport({
+    return attachOpenedTabs(attachVerifyReport({
       content: [{ type: 'text', text: lines.join('\n') }],
       locatorFallback: {
         trigger,
@@ -460,7 +563,7 @@ const coreHandler: ToolHandler = async (
         accepted: true,
         selected: { selector: candidate.selector, confidence: candidate.confidence, reason: candidate.reason, provider: candidate.provider },
       },
-    } as MCPResult, fallbackVerifyReport);
+    } as MCPResult, fallbackVerifyReport), openedTabs);
   };
 
   if (!tabId) {
@@ -604,16 +707,24 @@ const coreHandler: ToolHandler = async (
       if (target.resolution === 'snapshot-bbox') point = target.point;
 
       const isStealth = sessionManager.isStealthTarget(tabId);
+      let perceptionOpenedTabCursor: OpenedTabCursor | undefined;
       const { result: perceptionDomResult, verify: perceptionVerifyReport } = await runVerify(
         page,
         verifyMode,
         async () => withDomDelta(page, async () => {
           if (isStealth) await humanMouseMove(page, point.x, point.y);
-          if (action === 'double_click') await page.mouse.click(point.x, point.y, { clickCount: 2 });
+          if (action === 'double_click') {
+            perceptionOpenedTabCursor = beginOpenedTabObservation();
+            await page.mouse.click(point.x, point.y, { clickCount: 2 });
+          }
           else if (action === 'hover') { if (!isStealth) await page.mouse.move(point.x, point.y); }
-          else await page.mouse.click(point.x, point.y);
+          else {
+            perceptionOpenedTabCursor = beginOpenedTabObservation();
+            await page.mouse.click(point.x, point.y);
+          }
         }, { settleMs: Math.max(150, waitAfter) }),
       );
+      const openedTabs = await finishOpenedTabObservation(perceptionOpenedTabCursor);
 
       if (captureArtifact && action === 'click' && backendNodeId !== undefined) {
         await captureBackendNodeReplayStep({
@@ -655,10 +766,13 @@ const coreHandler: ToolHandler = async (
         } catch { /* screenshot failed, non-fatal */ }
       }
 
-      return attachVerifyReport({
-        content: resultContent,
-        structuredContent: provenance,
-      }, perceptionVerifyReport);
+      return attachOpenedTabs(
+        attachVerifyReport({
+          content: resultContent,
+          structuredContent: provenance,
+        }, perceptionVerifyReport),
+        openedTabs,
+      );
     } catch (error) {
       return {
         content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
@@ -728,8 +842,10 @@ const coreHandler: ToolHandler = async (
       const [x1, y1,, , x2,, , y2] = boxModel.model.content;
       const cx = Math.round((x1 + x2) / 2);
       const cy = Math.round((y1 + y2) / 2);
+      let refOpenedTabCursor: OpenedTabCursor | undefined;
 
       if (action === 'double_click') {
+        refOpenedTabCursor = beginOpenedTabObservation();
         await page.mouse.click(cx, cy, { clickCount: 2 });
       } else if (action === 'hover') {
         await page.mouse.move(cx, cy);
@@ -742,6 +858,7 @@ const coreHandler: ToolHandler = async (
         await page.keyboard.press('Backspace');
         await page.keyboard.type(String(typeValue));
       } else {
+        refOpenedTabCursor = beginOpenedTabObservation();
         await page.mouse.click(cx, cy);
       }
 
@@ -756,11 +873,12 @@ const coreHandler: ToolHandler = async (
 
       const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
       const lines = [`${actionVerb} [${refArg}] [via ref]`];
+      const openedTabs = await finishOpenedTabObservation(refOpenedTabCursor);
 
-      return {
+      return attachOpenedTabs({
         content: [{ type: 'text', text: maskInteractVault(lines.join('\n'), vaultValue) }],
         via: 'ref',
-      } as MCPResult;
+      } as MCPResult, openedTabs);
     } catch (err) {
       return {
         content: [{ type: 'text', text: `Interact error: ${err instanceof Error ? err.message : String(err)}` }],
@@ -829,19 +947,45 @@ const coreHandler: ToolHandler = async (
 
       const cdpClient = sessionManager.getCDPClient();
       const isStealth = sessionManager.isStealthTarget(tabId);
+      let coordinateOpenedTabCursor: OpenedTabCursor | undefined;
+      const coordinateClick = (clickCount: number) => dispatchCoordinateClick(cdpClient, page, {
+        x: cx,
+        y: cy,
+        button: (coordinateArg.button as 'left' | 'right' | 'middle') ?? 'left',
+        clickCount,
+        modifiers: (coordinateArg.modifiers as Array<'alt' | 'ctrl' | 'meta' | 'shift'>) ?? [],
+      });
 
       const { delta } = await withDomDelta(page, async () => {
         if (isStealth) await humanMouseMove(page, cx, cy);
-        await dispatchCoordinateClick(cdpClient, page, {
-          x: cx,
-          y: cy,
-          button: (coordinateArg.button as 'left' | 'right' | 'middle') ?? 'left',
-          clickCount: (coordinateArg.clickCount as number) ?? 1,
-          modifiers: (coordinateArg.modifiers as Array<'alt' | 'ctrl' | 'meta' | 'shift'>) ?? [],
-        });
+        if (action === 'double_click') {
+          coordinateOpenedTabCursor = beginOpenedTabObservation();
+          await coordinateClick((coordinateArg.clickCount as number) ?? 2);
+        } else if (action === 'hover') {
+          if (!isStealth) await page.mouse.move(cx, cy);
+        } else if (action === 'type') {
+          await dispatchCoordinateClick(cdpClient, page, {
+            x: cx,
+            y: cy,
+            button: 'left',
+            clickCount: 1,
+            modifiers: [],
+          });
+          const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+          await page.keyboard.down(modifier);
+          await page.keyboard.press('KeyA');
+          await page.keyboard.up(modifier);
+          await page.keyboard.press('Backspace');
+          await page.keyboard.type(String(typeValue));
+        } else {
+          coordinateOpenedTabCursor = beginOpenedTabObservation();
+          await coordinateClick((coordinateArg.clickCount as number) ?? 1);
+        }
       }, { settleMs: Math.max(150, waitAfter) });
+      const openedTabs = await finishOpenedTabObservation(coordinateOpenedTabCursor);
 
-      const lines: string[] = [`Clicked coordinate (${cx}, ${cy}) via CDP`];
+      const coordinateVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
+      const lines: string[] = [`${coordinateVerb} coordinate (${cx}, ${cy}) via CDP`];
       if (delta) lines.push('', '[DOM Delta]', delta);
 
       const resultContent: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
@@ -860,7 +1004,7 @@ const coreHandler: ToolHandler = async (
         } catch { /* screenshot failed, non-fatal */ }
       }
 
-      return { content: resultContent };
+      return attachOpenedTabs({ content: resultContent }, openedTabs);
     } catch (error) {
       return {
         content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
@@ -960,6 +1104,7 @@ const coreHandler: ToolHandler = async (
         // Perform action with DOM delta — wrapped in runVerify so the per-action
         // verify report (AX-hash + pHash) is captured around the actual click.
         const isStealth = sessionManager.isStealthTarget(tabId);
+        let axOpenedTabCursor: OpenedTabCursor | undefined;
         const { verify: axVerifyReport, result: axActionResult } = await runVerify(
           page,
           verifyMode,
@@ -967,7 +1112,10 @@ const coreHandler: ToolHandler = async (
             withDomDelta(page, async () => {
               // Stealth: use Bézier curve mouse path to avoid bot detection
               if (isStealth) await humanMouseMove(page, axX, axY);
-              if (action === 'double_click') await page.mouse.click(axX, axY, { clickCount: 2 });
+              if (action === 'double_click') {
+                axOpenedTabCursor = beginOpenedTabObservation();
+                await page.mouse.click(axX, axY, { clickCount: 2 });
+              }
               else if (action === 'hover') { if (!isStealth) await page.mouse.move(axX, axY); }
               else if (action === 'type') {
                 await page.mouse.click(axX, axY);
@@ -978,7 +1126,10 @@ const coreHandler: ToolHandler = async (
                 await page.keyboard.press('Backspace');
                 await page.keyboard.type(String(typeValue));
               }
-              else await page.mouse.click(axX, axY);
+              else {
+                axOpenedTabCursor = beginOpenedTabObservation();
+                await page.mouse.click(axX, axY);
+              }
             }, { settleMs: Math.max(150, waitAfter) }),
         );
         const axDelta = axActionResult.delta;
@@ -1005,8 +1156,12 @@ const coreHandler: ToolHandler = async (
         await cleanupTags(page, DISCOVERY_TAG).catch(() => {});
 
         // Classify outcome and build response
+        const openedTabs = await finishOpenedTabObservation(axOpenedTabCursor);
         const axVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
-        const axOutcome = classifyOutcome(axDelta, ax.role);
+        const classifiedAxOutcome = classifyOutcome(axDelta, ax.role);
+        const axOutcome = openedTabs && classifiedAxOutcome === 'SILENT_CLICK'
+          ? 'SUCCESS'
+          : classifiedAxOutcome;
         const axLine = formatOutcomeLine(axOutcome, axVerb, `${ax.role} "${ax.name}"`, `[${axRef}]`, `[${MATCH_LEVEL_LABELS[ax.matchLevel]} via AX tree]`);
 
         // Gather state summary (same as CSS path)
@@ -1046,7 +1201,10 @@ const coreHandler: ToolHandler = async (
           } catch { /* screenshot failed, non-fatal */ }
         }
 
-        return attachVerifyReport({ content: resultContent }, axVerifyReport);
+        return attachOpenedTabs(
+          attachVerifyReport({ content: resultContent }, axVerifyReport),
+          openedTabs,
+        );
       }
     } catch (axError) {
       throwIfAborted(context);
@@ -1177,6 +1335,7 @@ const coreHandler: ToolHandler = async (
     // Perform the action with DOM delta capture, wrapped in runVerify so the
     // structured verify report (AX-hash + pHash) covers the actual click.
     const isStealthCSS = sessionManager.isStealthTarget(tabId);
+    let cssOpenedTabCursor: OpenedTabCursor | undefined;
     const { result: cssDomResult, verify: cssVerifyReport } = await runVerify(
       page,
       verifyMode,
@@ -1187,6 +1346,7 @@ const coreHandler: ToolHandler = async (
             // Stealth: use Bézier curve mouse path to avoid bot detection
             if (isStealthCSS) await humanMouseMove(page, finalX, finalY);
             if (action === 'double_click') {
+              cssOpenedTabCursor = beginOpenedTabObservation();
               await page.mouse.click(finalX, finalY, { clickCount: 2 });
             } else if (action === 'hover') {
               if (!isStealthCSS) await page.mouse.move(finalX, finalY);
@@ -1199,6 +1359,7 @@ const coreHandler: ToolHandler = async (
               await page.keyboard.press('Backspace');
               await page.keyboard.type(String(typeValue));
             } else {
+              cssOpenedTabCursor = beginOpenedTabObservation();
               await page.mouse.click(finalX, finalY);
             }
           },
@@ -1237,12 +1398,16 @@ const coreHandler: ToolHandler = async (
     invalidateAXCache(getTargetId(page.target()));
 
     // Build compact action label with confidence score
+    const openedTabs = await finishOpenedTabObservation(cssOpenedTabCursor);
     const actionVerb = action === 'double_click' ? 'Double-clicked' : action === 'hover' ? 'Hovered' : action === 'type' ? 'Typed into' : 'Clicked';
     const textSample = bestMatch.textContent?.slice(0, 50) || bestMatch.name.slice(0, 50);
     const textPart = textSample ? ` "${textSample}"` : '';
     const refPart = refId ? ` [${refId}]` : '';
     const confidencePart = bestMatch.score < 50 ? ` [via CSS, LOW CONFIDENCE]` : ` [via CSS]`;
-    const cssOutcome = classifyOutcome(delta, bestMatch.role);
+    const classifiedCssOutcome = classifyOutcome(delta, bestMatch.role);
+    const cssOutcome = openedTabs && classifiedCssOutcome === 'SILENT_CLICK'
+      ? 'SUCCESS'
+      : classifiedCssOutcome;
     const interactedLine = formatOutcomeLine(cssOutcome, actionVerb, `${bestMatch.tagName}${textPart}`, refPart, confidencePart);
 
     // Gather state summary via page.evaluate
@@ -1398,7 +1563,10 @@ const coreHandler: ToolHandler = async (
       responseContent.push(screenshotContent);
     }
 
-    return attachVerifyReport({ content: responseContent }, cssVerifyReport);
+    return attachOpenedTabs(
+      attachVerifyReport({ content: responseContent }, cssVerifyReport),
+      openedTabs,
+    );
   } catch (error) {
     return {
       content: [
@@ -1414,22 +1582,46 @@ const coreHandler: ToolHandler = async (
 
 
 const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
-  const result = await coreHandler(sessionId, args, context);
-  const returnAfterState = parseReturnAfterState(args.returnAfterState);
-  if (returnAfterState === 'none' || result.isError) return result;
+  let tabId: string | undefined;
+  try {
+    tabId = applyLaneTarget(args).tabId as string | undefined;
+  } catch {
+    // coreHandler preserves the existing lane-validation error contract.
+  }
 
-  const tabId = args.tabId as string | undefined;
-  if (!tabId) return result;
+  const execute = async (): Promise<MCPResult> => {
+    const result = await coreHandler(sessionId, args, context);
+    const returnAfterState = parseReturnAfterState(args.returnAfterState);
+    if (returnAfterState === 'none' || result.isError || !tabId) return result;
+
+    try {
+      const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'interact');
+      if (page) {
+        await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
+      }
+    } catch {
+      // Snapshot chaining is best-effort; never mask the successful action result.
+    }
+    return result;
+  };
+
+  const sessionManager = getSessionManager();
+  if (
+    !tabId ||
+    typeof sessionManager.runTargetExclusive !== 'function' ||
+    !sessionManager.validateTargetOwnership(sessionId, tabId)
+  ) {
+    return execute();
+  }
 
   try {
-    const page = await getSessionManager().getPage(sessionId, tabId, undefined, 'interact');
-    if (page) {
-      await appendReturnAfterState(result, page, sessionId, tabId, returnAfterState, context);
-    }
-  } catch {
-    // Snapshot chaining is best-effort; never mask the successful action result.
+    return await sessionManager.runTargetExclusive(sessionId, tabId, execute);
+  } catch (error) {
+    return {
+      content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],
+      isError: true,
+    };
   }
-  return result;
 };
 
 export function registerInteractTool(server: MCPServer): void {

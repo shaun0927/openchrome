@@ -97,6 +97,7 @@ describe('interact tool - perception mode', () => {
   let handler: (sessionId: string, args: Record<string, unknown>) => Promise<MCPResult>;
   let page: ReturnType<typeof createMockPage>;
   let cdpSend: jest.Mock;
+  let sessionManager: Record<string, jest.Mock>;
   let nowSpy: jest.SpyInstance<number, []>;
 
   beforeAll(async () => {
@@ -122,12 +123,21 @@ describe('interact tool - perception mode', () => {
       }
       return {};
     });
-    (getSessionManager as jest.Mock).mockReturnValue({
+    sessionManager = {
       getPage: jest.fn().mockResolvedValue(page),
       getAvailableTargets: jest.fn().mockResolvedValue([]),
       getCDPClient: jest.fn().mockReturnValue({ send: cdpSend }),
       isStealthTarget: jest.fn().mockReturnValue(false),
-    });
+      getTargetWorkerId: jest.fn().mockReturnValue('default'),
+      getTargetCreationCursor: jest.fn().mockReturnValue(20),
+      getOpenedTabsAfter: jest.fn().mockReturnValue({
+        total: 0,
+        truncated: false,
+        pendingCount: 0,
+        tabs: [],
+      }),
+    };
+    (getSessionManager as jest.Mock).mockReturnValue(sessionManager);
   });
 
   afterEach(() => {
@@ -210,6 +220,79 @@ describe('interact tool - perception mode', () => {
       expect(page.mouse.move).toHaveBeenCalledWith(240, 320);
     }
     expect(result.structuredContent).toMatchObject({ action });
+  });
+
+  test('reports opener-correlated tabs created by a perception click', async () => {
+    sessionManager.getOpenedTabsAfter.mockReturnValue({
+      total: 1,
+      truncated: false,
+      pendingCount: 0,
+      tabs: [{
+        tabId: 'popup-1',
+        workerId: 'default',
+        url: 'https://example.test/report',
+        title: 'Report',
+        status: 'ready',
+      }],
+    });
+
+    const result = await callPerception();
+
+    expect(sessionManager.getTargetCreationCursor).toHaveBeenCalledTimes(1);
+    expect(sessionManager.getOpenedTabsAfter).toHaveBeenCalledWith({
+      afterSequence: 20,
+      sessionId: 'session-1',
+      workerId: 'default',
+      openerTargetId: 'tab-1',
+      limit: 5,
+    });
+    expect(result).toMatchObject({
+      openedTabCount: 1,
+      openedTabsTruncated: false,
+      openedTabs: [{ tabId: 'popup-1', status: 'ready' }],
+    });
+    expect(result.content?.[0].text).toContain('[Opened tabs]');
+    expect(result.structuredContent).toMatchObject({ mode: 'perception', action: 'click' });
+  });
+
+  test('reports opener-correlated tabs created by a perception double-click', async () => {
+    sessionManager.getOpenedTabsAfter.mockReturnValue({
+      total: 1,
+      truncated: false,
+      pendingCount: 0,
+      tabs: [{
+        tabId: 'popup-2',
+        workerId: 'default',
+        url: 'https://example.test/details',
+        title: 'Details',
+        status: 'ready',
+      }],
+    });
+
+    const result = await callPerception({ action: 'double_click' });
+
+    expect(page.mouse.click).toHaveBeenCalledWith(240, 320, { clickCount: 2 });
+    expect(sessionManager.getOpenedTabsAfter).toHaveBeenCalledWith({
+      afterSequence: 20,
+      sessionId: 'session-1',
+      workerId: 'default',
+      openerTargetId: 'tab-1',
+      limit: 5,
+    });
+    expect(result).toMatchObject({
+      openedTabCount: 1,
+      openedTabs: [{ tabId: 'popup-2', status: 'ready' }],
+    });
+    expect(result.structuredContent).toMatchObject({ mode: 'perception', action: 'double_click' });
+  });
+
+  test('does not observe opened tabs for a perception hover', async () => {
+    const result = await callPerception({ action: 'hover' });
+
+    expect(sessionManager.getTargetCreationCursor).not.toHaveBeenCalled();
+    expect(sessionManager.getOpenedTabsAfter).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('openedTabCount');
+    expect(result).not.toHaveProperty('openedTabs');
   });
 
   test.each([
