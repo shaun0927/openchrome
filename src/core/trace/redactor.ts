@@ -117,7 +117,7 @@ const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
   },
 ];
 
-const URL_CANDIDATE_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/gi;
+const URL_CANDIDATE_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g;
 
 /**
  * Redact URL userinfo using WHATWG parsing so raw `@` characters inside a

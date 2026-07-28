@@ -260,6 +260,35 @@ describe('AssertEvidenceStore', () => {
     }).evidence_handle).toBe(otherTenant.evidence_handle);
   });
 
+  test('retains the artifact and quota index when session eviction cannot unlink it', () => {
+    const store = new AssertEvidenceStore({ rootDir, maxOwnerArtifacts: 1 });
+    const owned = persist(store);
+    const artifactPath = path.join(rootDir, `${owned.evidence_handle}.json`);
+    const nodeFs = jest.requireActual<typeof import('node:fs')>('node:fs');
+    const realUnlinkSync = nodeFs.unlinkSync.bind(nodeFs);
+    const unlink = jest.spyOn(nodeFs, 'unlinkSync').mockImplementation((filePath) => {
+      if (String(filePath) === artifactPath) {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      }
+      return realUnlinkSync(filePath);
+    });
+
+    try {
+      expect(store.evictSession('session-a', 'tenant-a')).toBe(0);
+      expect(fs.existsSync(artifactPath)).toBe(true);
+      expect(() => persist(store)).toThrow(
+        expect.objectContaining<Partial<AssertEvidencePersistError>>({
+          code: 'owner_quota_exceeded',
+        }),
+      );
+    } finally {
+      unlink.mockRestore();
+    }
+
+    expect(store.evictSession('session-a', 'tenant-a')).toBe(1);
+    expect(fs.existsSync(artifactPath)).toBe(false);
+  });
+
   test('rejects artifacts whose required provenance no longer matches the result', () => {
     const store = new AssertEvidenceStore({ rootDir });
     const stored = persist(store);

@@ -60,6 +60,17 @@ describe('trace redactor — scrubString patterns', () => {
     expect(out).not.toContain('ss@example.com');
   });
 
+  test.each(['ws', 'wss', 'ftp'])(
+    'redacts URL userinfo for %s collector evidence',
+    (scheme) => {
+      const out = scrubString(`connect ${scheme}://alice:p@ss@example.com/private?view=1`);
+      expect(out).toBe(`connect ${scheme}://${REDACTED}@example.com/private?view=1`);
+      expect(out).not.toContain('alice');
+      expect(out).not.toContain('p@ss');
+      expect(out).not.toContain('ss@example.com');
+    },
+  );
+
   test('leaves benign strings untouched', () => {
     expect(scrubString('hello world')).toBe('hello world');
     expect(scrubString('https://example.com/page')).toBe('https://example.com/page');

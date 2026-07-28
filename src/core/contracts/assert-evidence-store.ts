@@ -291,8 +291,9 @@ export class AssertEvidenceStore {
     }
     const artifact = record.artifact;
     if (Date.parse(artifact.expires_at) <= this.now()) {
-      safeUnlink(this.filePath(handle));
-      this.removeIndexEntry(handle);
+      if (safeUnlink(this.filePath(handle))) {
+        this.removeIndexEntry(handle);
+      }
       throw new AssertEvidenceStoreError('expired', 'Evidence handle has expired');
     }
 
@@ -310,7 +311,7 @@ export class AssertEvidenceStore {
         entry.sessionSha256 !== sessionDigest
         || entry.tenantSha256 !== tenantDigest
       ) continue;
-      safeUnlink(this.filePath(handle));
+      if (!safeUnlink(this.filePath(handle))) continue;
       this.removeIndexEntry(handle);
       removed += 1;
     }
@@ -327,11 +328,11 @@ export class AssertEvidenceStore {
       try {
         const record = this.readRecordFile(filePath, handle);
         if (Date.parse(record.artifact.expires_at) > nowMs) continue;
-        safeUnlink(filePath);
+        if (!safeUnlink(filePath)) continue;
         this.removeIndexEntry(handle);
         removed += 1;
       } catch {
-        safeUnlink(filePath);
+        if (!safeUnlink(filePath)) continue;
         this.removeIndexEntry(handle);
         removed += 1;
       }
@@ -340,11 +341,9 @@ export class AssertEvidenceStore {
       const filePath = path.join(this.rootDir, file);
       try {
         if (fs.statSync(filePath).mtimeMs + this.ttlMs > nowMs) continue;
-        safeUnlink(filePath);
-        removed += 1;
+        if (safeUnlink(filePath)) removed += 1;
       } catch {
-        safeUnlink(filePath);
-        removed += 1;
+        if (safeUnlink(filePath)) removed += 1;
       }
     }
     return removed;
@@ -369,7 +368,12 @@ export class AssertEvidenceStore {
       try {
         const record = this.readRecordFile(filePath, handle);
         if (Date.parse(record.artifact.expires_at) <= nowMs) {
-          safeUnlink(filePath);
+          if (
+            !safeUnlink(filePath)
+            && record.owner.instance_sha256 === this.instanceSha256
+          ) {
+            this.addIndexEntry(handle, record, fs.statSync(filePath).size);
+          }
           continue;
         }
         if (record.owner.instance_sha256 !== this.instanceSha256) continue;
@@ -385,7 +389,7 @@ export class AssertEvidenceStore {
     const nowMs = this.now();
     for (const [handle, entry] of Array.from(this.artifactIndex.entries())) {
       if (entry.expiresAtMs > nowMs) continue;
-      safeUnlink(this.filePath(handle));
+      if (!safeUnlink(this.filePath(handle))) continue;
       this.removeIndexEntry(handle);
     }
   }
@@ -664,11 +668,13 @@ function isVerdict(value: unknown): value is AssertEvidenceVerdict {
   return value === 'pass' || value === 'fail' || value === 'inconclusive';
 }
 
-function safeUnlink(filePath: string): void {
+function safeUnlink(filePath: string): boolean {
   try {
     fs.unlinkSync(filePath);
-  } catch {
-    // File may already be absent.
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    return false;
   }
 }
 
