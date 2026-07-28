@@ -12,11 +12,13 @@
  */
 
 import * as fs from 'fs';
+import * as http from 'http';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import {
   discoverActiveDevToolsPort,
+  refreshAutoConnectEndpoint,
   AutoConnectError,
   __testing,
 } from '../../src/chrome/auto-connect';
@@ -53,6 +55,35 @@ function bindLocalListener(): Promise<{ port: number; close: () => void }> {
       resolve({
         port: addr.port,
         close: () => { try { server.close(); } catch { /* ignore */ } },
+      });
+    });
+    server.on('error', reject);
+  });
+}
+
+function bindDebugServer(
+  handler: (port: number, req: http.IncomingMessage, res: http.ServerResponse) => void,
+): Promise<{ port: number; close: () => Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        res.statusCode = 500;
+        res.end();
+        return;
+      }
+      handler(address.port, req, res);
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('failed to acquire HTTP port'));
+        return;
+      }
+      resolve({
+        port: address.port,
+        close: () => new Promise<void>((done) => server.close(() => done())),
       });
     });
     server.on('error', reject);
@@ -172,7 +203,7 @@ describe('discoverActiveDevToolsPort (#849)', () => {
     }
   });
 
-  it('parser tolerates missing browser-target line and trailing newlines', () => {
+  it('parser preserves the legacy missing browser-target line as a root sentinel', () => {
     const a = __testing.parseDevToolsActivePort('12345\n');
     expect(a.port).toBe(12345);
     expect(a.browserTargetPath).toBe('/');
@@ -321,6 +352,264 @@ describe('discoverActiveDevToolsPort (#849)', () => {
     const d = __testing.defaultUserDataDir('stable');
     expect(typeof d).toBe('string');
     expect((d as string).length).toBeGreaterThan(0);
+  });
+});
+
+describe('refreshAutoConnectEndpoint (#1558)', () => {
+  it('uses the current profile endpoint when /json/version returns 404', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((_port, _req, res) => {
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    try {
+      writeActivePortFile(dir, server.port, '/devtools/browser/from-file');
+      const result = await refreshAutoConnectEndpoint(
+        { userDataDir: dir, port: server.port },
+        { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+      );
+      expect(result.wsEndpoint).toBe(
+        `ws://127.0.0.1:${server.port}/devtools/browser/from-file`,
+      );
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it('accepts a matching /json/version endpoint and keeps the file path authoritative', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((port, req, res) => {
+      if (req.url === '/json/version') {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({
+          webSocketDebuggerUrl: `ws://localhost:${port}/devtools/browser/matching`,
+        }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+    try {
+      writeActivePortFile(dir, server.port, '/devtools/browser/matching');
+      const result = await refreshAutoConnectEndpoint(
+        { userDataDir: dir, port: server.port },
+        { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+      );
+      expect(result.wsEndpoint).toBe(
+        `ws://127.0.0.1:${server.port}/devtools/browser/matching`,
+      );
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it('preserves legacy one-line files when /json/version supplies a valid browser endpoint', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((port, req, res) => {
+      if (req.url === '/json/version') {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({
+          webSocketDebuggerUrl: `ws://localhost:${port}/devtools/browser/from-http`,
+        }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+    try {
+      fs.writeFileSync(path.join(dir, 'DevToolsActivePort'), `${server.port}\n`);
+      const result = await refreshAutoConnectEndpoint(
+        { userDataDir: dir, port: server.port },
+        { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+      );
+      expect(result).toMatchObject({
+        wsEndpoint: `ws://localhost:${server.port}/devtools/browser/from-http`,
+        browserTargetPath: '/devtools/browser/from-http',
+      });
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it('does not use the HTTP 404 fallback for a legacy one-line file', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((_port, _req, res) => {
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    try {
+      fs.writeFileSync(path.join(dir, 'DevToolsActivePort'), `${server.port}\n`);
+      await expect(
+        refreshAutoConnectEndpoint(
+          { userDataDir: dir, port: server.port },
+          { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+        ),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'debug_endpoint_unavailable',
+      });
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it.each([
+    ['wrong port', (port: number) => `ws://127.0.0.1:${port + 1}/devtools/browser/http`],
+    ['non-loopback host', (port: number) => `ws://example.com:${port}/devtools/browser/http`],
+    ['credentials', (port: number) => `ws://user:pass@127.0.0.1:${port}/devtools/browser/http`],
+    ['non-browser path', (port: number) => `ws://127.0.0.1:${port}/devtools/page/http`],
+  ])('rejects a legacy one-line file with a %s HTTP endpoint', async (_label, endpointForPort) => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((port, _req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ webSocketDebuggerUrl: endpointForPort(port) }));
+    });
+    try {
+      fs.writeFileSync(path.join(dir, 'DevToolsActivePort'), `${server.port}\n`);
+      await expect(
+        refreshAutoConnectEndpoint(
+          { userDataDir: dir, port: server.port },
+          { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+        ),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'endpoint_mismatch',
+      });
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it('fails closed when /json/version points at another browser on the same port', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((port, _req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/other-profile`,
+      }));
+    });
+    try {
+      writeActivePortFile(dir, server.port, '/devtools/browser/selected-profile');
+      await expect(
+        refreshAutoConnectEndpoint(
+          { userDataDir: dir, port: server.port },
+          { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+        ),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'endpoint_mismatch',
+      });
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it.each([
+    ['HTTP 403', 403, 'blocked'],
+    ['HTTP 500', 500, 'failed'],
+    ['malformed 200', 200, '{"Browser":"Chrome"}'],
+  ])('does not fall back on %s', async (_label, statusCode, body) => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((_port, _req, res) => {
+      res.statusCode = statusCode as number;
+      res.end(body as string);
+    });
+    try {
+      writeActivePortFile(dir, server.port, '/devtools/browser/from-file');
+      await expect(
+        refreshAutoConnectEndpoint(
+          { userDataDir: dir, port: server.port },
+          { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+        ),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'debug_endpoint_unavailable',
+      });
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it('does not fall back when /json/version times out', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((_port, _req, res) => {
+      setTimeout(() => {
+        if (!res.writableEnded) res.end('late');
+      }, 200);
+    });
+    try {
+      writeActivePortFile(dir, server.port, '/devtools/browser/from-file');
+      await expect(
+        refreshAutoConnectEndpoint(
+          { userDataDir: dir, port: server.port },
+          { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 25 },
+        ),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'debug_endpoint_unavailable',
+      });
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it('refreshes a changed browser UUID on the same port', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((_port, _req, res) => {
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    try {
+      writeActivePortFile(dir, server.port, '/devtools/browser/uuid-one');
+      const first = await refreshAutoConnectEndpoint(
+        { userDataDir: dir, port: server.port },
+        { expectedPort: server.port, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+      );
+
+      writeActivePortFile(dir, server.port, '/devtools/browser/uuid-two');
+      const second = await refreshAutoConnectEndpoint(first, {
+        expectedPort: server.port,
+        fileTimeoutMs: 50,
+        probeTimeoutMs: 500,
+      });
+
+      expect(first.browserTargetPath).toBe('/devtools/browser/uuid-one');
+      expect(second.browserTargetPath).toBe('/devtools/browser/uuid-two');
+    } finally {
+      await server.close();
+      rm(dir);
+    }
+  });
+
+  it('requires a server restart when DevToolsActivePort changes ports', async () => {
+    const dir = makeTempDir();
+    const server = await bindDebugServer((_port, _req, res) => {
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    try {
+      writeActivePortFile(dir, server.port, '/devtools/browser/new-port');
+      await expect(
+        refreshAutoConnectEndpoint(
+          { userDataDir: dir, port: server.port - 1 },
+          { expectedPort: server.port - 1, fileTimeoutMs: 50, probeTimeoutMs: 500 },
+        ),
+      ).rejects.toMatchObject({
+        name: 'AutoConnectError',
+        errorCode: 'port_changed',
+      });
+    } finally {
+      await server.close();
+      rm(dir);
+    }
   });
 });
 
