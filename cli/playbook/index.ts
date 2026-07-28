@@ -29,6 +29,18 @@ function collectVar(value: string, previous: string[]): string[] {
   return previous;
 }
 
+function writeStdout(output: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(output, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 export function registerPlaybookCommand(program: Command): void {
   const playbook = program
     .command('playbook')
@@ -147,7 +159,7 @@ export function registerPlaybookCommand(program: Command): void {
       const result = await validatePlaybook(parsed, {
         varMap,
       });
-      process.stdout.write(formatValidationResult(result, options.json));
+      await writeStdout(formatValidationResult(result, options.json));
       process.exit(validationExitCode(result));
     } catch (err) {
       if (err instanceof VarError) {
