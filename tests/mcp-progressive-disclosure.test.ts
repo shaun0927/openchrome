@@ -82,6 +82,7 @@ describe('MCP progressive disclosure client detection', () => {
       'oc_connection_health',
       'oc_stop',
     ]));
+    expect(tools).not.toContain('tabs_activate');
   });
 
   test('capability-aware unknown clients get progressive disclosure', async () => {
@@ -104,6 +105,7 @@ describe('MCP progressive disclosure client detection', () => {
 
     expect(tools).toContain('expand_tools');
     expect(tools.length).toBeLessThanOrEqual(16);
+    expect(tools).not.toContain('tabs_activate');
   });
 
   test('unknown clients without list_changed support keep legacy all-tools behavior', async () => {
@@ -112,5 +114,6 @@ describe('MCP progressive disclosure client detection', () => {
     expect(init.result?.capabilities?.tools?.listChanged).toBe(false);
     expect(tools).not.toContain('expand_tools');
     expect(tools.length).toBeGreaterThanOrEqual(118);
+    expect(tools).toContain('tabs_activate');
   });
 });

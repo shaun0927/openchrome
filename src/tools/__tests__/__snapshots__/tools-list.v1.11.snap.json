@@ -307,6 +307,9 @@
       "name": "storage"
     },
     {
+      "name": "tabs_activate"
+    },
+    {
       "name": "tabs_close"
     },
     {

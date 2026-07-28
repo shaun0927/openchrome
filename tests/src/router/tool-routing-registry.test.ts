@@ -30,11 +30,9 @@ describe('ToolRoutingRegistry', () => {
     }
   });
 
-  it('should return chrome-only count of exactly 2', () => {
+  it('should return the exact chrome-only tool set', () => {
     const chromeOnlyTools = ToolRoutingRegistry.getChromeOnlyTools();
-    expect(chromeOnlyTools).toHaveLength(2);
-    expect(chromeOnlyTools).toContain('computer');
-    expect(chromeOnlyTools).toContain('page_pdf');
+    expect(chromeOnlyTools).toEqual(['computer', 'page_pdf', 'tabs_activate']);
   });
 
   it('should return prefer-lightpanda count of at least 31', () => {
