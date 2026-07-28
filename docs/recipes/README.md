@@ -21,6 +21,7 @@ model composes them into prose.
 | [competitive-feature-matrix.md](competitive-feature-matrix.md) | Build a structured feature-matrix table across several vendor pages. | `navigate`, `extract_data`, `read_page` |
 | [semantic-login-flow.md](semantic-login-flow.md) | Resolve semantic query refs, drive plan actions, and verify with an Outcome Contract. | `oc_query`, `fill_form`, `interact`, `oc_assert`, `oc_evidence_bundle`, `execute_plan` |
 | [safe-plan-contract.md](safe-plan-contract.md) | Run reusable compiled browser workflows with v2 allow-list validation and bounded execution evidence. | `execute_plan` |
+| [high-signal-browser-diagnostics.md](high-signal-browser-diagnostics.md) | Retrieve deterministic console problems and network failures without discarding the full capture. | `console_capture`, `network_capture_lite`, `network_capture_full` |
 
 ## How recipes are structured
 
