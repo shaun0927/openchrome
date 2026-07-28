@@ -9,6 +9,7 @@
 
 import * as http from 'node:http';
 import type { PageFetcher } from '../../src/core/crawl/runner';
+import type { FetchOnePageOptions } from '../../src/tools/crawl';
 
 interface FetchedHtml {
   title: string;
@@ -38,7 +39,7 @@ function parseHtml(html: string, baseUrl: string): FetchedHtml {
 }
 
 export interface SpyState {
-  calls: Array<{ url: string; depth: number }>;
+  calls: Array<{ url: string; depth: number; opts: FetchOnePageOptions }>;
   /** Optional hook to throw before the fetch resolves (process-death sim). */
   beforeReturn?: (url: string) => void;
   /** Optional artificial delay between fetches (ms). */
@@ -47,7 +48,7 @@ export interface SpyState {
 
 export function makeSpyFetcher(spy: SpyState): PageFetcher {
   return async (sessionId, url, depth, opts) => {
-    spy.calls.push({ url, depth });
+    spy.calls.push({ url, depth, opts: { ...opts } });
     const html = await new Promise<string>((resolve, reject) => {
       const req = http.get(url, (res) => {
         const chunks: Buffer[] = [];

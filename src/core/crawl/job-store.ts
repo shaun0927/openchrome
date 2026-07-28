@@ -27,23 +27,31 @@ import * as path from 'node:path';
 
 import { acquireLock } from '../../utils/atomic-file';
 import { normalizeUrl } from '../../utils/crawl-utils';
+import type { ContentFilterMetrics, ContentFilterType } from '../extract/content-filter';
 import { redactValue } from '../trace/redactor';
 import type { CrawlCacheMetadata, CrawlCacheMode, CrawlCacheScope } from './content-cache';
+
+export type CrawledPageTextField = 'content' | 'raw_markdown' | 'fit_markdown';
+export const MAX_CRAWL_QUERY_CHARS = 2048;
 
 /** A page recorded in the job log (mirrors the legacy `crawl` tool shape). */
 export interface CrawledPage {
   url: string;
   title: string;
   content: string;
+  raw_markdown?: string;
+  fit_markdown?: string;
+  filter?: ContentFilterMetrics;
   depth: number;
   links_found: number;
   error?: string;
   /**
-   * Present and `true` when `content` was capped at `OC_CRAWL_PAGE_BYTES`
-   * (default 256 KiB). Absent when the page fit under the cap. Bounds the
-   * on-disk growth of a single job to a predictable size.
+   * Present when a shared fetch limit or `OC_CRAWL_PAGE_BYTES` capped content.
+   * Absent when every requested representation was preserved in full.
    */
   truncated?: boolean;
+  /** Text projections affected by a shared fetch or persistence limit. */
+  truncated_fields?: CrawledPageTextField[];
   cache?: CrawlCacheMetadata;
 }
 
@@ -58,6 +66,10 @@ export interface JobConfig {
   output_format: string;
   onlyMainContent?: boolean;
   includeLinks?: boolean;
+  content_filter?: ContentFilterType;
+  query?: string;
+  return_raw?: boolean;
+  return_fit?: boolean;
   respect_robots: boolean;
   delay_ms: number;
   concurrency: number;
@@ -210,6 +222,17 @@ function scrubUrlString(value: string): string {
   return typeof out === 'string' ? out : value;
 }
 
+export function assertPersistableCrawlQuery(query: string | undefined): void {
+  if (query === undefined) return;
+  if (query.length > MAX_CRAWL_QUERY_CHARS) {
+    throw new Error(`query must be at most ${MAX_CRAWL_QUERY_CHARS} characters`);
+  }
+  const redacted = redactValue(query);
+  if (typeof redacted !== 'string' || redacted !== query) {
+    throw new Error('query contains credential-like material that cannot be persisted safely');
+  }
+}
+
 /**
  * Defence-in-depth: even though the runner now scrubs `url`/`title`/`content`
  * up front (see `runner.ts`), every event is run through the credential
@@ -218,11 +241,20 @@ function scrubUrlString(value: string): string {
  *   - secrets that slip into fields the runner doesn't explicitly handle
  *     (e.g. an error `message` that quotes a Bearer token).
  *
- * The walker preserves shape (kind, t, depth, links_found, page.depth, …) —
- * only string leaves get pattern-scrubbed.
+ * The walker preserves operational shape while omitting per-page filter.query;
+ * the job header is the single durable source for that repeated value.
  */
 function scrubEvent(event: JobEvent): JobEvent {
-  return redactValue(event) as JobEvent;
+  let persistenceEvent = event;
+  if (event.kind === 'fetched' && event.page.filter?.query !== undefined) {
+    const filter = { ...event.page.filter };
+    delete filter.query;
+    persistenceEvent = {
+      ...event,
+      page: { ...event.page, filter },
+    };
+  }
+  return redactValue(persistenceEvent) as JobEvent;
 }
 
 /**
@@ -230,6 +262,7 @@ function scrubEvent(event: JobEvent): JobEvent {
  * write never produces a half-initialised job. Returns the freshly minted ULID.
  */
 export async function createJob(config: JobConfig): Promise<string> {
+  assertPersistableCrawlQuery(config.query);
   ensureRoot();
   const jobId = generateUlid();
   const file = jobFilePath(jobId);
@@ -237,7 +270,10 @@ export async function createJob(config: JobConfig): Promise<string> {
   // basic-auth `https://user:pass@host/` or a `?token=…` in a callback URL).
   // The runner sees the original `config.url` only in memory; on disk we
   // keep the scrubbed copy.
-  const safeConfig: JobConfig = { ...config, url: scrubUrlString(config.url) };
+  const safeConfig: JobConfig = {
+    ...config,
+    url: scrubUrlString(config.url),
+  };
   ORIGINAL_START_URLS.set(jobId, config.url);
   const header: HeaderRecord = { kind: 'header', config: safeConfig, createdAt: Date.now() };
   const line = JSON.stringify(header) + '\n';
