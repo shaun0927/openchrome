@@ -299,13 +299,17 @@ export class AssertEvidenceStore {
     return redactArtifact(artifact, owner);
   }
 
-  evictSession(sessionId: string): number {
-    if (!sessionId || !fs.existsSync(this.rootDir)) return 0;
+  evictSession(sessionId: string, tenantId: string): number {
+    if (!sessionId || !tenantId || !fs.existsSync(this.rootDir)) return 0;
     this.ensureIndexInitialized();
     let removed = 0;
     const sessionDigest = hashOwnerPart('session', sessionId);
+    const tenantDigest = hashOwnerPart('tenant', tenantId);
     for (const [handle, entry] of Array.from(this.artifactIndex.entries())) {
-      if (entry.sessionSha256 !== sessionDigest) continue;
+      if (
+        entry.sessionSha256 !== sessionDigest
+        || entry.tenantSha256 !== tenantDigest
+      ) continue;
       safeUnlink(this.filePath(handle));
       this.removeIndexEntry(handle);
       removed += 1;

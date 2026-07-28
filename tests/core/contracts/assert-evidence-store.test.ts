@@ -120,7 +120,7 @@ describe('AssertEvidenceStore', () => {
     });
     expect(artifact.provenance.session_id).toBe('${SECRET:SESSION_ID}');
     expect(artifact.provenance.tenant_id).toBe('${SECRET:TENANT_ID}');
-    expect(store.evictSession('session-a')).toBe(1);
+    expect(store.evictSession('session-a', 'tenant-a')).toBe(1);
   });
 
   test.each([
@@ -144,7 +144,7 @@ describe('AssertEvidenceStore', () => {
       sessionId: 'session-a',
       tenantId: 'tenant-a',
     })).toThrow(expect.objectContaining<Partial<AssertEvidenceStoreError>>({ code: 'forbidden' }));
-    expect(second.evictSession('session-a')).toBe(0);
+    expect(second.evictSession('session-a', 'tenant-a')).toBe(0);
     expect(first.loadAuthorized(stored.evidence_handle, {
       sessionId: 'session-a',
       tenantId: 'tenant-a',
@@ -237,12 +237,13 @@ describe('AssertEvidenceStore', () => {
     expect(fs.existsSync(tempPath)).toBe(false);
   });
 
-  test('evicts only artifacts owned by the deleted session', () => {
+  test('evicts only artifacts owned by the deleted session and tenant', () => {
     const store = new AssertEvidenceStore({ rootDir });
     const owned = persist(store);
     const other = persist(store, { sessionId: 'session-b' });
+    const otherTenant = persist(store, { tenantId: 'tenant-b' });
 
-    expect(store.evictSession('session-a')).toBe(1);
+    expect(store.evictSession('session-a', 'tenant-a')).toBe(1);
     expect(() => store.loadAuthorized(owned.evidence_handle, {
       sessionId: 'session-a',
       tenantId: 'tenant-a',
@@ -251,6 +252,10 @@ describe('AssertEvidenceStore', () => {
       sessionId: 'session-b',
       tenantId: 'tenant-a',
     }).evidence_handle).toBe(other.evidence_handle);
+    expect(store.loadAuthorized(otherTenant.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-b',
+    }).evidence_handle).toBe(otherTenant.evidence_handle);
   });
 
   test('rejects artifacts whose required provenance no longer matches the result', () => {

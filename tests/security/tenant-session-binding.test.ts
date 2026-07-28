@@ -18,6 +18,10 @@ function principal(tenantId: string, scopes: Principal['scopes'] = ['read', 'wri
   return { tenantId, scopes, mode: 'api-key', keyId: `k_${tenantId.slice(0, 8)}` };
 }
 
+function jwtPrincipal(tenantId: string, scopes: Principal['scopes'] = ['read', 'write']): Principal {
+  return { tenantId, scopes, mode: 'jwt' };
+}
+
 function msg(method: string, params: Record<string, unknown>, p: Principal, id = 1): Record<PropertyKey, unknown> {
   const m: Record<PropertyKey, unknown> = { jsonrpc: '2.0', id, method, params };
   m[PRINCIPAL_SYM] = p;
@@ -85,6 +89,20 @@ describe('tenant-session binding (MCPServer)', () => {
     const body = JSON.stringify(resp);
     expect(body).toContain('owned by another tenant');
     expect(body).toContain('s-2');
+  }, 20000);
+
+  it('applies the same tenant binding to JWT principals', async () => {
+    const alice = jwtPrincipal('alice');
+    const bob = jwtPrincipal('bob');
+    await server.handleMessage(
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 'jwt-shared' } }, alice),
+    );
+
+    const resp = await server.handleMessage(
+      msg('tools/call', { name: 'noop', arguments: { sessionId: 'jwt-shared' } }, bob, 2),
+    );
+
+    expect(JSON.stringify(resp)).toContain('owned by another tenant');
   }, 20000);
 
   it('disabled / legacy principals are unaffected (no binding enforced)', async () => {

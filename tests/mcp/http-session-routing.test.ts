@@ -83,9 +83,9 @@ describe('HTTP MCP session routing', () => {
   test('deletes the implicit browser session when DELETE /mcp closes its transport session', async () => {
     const sessionManager = createMockSessionManager();
     const server = new MCPServer(sessionManager as never);
-    let deleteHandler: ((sessionId: string) => void) | undefined;
+    let deleteHandler: ((sessionId: string, tenantId?: string) => void) | undefined;
     const transport: MCPTransport & {
-      onSessionDelete: (handler: (sessionId: string) => void) => void;
+      onSessionDelete: (handler: (sessionId: string, tenantId?: string) => void) => void;
     } = {
       onMessage: () => undefined,
       send: () => undefined,
@@ -95,7 +95,7 @@ describe('HTTP MCP session routing', () => {
     };
     server.wireRateLimiterCleanup(transport);
 
-    deleteHandler?.('transport-a');
+    deleteHandler?.('transport-a', 'default');
     await Promise.resolve();
 
     expect(sessionManager.deleteSession).toHaveBeenCalledWith('mcp-transport-a');
@@ -116,9 +116,9 @@ describe('HTTP MCP session routing', () => {
         trace: { status: 'unavailable', reason: 'test' },
       });
       const server = new MCPServer(createMockSessionManager() as never);
-      let deleteHandler: ((sessionId: string) => void) | undefined;
+      let deleteHandler: ((sessionId: string, tenantId?: string) => void) | undefined;
       const transport: MCPTransport & {
-        onSessionDelete: (handler: (sessionId: string) => void) => void;
+        onSessionDelete: (handler: (sessionId: string, tenantId?: string) => void) => void;
       } = {
         onMessage: () => undefined,
         send: () => undefined,
@@ -128,7 +128,7 @@ describe('HTTP MCP session routing', () => {
       };
       server.wireRateLimiterCleanup(transport);
 
-      deleteHandler?.('transport-a');
+      deleteHandler?.('transport-a', 'default');
       await Promise.resolve();
 
       expect(() => store.loadAuthorized(stored.evidence_handle, {

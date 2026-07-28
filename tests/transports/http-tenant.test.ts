@@ -200,7 +200,11 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
   });
 
   it('DELETE /mcp clears the tenant binding', async () => {
+    const deleted: Array<{ sessionId: string; tenantId?: string }> = [];
     await boot();
+    transport.onSessionDelete((sessionId: string, tenantId?: string) => {
+      deleted.push({ sessionId, tenantId });
+    });
     const first = await mcpPost(
       { 'X-Tenant-Id': 'acme' },
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
@@ -211,6 +215,7 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     const del = await request('/mcp', 'DELETE', { 'Mcp-Session-Id': mcpSession });
     expect(del.status).toBe(200);
     expect(transport.getTenantForMcpSession(mcpSession)).toBeUndefined();
+    expect(deleted).toEqual([{ sessionId: mcpSession, tenantId: 'anonymous' }]);
   });
 
   it('advertises X-Tenant-Id in CORS Allow-Headers', async () => {
