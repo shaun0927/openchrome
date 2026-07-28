@@ -46,6 +46,7 @@ import {
 } from '../core/contracts/assert-evidence-store';
 import { currentRequestContext } from '../observability/request-id';
 import { DEFAULT_TENANT_ID } from '../tenant/types';
+import { resolveEffectiveTenantId } from '../auth/tenant-principal';
 
 type Verdict = 'pass' | 'fail' | 'inconclusive';
 type OcAssertErrorCode =
@@ -514,8 +515,10 @@ function createHandler(
   output.trace_status = 'unavailable';
   output.trace_unavailable_reason = traceUnavailableReason;
 
-  const tenantId = context?.principal?.tenantId
-    ?? currentRequestContext()?.tenantId
+  const tenantId = resolveEffectiveTenantId(
+    context?.principal,
+    currentRequestContext()?.tenantId,
+  )
     ?? DEFAULT_TENANT_ID;
   const provenance = evidenceArg?.provenance;
   const capturedAt = normalizeCapturedAt(provenance?.captured_at);

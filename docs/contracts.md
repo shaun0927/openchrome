@@ -290,6 +290,9 @@ The retention contract is:
   session, and tenant before returning artifact contents; a handle disclosed to
   an independent stdio/daemon process is rejected even when both processes use
   the default logical session and tenant IDs;
+- API-key/JWT requests derive evidence ownership from the authenticated tenant;
+  disabled/legacy HTTP requests use the effective `X-Tenant-Id` request tenant
+  instead of the synthetic `anonymous`/`legacy` principal;
 - HTTP `DELETE /mcp`, `sessions/delete`, and SessionManager deletion events
   delete artifacts only for the ended session/tenant owner; real browser
   sessions emit the same tenant-scoped deletion event during TTL cleanup and
