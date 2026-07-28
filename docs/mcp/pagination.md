@@ -49,25 +49,22 @@ Cursors are base64url-encoded JSON of the form
 
 ## Stale cursor handling
 
-A cursor referring to a stale view (the underlying set changed between
-calls) MUST be reported as a JSON-RPC error, not a `MCPResult.isError`:
+A cursor referring to a stale view (the underlying set changed between calls)
+is reported as a structured tool error:
 
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": <id>,
-  "error": {
-    "code": -32003,
-    "message": "stale_cursor",
-    "data": { "code": "stale_cursor", "retry": "restart_from_no_cursor" }
+  "isError": true,
+  "structuredContent": {
+    "error": { "code": "stale_cursor", "retry": "restart_from_no_cursor" }
   }
 }
 ```
 
 Rationale: stale-cursor errors are mechanical — clients should auto-retry
-from the start, not surface a tool error to the orchestrating LLM. Using
-the JSON-RPC channel makes the error machine-readable and keeps the
-LLM-visible response free of recoverable failures.
+from the start rather than silently resetting to offset zero. The structured
+error keeps the retry instruction machine-readable; transport-level promotion
+to a JSON-RPC error may be added later without changing cursor encoding.
 
 ## Helper API
 
@@ -85,8 +82,11 @@ const { items, hasMore, nextCursor, total, staleCursor } = paginate(allMatches, 
 });
 
 if (staleCursor) {
-  // Return JSON-RPC -32003 — see "Stale cursor handling" above.
-  throw new StaleCursorError();
+  return {
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify({ error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } }) }],
+    structuredContent: { error: { code: 'stale_cursor', retry: 'restart_from_no_cursor' } },
+  };
 }
 
 return {
@@ -101,8 +101,8 @@ return {
 | -------------- | -------------- | ----------------- | ------ |
 | `paginate` helper | `items` | caller supplied | ✅ shipped |
 | `query_dom` | `elements` / `results` | 50 | ✅ multiple CSS/XPath results accept `cursor` and return `nextCursor` / `hasMore` / `totalCount` |
-| `console_capture` `get` | `entries` / `logs` | 200 when cursoring; no-cursor output remains legacy-compatible | ✅ cursor support in PR #1234 |
-| `network_capture_lite/full` `getLogs` | `requests` / `entries` | 100 | ✅ cursor support in PR #1235 |
+| `console_capture` `get` | `entries` / `logs` | 200 for filtered views and legacy cursor calls | ✅ cursor support plus opt-in high-signal views |
+| `network_capture_lite/full` `getLogs` | `requests` / `entries` | 100 | ✅ cursor support plus opt-in failure view |
 | `read_page` markdown | `text` | 5,000 chars after the legacy first chunk | ✅ markdown cursor support in this PR |
 | `crawl` | `pages` | 25 pages | ✅ cursor support in this PR |
 
@@ -127,12 +127,37 @@ paged console entries in `structuredContent.entries`; the text payload uses the
 legacy `logs` field and includes `hasMore` / `nextCursor` only for cursor calls.
 Calls without `cursor` preserve the v1.11 text response baseline.
 
+For an opt-in high-signal read, set `view: "problems"` (`error`, `warning`,
+`warn`, and `assert`) or `view: "errors"` (`error` and `assert`). The tool
+classifies the complete retained snapshot, applies the existing consecutive-log
+deduplication, reverses the result to newest-first order, and only then applies
+`limit` and cursor pagination. Filtered calls always return `hasMore`, optional
+`nextCursor`, and the selected `view` in both response channels. Their default
+page size is 200, and `limit: 0` returns every match.
+
+Filtered console cursors are scoped to the selected view and ordering version.
+Reusing a cursor under another view returns `stale_cursor`, even when the two
+views happen to contain the same entries. Omitted `view` and `view: "all"`
+continue through the exact legacy response path.
+
 ### `network_capture_lite/full`
 
 For `action: "getLogs"`, pass a previous `nextCursor` as `cursor`. Cursoring
 returns paged requests in `structuredContent.requests`; the text payload keeps
 the legacy `entries` field and includes `hasMore` / `nextCursor` only for cursor
 calls. `limit: 0` still means "all retained entries" for compatibility.
+
+Set `view: "failures"` to retrieve only HTTP responses with `status >= 400`
+and non-canceled request failures. The view excludes normal canceled requests,
+unfinished requests, and response-body `fetch_failed` markers because those are
+not request failures by themselves. Filtering runs across the complete retained
+newest-first set before the 100-entry default page or caller-supplied `limit` is
+applied. `limit: 0` returns all matches.
+
+Filtered network calls always expose `hasMore`, optional `nextCursor`,
+`matchedEntries`, and the selected `view`. Their cursors are scoped to the
+failure view and ordering version. Omitted `view` and `view: "all"` preserve the
+legacy response path and cursor hashes.
 
 ### `read_page` markdown
 
