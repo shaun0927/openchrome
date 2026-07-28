@@ -14,6 +14,7 @@ function runValidate(args: string[], cwd = process.cwd()) {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, OPENCHROME_UPDATE_CHECK: '0' },
+    maxBuffer: 16 * 1024 * 1024,
   });
 }
 
@@ -56,6 +57,33 @@ describeBuiltCli('oc playbook validate built CLI', () => {
     } finally {
       fs.chmodSync(readOnlyCwd, 0o755);
       fs.rmSync(readOnlyCwd, { recursive: true, force: true });
+    }
+  });
+
+  test('flushes large JSON validation reports before exiting', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-validate-large-'));
+    const filePath = path.join(tempDir, 'large-invalid.json');
+    try {
+      fs.writeFileSync(filePath, JSON.stringify({
+        name: 'large invalid report',
+        steps: Array.from({ length: 2_000 }, () => ({
+          wait_for: { condition: 'navigation' },
+        })),
+      }));
+
+      const result = runValidate([filePath, '--json']);
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout.length).toBeGreaterThan(64 * 1024);
+      const report = JSON.parse(result.stdout) as {
+        diagnostics: unknown[];
+        summary: { total: number; ok: boolean };
+      };
+      expect(report.summary).toMatchObject({ total: 2_000, ok: false });
+      expect(report.diagnostics.length).toBeGreaterThan(2_000);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
