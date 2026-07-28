@@ -37,6 +37,7 @@ import { getIdleState } from '../utils/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
 import { applyRegisteredPreloads } from './preload-injector';
 import { TargetPageIndex } from './target-page-index';
+import { safeTitle } from '../utils/safe-title';
 
 // Cookie type shared across methods
 type CookieEntry = {
@@ -819,20 +820,30 @@ export class CDPClient {
       // Inbound CDP event — reset idle window (issue #649 Part A).
       getIdleState().notifyActive();
       if (target.type() !== 'page') return;
+      const targetId = getTargetId(target);
+      const { getSessionManager } = await import('../session-manager');
+      const sessionManager = getSessionManager();
+      const trackedPopup = targetId ? sessionManager.hasTargetCreationRecord(targetId) : false;
       const url = target.url();
       if (!isInternalBrowserUrl(url)) {
         try {
           assertDomainAllowed(url);
         } catch (err) {
-          const targetId = getTargetId(target);
           if (targetId) {
+            if (trackedPopup) sessionManager.markPopupTargetBlocked(targetId);
             await this.closePage(targetId).catch(() => {});
           }
           console.error(`[CDPClient] Blocked changed target by domain policy (URL: ${url}): ${err instanceof Error ? err.message : String(err)}`);
           return;
         }
       }
-      const targetId = getTargetId(target);
+      if (trackedPopup && !isInternalBrowserUrl(url)) {
+        sessionManager.markPopupTargetReady(targetId, { url });
+        const page = await target.page().catch(() => null);
+        if (page) {
+          sessionManager.markPopupTargetReady(targetId, { title: await safeTitle(page) });
+        }
+      }
       if (this.targetIdIndex.has(targetId)) {
         console.error(`[CDPClient] Target changed: ${targetId}`);
       }
@@ -853,61 +864,94 @@ export class CDPClient {
       // Only track 'page' type targets (skip service_worker, browser, etc.)
       if (target.type() !== 'page') return;
 
+      const targetId = getTargetId(target);
+      if (!targetId) return;
+
       const url = target.url();
-      // New Chrome pages are commonly born as about:blank before createPage()
-      // or popup scripts navigate them. Do not close these provisional targets;
-      // targetchanged enforces the allowlist once they reach a real URL.
-      if (isInternalBrowserUrl(url)) return;
-      try {
-        assertDomainAllowed(url);
-      } catch (err) {
-        const targetId = getTargetId(target);
-        if (targetId) {
+      const provisional = url === '' || url === 'about:blank';
+      if (isInternalBrowserUrl(url) && !provisional) return;
+
+      if (!provisional) {
+        try {
+          assertDomainAllowed(url);
+        } catch (err) {
+          const blockedOpener = target.opener();
+          const blockedOpenerTargetId = blockedOpener ? getTargetId(blockedOpener) : '';
+          if (blockedOpenerTargetId) {
+            const { getSessionManager } = await import('../session-manager');
+            const sessionManager = getSessionManager();
+            if (sessionManager.getTargetOwner(blockedOpenerTargetId)) {
+              await sessionManager.registerPopupTarget(targetId, blockedOpenerTargetId, { state: 'blocked' });
+            }
+          }
           await this.closePage(targetId).catch(() => {});
+          console.error(`[CDPClient] Blocked popup target by domain policy (URL: ${url}): ${err instanceof Error ? err.message : String(err)}`);
+          return;
         }
-        console.error(`[CDPClient] Blocked popup target by domain policy (URL: ${url}): ${err instanceof Error ? err.message : String(err)}`);
-        return;
       }
-      // Filter out Chrome internal pages and blank pages
-      // Check if this target was opened by a tracked page (popup/window.open)
+
       const opener = target.opener();
       if (!opener) return; // Not a popup - skip to avoid ghost tabs
-
-      // Get the opener's target ID to check if it's managed
       const openerTargetId = getTargetId(opener);
       if (!openerTargetId) return;
 
       // Check if opener is managed by SessionManager (dynamic import to avoid circular dep)
       const { getSessionManager } = await import('../session-manager');
       const sessionManager = getSessionManager();
-      const ownerInfo = sessionManager.getTargetOwner(openerTargetId);
-      if (!ownerInfo) return; // Opener not tracked, skip
+      if (!sessionManager.getTargetOwner(openerTargetId)) return;
 
-      // This is a popup from a managed page - track it
-      const targetId = getTargetId(target);
-      if (!targetId) return;
-
-      // Register in the same worker as opener and inherit the opener's
-      // named-context mapping (#848 Codex P1) so popups count toward the
-      // same context's tab total instead of slipping into the default.
-      await sessionManager.registerExternalTarget(targetId, ownerInfo.sessionId, ownerInfo.workerId, {
-        inheritContextFromTargetId: openerTargetId,
+      // Register in the same worker as opener and inherit its named context.
+      // Managed blank targets remain provisional until targetchanged observes
+      // an allowed non-internal URL.
+      const registered = await sessionManager.registerPopupTarget(targetId, openerTargetId, {
+        state: provisional ? 'provisional' : 'ready',
+        ...(!provisional && { url }),
       });
+      if (!registered) {
+        await this.closePage(targetId).catch(() => {});
+        return;
+      }
 
       // target.page() can race with target close — keep the inner try/catch
       // as a localized best-effort, but any *other* failure in this handler
       // now surfaces via safeAsyncListener → openchrome_listener_errors_total.
+      let popupPage: Page | null = null;
       try {
-        const page = await target.page();
-        if (page) {
-          this.targetIdIndex.set(targetId, page);
-          this.touchTargetActivity(targetId);
-          this.configurePageDefenses(page);
-          await applyRegisteredPreloads(page);
-          console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${url})`);
+        popupPage = await target.page();
+        if (!popupPage) {
+          sessionManager.onTargetClosed(targetId);
+          return;
         }
+
+        const page = popupPage;
+        this.targetIdIndex.set(targetId, page);
+        this.touchTargetActivity(targetId);
+        this.configurePageDefenses(page);
+        await applyRegisteredPreloads(page);
+
+        const currentUrl = page.url();
+        if (!isInternalBrowserUrl(currentUrl)) {
+          try {
+            assertDomainAllowed(currentUrl);
+            sessionManager.markPopupTargetReady(targetId, { url: currentUrl });
+            sessionManager.markPopupTargetReady(targetId, { title: await safeTitle(page) });
+          } catch (err) {
+            sessionManager.markPopupTargetBlocked(targetId);
+            await this.closePage(targetId).catch(() => {});
+            console.error(`[CDPClient] Blocked popup target after registration (URL: ${currentUrl}): ${err instanceof Error ? err.message : String(err)}`);
+            return;
+          }
+        }
+        console.error(`[CDPClient] Indexed popup target ${targetId} (URL: ${currentUrl})`);
       } catch {
-        // Target may have already closed — expected race, not an error.
+        // A close race keeps ready-then-closed evidence. A live-page
+        // initialization failure is fail-closed and must not confirm success.
+        if (popupPage && !popupPage.isClosed()) {
+          sessionManager.markPopupTargetBlocked(targetId);
+        }
+        await this.closePage(targetId).catch(() => {});
+        this.targetIdIndex.delete(targetId);
+        sessionManager.evictTarget(targetId, 'listener_error');
       }
     }, (_err, args) => {
       const target = args[0];
@@ -915,7 +959,10 @@ export class CDPClient {
       if (!targetId) return;
       import('../session-manager')
         .then(({ getSessionManager }) => {
-          getSessionManager().evictTarget(targetId, 'listener_error');
+          const sessionManager = getSessionManager();
+          sessionManager.markPopupTargetBlocked(targetId);
+          sessionManager.evictTarget(targetId, 'listener_error');
+          return this.closePage(targetId).catch(() => {});
         })
         .catch(() => {
           // best-effort cleanup only
