@@ -422,12 +422,68 @@ export interface MCPServerOptions {
 }
 
 const STDIO_TOOL_EXPOSURE_SESSION = 'stdio';
+const DEFAULT_TOOL_SEARCH_LIMIT = 5;
+const MAX_TOOL_SEARCH_LIMIT = 8;
+const MAX_SELECTED_TOOL_COUNT = 12;
+const MAX_SELECTED_SCHEMA_BYTES = 16_000;
 
 interface ToolExposureState {
   exposedTier: ToolTier;
   selectedToolNames: Set<string>;
+  selectedSchemaBytes: number;
   clientSupportsListChanged: boolean;
   clientDetected: boolean;
+}
+
+function normalizeToolSearchText(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function toolSchemaSearchText(schema: unknown): string {
+  if (!schema || typeof schema !== 'object') return '';
+  const parts: string[] = [];
+  const visit = (value: unknown, propertyName?: string): void => {
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    if (propertyName) parts.push(propertyName);
+    if (typeof record.type === 'string') parts.push(record.type);
+    if (typeof record.description === 'string') parts.push(record.description);
+    if (Array.isArray(record.enum)) parts.push(...record.enum.map(String));
+    if (record.properties && typeof record.properties === 'object') {
+      for (const [name, child] of Object.entries(record.properties as Record<string, unknown>)) {
+        visit(child, name);
+      }
+    }
+  };
+  visit(schema);
+  return parts.join(' ');
+}
+
+function scoreToolSearch(query: string, definition: MCPToolDefinition): number {
+  const phrase = normalizeToolSearchText(query);
+  const tokens = Array.from(new Set(phrase.split(' ').filter(Boolean)));
+  if (tokens.length === 0) return 0;
+  const name = normalizeToolSearchText(definition.name);
+  const description = normalizeToolSearchText(definition.description);
+  const capability = normalizeToolSearchText(definition.capability ?? 'core');
+  const parameters = normalizeToolSearchText(toolSchemaSearchText(definition.inputSchema));
+  let score = 0;
+  if (name.includes(phrase)) score += 14;
+  if (description.includes(phrase)) score += 8;
+  if (capability.includes(phrase)) score += 6;
+  if (parameters.includes(phrase)) score += 5;
+  for (const token of tokens) {
+    if (name.split(' ').includes(token)) score += 9;
+    else if (name.includes(token)) score += 6;
+    if (description.includes(token)) score += 3;
+    if (capability.includes(token)) score += 2;
+    if (parameters.includes(token)) score += 2;
+  }
+  return score;
 }
 
 
@@ -676,6 +732,7 @@ export class MCPServer {
       state = {
         exposedTier: this.options.initialToolTier ?? 1,
         selectedToolNames: new Set(),
+        selectedSchemaBytes: 0,
         clientSupportsListChanged: true,
         clientDetected: false,
       };
@@ -1462,7 +1519,7 @@ export class MCPServer {
       if (hiddenCount > 0) {
         tools.push({
           name: 'expand_tools',
-          description: `Show ${hiddenCount} additional specialist tools (network, emulation, PDF, orchestration, etc). Call with tier=2 for specialist tools, tier=3 for all tools including orchestration.`,
+          description: `Discover or show ${hiddenCount} additional specialist tools. Use query to expose only intent-matched tools, tier=2 for all specialist tools, or tier=3 for everything including orchestration.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -1471,8 +1528,17 @@ export class MCPServer {
                 enum: Array.from({ length: 3 - exposureState.exposedTier }, (_, i) => String(exposureState.exposedTier + 1 + i)),
                 description: 'Tool tier to expand to. 2=specialist, 3=all including orchestration',
               },
+              query: {
+                type: 'string',
+                description: 'Intent or capability to find, such as PDF export, network capture, or workflow status',
+              },
+              limit: {
+                type: 'integer',
+                minimum: 1,
+                maximum: MAX_TOOL_SEARCH_LIMIT,
+                description: `Maximum matching schemas to expose. Defaults to ${DEFAULT_TOOL_SEARCH_LIMIT}.`,
+              },
             },
-            required: ['tier'],
           },
           annotations: TOOL_ANNOTATIONS.expand_tools,
         });
@@ -1767,6 +1833,78 @@ export class MCPServer {
             isError: true,
           };
         }
+      }
+
+      if (toolArgs.query !== undefined) {
+        if (toolArgs.tier !== undefined) {
+          return {
+            content: [{ type: 'text', text: 'Error: provide either query or tier, not both.' }],
+            isError: true,
+          };
+        }
+        const query = typeof toolArgs.query === 'string' ? toolArgs.query.trim() : '';
+        if (query.length === 0 || query.length > 256) {
+          return {
+            content: [{ type: 'text', text: 'Error: query must be a non-empty string of at most 256 characters.' }],
+            isError: true,
+          };
+        }
+        const requestedLimit = typeof toolArgs.limit === 'number'
+          ? toolArgs.limit
+          : Number(toolArgs.limit ?? DEFAULT_TOOL_SEARCH_LIMIT);
+        const limit = Math.max(
+          1,
+          Math.min(MAX_TOOL_SEARCH_LIMIT, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : DEFAULT_TOOL_SEARCH_LIMIT),
+        );
+        const ranked = Array.from(this.tools.values())
+          .filter((registry) => {
+            const definition = registry.definition;
+            return getToolTier(definition.name) > exposureState.exposedTier
+              && !exposureState.selectedToolNames.has(definition.name)
+              && this.isCapabilityAllowed(definition.capability)
+              && (!principal || isAllowed(definition.name, principal.scopes));
+          })
+          .map((registry) => ({
+            definition: registry.definition,
+            score: scoreToolSearch(query, registry.definition),
+          }))
+          .filter((candidate) => candidate.score > 0)
+          .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return a.definition.name < b.definition.name ? -1 : a.definition.name > b.definition.name ? 1 : 0;
+          });
+
+        const selected: MCPToolDefinition[] = [];
+        for (const candidate of ranked) {
+          if (selected.length >= limit || exposureState.selectedToolNames.size >= MAX_SELECTED_TOOL_COUNT) break;
+          const schemaBytes = Buffer.byteLength(JSON.stringify(candidate.definition), 'utf8');
+          if (exposureState.selectedSchemaBytes + schemaBytes > MAX_SELECTED_SCHEMA_BYTES) continue;
+          exposureState.selectedToolNames.add(candidate.definition.name);
+          exposureState.selectedSchemaBytes += schemaBytes;
+          selected.push(candidate.definition);
+        }
+        if (selected.length > 0 && exposureState.clientSupportsListChanged) {
+          this.sendToolListChanged(this.currentToolExposureSessionId());
+        }
+        const searchResult = {
+          query,
+          matchedCount: ranked.length,
+          exposedCount: selected.length,
+          omittedCount: ranked.length - selected.length,
+          selectedToolCount: exposureState.selectedToolNames.size,
+          selectedSchemaBytes: exposureState.selectedSchemaBytes,
+          limits: {
+            resultCount: MAX_TOOL_SEARCH_LIMIT,
+            selectedToolCount: MAX_SELECTED_TOOL_COUNT,
+            selectedSchemaBytes: MAX_SELECTED_SCHEMA_BYTES,
+          },
+          tools: selected,
+        };
+        const expandResult: MCPResult = {
+          content: [{ type: 'text', text: JSON.stringify(searchResult) }],
+        };
+        this.recordToolOutputObservability(toolName, expandResult);
+        return expandResult;
       }
 
       const oldTier = exposureState.exposedTier;
