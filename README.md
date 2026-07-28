@@ -61,6 +61,11 @@ openchrome setup --client codex        # Codex CLI (auto-elect topology)
 npx openchrome-mcp setup --client opencode   # OpenCode (auto-elect topology)
 ```
 
+Certified releases may also include optional self-contained executables for
+macOS, Windows, and Linux. They require Chrome but not a separate Node.js/npm
+runtime. Pin the release and verify its SHA-256 before use:
+[`docs/getting-started/standalone-cli.md`](docs/getting-started/standalone-cli.md).
+
 Restart your MCP client. That's it — Chrome auto-launches on the first browser/CDP-requiring tool call. Protocol startup, tool discovery, and browser-free diagnostics stay launch-free.
 An already-open Chrome is reused only when it exposes the configured remote-debugging port; a normal Chrome without that CDP endpoint remains separate from the managed browser.
 

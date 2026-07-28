@@ -80,7 +80,10 @@
     "bench:api-key-readiness": "ts-node tests/benchmark/benchmark-readiness.ts --api-key-only",
     "lint:skill-tools": "node scripts/lint-skill-tool-refs.mjs skills/openchrome/SKILL.md",
     "verify:auto-elect-smoke": "node scripts/verify/auto-elect-two-client-smoke.mjs",
-    "verify:parallel-auto-elect": "node scripts/verify/parallel-auto-elect.mjs --clients=3"
+    "verify:parallel-auto-elect": "node scripts/verify/parallel-auto-elect.mjs --clients=3",
+    "build:standalone": "node scripts/build-standalone-cli.cjs",
+    "verify:standalone": "node scripts/verify-standalone-cli.cjs",
+    "verify:standalone:browser": "node scripts/verify-standalone-browser-smoke.cjs"
   },
   "keywords": [
     "openchrome",

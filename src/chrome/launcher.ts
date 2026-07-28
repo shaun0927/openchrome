@@ -562,6 +562,14 @@ export class ChromeLauncher {
       console.error('[ChromeLauncher] Running in headless mode (no visible window)');
     }
 
+    // A fresh Chrome for Testing profile can block on macOS Keychain setup in
+    // non-interactive CI, leaving the process alive without opening its CDP port.
+    // Keep this test-only credential store away from user-owned real profiles.
+    if (process.platform === 'darwin' && process.env.CI && headless && profileType !== 'real') {
+      args.push('--use-mock-keychain');
+      console.error('[ChromeLauncher] macOS CI detected: using mock keychain for headless managed Chrome');
+    }
+
     // CI/Docker environments require --no-sandbox (Chrome won't start otherwise)
     if (process.env.CI || process.env.DOCKER) {
       args.push('--no-sandbox', '--disable-setuid-sandbox');

@@ -54,6 +54,7 @@ import { registerPlaybookCommand } from './playbook/index';
 import { registerReplayCommand } from './replay';
 import { registerRunCommand } from './run';
 import { getClaudeCliCommand, getClaudeExecFileOptions, shouldUseClaudeCliShell } from './claude-cli';
+import { getBuildInfo } from './build-info';
 
 const program = new Command();
 
@@ -130,19 +131,19 @@ async function loadVaultStore() {
 }
 
 // Package info - from dist/cli/ go up two levels to root
-const packageJsonPath = path.join(__dirname, '..', '..', 'package.json');
-let version = '0.1.0';
-try {
-  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-  version = packageJson.version;
-} catch {
-  // Use default version
-}
+const version = getBuildInfo().version;
 
 program
   .name('openchrome')
   .description('MCP server for parallel Claude Code browser sessions via CDP')
   .version(version);
+
+program
+  .command('build-info')
+  .description('Print embedded OpenChrome build provenance as JSON')
+  .action(() => {
+    process.stdout.write(`${JSON.stringify(getBuildInfo(), null, 2)}\n`);
+  });
 
 
 const vault = program

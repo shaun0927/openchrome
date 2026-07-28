@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
+import { resolveServeInvocation } from '../serve-invocation';
 
 const MANIFEST_TIMEOUT_MS = 30_000;
 const MANIFEST_MAX_BUFFER = 8 * 1024 * 1024;
@@ -54,10 +55,11 @@ function stderrTail(stderr: string): string {
 export class RegisteredToolManifestClient implements ToolDefinitionSource {
   async listToolDefinitions(): Promise<McpToolDefinition[]> {
     const serveEntry = path.join(__dirname, '..', '..', 'index.js');
+    const invocation = resolveServeInvocation(serveEntry, ['--introspect-tools-list']);
     return new Promise<McpToolDefinition[]>((resolve, reject) => {
       execFile(
-        process.execPath,
-        [serveEntry, 'serve', '--introspect-tools-list'],
+        invocation.command,
+        invocation.args,
         {
           encoding: 'utf8',
           env: {

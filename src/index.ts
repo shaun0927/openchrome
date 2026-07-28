@@ -151,10 +151,15 @@ program
     if (options.introspectToolsList) {
       const { MCPServer } = await import('./mcp-server');
       const { registerAllTools } = await import('./tools');
-      const server = new MCPServer(undefined, { initialToolTier: 3, manifestOnly: true });
+      if (options.minimal && options.allTools) {
+        console.error('[openchrome] --minimal and --all-tools are mutually exclusive');
+        process.exitCode = 2;
+        return;
+      }
+      const initialToolTier: ToolTier = options.minimal ? 1 : 3;
+      const server = new MCPServer(undefined, { initialToolTier, manifestOnly: true });
       registerAllTools(server, { runtimeSideEffects: false });
-      const manifest = server.getToolManifest();
-      const output = JSON.stringify(manifest.tools) + '\n';
+      const output = JSON.stringify(server.getVisibleToolDefinitions()) + '\n';
       for (let offset = 0; offset < output.length; offset += 16_384) {
         const chunk = output.slice(offset, offset + 16_384);
         if (!process.stdout.write(chunk)) {

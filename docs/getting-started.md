@@ -4,7 +4,7 @@ OpenChrome is an MCP server that enables multiple Claude Code sessions to contro
 
 ## Prerequisites
 
-- Node.js >= 18
+- Node.js >= 18 for the npm installation path
 - Google Chrome (stable or Chromium)
 
 ## Installation
@@ -12,6 +12,11 @@ OpenChrome is an MCP server that enables multiple Claude Code sessions to contro
 ```bash
 npm install -g openchrome-mcp
 ```
+
+Certified releases may instead provide a self-contained executable that does
+not require Node.js. Pin the release asset and verify its SHA-256 as documented
+in [Standalone OpenChrome CLI](getting-started/standalone-cli.md). Chrome is not
+included in the executable.
 
 ## Quick Start
 
