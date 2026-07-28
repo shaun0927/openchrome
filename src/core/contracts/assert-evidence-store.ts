@@ -12,6 +12,7 @@ export const DEFAULT_ASSERT_EVIDENCE_TTL_MS = 30 * 60 * 1000;
 export const DEFAULT_ASSERT_EVIDENCE_SWEEP_INTERVAL_MS = 60 * 1000;
 
 const ASSERT_EVIDENCE_STORAGE_VERSION = 1;
+const PROCESS_ASSERT_EVIDENCE_INSTANCE_ID = randomUUID();
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const HANDLE_RE = new RegExp(`^ev_${UUID_SOURCE}$`, 'i');
@@ -86,11 +87,14 @@ export interface AssertEvidenceStoreOptions {
   ttlMs?: number;
   now?: () => number;
   sweepIntervalMs?: number;
+  /** Stable for one OpenChrome process; separates otherwise-identical logical sessions. */
+  instanceId?: string;
 }
 
 interface StoredAssertEvidenceRecord {
   storage_version: typeof ASSERT_EVIDENCE_STORAGE_VERSION;
   owner: {
+    instance_sha256: string;
     session_sha256: string;
     tenant_sha256: string;
   };
@@ -125,6 +129,7 @@ export class AssertEvidenceStore {
   private readonly ttlMs: number;
   private readonly now: () => number;
   private readonly sweepIntervalMs?: number;
+  private readonly instanceId: string;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: AssertEvidenceStoreOptions = {}) {
@@ -132,6 +137,7 @@ export class AssertEvidenceStore {
     this.ttlMs = normalizeTtl(options.ttlMs);
     this.now = options.now ?? Date.now;
     this.sweepIntervalMs = normalizeSweepInterval(options.sweepIntervalMs);
+    this.instanceId = normalizeInstanceId(options.instanceId);
   }
 
   persist(input: AssertEvidencePersistInput): AssertEvidenceHandle {
@@ -168,7 +174,7 @@ export class AssertEvidenceStore {
     });
     const record: StoredAssertEvidenceRecord = {
       storage_version: ASSERT_EVIDENCE_STORAGE_VERSION,
-      owner: ownerDigest(input.sessionId, input.tenantId),
+      owner: ownerDigest(this.instanceId, input.sessionId, input.tenantId),
       artifact,
     };
 
@@ -196,12 +202,16 @@ export class AssertEvidenceStore {
   loadAuthorized(handle: string, owner: AssertEvidenceOwner): AssertEvidenceArtifact {
     this.ensureSweepStarted();
     const record = this.readEnvelope(handle);
-    const expectedOwner = ownerDigest(owner.sessionId, owner.tenantId);
+    const expectedOwner = ownerDigest(this.instanceId, owner.sessionId, owner.tenantId);
     if (
-      record.owner.session_sha256 !== expectedOwner.session_sha256
+      record.owner.instance_sha256 !== expectedOwner.instance_sha256
+      || record.owner.session_sha256 !== expectedOwner.session_sha256
       || record.owner.tenant_sha256 !== expectedOwner.tenant_sha256
     ) {
-      throw new AssertEvidenceStoreError('forbidden', 'Evidence is owned by another session or tenant');
+      throw new AssertEvidenceStoreError(
+        'forbidden',
+        'Evidence is owned by another OpenChrome instance, session, or tenant',
+      );
     }
 
     if (!isArtifact(record.artifact, handle)) {
@@ -219,16 +229,21 @@ export class AssertEvidenceStore {
   evictSession(sessionId: string): number {
     if (!sessionId || !fs.existsSync(this.rootDir)) return 0;
     let removed = 0;
+    const instanceDigest = hashOwnerPart('instance', this.instanceId);
     const sessionDigest = hashOwnerPart('session', sessionId);
     for (const file of this.artifactFiles()) {
       const filePath = path.join(this.rootDir, file);
       try {
         const record = this.readEnvelopeFile(filePath);
-        if (record.owner.session_sha256 !== sessionDigest) continue;
+        if (
+          record.owner.instance_sha256 !== instanceDigest
+          || record.owner.session_sha256 !== sessionDigest
+        ) continue;
         safeUnlink(filePath);
         removed += 1;
       } catch {
-        safeUnlink(filePath);
+        // Session cleanup must not delete an artifact whose instance ownership
+        // cannot be proven. The periodic cleanup path removes corrupt files.
       }
     }
     return removed;
@@ -351,20 +366,30 @@ function normalizeSweepInterval(value: number | undefined): number | undefined {
   return Math.floor(value);
 }
 
+function normalizeInstanceId(value: string | undefined): string {
+  if (typeof value === 'string' && value.trim().length > 0) return value;
+  return PROCESS_ASSERT_EVIDENCE_INSTANCE_ID;
+}
+
 function assertSafeHandle(handle: string): void {
   if (!HANDLE_RE.test(handle)) {
     throw new AssertEvidenceStoreError('malformed_handle', 'Evidence handle is malformed');
   }
 }
 
-function ownerDigest(sessionId: string, tenantId: string): StoredAssertEvidenceRecord['owner'] {
+function ownerDigest(
+  instanceId: string,
+  sessionId: string,
+  tenantId: string,
+): StoredAssertEvidenceRecord['owner'] {
   return {
+    instance_sha256: hashOwnerPart('instance', instanceId),
     session_sha256: hashOwnerPart('session', sessionId),
     tenant_sha256: hashOwnerPart('tenant', tenantId),
   };
 }
 
-function hashOwnerPart(kind: 'session' | 'tenant', value: string): string {
+function hashOwnerPart(kind: 'instance' | 'session' | 'tenant', value: string): string {
   return createHash('sha256')
     .update(`openchrome/assert-evidence/v1/${kind}\0`, 'utf8')
     .update(value, 'utf8')
@@ -411,7 +436,11 @@ function isStoredEnvelope(value: unknown): value is StoredAssertEvidenceEnvelope
   const record = value as Partial<StoredAssertEvidenceEnvelope>;
   if (record.storage_version !== ASSERT_EVIDENCE_STORAGE_VERSION) return false;
   if (!record.owner || typeof record.owner !== 'object' || Array.isArray(record.owner)) return false;
-  if (!isSha256(record.owner.session_sha256) || !isSha256(record.owner.tenant_sha256)) return false;
+  if (
+    !isSha256(record.owner.instance_sha256)
+    || !isSha256(record.owner.session_sha256)
+    || !isSha256(record.owner.tenant_sha256)
+  ) return false;
   return Object.prototype.hasOwnProperty.call(record, 'artifact');
 }
 

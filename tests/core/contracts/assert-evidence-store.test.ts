@@ -129,6 +129,22 @@ describe('AssertEvidenceStore', () => {
     );
   });
 
+  test('isolates identical session and tenant IDs across OpenChrome instances', () => {
+    const first = new AssertEvidenceStore({ rootDir, instanceId: 'instance-a' });
+    const second = new AssertEvidenceStore({ rootDir, instanceId: 'instance-b' });
+    const stored = persist(first);
+
+    expect(() => second.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    })).toThrow(expect.objectContaining<Partial<AssertEvidenceStoreError>>({ code: 'forbidden' }));
+    expect(second.evictSession('session-a')).toBe(0);
+    expect(first.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    }).evidence_handle).toBe(stored.evidence_handle);
+  });
+
   test('expires stale handles and deletes their files', () => {
     let now = 1_000;
     const store = new AssertEvidenceStore({
