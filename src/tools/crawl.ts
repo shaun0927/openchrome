@@ -499,11 +499,21 @@ export interface FetchOnePageOptions {
   onlyMainContent?: boolean;
   /** When true, include outgoing links in the result for BFS expansion. */
   includeLinks?: boolean;
+  /** Deterministic markdown-clean content projection. */
+  contentFilter?: ContentFilterType;
+  /** Query terms used by the BM25 content filter. */
+  query?: string;
+  /** Include the pre-filter markdown projection. */
+  returnRaw?: boolean;
+  /** Include/use the filtered markdown projection. */
+  returnFit?: boolean;
 }
 
 /** Single-page crawl result plus transient links for BFS/job queue expansion. */
 export interface FetchOnePageResult extends CrawledPage {
   _links?: string[];
+  truncated?: boolean;
+  truncated_fields?: Array<'content' | 'raw_markdown' | 'fit_markdown'>;
 }
 
 /**
@@ -520,6 +530,10 @@ export async function fetchOnePage(
   const cleanOpts = {
     onlyMainContent: opts.onlyMainContent !== false,
     includeLinks: opts.includeLinks !== false,
+    contentFilter: opts.contentFilter,
+    query: opts.query,
+    returnRaw: opts.returnRaw,
+    returnFit: opts.returnFit,
   };
   return fetchPage(sessionId, url, depth, opts.outputFormat, cleanOpts, context) as Promise<FetchOnePageResult>;
 }

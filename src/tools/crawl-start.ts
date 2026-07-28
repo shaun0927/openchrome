@@ -8,8 +8,14 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { createJob, type JobConfig } from '../core/crawl/job-store';
+import {
+  assertPersistableCrawlQuery,
+  createJob,
+  MAX_CRAWL_QUERY_CHARS,
+  type JobConfig,
+} from '../core/crawl/job-store';
 import { parseCrawlCacheMode, parseCrawlCacheScope } from '../core/crawl/content-cache';
+import type { ContentFilterType } from '../core/extract/content-filter';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
 
 const definition: MCPToolDefinition = {
@@ -17,8 +23,8 @@ const definition: MCPToolDefinition = {
   description:
     'Initialise a resumable crawl job. Returns { jobId, status: "pending" } ' +
     'immediately — performs NO network I/O. Drive progress with crawl_status' +
-    '({ jobId, advance: N }) which fetches up to N pages per call. Same args ' +
-    'as the legacy crawl tool. Use crawl_cancel to stop.',
+    '({ jobId, advance: N }) which fetches up to N pages per call. Supports ' +
+    'the crawl subset listed in this schema; use crawl_cancel to stop.',
   annotations: TOOL_ANNOTATIONS.crawl_start,
   inputSchema: {
     type: 'object',
@@ -32,6 +38,14 @@ const definition: MCPToolDefinition = {
       output_format: { type: 'string', enum: ['markdown', 'text', 'structured', 'markdown-clean'], description: 'Content format. Default: markdown' },
       onlyMainContent: { type: 'boolean', description: 'For markdown-clean, remove nav/footer/ads before conversion. Default: true' },
       includeLinks: { type: 'boolean', description: 'For markdown-clean, include link destinations in markdown. Default: true' },
+      content_filter: { type: 'string', enum: ['none', 'prune', 'bm25'], description: 'markdown-clean only: deterministic fit_markdown filter. Default: none.' },
+      query: {
+        type: 'string',
+        maxLength: MAX_CRAWL_QUERY_CHARS,
+        description: 'markdown-clean only: query terms required by content_filter="bm25".',
+      },
+      return_raw: { type: 'boolean', description: 'markdown-clean only: include raw_markdown in each returned page. Default: false.' },
+      return_fit: { type: 'boolean', description: 'markdown-clean only: include fit_markdown and use it as content. Defaults to true when filtering.' },
       respect_robots: { type: 'boolean', description: 'Whether to obey robots.txt. Default: true' },
       delay_ms: { type: 'number', description: 'Delay between page fetches (ms). Default: 1000' },
       concurrency: { type: 'number', description: 'Max parallel fetches. Default: 3' },
@@ -59,6 +73,30 @@ const handler: ToolHandler = async (
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return errorResult('url must use http or https scheme');
+  }
+
+  const outputFormat = (args.output_format as string) || 'markdown';
+  const usesMarkdownProjection = outputFormat === 'markdown-clean';
+  let contentFilter: ContentFilterType | undefined;
+  let query: string | undefined;
+  if (usesMarkdownProjection) {
+    try {
+      contentFilter = parseResumableContentFilter(args.content_filter);
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+    if (args.query !== undefined && typeof args.query !== 'string') {
+      return errorResult('query must be a string');
+    }
+    query = args.query as string | undefined;
+    try {
+      assertPersistableCrawlQuery(query);
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+    if (contentFilter === 'bm25' && !query?.trim()) {
+      return errorResult('content_filter="bm25" requires a non-empty query');
+    }
   }
 
   // Clamp `max_pages` to [1, 10_000]. The legacy crawl tool accepted up to
@@ -91,9 +129,19 @@ const handler: ToolHandler = async (
     scope: (args.scope as string) || `${parsed.origin}/**`,
     include_patterns: args.include_patterns as string[] | undefined,
     exclude_patterns: args.exclude_patterns as string[] | undefined,
-    output_format: (args.output_format as string) || 'markdown',
+    output_format: outputFormat,
     onlyMainContent: args.onlyMainContent !== false,
     includeLinks: args.includeLinks !== false,
+    content_filter: contentFilter,
+    query,
+    return_raw:
+      usesMarkdownProjection && typeof args.return_raw === 'boolean'
+        ? args.return_raw
+        : undefined,
+    return_fit:
+      usesMarkdownProjection && typeof args.return_fit === 'boolean'
+        ? args.return_fit
+        : undefined,
     respect_robots: args.respect_robots !== false,
     delay_ms: args.delay_ms != null ? Number(args.delay_ms) : 1000,
     concurrency:
@@ -127,6 +175,12 @@ const handler: ToolHandler = async (
     ...payload,
   };
 };
+
+function parseResumableContentFilter(value: unknown): ContentFilterType | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'none' || value === 'prune' || value === 'bm25') return value;
+  throw new Error('content_filter must be one of none, prune, bm25');
+}
 
 function errorResult(message: string): MCPResult {
   return {

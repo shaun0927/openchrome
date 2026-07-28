@@ -11,6 +11,8 @@
  * the next `advanceJob` call resumes from.
  */
 
+import { TextDecoder } from 'node:util';
+import { MAX_OUTPUT_CHARS } from '../../config/defaults';
 import type { ToolContext } from '../../types/mcp';
 import { hasBudget } from '../../types/mcp';
 import {
@@ -40,6 +42,7 @@ import {
   takeOriginalQueuedUrl,
   withJobLock,
   type CrawledPage,
+  type CrawledPageTextField,
   type JobState,
   type QueueEntry,
 } from './job-store';
@@ -77,15 +80,21 @@ function pageContentByteCap(): number {
 /**
  * Truncate a UTF-8 string to at most `maxBytes` bytes. Returns the original
  * string when already small enough plus a `truncated` flag. We cut on the
- * byte boundary then re-decode with `fatal: false` so the trailing partial
- * code-point (if any) is replaced with U+FFFD rather than producing invalid
- * UTF-8 in the JSONL line.
+ * byte boundary and back off until the slice ends on a complete code point.
  */
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
   const buf = Buffer.from(value, 'utf8');
   if (buf.length <= maxBytes) return { value, truncated: false };
-  const slice = buf.subarray(0, maxBytes);
-  return { value: slice.toString('utf8'), truncated: true };
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let end = maxBytes;
+  while (end > 0) {
+    try {
+      return { value: decoder.decode(buf.subarray(0, end)), truncated: true };
+    } catch {
+      end--;
+    }
+  }
+  return { value: '', truncated: true };
 }
 
 /**
@@ -96,6 +105,122 @@ function truncateUtf8(value: string, maxBytes: number): { value: string; truncat
 function scrubString(value: string): string {
   const out = redactValue(value);
   return typeof out === 'string' ? out : value;
+}
+
+const SHARED_OUTPUT_TRUNCATION_SUFFIX = '...[truncated]';
+
+function wasSharedOutputTruncated(value: string): boolean {
+  return value.length === MAX_OUTPUT_CHARS + SHARED_OUTPUT_TRUNCATION_SUFFIX.length &&
+    value.endsWith(SHARED_OUTPUT_TRUNCATION_SUFFIX);
+}
+
+function filterWithoutQuery(
+  filter: FetchOnePageResult['filter'],
+): FetchOnePageResult['filter'] {
+  if (!filter) return undefined;
+  const copy = { ...filter };
+  delete copy.query;
+  return copy;
+}
+
+interface PageProjectionOptions {
+  returnRaw: boolean;
+  projectFit: boolean;
+  includeFilter: boolean;
+}
+
+interface PreparedPage {
+  page: CrawledPage;
+  cachePage: FetchOnePageResult;
+  links: string[];
+}
+
+function preparePageForPersistence(
+  result: FetchOnePageResult,
+  byteCap: number,
+  options: PageProjectionOptions,
+): PreparedPage {
+  const safeResult = redactValue({
+    url: result.url,
+    title: result.title,
+    content: result.content,
+    raw_markdown: options.returnRaw ? result.raw_markdown : undefined,
+    filter: options.includeFilter ? filterWithoutQuery(result.filter) : undefined,
+    error: result.error,
+    _links: result._links ?? [],
+  }) as {
+    url: string;
+    title: string;
+    content: string;
+    raw_markdown?: string;
+    filter?: FetchOnePageResult['filter'];
+    error?: string;
+    _links: string[];
+  };
+
+  const distinctRaw =
+    options.returnRaw &&
+    safeResult.raw_markdown !== undefined &&
+    safeResult.raw_markdown !== safeResult.content
+      ? safeResult.raw_markdown
+      : undefined;
+  const contentBytes = Buffer.byteLength(safeResult.content, 'utf8');
+  const rawBytes = distinctRaw === undefined ? 0 : Buffer.byteLength(distinctRaw, 'utf8');
+
+  let contentBudget = byteCap;
+  let rawBudget = 0;
+  if (distinctRaw !== undefined) {
+    contentBudget = Math.min(contentBytes, Math.ceil(byteCap / 2));
+    rawBudget = Math.min(rawBytes, Math.floor(byteCap / 2));
+    let remaining = byteCap - contentBudget - rawBudget;
+    const contentRemainder = Math.min(Math.max(0, contentBytes - contentBudget), remaining);
+    contentBudget += contentRemainder;
+    remaining -= contentRemainder;
+    rawBudget += Math.min(Math.max(0, rawBytes - rawBudget), remaining);
+  }
+
+  const boundedContent = truncateUtf8(safeResult.content, contentBudget);
+  const boundedRaw = distinctRaw === undefined
+    ? undefined
+    : truncateUtf8(distinctRaw, rawBudget);
+  const truncatedFields = new Set<CrawledPageTextField>();
+  for (const field of result.truncated_fields ?? []) {
+    if (
+      field === 'content' ||
+      (field === 'raw_markdown' && options.returnRaw) ||
+      (field === 'fit_markdown' && options.projectFit)
+    ) {
+      truncatedFields.add(field);
+    }
+  }
+  const contentWasTruncated =
+    result.truncated === true ||
+    wasSharedOutputTruncated(result.content) ||
+    boundedContent.truncated;
+  if (contentWasTruncated) {
+    truncatedFields.add('content');
+    if (options.projectFit) truncatedFields.add('fit_markdown');
+    if (options.returnRaw && distinctRaw === undefined) truncatedFields.add('raw_markdown');
+  }
+  if (boundedRaw?.truncated) truncatedFields.add('raw_markdown');
+
+  const page: CrawledPage = {
+    url: safeResult.url,
+    title: safeResult.title,
+    content: boundedContent.value,
+    ...(boundedRaw !== undefined ? { raw_markdown: boundedRaw.value } : {}),
+    ...(safeResult.filter !== undefined ? { filter: safeResult.filter } : {}),
+    depth: result.depth,
+    links_found: result.links_found,
+    ...(contentWasTruncated ? { truncated: true } : {}),
+    ...(truncatedFields.size > 0 ? { truncated_fields: Array.from(truncatedFields) } : {}),
+    ...(safeResult.error !== undefined ? { error: safeResult.error } : {}),
+  };
+  const cachePage: FetchOnePageResult = {
+    ...page,
+    ...(safeResult._links.length > 0 ? { _links: safeResult._links } : {}),
+  };
+  return { page, cachePage, links: safeResult._links };
 }
 
 /**
@@ -238,10 +363,24 @@ export async function advanceJob(
   const outputFormat = state.config.output_format;
   const onlyMainContent = state.config.onlyMainContent;
   const includeLinks = state.config.includeLinks;
+  const usesMarkdownProjection = outputFormat === 'markdown-clean';
+  const contentFilter = usesMarkdownProjection
+    ? (state.config.content_filter ?? 'none')
+    : 'none';
+  const query = usesMarkdownProjection
+    ? state.config.query
+    : undefined;
+  const returnRaw = usesMarkdownProjection && state.config.return_raw === true;
+  const returnFit = usesMarkdownProjection &&
+    (state.config.return_fit ?? contentFilter !== 'none');
+  const projectFit = contentFilter !== 'none' && returnFit;
+  const includeFilter = usesMarkdownProjection &&
+    (contentFilter !== 'none' || returnRaw || returnFit);
   const delayMs = state.config.delay_ms;
   const respectRobots = state.config.respect_robots;
   const cacheMode = state.config.cache_mode ?? 'disabled';
   const cacheScope = state.config.cache_scope ?? 'public';
+  const rawMarkdownRequiresSessionScope = returnRaw && cacheScope === 'public';
   const cacheTtlMs = state.config.cache_ttl_ms;
   const crawlCache = new CrawlContentCache<FetchOnePageResult>();
   const robotsCache = new Map<string, RobotsRules | null>();
@@ -316,29 +455,52 @@ export async function advanceJob(
         engine: 'crawl_job',
         cacheScope,
         sessionFingerprint: sessionId,
-        dimensions: { onlyMainContent, includeLinks, scope, includePatterns, excludePatterns },
+        dimensions: {
+          onlyMainContent,
+          includeLinks,
+          scope,
+          includePatterns,
+          excludePatterns,
+          contentFilter,
+          query,
+          returnRaw,
+          returnFit,
+          pageByteCap: byteCap,
+        },
       });
 
       let result: FetchOnePageResult;
-      const cached = canReadCache(cacheMode) ? crawlCache.read(cacheKey, cacheTtlMs) : null;
+      let cacheMeta: CrawledPage['cache'];
+      const cached = canReadCache(cacheMode) && !rawMarkdownRequiresSessionScope
+        ? crawlCache.read(cacheKey, cacheTtlMs)
+        : null;
       if (cached && !cached.stale) {
         result = {
           ...cached.entry.page,
           depth: next.depth,
-          cache: crawlCache.metadata('hit', {
-            key: cacheKey,
-            scope: cacheScope,
-            hit: true,
-            createdAt: cached.entry.createdAt,
-            content_length: cached.entry.contentLength,
-          }),
+          _links: cached.entry.page._links ?? cached.entry.links,
         };
+        cacheMeta = crawlCache.metadata('hit', {
+          key: cacheKey,
+          scope: cacheScope,
+          hit: true,
+          createdAt: cached.entry.createdAt,
+          content_length: cached.entry.contentLength,
+        });
       } else try {
         result = await fetcher(
           sessionId,
           fetchUrl,
           next.depth,
-          { outputFormat, onlyMainContent, includeLinks },
+          {
+            outputFormat,
+            onlyMainContent,
+            includeLinks,
+            contentFilter,
+            query,
+            returnRaw,
+            returnFit,
+          },
           context,
         );
       } catch (err) {
@@ -368,11 +530,32 @@ export async function advanceJob(
       }
 
       const links = result._links ?? [];
+      const prepared = preparePageForPersistence(result, byteCap, {
+        returnRaw,
+        projectFit,
+        includeFilter,
+      });
       if (cacheMode !== 'disabled' && !(cached && !cached.stale)) {
         const cacheStatus = cacheMode === 'write_only' ? 'write_only' : cacheMode === 'bypass' ? 'bypass' : 'miss';
-        let cacheMeta = crawlCache.metadata(cacheStatus, { key: cacheKey, scope: cacheScope, hit: false, write: 'disabled' });
-        if (canWriteCache(cacheMode) && !result.error) {
-          const written = crawlCache.write({ key: cacheKey, sourceUrl: fetchUrl, finalUrl: result.url, page: result, links, cacheScope });
+        const writeBlockedReason = rawMarkdownRequiresSessionScope
+          ? 'raw-markdown-requires-session-scope'
+          : undefined;
+        cacheMeta = crawlCache.metadata(cacheStatus, {
+          key: cacheKey,
+          scope: cacheScope,
+          hit: false,
+          write: writeBlockedReason && canWriteCache(cacheMode) ? 'skipped' : 'disabled',
+          ...(writeBlockedReason ? { write_skipped_reason: writeBlockedReason } : {}),
+        });
+        if (canWriteCache(cacheMode) && !writeBlockedReason && !result.error) {
+          const written = crawlCache.write({
+            key: cacheKey,
+            sourceUrl: scrubString(fetchUrl),
+            finalUrl: prepared.page.url,
+            page: prepared.cachePage,
+            links: prepared.links,
+            cacheScope,
+          });
           cacheMeta = crawlCache.metadata(cacheStatus, {
             key: cacheKey,
             scope: cacheScope,
@@ -380,33 +563,17 @@ export async function advanceJob(
             write: written.stored ? 'stored' : 'skipped',
             write_skipped_reason: written.reason,
             createdAt: written.entry?.createdAt,
-            content_length: result.content.length,
+            content_length: prepared.page.content.length,
           });
         }
-        result.cache = cacheMeta;
       }
-      // Redact url/title/content before they hit disk: page bodies routinely
-      // contain Bearer tokens, JWTs, AWS keys, etc. The redactor also runs at
-      // the job-store boundary (defence-in-depth), but doing it here keeps
-      // the in-memory event tree consistent and lets the truncation step
-      // operate on the scrubbed text.
-      const safeUrl = scrubString(result.url);
-      const safeTitle = scrubString(result.title);
-      const scrubbedContent = scrubString(result.content);
-      const { value: cappedContent, truncated } = truncateUtf8(scrubbedContent, byteCap);
       const page: CrawledPage = {
-        url: safeUrl,
-        title: safeTitle,
-        content: cappedContent,
-        depth: result.depth,
-        links_found: result.links_found,
-        ...(truncated ? { truncated: true } : {}),
-        ...(result.error !== undefined ? { error: scrubString(result.error) } : {}),
-        ...(result.cache ? { cache: result.cache } : {}),
+        ...prepared.page,
+        ...(cacheMeta ? { cache: cacheMeta } : {}),
       };
       appendEventUnlocked(jobId, {
         kind: 'fetched',
-        url: safeUrl,
+        url: page.url,
         depth: next.depth,
         page,
         t: Date.now(),

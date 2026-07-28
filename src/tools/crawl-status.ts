@@ -10,7 +10,14 @@
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { assertValidJobId, loadJob, isExpired, type JobState } from '../core/crawl/job-store';
+import {
+  assertValidJobId,
+  loadJob,
+  isExpired,
+  type CrawledPage,
+  type JobConfig,
+  type JobState,
+} from '../core/crawl/job-store';
 import { advanceJob, defaultAdvance, type AdvanceOptions } from '../core/crawl/runner';
 import { emitCrawlTrace } from '../core/crawl/trace-emit';
 
@@ -56,6 +63,41 @@ interface StatusResponse {
   pagesOmitted?: number;
   startedAt?: number;
   finishedAt?: number;
+}
+
+function projectPage(page: CrawledPage, config: JobConfig): CrawledPage {
+  const {
+    raw_markdown: storedRaw,
+    fit_markdown: storedFit,
+    filter: storedFilter,
+    truncated_fields: storedTruncatedFields,
+    ...base
+  } = page;
+  const usesMarkdownProjection = config.output_format === 'markdown-clean';
+  const visibleTruncatedFields = usesMarkdownProjection
+    ? storedTruncatedFields
+    : storedTruncatedFields?.filter((field) => field === 'content');
+  const returnRaw = usesMarkdownProjection && config.return_raw === true;
+  const returnFit =
+    usesMarkdownProjection &&
+    (config.content_filter ?? 'none') !== 'none' &&
+    (config.return_fit ?? true);
+  const normalizedQuery = config.query?.trim();
+  const visibleFilter = usesMarkdownProjection && storedFilter !== undefined
+    ? {
+        ...storedFilter,
+        ...(normalizedQuery ? { query: normalizedQuery } : {}),
+      }
+    : undefined;
+  return {
+    ...base,
+    ...(visibleTruncatedFields && visibleTruncatedFields.length > 0
+      ? { truncated_fields: visibleTruncatedFields }
+      : {}),
+    ...(visibleFilter ? { filter: visibleFilter } : {}),
+    ...(returnRaw ? { raw_markdown: storedRaw ?? page.content } : {}),
+    ...(returnFit ? { fit_markdown: storedFit ?? page.content } : {}),
+  };
 }
 
 let runnerOptionsOverride: AdvanceOptions | undefined;
@@ -140,11 +182,12 @@ const handler: ToolHandler = async (
   };
 
   if (includePages) {
+    const visiblePages = state.pages.length > max
+      ? state.pages.slice(0, max)
+      : state.pages;
+    response.pages = visiblePages.map((page) => projectPage(page, state.config));
     if (state.pages.length > max) {
-      response.pages = state.pages.slice(0, max);
       response.pagesOmitted = state.pages.length - max;
-    } else {
-      response.pages = state.pages;
     }
   }
 
