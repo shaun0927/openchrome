@@ -1,26 +1,54 @@
-name: E2E Tests
+name: E2E Nightly Functional
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # Nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full commit SHA to test; defaults to the selected ref
+        required: false
+        type: string
 
 jobs:
-  e2e-nightly:
+  functional:
+    name: functional-${{ matrix.suite }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [stdio, http]
     env:
-      TIME_SCALE: '1'
-      HEAP_DELTA_LIMIT_MB: '50'
       CI: 'true'
-    timeout-minutes: 90
+      DEBUG: '1'
+      HEAP_DELTA_LIMIT_MB: '50'
+      OPENCHROME_E2E_SERVER_ARGS: '--server-mode'
+      TIME_SCALE: '0.167'
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
+
+      - name: Verify exact commit
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.commit_sha }}
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ -n "$EXPECTED_SHA" && "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "Expected $EXPECTED_SHA but checked out $actual_sha" >&2
+            exit 1
+          fi
+          echo "commit_sha=$actual_sha" >> "$GITHUB_OUTPUT"
+          echo "### Nightly functional (${{ matrix.suite }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: \`$actual_sha\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Node.js 20
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
-          cache: 'npm'
+          cache: npm
 
       - name: Install Chrome
         uses: browser-actions/setup-chrome@latest
@@ -33,16 +61,31 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run E2E tests (full duration)
-        run: npm run test:e2e
-        env:
-          DEBUG: '1'
+      - name: Capture environment
+        run: |
+          mkdir -p "artifacts/e2e/nightly-${{ matrix.suite }}"
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "node=$(node --version)"
+            echo "npm=$(npm --version)"
+            google-chrome --version || google-chrome-stable --version || true
+          } > "artifacts/e2e/nightly-${{ matrix.suite }}/environment.txt"
 
-      - name: Upload E2E results
+      - name: Run nightly functional suite
+        run: |
+          set -o pipefail
+          npm run "test:e2e:functional:${{ matrix.suite }}" -- \
+            --json \
+            --outputFile "artifacts/e2e/nightly-${{ matrix.suite }}/jest-results.json" \
+            2>&1 | tee "artifacts/e2e/nightly-${{ matrix.suite }}/jest.log"
+
+      - name: Upload nightly evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results-nightly
+          name: e2e-nightly-${{ matrix.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            .e2e-state.json
+            artifacts/e2e/nightly-${{ matrix.suite }}/
+            endurance-report-*.json
+          if-no-files-found: warn
           retention-days: 30

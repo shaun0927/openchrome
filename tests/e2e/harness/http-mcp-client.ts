@@ -7,28 +7,44 @@ import { spawn, ChildProcess } from 'child_process';
 import * as http from 'http';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { MCPResponse, MCPToolResult } from './mcp-client';
+import { hasChildExited, terminateChild } from './child-process';
+
+const STARTUP_TIMEOUT_MS = 30_000;
+const SHUTDOWN_REQUEST_TIMEOUT_MS = 5_000;
+const STDERR_CAPTURE_LIMIT = 4_096;
 
 export class HttpMCPClient {
   private serverProcess: ChildProcess | null = null;
   private httpPort: number;
   private metricsPort: number;
+  private cdpPort: number;
+  private userDataDir: string;
   private baseUrl: string;
   private requestId = 0;
   private sessionId: string | null = null;
   private defaultTimeoutMs: number;
   private extraEnv: Record<string, string>;
   private extraArgs: string[];
+  private activeRequests = new Set<http.ClientRequest>();
+  private terminalError: Error | null = null;
 
   constructor(opts?: {
     httpPort?: number;
     metricsPort?: number;
+    cdpPort?: number;
+    userDataDir?: string;
     env?: Record<string, string>;
     args?: string[];
     timeoutMs?: number;
   }) {
-    this.httpPort = opts?.httpPort ?? 3200 + Math.floor(Math.random() * 100);
-    this.metricsPort = opts?.metricsPort ?? 9200 + Math.floor(Math.random() * 100);
+    const slot = Math.floor(Math.random() * 1_000);
+    this.httpPort = opts?.httpPort ?? 30_000 + slot;
+    this.metricsPort = opts?.metricsPort ?? 32_000 + slot;
+    this.cdpPort = opts?.cdpPort ?? 34_000 + slot;
+    this.userDataDir = opts?.userDataDir
+      ?? path.join(os.tmpdir(), `openchrome-e2e-http-${process.pid}-${this.httpPort}`);
     this.baseUrl = `http://127.0.0.1:${this.httpPort}`;
     this.defaultTimeoutMs = opts?.timeoutMs ?? 30_000;
     this.extraEnv = opts?.env ?? {};
@@ -46,37 +62,87 @@ export class HttpMCPClient {
     }
 
     return new Promise<void>((resolve, reject) => {
-      this.serverProcess = spawn(
+      const child = spawn(
         'node',
         [
           serverPath,
           'serve',
           '--http', String(this.httpPort),
-          '--auto-launch',
+          '--http-host', '127.0.0.1',
           '--server-mode',
+          '--port', String(this.cdpPort),
+          '--user-data-dir', this.userDataDir,
           ...this.extraArgs,
         ],
         {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: {
             ...process.env,
+            OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP: '1',
             OPENCHROME_HEALTH_PORT: String(this.metricsPort),
             ...this.extraEnv,
           },
         },
       );
+      this.serverProcess = child;
+      this.terminalError = null;
 
       let ready = false;
       let stderrBuf = '';
+      let startupSettled = false;
+      let startupTimer: NodeJS.Timeout | null = null;
 
-      this.serverProcess.stderr?.on('data', (data: Buffer) => {
+      const clearStartupTimer = () => {
+        if (startupTimer) {
+          clearTimeout(startupTimer);
+          startupTimer = null;
+        }
+      };
+
+      const settleStartup = (error?: Error) => {
+        clearStartupTimer();
+        if (startupSettled) return;
+        startupSettled = true;
+        if (!error) {
+          resolve();
+          return;
+        }
+
+        this.terminalError = error;
+        this.rejectActiveRequests(error);
+        void terminateChild(child)
+          .catch((cleanupError: unknown) => {
+            const detail = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+            error.message = `${error.message}. Cleanup failed: ${detail}`;
+          })
+          .finally(() => {
+            if (this.serverProcess === child) this.serverProcess = null;
+            this.sessionId = null;
+            reject(error);
+          });
+      };
+
+      const lifecycleError = (message: string) => {
+        const stderr = stderrBuf.trim();
+        return new Error(stderr ? `${message}. stderr: ${stderr}` : message);
+      };
+
+      const handleTermination = (error: Error) => {
+        this.terminalError = error;
+        if (this.serverProcess === child) this.serverProcess = null;
+        this.sessionId = null;
+        this.rejectActiveRequests(error);
+        settleStartup(error);
+      };
+
+      child.stderr?.on('data', (data: Buffer) => {
         const msg = data.toString();
-        stderrBuf += msg;
+        stderrBuf = (stderrBuf + msg).slice(-STDERR_CAPTURE_LIMIT);
         if (process.env.DEBUG) process.stderr.write(`[http-mcp-client:${this.httpPort}] ${msg}`);
         // Wait specifically for HTTPTransport to be listening on our port.
         // "[MCPServer] Ready" appears BEFORE the HTTP port is bound, so
-        // we must wait for "[HTTPTransport] Listening on port XXXX".
-        if (!ready && stderrBuf.includes(`Listening on port ${this.httpPort}`)) {
+        // match the transport's canonical "Listening on host:port" log.
+        if (!ready && stderrBuf.includes(`[HTTPTransport] Listening on 127.0.0.1:${this.httpPort}`)) {
           ready = true;
           // Send initialize over HTTP
           this.send('initialize', {
@@ -87,27 +153,28 @@ export class HttpMCPClient {
             .then((initResp) => {
               // Capture session ID from response header (stored in send())
               if (initResp.error) {
-                reject(new Error(`Initialize failed: ${initResp.error.message}`));
+                settleStartup(new Error(`Initialize failed: ${initResp.error.message}`));
               } else {
-                resolve();
+                settleStartup();
               }
             })
-            .catch(reject);
+            .catch((error: unknown) => settleStartup(error instanceof Error ? error : new Error(String(error))));
         }
       });
 
-      this.serverProcess.on('error', (err) => {
-        if (!ready) reject(err);
+      child.on('error', (err) => {
+        handleTermination(lifecycleError(`Server process error: ${err.message}`));
       });
 
-      this.serverProcess.on('exit', (code) => {
-        if (!ready) reject(new Error(`Server exited with code ${code} before ready. stderr: ${stderrBuf.slice(-500)}`));
+      child.on('exit', (code, signal) => {
+        const detail = code !== null ? `code ${code}` : `signal ${signal ?? 'unknown'}`;
+        handleTermination(lifecycleError(`Server exited with ${detail}${ready ? '' : ' before ready'}`));
       });
 
-      const timeout = setTimeout(() => {
-        if (!ready) reject(new Error(`Server startup timeout (30s). stderr: ${stderrBuf.slice(-500)}`));
-      }, 30_000);
-      timeout.unref();
+      startupTimer = setTimeout(() => {
+        settleStartup(lifecycleError(`Server startup timeout (${STARTUP_TIMEOUT_MS}ms)`));
+      }, STARTUP_TIMEOUT_MS);
+      startupTimer.unref();
     });
   }
 
@@ -115,42 +182,56 @@ export class HttpMCPClient {
    * Stop server and cleanup.
    */
   async stop(): Promise<void> {
-    if (!this.serverProcess) return;
+    const child = this.serverProcess;
+    if (!child) {
+      this.rejectActiveRequests(new Error('HTTP client shutdown'));
+      return;
+    }
 
     // Try graceful stop
+    if (!hasChildExited(child)) {
+      try {
+        await this.callTool('oc_stop', {}, SHUTDOWN_REQUEST_TIMEOUT_MS).catch(() => { /* ignore */ });
+      } catch { /* ignore */ }
+    }
+
     try {
-      await this.callTool('oc_stop', {}).catch(() => { /* ignore */ });
-    } catch { /* ignore */ }
-
-    this.serverProcess.kill('SIGTERM');
-
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.serverProcess?.kill('SIGKILL');
-        resolve();
-      }, 5000);
-      timer.unref();
-      this.serverProcess?.on('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-
-    this.serverProcess = null;
-    this.sessionId = null;
+      if (this.serverProcess === child && !hasChildExited(child)) {
+        await terminateChild(child);
+      }
+    } finally {
+      if (this.serverProcess === child) this.serverProcess = null;
+      this.sessionId = null;
+      this.rejectActiveRequests(new Error('HTTP client shutdown'));
+    }
   }
 
   /**
    * Send MCP JSON-RPC request via HTTP POST to /mcp.
    */
   async send(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<MCPResponse> {
+    if (!this.serverProcess || hasChildExited(this.serverProcess)) {
+      throw this.terminalError ?? new Error('HTTP MCP server is not running');
+    }
     const id = ++this.requestId;
     const timeout = timeoutMs ?? this.defaultTimeoutMs;
     const body = JSON.stringify({ jsonrpc: '2.0', id, method, params });
 
     return new Promise<MCPResponse>((resolve, reject) => {
+      let settled = false;
+      let req: http.ClientRequest | null = null;
+      const settle = (error?: Error, response?: MCPResponse) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (req) this.activeRequests.delete(req);
+        if (error) reject(error);
+        else resolve(response!);
+      };
       const timer = setTimeout(() => {
-        reject(new Error(`HTTP request timeout: ${method} (${timeout}ms)`));
+        const error = new Error(`HTTP request timeout: ${method} (${timeout}ms)`);
+        req?.destroy(error);
+        settle(error);
       }, timeout);
       timer.unref();
 
@@ -162,7 +243,7 @@ export class HttpMCPClient {
         headers['Mcp-Session-Id'] = this.sessionId;
       }
 
-      const req = http.request(
+      req = http.request(
         {
           hostname: '127.0.0.1',
           port: this.httpPort,
@@ -174,7 +255,6 @@ export class HttpMCPClient {
           const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => chunks.push(chunk));
           res.on('end', () => {
-            clearTimeout(timer);
             // Capture session ID from response
             const sid = res.headers['mcp-session-id'];
             if (sid && typeof sid === 'string') {
@@ -182,25 +262,24 @@ export class HttpMCPClient {
             }
 
             if (res.statusCode === 202) {
-              // Notification accepted — synthesize a response
-              resolve({ jsonrpc: '2.0', id, result: {} } as MCPResponse);
+              settle(new Error(`Unexpected HTTP 202 for JSON-RPC request: ${method}`));
               return;
             }
 
             const responseBody = Buffer.concat(chunks).toString('utf-8');
             try {
               const parsed = JSON.parse(responseBody) as MCPResponse;
-              resolve(parsed);
+              settle(undefined, parsed);
             } catch (err) {
-              reject(new Error(`Failed to parse response for ${method}: ${responseBody.slice(0, 200)}`));
+              settle(new Error(`Failed to parse response for ${method}: ${responseBody.slice(0, 200)}`));
             }
           });
         },
       );
+      this.activeRequests.add(req);
 
       req.on('error', (err) => {
-        clearTimeout(timer);
-        reject(new Error(`HTTP request error for ${method}: ${err.message}`));
+        settle(new Error(`HTTP request error for ${method}: ${err.message}`));
       });
 
       req.write(body);
@@ -293,7 +372,9 @@ export class HttpMCPClient {
    * Whether the server process is still running.
    */
   get isRunning(): boolean {
-    return this.serverProcess !== null && !this.serverProcess.killed;
+    return this.serverProcess !== null
+      && !this.serverProcess.killed
+      && !hasChildExited(this.serverProcess);
   }
 
   /**
@@ -310,17 +391,34 @@ export class HttpMCPClient {
     return this.metricsPort;
   }
 
+  private rejectActiveRequests(error: Error): void {
+    for (const request of this.activeRequests) request.destroy(error);
+    this.activeRequests.clear();
+  }
+
   /**
    * Simple HTTP GET helper.
    */
   private httpGet(port: number, urlPath: string, timeoutMs = 10_000): Promise<string> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let req: http.ClientRequest | null = null;
+      const settle = (error?: Error, body?: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (req) this.activeRequests.delete(req);
+        if (error) reject(error);
+        else resolve(body ?? '');
+      };
       const timer = setTimeout(() => {
-        reject(new Error(`GET ${urlPath} timeout (${timeoutMs}ms)`));
+        const error = new Error(`GET ${urlPath} timeout (${timeoutMs}ms)`);
+        req?.destroy(error);
+        settle(error);
       }, timeoutMs);
       timer.unref();
 
-      const req = http.request(
+      req = http.request(
         {
           hostname: '127.0.0.1',
           port,
@@ -331,15 +429,14 @@ export class HttpMCPClient {
           const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => chunks.push(chunk));
           res.on('end', () => {
-            clearTimeout(timer);
-            resolve(Buffer.concat(chunks).toString('utf-8'));
+            settle(undefined, Buffer.concat(chunks).toString('utf-8'));
           });
         },
       );
+      this.activeRequests.add(req);
 
       req.on('error', (err) => {
-        clearTimeout(timer);
-        reject(err);
+        settle(err);
       });
       req.end();
     });
