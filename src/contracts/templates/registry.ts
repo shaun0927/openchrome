@@ -20,6 +20,7 @@ import {
   InvalidTemplateError,
   OutcomeTemplate,
 } from './types';
+import { PAGE_META_TEMPLATE } from './public-web/page-meta';
 
 /** Result of a successful `list()` call — a frozen view of the registry. */
 export interface TemplateListing {
@@ -34,6 +35,10 @@ export interface TemplateListing {
 }
 
 const ID_PATTERN = /^[a-z0-9]+(?:[-.][a-z0-9]+)*$/;
+
+export function isValidTemplateId(id: string): boolean {
+  return ID_PATTERN.test(id);
+}
 
 /**
  * Recursively freeze a plain object or array so that the registry's stored
@@ -61,7 +66,7 @@ function validateTemplate(template: OutcomeTemplate): void {
   if (typeof template.id !== 'string' || template.id.length === 0) {
     throw new InvalidTemplateError('id must be a non-empty string');
   }
-  if (!ID_PATTERN.test(template.id)) {
+  if (!isValidTemplateId(template.id)) {
     throw new InvalidTemplateError(
       `id "${template.id}" must be dotted kebab-case (a-z0-9 separated by '-' or '.')`,
     );
@@ -174,4 +179,16 @@ export class TemplateRegistry {
     for (const versions of this.byId.values()) n += versions.size;
     return n;
   }
+}
+
+export const BUILT_IN_TEMPLATES: readonly OutcomeTemplate[] = [
+  PAGE_META_TEMPLATE,
+];
+
+export function createDefaultTemplateRegistry(): TemplateRegistry {
+  const registry = new TemplateRegistry();
+  for (const template of BUILT_IN_TEMPLATES) {
+    registry.register(template);
+  }
+  return registry;
 }

@@ -76,6 +76,30 @@ so an LLM can correct multiple mistakes at once. Malformed input is never
 silently accepted; the runtime refuses to evaluate an unvalidated DSL
 fragment.
 
+## Registered contract IDs
+
+`oc_assert` accepts either an inline assertion under `contract` or a registered
+template ID under `contract_id`. These fields are mutually exclusive. Passing
+both returns `verdict: "inconclusive"` with
+`error_code: "CONTRACT_ID_CONFLICT"` so hosts never have to infer precedence.
+
+Registered IDs resolve through the canonical default template registry exported
+from `src/contracts/templates`. That registry is the single source of truth for
+built-in outcome-contract templates and is populated from the built-in template
+catalog, currently `public-web.page-meta@1`.
+
+Lookup is closed-world:
+
+- malformed IDs return `error_code: "CONTRACT_ID_MALFORMED"`;
+- unknown IDs return `error_code: "CONTRACT_ID_UNKNOWN"`;
+- registered templates without an `assertions` tree return
+  `error_code: "CONTRACT_TEMPLATE_NO_ASSERTIONS"`.
+
+The existing inline assertion path is unchanged and remains the portable way to
+evaluate ad hoc assertions. Schema-only templates, such as
+`public-web.page-meta`, can be listed and used by schema-diff consumers, but
+they are not executable by `oc_assert` until they carry assertions.
+
 ## Per-assertion reference
 
 ### `url`

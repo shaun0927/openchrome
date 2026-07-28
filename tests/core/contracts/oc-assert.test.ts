@@ -13,9 +13,15 @@
  * (oc_evidence_bundle). It is asserted only by shape — not consumed.
  */
 
-import { registerOcAssertTool, deriveFailureCategory } from '../../../src/tools/oc-assert';
+import {
+  registerOcAssertTool,
+  deriveFailureCategory,
+} from '../../../src/tools/oc-assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { MCPToolDefinition, MCPResult, ToolHandler } from '../../../src/types/mcp';
 import type { Evidence } from '../../../src/contracts/types';
+import { PAGE_META_TEMPLATE, TemplateRegistry } from '../../../src/contracts/templates';
 
 interface RegisteredTool {
   name: string;
@@ -44,12 +50,26 @@ async function invoke(
   return parseResult(result);
 }
 
-function setup(): { handler: ToolHandler; definition: MCPToolDefinition } {
+function setup(registry?: TemplateRegistry): { handler: ToolHandler; definition: MCPToolDefinition } {
   const server = new MockServer();
-  registerOcAssertTool(server as unknown as Parameters<typeof registerOcAssertTool>[0]);
+  registerOcAssertTool(
+    server as unknown as Parameters<typeof registerOcAssertTool>[0],
+    registry,
+  );
   const registered = server.tools.get('oc_assert');
   expect(registered).toBeDefined();
   return { handler: registered!.handler, definition: registered!.definition };
+}
+
+function registryWithUrlContract(): TemplateRegistry {
+  const registry = new TemplateRegistry();
+  registry.register({
+    id: 'test.url-pass',
+    version: 1,
+    description: 'test url contract',
+    assertions: { kind: 'url', pattern: '^https://example\\.com/registered$' },
+  });
+  return registry;
 }
 
 describe('oc_assert — registration', () => {
@@ -58,6 +78,21 @@ describe('oc_assert — registration', () => {
     expect(definition.name).toBe('oc_assert');
     expect(definition.inputSchema.type).toBe('object');
     expect(definition.description).toMatch(/Outcome Contract/);
+  });
+
+  test('core contract registry path does not import pilot modules', () => {
+    const files = [
+      '../../../src/tools/oc-assert.ts',
+      '../../../src/contracts/templates/index.ts',
+      '../../../src/contracts/templates/registry.ts',
+    ].map((relative) => path.resolve(__dirname, relative));
+
+    for (const file of files) {
+      const source = fs.readFileSync(file, 'utf8');
+      expect(source).not.toMatch(/from ['"].*\/pilot(?:\/|['"])/);
+      expect(source).not.toMatch(/import\(['"].*\/pilot(?:\/|['"])/);
+      expect(source).not.toMatch(/require\(['"].*\/pilot(?:\/|['"])\)/);
+    }
   });
 });
 
@@ -134,10 +169,77 @@ describe('oc_assert — verdicts', () => {
   });
 
   test('inconclusive: contract_id supplied without a registry', async () => {
+    const { handler } = setup(new TemplateRegistry());
+    const out = await invoke(handler, { contract_id: 'cart-visible' });
+    expect(out.verdict).toBe('inconclusive');
+    expect(out.error_code).toBe('CONTRACT_ID_UNKNOWN');
+    expect(out.inconclusive_reason).toMatch(/unknown contract_id/);
+  });
+
+  test('pass: known registered contract_id executes through the oc_assert evaluator', async () => {
+    const { handler } = setup(registryWithUrlContract());
+    const out = await invoke(handler, {
+      contract_id: 'test.url-pass',
+      evidence: { snapshot: { url: 'https://example.com/registered' } },
+    });
+    expect(out.verdict).toBe('pass');
+    expect(typeof out.evidence_handle).toBe('string');
+    expect((out.evidence as Evidence).assertion_kind).toBe('url');
+  });
+
+  test('fail: known registered contract_id does not silently fall back', async () => {
+    const { handler } = setup(registryWithUrlContract());
+    const out = await invoke(handler, {
+      contract_id: 'test.url-pass',
+      evidence: { snapshot: { url: 'https://example.com/other' } },
+    });
+    expect(out.verdict).toBe('fail');
+    expect(out.failure_category).toBe('POSTCONDITION_FAILED');
+  });
+
+  test('inconclusive: unknown contract_id returns stable closed-world error code', async () => {
+    const { handler } = setup(registryWithUrlContract());
+    const out = await invoke(handler, {
+      contract_id: 'test.unknown',
+      contract: undefined,
+      evidence: { snapshot: { url: 'https://example.com/registered' } },
+    });
+    expect(out.verdict).toBe('inconclusive');
+    expect(out.error_code).toBe('CONTRACT_ID_UNKNOWN');
+    expect(out.inconclusive_reason).toBe('unknown contract_id: test.unknown');
+  });
+
+  test('inconclusive: malformed contract_id returns stable error code', async () => {
     const { handler } = setup();
     const out = await invoke(handler, { contract_id: 'cart_visible' });
     expect(out.verdict).toBe('inconclusive');
-    expect(out.inconclusive_reason).toMatch(/contract_id/);
+    expect(out.error_code).toBe('CONTRACT_ID_MALFORMED');
+    expect(out.inconclusive_reason).toMatch(/dotted kebab-case/);
+  });
+
+  test('inconclusive: inline contract plus contract_id conflict is rejected explicitly', async () => {
+    const { handler } = setup();
+    const out = await invoke(handler, {
+      contract_id: 'test.url-pass',
+      contract: { kind: 'url', pattern: '.*' },
+      evidence: { snapshot: { url: 'https://example.com/registered' } },
+    });
+    expect(out.verdict).toBe('inconclusive');
+    expect(out.error_code).toBe('CONTRACT_ID_CONFLICT');
+    expect(out.inconclusive_reason).toMatch(/mutually exclusive/);
+  });
+
+  test('inconclusive: registered template without assertions fails closed', async () => {
+    const registry = new TemplateRegistry();
+    registry.register(PAGE_META_TEMPLATE);
+    const { handler } = setup(registry);
+    const out = await invoke(handler, {
+      contract_id: 'public-web.page-meta',
+      evidence: { snapshot: { url: 'https://example.com/' } },
+    });
+    expect(out.verdict).toBe('inconclusive');
+    expect(out.error_code).toBe('CONTRACT_TEMPLATE_NO_ASSERTIONS');
+    expect(out.inconclusive_reason).toMatch(/no assertions/);
   });
 
   test('inconclusive: schema validation failure surfaces errors', async () => {

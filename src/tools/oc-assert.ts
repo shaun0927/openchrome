@@ -7,11 +7,9 @@
  * action gating — those live in the pilot runtime (#749, #750).
  *
  * Design notes:
- *  - The DSL in src/contracts/ does not (yet) expose a contract-by-id
- *    registry. To keep this PR scoped, `oc_assert` accepts the Assertion
- *    inline under `contract`. `contract_id` is reserved as an optional
- *    forward-compatible field; today it surfaces a clear error if used
- *    without `contract`.
+ *  - `contract_id` resolves through the canonical outcome-template registry
+ *    in `src/contracts/templates`. The inline `contract` path remains
+ *    supported for callers that already send assertion DSL directly.
  *  - Evaluation is snapshot-driven: callers pre-capture the page state
  *    (url, dom text/count, network, screenshot bytes, dialog flag) and
  *    pass it in `evidence.snapshot`. Live browser plumbing belongs to
@@ -27,6 +25,11 @@ import { runImageQaSampling } from './image-qa';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { evaluate } from '../contracts/evaluate';
 import { validateAssertion } from '../contracts/validator';
+import {
+  TemplateRegistry,
+  createDefaultTemplateRegistry,
+  isValidTemplateId,
+} from '../contracts/templates';
 import { getActiveActionRecorder } from '../recording/action-recorder';
 import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
 import { primaryFailureCategory } from '../failure/classifier';
@@ -39,6 +42,11 @@ import type {
 } from '../contracts/types';
 
 type Verdict = 'pass' | 'fail' | 'inconclusive';
+type OcAssertErrorCode =
+  | 'CONTRACT_ID_CONFLICT'
+  | 'CONTRACT_ID_MALFORMED'
+  | 'CONTRACT_ID_UNKNOWN'
+  | 'CONTRACT_TEMPLATE_NO_ASSERTIONS';
 
 interface FailedAssertion {
   name: string;
@@ -61,6 +69,7 @@ interface OcAssertOutput {
   evidence?: Evidence;
   validation_errors?: Array<{ path: string; message: string }>;
   inconclusive_reason?: string;
+  error_code?: OcAssertErrorCode;
 }
 
 interface SnapshotInput {
@@ -86,9 +95,8 @@ const definition: MCPToolDefinition = {
       contract_id: {
         type: 'string',
         description:
-          'Optional identifier for a registered contract. Reserved for ' +
-          'forward compatibility — currently no registry exists, so callers ' +
-          'must supply `contract` inline.',
+          'Optional identifier for a registered contract in the canonical ' +
+          'outcome-template registry. Mutually exclusive with `contract`.',
       },
       contract: {
         type: 'object',
@@ -328,24 +336,62 @@ function isInconclusive(evidence: Evidence): boolean {
   return typeof evidence.details.error === 'string';
 }
 
-const handler: ToolHandler = async (
+function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
+  return async (
   sessionId: string,
   args: Record<string, unknown>,
   context?: ToolContext,
 ): Promise<MCPResult> => {
   const contractInline = args.contract;
-  const contractId = args.contract_id as string | undefined;
+  const contractIdArg = args.contract_id;
 
-  if (contractInline === undefined) {
-    if (contractId !== undefined) {
+  if (contractInline !== undefined && contractIdArg !== undefined) {
+    const output: OcAssertOutput = {
+      verdict: 'inconclusive',
+      error_code: 'CONTRACT_ID_CONFLICT',
+      inconclusive_reason:
+        '`contract` and `contract_id` are mutually exclusive; pass exactly one assertion source.',
+    };
+    return jsonResult(output);
+  }
+
+  let assertionSource = contractInline;
+
+  if (contractIdArg !== undefined) {
+    if (typeof contractIdArg !== 'string' || !isValidTemplateId(contractIdArg)) {
       const output: OcAssertOutput = {
         verdict: 'inconclusive',
+        error_code: 'CONTRACT_ID_MALFORMED',
         inconclusive_reason:
-          'contract_id lookup is not yet implemented; pass the assertion ' +
-          'inline via `contract`.',
+          'contract_id must be dotted kebab-case (a-z0-9 separated by "-" or ".").',
       };
       return jsonResult(output);
     }
+    const contractId = contractIdArg;
+
+    const template = templateRegistry.get(contractId);
+    if (!template) {
+      const output: OcAssertOutput = {
+        verdict: 'inconclusive',
+        error_code: 'CONTRACT_ID_UNKNOWN',
+        inconclusive_reason: `unknown contract_id: ${contractId}`,
+      };
+      return jsonResult(output);
+    }
+
+    if (!template.assertions) {
+      const output: OcAssertOutput = {
+        verdict: 'inconclusive',
+        error_code: 'CONTRACT_TEMPLATE_NO_ASSERTIONS',
+        inconclusive_reason: `registered contract_id has no assertions: ${contractId}`,
+      };
+      return jsonResult(output);
+    }
+
+    assertionSource = template.assertions;
+  }
+
+  if (assertionSource === undefined) {
     const output: OcAssertOutput = {
       verdict: 'inconclusive',
       inconclusive_reason: 'missing required field: `contract`',
@@ -353,7 +399,7 @@ const handler: ToolHandler = async (
     return jsonResult(output);
   }
 
-  const validation = validateAssertion(contractInline);
+  const validation = validateAssertion(assertionSource);
   if (!validation.ok) {
     const output: OcAssertOutput = {
       verdict: 'inconclusive',
@@ -424,7 +470,7 @@ const handler: ToolHandler = async (
   const recorder = getActiveActionRecorder(sessionId);
   if (recorder) {
     recorder.appendContractResult({
-      assertion: contractInline,
+      assertion: validation.value,
       verdict,
       details: result.evidence.details as Record<string, unknown> | undefined,
     }).catch((err: unknown) => {
@@ -432,8 +478,9 @@ const handler: ToolHandler = async (
     });
   }
 
-  return jsonResult(output);
-};
+    return jsonResult(output);
+  };
+}
 
 /**
  * Map an oc_assert failure to a structured, host-actionable failure category
@@ -504,6 +551,9 @@ function jsonResult(payload: OcAssertOutput): MCPResult {
   };
 }
 
-export function registerOcAssertTool(server: MCPServer): void {
-  server.registerTool('oc_assert', handler, definition);
+export function registerOcAssertTool(
+  server: MCPServer,
+  templateRegistry: TemplateRegistry = createDefaultTemplateRegistry(),
+): void {
+  server.registerTool('oc_assert', createHandler(templateRegistry), definition);
 }

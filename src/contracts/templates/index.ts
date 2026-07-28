@@ -14,7 +14,12 @@ export {
   InvalidTemplateError,
 } from './types';
 export type { TemplateListing } from './registry';
-export { TemplateRegistry } from './registry';
+export {
+  BUILT_IN_TEMPLATES,
+  TemplateRegistry,
+  createDefaultTemplateRegistry,
+  isValidTemplateId,
+} from './registry';
 
 // ── public-web template catalog (A2-PR2..5 of #1359) ──────────────────────
 export { PAGE_META_TEMPLATE } from './public-web/page-meta';
