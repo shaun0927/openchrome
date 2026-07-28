@@ -33,6 +33,8 @@ class FakeChildProcess extends EventEmitter {
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   readonly requests: JSONRPCRequest[] = [];
+  readonly killSignals: NodeJS.Signals[] = [];
+  autoExitOnKill = false;
 
   constructor() {
     super();
@@ -45,7 +47,8 @@ class FakeChildProcess extends EventEmitter {
 
   kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
     this.killed = true;
-    this.signalCode = signal;
+    this.killSignals.push(signal);
+    if (this.autoExitOnKill) this.exit(null, signal);
     return true;
   }
 
@@ -127,6 +130,63 @@ describe('MCPClient lifecycle', () => {
     await rejection;
     expect(jest.getTimerCount()).toBe(0);
     await expect(client.send('tools/list')).rejects.toThrow('MCP client is not running');
+  });
+
+  test('terminates the child before rejecting an initialize failure', async () => {
+    const child = new FakeChildProcess();
+    child.autoExitOnKill = true;
+    mockSpawn.mockReturnValueOnce(child as unknown as ChildProcess);
+    const client = new MCPClient();
+
+    const startup = client.start();
+    child.emitReady();
+    child.respond(child.requests[0], {
+      error: { code: -32_000, message: 'initialize rejected' },
+    });
+
+    await expect(startup).rejects.toThrow('Initialize failed: initialize rejected');
+    expect(child.killSignals).toEqual(['SIGTERM']);
+    expect(client.isRunning).toBe(false);
+  });
+
+  test('waits for actual exit after escalating shutdown to SIGKILL', async () => {
+    const child = new FakeChildProcess();
+    const client = await startReadyClient(child);
+    child.stdin.destroy();
+
+    let stopped = false;
+    const stopping = client.stop().then(() => { stopped = true; });
+    expect(child.killSignals).toEqual(['SIGTERM']);
+
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(child.killSignals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(stopped).toBe(false);
+
+    child.exit(null, 'SIGKILL');
+    await stopping;
+    expect(stopped).toBe(true);
+    expect(client.isRunning).toBe(false);
+  });
+
+  test('does not spawn a replacement until the old process exits', async () => {
+    const oldChild = new FakeChildProcess();
+    const client = await startReadyClient(oldChild);
+    const newChild = new FakeChildProcess();
+    mockSpawn.mockReturnValueOnce(newChild as unknown as ChildProcess);
+
+    const restarting = client.restart();
+    expect(oldChild.killSignals).toEqual(['SIGKILL']);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+
+    oldChild.exit(null, 'SIGKILL');
+    await jest.advanceTimersByTimeAsync(0);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+
+    newChild.emitReady();
+    newChild.respond(newChild.requests[0]);
+    await restarting;
+    expect(client.isRunning).toBe(true);
+    newChild.exit(0);
   });
 
   test('passes harness serve args to spawn and clears each request timeout on response', async () => {

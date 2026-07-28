@@ -13,7 +13,10 @@ on:
         description: Bounded hosted-runner endurance duration in hours
         required: false
         default: '1'
-        type: string
+        type: choice
+        options:
+          - '0.5'
+          - '1'
 
 env:
   CI: 'true'

@@ -10,6 +10,8 @@ on:
       - 'tests/e2e/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'tsconfig.test.json'
 
 concurrency:
   group: e2e-smoke-${{ github.event.pull_request.number }}

@@ -31,7 +31,10 @@ import { scaled } from './harness/time-scale';
 // Configuration
 // ---------------------------------------------------------------------------
 
-const DURATION_HOURS = parseInt(process.env.ENDURANCE_HOURS || '1', 10);
+const DURATION_HOURS = Number(process.env.ENDURANCE_HOURS || '1');
+if (!Number.isFinite(DURATION_HOURS) || DURATION_HOURS <= 0) {
+  throw new Error(`ENDURANCE_HOURS must be a positive number; received ${process.env.ENDURANCE_HOURS ?? '1'}`);
+}
 const DURATION_MS    = scaled(DURATION_HOURS * 60 * 60 * 1000);
 
 const FIXTURE_PORT       = 18930; // Isolated port for runner

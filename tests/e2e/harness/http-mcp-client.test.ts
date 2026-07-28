@@ -24,10 +24,13 @@ class FakeChildProcess extends EventEmitter {
   killed = false;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
+  readonly killSignals: NodeJS.Signals[] = [];
+  autoExitOnKill = false;
 
   kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
     this.killed = true;
-    this.signalCode = signal;
+    this.killSignals.push(signal);
+    if (this.autoExitOnKill) this.exit(null, signal);
     return true;
   }
 
@@ -67,21 +70,24 @@ class FakeRequest extends EventEmitter {
 function emitJsonResponse(
   callback: (response: IncomingMessage) => void,
   body: Record<string, unknown>,
+  statusCode = 200,
 ): void {
   const response = new EventEmitter() as IncomingMessage;
   response.headers = { 'mcp-session-id': 'session-1' };
-  response.statusCode = 200;
+  response.statusCode = statusCode;
   callback(response);
   response.emit('data', Buffer.from(JSON.stringify(body)));
   response.emit('end');
 }
 
-function mockInitializeResponse(): void {
+function mockInitializeResponse(
+  body: Record<string, unknown> = { jsonrpc: '2.0', id: 1, result: {} },
+): void {
   mockRequest.mockImplementationOnce(((options, callback) => {
     const request = new FakeRequest(() => {
       emitJsonResponse(
         callback as (response: IncomingMessage) => void,
-        { jsonrpc: '2.0', id: 1, result: {} },
+        body,
       );
     });
     return request as unknown as ClientRequest;
@@ -148,6 +154,25 @@ describe('HttpMCPClient lifecycle', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  test('terminates the server before rejecting an initialize failure', async () => {
+    const child = new FakeChildProcess();
+    child.autoExitOnKill = true;
+    mockSpawn.mockReturnValueOnce(child as unknown as ChildProcess);
+    mockInitializeResponse({
+      jsonrpc: '2.0',
+      id: 1,
+      error: { code: -32_000, message: 'initialize rejected' },
+    });
+    const client = new HttpMCPClient({ httpPort: 31_004 });
+
+    const startup = client.start();
+    child.stderr.write('[HTTPTransport] Listening on 127.0.0.1:31004\n');
+
+    await expect(startup).rejects.toThrow('Initialize failed: initialize rejected');
+    expect(child.killSignals).toEqual(['SIGTERM']);
+    expect(client.isRunning).toBe(false);
+  });
+
   test('destroys and rejects an active HTTP request when the ready server exits', async () => {
     const child = new FakeChildProcess();
     mockSpawn.mockReturnValueOnce(child as unknown as ChildProcess);
@@ -167,6 +192,48 @@ describe('HttpMCPClient lifecycle', () => {
 
     await expect(pending).rejects.toThrow(/Server exited with code 9/);
     expect(pendingRequest.destroyed).toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('rejects HTTP 202 for a JSON-RPC request with an id', async () => {
+    const child = new FakeChildProcess();
+    mockSpawn.mockReturnValueOnce(child as unknown as ChildProcess);
+    mockInitializeResponse();
+    const client = new HttpMCPClient({ httpPort: 31_005 });
+
+    const startup = client.start();
+    child.stderr.write('[HTTPTransport] Listening on 127.0.0.1:31005\n');
+    await startup;
+
+    mockRequest.mockImplementationOnce(((options, callback) => {
+      const request = new FakeRequest(() => {
+        emitJsonResponse(
+          callback as (response: IncomingMessage) => void,
+          {},
+          202,
+        );
+      });
+      return request as unknown as ClientRequest;
+    }) as typeof http.request);
+
+    await expect(client.send('tools/list')).rejects.toThrow(
+      'Unexpected HTTP 202 for JSON-RPC request: tools/list',
+    );
+    child.exit(0);
+  });
+
+  test('destroys a timed-out health request and clears its timer', async () => {
+    const request = new FakeRequest();
+    mockRequest.mockReturnValueOnce(request as unknown as ClientRequest);
+    const client = new HttpMCPClient();
+
+    const health = client.getHealth();
+    const rejection = expect(health).rejects.toThrow('GET /health timeout (10000ms)');
+    expect(jest.getTimerCount()).toBe(1);
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    await rejection;
+    expect(request.destroyed).toBe(true);
     expect(jest.getTimerCount()).toBe(0);
   });
 });

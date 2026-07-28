@@ -5,8 +5,10 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { hasChildExited, terminateChild } from './child-process';
 
 const STARTUP_TIMEOUT_MS = 30_000;
+const SHUTDOWN_REQUEST_TIMEOUT_MS = 5_000;
 const STDERR_CAPTURE_LIMIT = 4_096;
 
 export interface MCPResponse {
@@ -49,14 +51,10 @@ export class MCPClient {
     this.pending.clear();
   }
 
-  private hasExited(child: ChildProcess): boolean {
-    return child.exitCode !== null || child.signalCode !== null;
-  }
-
   private canSend(child: ChildProcess | null): child is ChildProcess {
     return child !== null
       && !child.killed
-      && !this.hasExited(child)
+      && !hasChildExited(child)
       && child.stdin !== null
       && !child.stdin.destroyed
       && !child.stdin.writableEnded;
@@ -97,10 +95,21 @@ export class MCPClient {
 
       const rejectStartup = (error: Error) => {
         clearStartupTimer();
-        if (!startupSettled) {
-          startupSettled = true;
-          reject(error);
-        }
+        if (startupSettled) return;
+        startupSettled = true;
+        this.rejectPending(error);
+        void terminateChild(child)
+          .catch((cleanupError: unknown) => {
+            const detail = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+            error.message = `${error.message}. Cleanup failed: ${detail}`;
+          })
+          .finally(() => {
+            if (this.process === child) {
+              this.process = null;
+              this.buffer = '';
+            }
+            reject(error);
+          });
       };
 
       const resolveStartup = () => {
@@ -193,37 +202,21 @@ export class MCPClient {
     }
 
     if (this.canSend(child)) {
-      try { await this.callTool('oc_stop', {}); } catch { /* ignore */ }
+      try { await this.callTool('oc_stop', {}, SHUTDOWN_REQUEST_TIMEOUT_MS); } catch { /* ignore */ }
     }
 
-    if (this.process !== child || this.hasExited(child)) return;
-
-    child.stdin?.end();
-    child.kill('SIGTERM');
-
-    // Wait for exit
-    await new Promise<void>((resolve) => {
-      if (this.hasExited(child)) {
-        resolve();
-        return;
+    try {
+      if (this.process === child && !hasChildExited(child)) {
+        child.stdin?.end();
+        await terminateChild(child);
       }
-
-      const timer = setTimeout(() => {
-        if (!this.hasExited(child)) child.kill('SIGKILL');
-        resolve();
-      }, 5000);
-      timer.unref();
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-
-    if (this.process === child) {
-      this.process = null;
-      this.buffer = '';
+    } finally {
+      if (this.process === child) {
+        this.process = null;
+        this.buffer = '';
+      }
+      this.rejectPending(new Error('Client shutdown'));
     }
-    this.rejectPending(new Error('Client shutdown'));
   }
 
   /**
@@ -232,13 +225,13 @@ export class MCPClient {
    */
   async restart(): Promise<void> {
     const child = this.process;
-    if (child && !this.hasExited(child)) child.kill('SIGKILL');
-    if (this.process === child) this.process = null;
     this.buffer = '';
     this.rejectPending(new Error('Restart'));
 
-    // Small delay before restart
-    await new Promise((r) => setTimeout(r, 1000));
+    if (child) {
+      await terminateChild(child, { initialSignal: 'SIGKILL' });
+      if (this.process === child) this.process = null;
+    }
 
     // Relaunch
     await this.start();
@@ -296,6 +289,6 @@ export class MCPClient {
   }
 
   get isRunning(): boolean {
-    return this.process !== null && !this.process.killed && !this.hasExited(this.process);
+    return this.process !== null && !this.process.killed && !hasChildExited(this.process);
   }
 }

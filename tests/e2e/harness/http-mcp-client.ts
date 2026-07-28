@@ -9,8 +9,10 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { MCPResponse, MCPToolResult } from './mcp-client';
+import { hasChildExited, terminateChild } from './child-process';
 
 const STARTUP_TIMEOUT_MS = 30_000;
+const SHUTDOWN_REQUEST_TIMEOUT_MS = 5_000;
 const STDERR_CAPTURE_LIMIT = 4_096;
 
 export class HttpMCPClient {
@@ -101,8 +103,23 @@ export class HttpMCPClient {
         clearStartupTimer();
         if (startupSettled) return;
         startupSettled = true;
-        if (error) reject(error);
-        else resolve();
+        if (!error) {
+          resolve();
+          return;
+        }
+
+        this.terminalError = error;
+        this.rejectActiveRequests(error);
+        void terminateChild(child)
+          .catch((cleanupError: unknown) => {
+            const detail = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+            error.message = `${error.message}. Cleanup failed: ${detail}`;
+          })
+          .finally(() => {
+            if (this.serverProcess === child) this.serverProcess = null;
+            this.sessionId = null;
+            reject(error);
+          });
       };
 
       const lifecycleError = (message: string) => {
@@ -172,41 +189,28 @@ export class HttpMCPClient {
     }
 
     // Try graceful stop
-    if (!this.hasExited(child)) {
+    if (!hasChildExited(child)) {
       try {
-        await this.callTool('oc_stop', {}).catch(() => { /* ignore */ });
+        await this.callTool('oc_stop', {}, SHUTDOWN_REQUEST_TIMEOUT_MS).catch(() => { /* ignore */ });
       } catch { /* ignore */ }
     }
 
-    if (this.serverProcess !== child || this.hasExited(child)) return;
-    child.kill('SIGTERM');
-
-    await new Promise<void>((resolve) => {
-      if (this.hasExited(child)) {
-        resolve();
-        return;
+    try {
+      if (this.serverProcess === child && !hasChildExited(child)) {
+        await terminateChild(child);
       }
-      const timer = setTimeout(() => {
-        if (!this.hasExited(child)) child.kill('SIGKILL');
-        resolve();
-      }, 5000);
-      timer.unref();
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-
-    if (this.serverProcess === child) this.serverProcess = null;
-    this.sessionId = null;
-    this.rejectActiveRequests(new Error('HTTP client shutdown'));
+    } finally {
+      if (this.serverProcess === child) this.serverProcess = null;
+      this.sessionId = null;
+      this.rejectActiveRequests(new Error('HTTP client shutdown'));
+    }
   }
 
   /**
    * Send MCP JSON-RPC request via HTTP POST to /mcp.
    */
   async send(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<MCPResponse> {
-    if (!this.serverProcess || this.hasExited(this.serverProcess)) {
+    if (!this.serverProcess || hasChildExited(this.serverProcess)) {
       throw this.terminalError ?? new Error('HTTP MCP server is not running');
     }
     const id = ++this.requestId;
@@ -258,8 +262,7 @@ export class HttpMCPClient {
             }
 
             if (res.statusCode === 202) {
-              // Notification accepted — synthesize a response
-              settle(undefined, { jsonrpc: '2.0', id, result: {} } as MCPResponse);
+              settle(new Error(`Unexpected HTTP 202 for JSON-RPC request: ${method}`));
               return;
             }
 
@@ -371,7 +374,7 @@ export class HttpMCPClient {
   get isRunning(): boolean {
     return this.serverProcess !== null
       && !this.serverProcess.killed
-      && !this.hasExited(this.serverProcess);
+      && !hasChildExited(this.serverProcess);
   }
 
   /**
@@ -388,10 +391,6 @@ export class HttpMCPClient {
     return this.metricsPort;
   }
 
-  private hasExited(child: ChildProcess): boolean {
-    return child.exitCode !== null || child.signalCode !== null;
-  }
-
   private rejectActiveRequests(error: Error): void {
     for (const request of this.activeRequests) request.destroy(error);
     this.activeRequests.clear();
@@ -402,12 +401,24 @@ export class HttpMCPClient {
    */
   private httpGet(port: number, urlPath: string, timeoutMs = 10_000): Promise<string> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let req: http.ClientRequest | null = null;
+      const settle = (error?: Error, body?: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (req) this.activeRequests.delete(req);
+        if (error) reject(error);
+        else resolve(body ?? '');
+      };
       const timer = setTimeout(() => {
-        reject(new Error(`GET ${urlPath} timeout (${timeoutMs}ms)`));
+        const error = new Error(`GET ${urlPath} timeout (${timeoutMs}ms)`);
+        req?.destroy(error);
+        settle(error);
       }, timeoutMs);
       timer.unref();
 
-      const req = http.request(
+      req = http.request(
         {
           hostname: '127.0.0.1',
           port,
@@ -418,15 +429,14 @@ export class HttpMCPClient {
           const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => chunks.push(chunk));
           res.on('end', () => {
-            clearTimeout(timer);
-            resolve(Buffer.concat(chunks).toString('utf-8'));
+            settle(undefined, Buffer.concat(chunks).toString('utf-8'));
           });
         },
       );
+      this.activeRequests.add(req);
 
       req.on('error', (err) => {
-        clearTimeout(timer);
-        reject(err);
+        settle(err);
       });
       req.end();
     });
