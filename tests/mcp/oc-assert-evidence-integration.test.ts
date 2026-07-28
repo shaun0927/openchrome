@@ -270,6 +270,59 @@ describe('oc_assert durable evidence through MCP', () => {
     }).evidence_handle).toBe(tenantB.evidence_handle);
   });
 
+  test.each([
+    ['disabled', { mode: 'disabled', tenantId: 'anonymous', scopes: ['admin'] } as Principal],
+    ['legacy', { mode: 'legacy', tenantId: 'legacy', scopes: ['admin'] } as Principal],
+  ])('%s sessions/delete enforces the effective request tenant before evidence eviction', async (_mode, principal) => {
+    const sessionManager = createMockSessionManager();
+    sessionManager.getSession.mockReturnValue({ tenantId: 'tenant-a' });
+    server = new MCPServer(sessionManager as never);
+    registerOcAssertTool(server, undefined, store);
+    registerOcEvidenceGetTool(server, store);
+    const stored = store.persist({
+      sessionId: 'shared-header-session',
+      tenantId: 'tenant-a',
+      verdict: 'pass',
+      contractSource: 'inline',
+      assertion: { kind: 'url', pattern: 'example' },
+      result: { verdict: 'pass' },
+      trace: { status: 'unavailable', reason: 'test' },
+    });
+    const request = authenticated({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'sessions/delete',
+      params: { sessionId: 'shared-header-session' },
+    }, principal);
+
+    const denied = await runWithRequestContext(
+      { requestId: 'req-tenant-b-delete', tenantId: 'tenant-b' },
+      () => server.handleMessage(request),
+    ) as MCPResponse;
+    expect(denied.result?.isError).toBe(true);
+    expect(denied.result?.content?.[0]?.text).toContain('owned by another tenant');
+    expect(sessionManager.deleteSession).not.toHaveBeenCalled();
+    expect(store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'shared-header-session',
+      tenantId: 'tenant-a',
+    }).evidence_handle).toBe(stored.evidence_handle);
+
+    await runWithRequestContext(
+      { requestId: 'req-tenant-a-delete', tenantId: 'tenant-a' },
+      () => server.handleMessage(authenticated({
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'sessions/delete',
+        params: { sessionId: 'shared-header-session' },
+      }, principal)),
+    );
+    expect(sessionManager.deleteSession).toHaveBeenCalledWith('shared-header-session');
+    expect(() => store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'shared-header-session',
+      tenantId: 'tenant-a',
+    })).toThrow();
+  });
+
   test('session lifecycle deletion prefers the authenticated tenant binding over a default event tenant', async () => {
     const sessionManager = createMockSessionManager();
     const lifecycleListeners: Array<(event: SessionEvent) => void> = [];

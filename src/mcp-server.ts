@@ -2877,24 +2877,35 @@ export class MCPServer {
     const managedSession = this.sessionManager.getSession?.(sessionId);
     const managedTenantId = managedSession?.tenantId;
     const boundTenantId = this.sessionTenants.get(sessionId);
-    if (isTenantScopedPrincipal(principal)) {
-      const owner = boundTenantId ?? managedTenantId;
-      if (owner !== undefined && owner !== principal.tenantId) {
-        return this.forbiddenResult(
-          'sessions/delete',
-          sessionId,
-          principal,
-          `session '${sessionId}' is owned by another tenant`,
-        );
+    const requestTenantId = currentRequestContext()?.tenantId;
+    const effectiveRequestTenantId = isTenantScopedPrincipal(principal)
+      ? principal.tenantId
+      : requestTenantId;
+    const ownerTenantId = boundTenantId
+      ?? (
+        managedTenantId === DEFAULT_TENANT_ID && !isTenantScopedPrincipal(principal)
+          ? undefined
+          : managedTenantId
+      );
+    if (
+      effectiveRequestTenantId !== undefined
+      && ownerTenantId !== undefined
+      && ownerTenantId !== effectiveRequestTenantId
+    ) {
+      const reason = `session '${sessionId}' is owned by another tenant`;
+      if (principal) {
+        return this.forbiddenResult('sessions/delete', sessionId, principal, reason);
       }
+      return {
+        content: [{ type: 'text', text: `Forbidden: ${reason}` }],
+        isError: true,
+      };
     }
 
-    const tenantId = isTenantScopedPrincipal(principal)
-      ? principal.tenantId
-      : managedTenantId
-        ?? boundTenantId
-        ?? currentRequestContext()?.tenantId
-        ?? DEFAULT_TENANT_ID;
+    const tenantId = effectiveRequestTenantId
+      ?? ownerTenantId
+      ?? managedTenantId
+      ?? DEFAULT_TENANT_ID;
     await this.sessionManager.deleteSession(sessionId);
     getAssertEvidenceStore().evictSession(sessionId, tenantId);
     // Release the binding so sessionId (notably 'default') can be reclaimed
