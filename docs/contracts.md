@@ -252,7 +252,9 @@ you can re-derive the threshold later.
     `bytes`, or `count` units;
   - `resource.count`, `resource.totalTransferSize`,
     `resource.largestTransferSize`, and `resource.maxDuration` for bounded
-    resource aggregates. Raw per-resource rows are not contract facts.
+    resource aggregates computed over the full current Resource Timing buffer.
+    The legacy response still returns at most 50 raw rows; those rows are not
+    used to derive contract aggregates.
 - `unit` must match the emitted fact exactly. OpenChrome does not perform
   implicit unit conversion.
 - `value` must be finite. `max_age_ms` is a non-negative integer capped at
@@ -281,6 +283,15 @@ you can re-derive the threshold later.
   distinguishes runtime exceptions from explicit `console.error` calls.
 - Deduplicated entries carry a positive `count`; comparisons use the sum of
   matching counts rather than the number of rows.
+- Facts declare `captured_types: null` for an unfiltered capture or the exact
+  bounded capture filter. A filtered fact can decide only assertions with an
+  explicit `type` included in that filter; other queries are inconclusive with
+  `CONTRACT_FACT_CAPTURE_FILTERED` rather than inferring zero matches.
+- Console messages remain inside the default `<oc:console>` page-origin
+  boundary in collector output. Facts declare `message_encoding`, and the
+  evaluator matches `message_pattern` against the bounded text inside that
+  boundary. Callers that explicitly disable boundary markers receive
+  `message_encoding: "plain"` instead.
 - Each fact contains at most 200 entries, each message is capped at 1024
   characters, and unbounded raw console retention is never introduced.
 - A fact marked `truncated: true` is always inconclusive, even when the
@@ -371,8 +382,9 @@ Producer behavior is additive and bounded:
 - `performance_metrics` emits one fact per returned numeric measurement and
   passes the tool deadline/abort context through every bounded page evaluation;
 - `console_capture get` emits one console fact built from the full retained
-  buffer independently of response pagination, then applies the 200-entry fact
-  cap and truncation marker;
+  buffer independently of response pagination, records any capture type filter,
+  preserves page-origin boundary markers by default, then applies the 200-entry
+  fact cap and truncation marker;
 - existing `metrics`, `logs`, `stats`, text content, and tool names remain
   backward compatible;
 - no producer widens capture, starts capture implicitly, or stores facts beyond
@@ -381,8 +393,8 @@ Producer behavior is additive and bounded:
 Evaluation is closed-world and scope-safe. The current MCP session ID must
 match `session_id`, and `evidence.provenance.target_id` must match `target_id`.
 The freshest matching fact is selected deterministically. Missing provenance,
-cross-session/cross-target facts, unsupported versions, malformed envelopes,
-stale captures, missing metrics, unit mismatches, and truncated console facts
+cross-session/cross-target facts, unsupported versions, malformed or future-dated
+envelopes, stale captures, missing metrics, unit mismatches, and truncated console facts
 return `verdict: "inconclusive"` with one of these machine-stable codes:
 
 ```text
@@ -394,6 +406,7 @@ CONTRACT_FACT_SCOPE_MISMATCH
 CONTRACT_FACT_STALE
 CONTRACT_FACT_NOT_FOUND
 CONTRACT_FACT_UNIT_MISMATCH
+CONTRACT_FACT_CAPTURE_FILTERED
 CONTRACT_FACT_TRUNCATED
 ```
 

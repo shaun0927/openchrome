@@ -144,6 +144,47 @@ describe('writeEvidenceBundle — individual include flags', () => {
     expect(payload.entries[49].text).toBe('line-249');
   });
 
+  test("include=['contract_facts']: preserves bounded facts with redaction", () => {
+    const rootDir = mkRoot();
+    const result = writeEvidenceBundle(
+      {
+        contract_facts: [{
+          schema_version: 1,
+          kind: 'console',
+          source_tool: 'console_capture',
+          session_id: 'session-a',
+          target_id: 'tab-a',
+          captured_at: '2026-07-28T12:00:00.000Z',
+          entries: [{
+            type: 'error',
+            message: 'password=hunter2 Authorization: Bearer abc123def456',
+            count: 1,
+            uncaught: false,
+          }],
+          captured_types: null,
+          message_encoding: 'plain',
+          truncated: false,
+        }],
+      },
+      { rootDir, include: ['contract_facts'] },
+    );
+
+    expect(result.parts).toEqual(['contract_facts.json']);
+    const raw = fs.readFileSync(path.join(result.path, 'contract_facts.json'), 'utf8');
+    expect(raw).not.toContain('hunter2');
+    expect(raw).not.toContain('abc123def456');
+    const payload = JSON.parse(raw) as {
+      schema_version: number;
+      max_facts: number;
+      truncated: boolean;
+      facts: unknown[];
+    };
+    expect(payload.schema_version).toBe(1);
+    expect(payload.max_facts).toBe(256);
+    expect(payload.truncated).toBe(false);
+    expect(payload.facts).toHaveLength(1);
+  });
+
   test("include=['gate']: writes caller-supplied gate fact to gate.json", () => {
     const rootDir = mkRoot();
     const gate = {

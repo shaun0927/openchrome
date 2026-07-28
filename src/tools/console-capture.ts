@@ -17,6 +17,7 @@ import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '.
 import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
 import { paginate } from '../utils/paginate';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
+import { buildConsoleContractFact } from '../contracts/contract-facts';
 
 /**
  * Validate caller-supplied cap values. Used to reject `maxLogs`/`maxBytes`
@@ -43,6 +44,7 @@ interface ConsoleLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  uncaught?: boolean;
   truncatedFrom?: number;
 }
 
@@ -107,6 +109,7 @@ interface DedupedLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  uncaught?: boolean;
   truncatedFrom?: number;
 }
 
@@ -131,6 +134,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
         lastTimestamp: current.timestamp,
         location: current.location,
         args: current.args,
+        ...(current.uncaught === true ? { uncaught: true } : {}),
         ...(current.truncatedFrom !== undefined && { truncatedFrom: current.truncatedFrom }),
       });
       i++;
@@ -142,7 +146,8 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
     while (
       i + count < logs.length &&
       logs[i + count].text === current.text &&
-      logs[i + count].type === current.type
+      logs[i + count].type === current.type &&
+      logs[i + count].uncaught === current.uncaught
     ) {
       count++;
     }
@@ -157,6 +162,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
         lastTimestamp: logs[i + count - 1].timestamp,
         location: current.location,
         args: current.args,
+        ...(current.uncaught === true ? { uncaught: true } : {}),
       });
     } else {
       // Show individually
@@ -170,6 +176,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
           lastTimestamp: entry.timestamp,
           location: entry.location,
           args: entry.args,
+          ...(entry.uncaught === true ? { uncaught: true } : {}),
           ...(entry.truncatedFrom !== undefined && { truncatedFrom: entry.truncatedFrom }),
         });
       }
@@ -430,6 +437,7 @@ const handler: ToolHandler = async (
             type: 'error',
             text,
             timestamp: Date.now(),
+            uncaught: true,
             location: callFrame
               ? {
                   url: callFrame.url,
@@ -525,11 +533,13 @@ const handler: ToolHandler = async (
           };
         }
 
+        const allLogs = state.logs.drain();
         const logs: ConsoleLogEntry[] = (limit && limit > 0)
           ? state.logs.tail(limit)
-          : state.logs.drain();
+          : allLogs;
 
         // Deduplicate consecutive identical log messages
+        const deduplicatedFactEntries = deduplicateLogs(allLogs);
         const deduplicatedLogs = deduplicateLogs(logs).map((log) => ({
           ...log,
           text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, log.text) : log.text,
@@ -545,7 +555,7 @@ const handler: ToolHandler = async (
           beforeDedup: logs.length,
           byType: {} as Record<string, number>,
         };
-        for (const log of state.logs.drain()) {
+        for (const log of allLogs) {
           stats.byType[log.type] = (stats.byType[log.type] || 0) + 1;
         }
 
@@ -558,20 +568,34 @@ const handler: ToolHandler = async (
         if (pagination.invalidCursor) return invalidCursorResult(pagination.invalidCursor);
         if (cursor) stats.returned = pagination.logs.length;
 
+        const contractFact = buildConsoleContractFact({
+          sessionId,
+          targetId: tabId,
+          capturedAt: new Date().toISOString(),
+          entries: deduplicatedFactEntries,
+          capturedTypes: state.filter && state.filter.length > 0 ? state.filter : null,
+          messageEncoding: boundaryMarkers ? 'oc_boundary_v1' : 'plain',
+          truncated:
+            bufStats.evictedTotal > 0
+            || allLogs.some((entry) => entry.truncatedFrom !== undefined),
+        });
+        const payload = {
+          action: 'get',
+          status: 'running',
+          logs: cursor ? pagination.logs : deduplicatedLogs,
+          stats,
+          durationMs: Date.now() - state.startedAt,
+          bufferStats,
+          contract_facts: [contractFact],
+          ...(cursor ? { hasMore: pagination.hasMore } : {}),
+          ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
+        };
+
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
-                action: 'get',
-                status: 'running',
-                logs: cursor ? pagination.logs : deduplicatedLogs,
-                stats,
-                durationMs: Date.now() - state.startedAt,
-                bufferStats,
-                ...(cursor ? { hasMore: pagination.hasMore } : {}),
-                ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
-              }),
+              text: JSON.stringify(payload),
             },
           ],
           structuredContent: {
@@ -581,6 +605,7 @@ const handler: ToolHandler = async (
             hasMore: cursor ? pagination.hasMore : false,
             ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
             total: pagination.total,
+            contract_facts: [contractFact],
           },
         };
       }

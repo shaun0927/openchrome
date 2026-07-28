@@ -70,4 +70,14 @@ export interface EvalContext {
     question: string;
     screenshot: Buffer;
   }): Promise<{ status: 'ok'; answer: string } | { status: 'unsupported_by_host'; reason: string }>;
+
+  /** Caller-supplied portable facts for performance/console assertions. */
+  contractFacts?(): Promise<unknown>;
+
+  /** Current verifier scope used to reject stale or cross-session/target facts. */
+  contractFactScope?(): {
+    sessionId: string;
+    targetId?: string;
+    nowMs: number;
+  };
 }

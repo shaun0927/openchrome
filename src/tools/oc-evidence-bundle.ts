@@ -57,6 +57,7 @@ interface SnapshotInput {
   screenshot_png_base64?: string;
   network?: NetworkEntry[];
   console?: ConsoleEntry[];
+  contract_facts?: unknown[];
   now_ms?: number;
   /** Caller-supplied gate fact (typically the oc_gate_inspect output). */
   gate?: Record<string, unknown>;
@@ -69,6 +70,7 @@ const VALID_PARTS: readonly EvidenceBundlePart[] = [
   'screenshot',
   'network',
   'console',
+  'contract_facts',
   'phash',
   'gate',
   'schema_diff',
@@ -89,11 +91,10 @@ const definition: MCPToolDefinition = {
       include: {
         type: 'array',
         description:
-          "Which parts to capture. Default ['dom', 'screenshot']. Allowed " +
-          "items: 'dom' | 'screenshot' | 'network' | 'console' | 'phash' | " +
-          "'gate' | 'schema_diff'. `gate` requires `evidence.snapshot.gate`; " +
-          '`schema_diff` requires `target_schema` and `evidence.snapshot.observed`; ' +
-          'otherwise the part is omitted.',
+          "Parts to capture. Default ['dom', 'screenshot']. Allowed: dom, screenshot, " +
+          'network, console, contract_facts, phash, gate, schema_diff. gate requires ' +
+          'evidence.snapshot.gate; schema_diff requires target_schema and ' +
+          'evidence.snapshot.observed. Missing inputs omit that part.',
         items: {
           type: 'string',
           enum: VALID_PARTS as unknown as string[],
@@ -118,14 +119,14 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description:
           'Caller-supplied snapshot. Provide the subset of fields the requested ' +
-          'parts need: `dom`, `screenshot_png_base64`, `network`, `console`, `now_ms`, ' +
+          'parts need: `dom`, `screenshot_png_base64`, `network`, `console`, `contract_facts`, `now_ms`, ' +
           '`gate`, `observed`. Missing fields cause the corresponding part to be omitted gracefully.',
         properties: {
           snapshot: {
             type: 'object',
             description:
               'Snapshot fields. `dom` (string|object), `screenshot_png_base64` (base64 PNG), ' +
-              '`network` (NetworkEntry[]), `console` (ConsoleEntry[]), `now_ms` (epoch ms ' +
+              '`network` (NetworkEntry[]), `console` (ConsoleEntry[]), `contract_facts` (bounded collector facts), `now_ms` (epoch ms ' +
               'used for the network window cutoff), `gate` (oc_gate_inspect-compatible fact), ' +
               '`observed` (structured extraction data for schema_diff).',
           },
@@ -157,6 +158,7 @@ function buildSnapshot(input: SnapshotInput | undefined): EvidenceBundleSnapshot
   if (input.screenshot_png_base64) out.screenshot_png = input.screenshot_png_base64;
   if (Array.isArray(input.network)) out.network = input.network;
   if (Array.isArray(input.console)) out.console = input.console;
+  if (Array.isArray(input.contract_facts)) out.contract_facts = input.contract_facts;
   if (typeof input.now_ms === 'number') out.now_ms = input.now_ms;
   if (input.gate && typeof input.gate === 'object') {
     // Shallow-copy through with `unknown` shape; the bundle writer is
@@ -246,7 +248,7 @@ const handler: ToolHandler = async (
   if (result.parts.length === 0) {
     output.inconclusive_reason =
       'no evidence parts captured — supply `evidence.snapshot` with at least one of ' +
-      "dom / screenshot_png_base64 / network / console / gate / observed, and select matching `include` parts.";
+      "dom / screenshot_png_base64 / network / console / contract_facts / gate / observed, and select matching `include` parts.";
   }
   const inlineResult = jsonResult(output);
   return resolveOutputMode(mode, inlineLimit, inlineResult, output, 'oc_evidence_bundle');
