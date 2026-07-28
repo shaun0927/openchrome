@@ -171,6 +171,116 @@ describe('CDPClient target/page contracts (#687 Wave 4 prereq)', () => {
     expect(await client.getPageByTargetId('startup-target')).toBe(startupPage);
   });
 
+  it('createPage attempts startup reuse only once during concurrent page hydration', async () => {
+    const startupPage = makePage('startup-target', 'chrome://newtab/');
+    const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');
+    let resolveStartupPage!: (page: MockPage | null) => void;
+    const startupPageReady = new Promise<MockPage | null>((resolve) => {
+      resolveStartupPage = resolve;
+    });
+    startupTarget.page.mockImplementation(() => startupPageReady);
+
+    const freshPage = makePage('fresh-target');
+    const browser = makeBrowser([], [startupTarget]);
+    browser.newPage.mockResolvedValue(freshPage);
+    const client = connectedClient(browser);
+
+    const firstPagePromise = client.createPage('https://first.test/', null, true);
+    await Promise.resolve();
+    const secondPagePromise = client.createPage('https://second.test/', null, true);
+    resolveStartupPage(startupPage);
+
+    await expect(firstPagePromise).resolves.toBe(startupPage);
+    await expect(secondPagePromise).resolves.toBe(freshPage);
+    expect(startupTarget.page).toHaveBeenCalledTimes(1);
+    expect(browser.newPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('createPage does not reuse a later blank page while three page creations overlap', async () => {
+    const startupPage = makePage('startup-target', 'chrome://newtab/');
+    const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');
+    let resolveStartupPage!: (page: MockPage | null) => void;
+    const startupPageReady = new Promise<MockPage | null>((resolve) => {
+      resolveStartupPage = resolve;
+    });
+    startupTarget.page.mockImplementation(() => startupPageReady);
+
+    const secondPage = makePage('second-target');
+    const secondTarget = makeTarget('second-target', secondPage, 'page', 'about:blank');
+    let resolveSecondPage!: (page: MockPage) => void;
+    const secondPageReady = new Promise<MockPage>((resolve) => {
+      resolveSecondPage = resolve;
+    });
+    const thirdPage = makePage('third-target');
+    const visibleTargets = [startupTarget];
+    const browser = makeBrowser([], visibleTargets);
+    browser.newPage
+      .mockImplementationOnce(() => {
+        visibleTargets.push(secondTarget);
+        return secondPageReady;
+      })
+      .mockResolvedValueOnce(thirdPage);
+    const client = connectedClient(browser);
+
+    const firstPagePromise = client.createPage('https://first.test/', null, true);
+    await Promise.resolve();
+    const secondPagePromise = client.createPage('https://second.test/', null, true);
+    await Promise.resolve();
+    const thirdPagePromise = client.createPage('https://third.test/', null, true);
+    resolveStartupPage(startupPage);
+    resolveSecondPage(secondPage);
+
+    await expect(firstPagePromise).resolves.toBe(startupPage);
+    await expect(secondPagePromise).resolves.toBe(secondPage);
+    await expect(thirdPagePromise).resolves.toBe(thirdPage);
+    expect(startupTarget.page).toHaveBeenCalledTimes(1);
+    expect(secondTarget.page).not.toHaveBeenCalled();
+    expect(browser.newPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('createPage rejects startup hydration that resolves after disconnect', async () => {
+    const startupPage = makePage('startup-target', 'chrome://newtab/');
+    const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');
+    let resolveStartupPage!: (page: MockPage | null) => void;
+    const startupPageReady = new Promise<MockPage | null>((resolve) => {
+      resolveStartupPage = resolve;
+    });
+    startupTarget.page.mockImplementation(() => startupPageReady);
+    const browser = makeBrowser([], [startupTarget]);
+    const client = connectedClient(browser);
+
+    const pagePromise = client.createPage('https://stale.test/', null, true);
+    await Promise.resolve();
+    await client.disconnect();
+    resolveStartupPage(startupPage);
+
+    await expect(pagePromise).rejects.toThrow('Chrome connection changed while resolving the startup page');
+    expect(browser.newPage).not.toHaveBeenCalled();
+    expect(
+      (client as unknown as { targetIdIndex: { has(targetId: string): boolean } })
+        .targetIdIndex.has('startup-target'),
+    ).toBe(false);
+  });
+
+  it('createPage can reuse one startup page for each browser connection', async () => {
+    const firstStartupPage = makePage('first-startup', 'chrome://newtab/');
+    const firstStartupTarget = makeTarget('first-startup', firstStartupPage, 'page', 'chrome://newtab/');
+    const firstBrowser = makeBrowser([], [firstStartupTarget]);
+    const client = connectedClient(firstBrowser);
+
+    await expect(client.createPage('https://first.test/', null, true)).resolves.toBe(firstStartupPage);
+
+    const secondStartupPage = makePage('second-startup', 'chrome://newtab/');
+    const secondStartupTarget = makeTarget('second-startup', secondStartupPage, 'page', 'chrome://newtab/');
+    const secondBrowser = makeBrowser([], [secondStartupTarget]);
+    (client as unknown as { browser: unknown }).browser = secondBrowser;
+    (client as unknown as { targetIdIndex: { clear(): void } }).targetIdIndex.clear();
+
+    await expect(client.createPage('https://second.test/', null, true)).resolves.toBe(secondStartupPage);
+    expect(firstStartupTarget.page).toHaveBeenCalledTimes(1);
+    expect(secondStartupTarget.page).toHaveBeenCalledTimes(1);
+  });
+
   it('createPage does not reuse startup candidates outside safe first-call guards', async () => {
     const startupPage = makePage('startup-target', 'chrome://newtab/');
     const startupTarget = makeTarget('startup-target', startupPage, 'page', 'chrome://newtab/');

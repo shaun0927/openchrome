@@ -80,25 +80,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function allocatePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      server.close((closeError) => {
-        if (closeError) {
-          reject(closeError);
-          return;
-        }
-        if (typeof address === 'object' && address !== null) {
-          resolve(address.port);
-        } else {
-          reject(new Error('ephemeral port allocation did not return an address'));
-        }
+async function allocateDistinctPorts(count: number): Promise<number[]> {
+  const reservations: net.Server[] = [];
+  try {
+    for (let i = 0; i < count; i++) {
+      const server = net.createServer();
+      reservations.push(server);
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
       });
+    }
+
+    return reservations.map((server) => {
+      const address = server.address();
+      if (typeof address !== 'object' || address === null) {
+        throw new Error('ephemeral port allocation did not return an address');
+      }
+      return address.port;
     });
-  });
+  } finally {
+    await Promise.all(reservations.map((server) => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+  }
 }
 
 async function waitForLog(getLog: () => string, pattern: RegExp, timeoutMs: number): Promise<boolean> {
@@ -191,9 +196,7 @@ describeFn('health endpoint gating (issue #648)', () => {
 
   scenarios.forEach((scenario) => {
     test(scenario.name, async () => {
-      const healthPort = await allocatePort();
-      const chromePort = await allocatePort();
-      const httpPort = await allocatePort();
+      const [healthPort, chromePort, httpPort] = await allocateDistinctPorts(3);
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         OPENCHROME_HEALTH_PORT: String(healthPort),
@@ -254,6 +257,15 @@ describeFn('health endpoint gating (issue #648)', () => {
         // after the SelfHealing log on those machines. Poll instead of guess.
         let probe: 'connected' | 'refused' | 'timeout' = 'refused';
         if (scenario.expectBound) {
+          const sawBoundLog = await waitForLog(
+            () => stderr,
+            new RegExp(`\\[HealthEndpoint\\] Health check: http://127\\.0\\.0\\.1:${healthPort}/health`),
+            10_000,
+          );
+          if (!sawBoundLog) {
+            throw new Error(`HealthEndpoint never confirmed its bound port ${healthPort}. stderr:\n${stderr}`);
+          }
+
           const deadline = Date.now() + 10_000;
           while (Date.now() < deadline) {
             probe = await probePort(healthPort, 300);

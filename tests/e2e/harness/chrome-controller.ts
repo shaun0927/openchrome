@@ -22,14 +22,20 @@ export class ChromeController {
     try {
       let output: string;
       if (platform === 'darwin') {
-        output = execSync(`lsof -i :${debugPort} -t 2>/dev/null`, { encoding: 'utf-8' }).trim();
+        output = execSync(
+          `lsof -nP -iTCP:${debugPort} -sTCP:LISTEN -t 2>/dev/null`,
+          { encoding: 'utf-8' },
+        ).trim();
       } else if (platform === 'win32') {
         output = execSync(`netstat -ano | findstr :${debugPort} | findstr LISTENING`, { encoding: 'utf-8' }).trim();
         const parts = output.split(/\s+/);
         output = parts[parts.length - 1];
       } else {
         // Linux
-        output = execSync(`lsof -i :${debugPort} -t 2>/dev/null || ss -tlnp | grep :${debugPort} | grep -oP 'pid=\\K\\d+'`, { encoding: 'utf-8' }).trim();
+        output = execSync(
+          `lsof -nP -iTCP:${debugPort} -sTCP:LISTEN -t 2>/dev/null || ss -H -ltnp | grep :${debugPort} | grep -oP 'pid=\\K\\d+'`,
+          { encoding: 'utf-8' },
+        ).trim();
       }
 
       const pids = output.split('\n').map(p => parseInt(p.trim(), 10)).filter(p => !isNaN(p));
