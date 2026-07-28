@@ -53,7 +53,7 @@ Categories below are documentation-only — the runtime source is
 | `oc_connection_health`     | Health probe                                         |
 | `oc_skill_recall`          | Read skill memory                                    |
 | `vision_find`              | Read-only image-based discovery                      |
-| `oc_assert`                | Single-call contract verifier (read-only)            |
+| `oc_evidence_get`          | Authorized read of persisted contract evidence       |
 | `oc_journal_compact`       | Read-only journal compaction (deterministic + sampling) |
 | `image_qa`                | Vision Q&A over caller-supplied screenshot via MCP sampling |
 | `oc_recording_list`        | List existing recordings                             |
@@ -133,6 +133,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | `oc_session_snapshot`   | Writes snapshot file                                             |
 | `oc_session_resume`     | Restores session state                                           |
 | `oc_checkpoint`         | Writes a checkpoint                                              |
+| `oc_assert`             | Evaluates a snapshot and persists redacted evidence              |
 | `oc_evidence_bundle`    | Writes evidence files                                            |
 | `oc_recording_start`    | Begins a recording session                                       |
 | `oc_recording_export`   | Writes an export file                                            |

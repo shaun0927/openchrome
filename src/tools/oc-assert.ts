@@ -14,9 +14,9 @@
  *    (url, dom text/count, network, screenshot bytes, dialog flag) and
  *    pass it in `evidence.snapshot`. Live browser plumbing belongs to
  *    the pilot runtime; the core tool stays a pure verifier.
- *  - `evidence_handle` is a UUID placeholder that future
- *    `oc_evidence_bundle` (#792) will consume to materialize a
- *    downloadable archive. v1.11 does not persist these handles.
+ *  - evaluated results are persisted as redacted, session/tenant-scoped
+ *    evidence artifacts with a bounded retention window. The pure snapshot
+ *    verifier does not create runtime traces and never invents trace IDs.
  */
 
 import { MCPServer } from '../mcp-server';
@@ -40,6 +40,12 @@ import type {
   Evidence,
   NetworkSinceMarker,
 } from '../contracts/types';
+import {
+  AssertEvidenceStore,
+  getAssertEvidenceStore,
+} from '../core/contracts/assert-evidence-store';
+import { currentRequestContext } from '../observability/request-id';
+import { DEFAULT_TENANT_ID } from '../tenant/types';
 
 type Verdict = 'pass' | 'fail' | 'inconclusive';
 type OcAssertErrorCode =
@@ -66,6 +72,15 @@ interface OcAssertOutput {
   failure_category?: FailureCategory;
   failure_reason?: string;
   evidence_handle?: string;
+  evidence_status?: 'persisted' | 'unavailable';
+  evidence_expires_at?: string;
+  evidence_get?: {
+    tool: 'oc_evidence_get';
+    arguments: { evidence_handle: string };
+  };
+  evidence_persistence_reason?: string;
+  trace_status?: 'unavailable';
+  trace_unavailable_reason?: string;
   evidence?: Evidence;
   validation_errors?: Array<{ path: string; message: string }>;
   inconclusive_reason?: string;
@@ -82,13 +97,19 @@ interface SnapshotInput {
   has_open_dialog?: boolean;
 }
 
+interface EvidenceProvenanceInput {
+  target_id?: string;
+  worker_id?: string;
+  captured_at?: string;
+}
+
 const definition: MCPToolDefinition = {
   name: 'oc_assert',
   description:
     'Evaluate a single Outcome Contract assertion against caller-supplied ' +
-    'evidence (snapshot). Returns verdict pass/fail/inconclusive plus the ' +
-    'list of failed leaf assertions. Core-tier single-call surface; retry ' +
-    'and escalation live in the pilot runtime.',
+    'evidence (snapshot), persist the redacted result for bounded retrieval, ' +
+    'and return verdict pass/fail/inconclusive plus failed leaf assertions. ' +
+    'Core-tier single-call surface; retry and escalation live in the pilot runtime.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -116,6 +137,20 @@ const definition: MCPToolDefinition = {
           'Pre-captured page evidence. Required for evaluation; without it ' +
           'the verdict is `inconclusive`.',
         properties: {
+          provenance: {
+            type: 'object',
+            description:
+              'Optional caller-supplied capture provenance persisted with the result. ' +
+              '`target_id` and `worker_id` identify the source target; `captured_at` is an ISO timestamp.',
+            properties: {
+              target_id: { type: 'string', description: 'Optional source target/tab ID.' },
+              worker_id: { type: 'string', description: 'Optional source worker ID.' },
+              captured_at: {
+                type: 'string',
+                description: 'Optional source capture time as an ISO timestamp.',
+              },
+            },
+          },
           snapshot: {
             type: 'object',
             description:
@@ -336,7 +371,10 @@ function isInconclusive(evidence: Evidence): boolean {
   return typeof evidence.details.error === 'string';
 }
 
-function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
+function createHandler(
+  templateRegistry: TemplateRegistry,
+  evidenceStore: AssertEvidenceStore,
+): ToolHandler {
   return async (
   sessionId: string,
   args: Record<string, unknown>,
@@ -344,6 +382,8 @@ function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
 ): Promise<MCPResult> => {
   const contractInline = args.contract;
   const contractIdArg = args.contract_id;
+  let contractSource: 'inline' | 'registry' = 'inline';
+  let resolvedContractId: string | undefined;
 
   if (contractInline !== undefined && contractIdArg !== undefined) {
     const output: OcAssertOutput = {
@@ -368,6 +408,8 @@ function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
       return jsonResult(output);
     }
     const contractId = contractIdArg;
+    contractSource = 'registry';
+    resolvedContractId = contractId;
 
     const template = templateRegistry.get(contractId);
     if (!template) {
@@ -409,7 +451,10 @@ function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
     return jsonResult(output);
   }
 
-  const evidenceArg = args.evidence as { snapshot?: SnapshotInput } | undefined;
+  const evidenceArg = args.evidence as {
+    snapshot?: SnapshotInput;
+    provenance?: EvidenceProvenanceInput;
+  } | undefined;
   const snapshot = evidenceArg?.snapshot;
 
   // Without any snapshot the verdict is inconclusive — there is no live
@@ -419,7 +464,7 @@ function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
     const output: OcAssertOutput = {
       verdict: 'inconclusive',
       inconclusive_reason:
-        'no evidence.snapshot provided; oc_assert is a pure verifier and ' +
+        'no evidence.snapshot provided; oc_assert is a snapshot-driven verifier and ' +
         'cannot capture page state on its own.',
     };
     return jsonResult(output);
@@ -450,7 +495,6 @@ function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
   const output: OcAssertOutput = {
     verdict,
     evidence: result.evidence,
-    evidence_handle: makeEvidenceHandle(),
   };
 
   if (verdict === 'fail') {
@@ -463,6 +507,48 @@ function createHandler(templateRegistry: TemplateRegistry): ToolHandler {
       typeof result.evidence.details.error === 'string'
         ? (result.evidence.details.error as string)
         : 'evaluation was inconclusive';
+  }
+
+  const traceUnavailableReason =
+    'oc_assert evaluates caller-supplied snapshots and does not create a runtime trace; no trace_ref was generated.';
+  output.trace_status = 'unavailable';
+  output.trace_unavailable_reason = traceUnavailableReason;
+
+  const tenantId = context?.principal?.tenantId
+    ?? currentRequestContext()?.tenantId
+    ?? DEFAULT_TENANT_ID;
+  const provenance = evidenceArg?.provenance;
+  const capturedAt = normalizeCapturedAt(provenance?.captured_at);
+  try {
+    const stored = evidenceStore.persist({
+      sessionId,
+      tenantId,
+      verdict,
+      contractSource,
+      ...(resolvedContractId ? { contractId: resolvedContractId } : {}),
+      ...(typeof provenance?.target_id === 'string' ? { targetId: provenance.target_id } : {}),
+      ...(typeof provenance?.worker_id === 'string' ? { workerId: provenance.worker_id } : {}),
+      ...(typeof snapshot.url === 'string' ? { pageUrl: snapshot.url } : {}),
+      ...(capturedAt ? { capturedAt } : {}),
+      assertion: validation.value,
+      result: output as unknown as Record<string, unknown>,
+      trace: { status: 'unavailable', reason: traceUnavailableReason },
+    });
+    output.evidence_handle = stored.evidence_handle;
+    output.evidence_status = 'persisted';
+    output.evidence_expires_at = stored.expires_at;
+    output.evidence_get = {
+      tool: 'oc_evidence_get',
+      arguments: { evidence_handle: stored.evidence_handle },
+    };
+  } catch (error) {
+    output.evidence_status = 'unavailable';
+    output.evidence_persistence_reason =
+      'evidence persistence failed; no evidence_handle was returned';
+    console.error(
+      '[oc_assert] Failed to persist evidence:',
+      error instanceof Error ? error.message : error,
+    );
   }
 
   // Wire into active recording: append verdict to most-recent action's contractResults.
@@ -520,23 +606,11 @@ export function deriveFailureCategory(
   };
 }
 
-function makeEvidenceHandle(): string {
-  // Placeholder for #792 oc_evidence_bundle. The handle is currently not
-  // persisted; the pilot runtime / a future evidence store will materialize
-  // it when oc_evidence_bundle lands.
-  return `ev_${cryptoRandomUUID()}`;
-}
-
-function cryptoRandomUUID(): string {
-  // crypto is globally available on Node ≥ 19; require() avoids pulling
-  // type-only imports into the build surface.
-  const c: { randomUUID?: () => string } | undefined =
-    (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (c && typeof c.randomUUID === 'function') {
-    return c.randomUUID();
+function normalizeCapturedAt(value: unknown): string | undefined {
+  if (typeof value === 'string' && Number.isFinite(Date.parse(value))) {
+    return new Date(value).toISOString();
   }
-  // Fallback: time + random. We do not use this for cryptographic purposes.
-  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  return undefined;
 }
 
 function jsonResult(payload: OcAssertOutput): MCPResult {
@@ -554,6 +628,7 @@ function jsonResult(payload: OcAssertOutput): MCPResult {
 export function registerOcAssertTool(
   server: MCPServer,
   templateRegistry: TemplateRegistry = createDefaultTemplateRegistry(),
+  evidenceStore: AssertEvidenceStore = getAssertEvidenceStore(),
 ): void {
-  server.registerTool('oc_assert', createHandler(templateRegistry), definition);
+  server.registerTool('oc_assert', createHandler(templateRegistry, evidenceStore), definition);
 }

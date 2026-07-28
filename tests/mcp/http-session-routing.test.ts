@@ -1,9 +1,17 @@
 /// <reference types="jest" />
 
 import { MCPServer } from '../../src/mcp-server';
+import {
+  AssertEvidenceStore,
+  AssertEvidenceStoreError,
+  setAssertEvidenceStoreForTests,
+} from '../../src/core/contracts/assert-evidence-store';
 import type { MCPTransport } from '../../src/transports';
 import type { MCPRequest, MCPToolDefinition } from '../../src/types/mcp';
 import { createMockSessionManager } from '../utils/mock-session';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const testTool: MCPToolDefinition = {
   name: 'oc_policy',
@@ -91,5 +99,45 @@ describe('HTTP MCP session routing', () => {
     await Promise.resolve();
 
     expect(sessionManager.deleteSession).toHaveBeenCalledWith('mcp-transport-a');
+  });
+
+  test('DELETE /mcp evicts launch-free evidence for the implicit session', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-http-evidence-'));
+    const store = new AssertEvidenceStore({ rootDir });
+    setAssertEvidenceStoreForTests(store);
+    try {
+      const stored = store.persist({
+        sessionId: 'mcp-transport-a',
+        tenantId: 'default',
+        verdict: 'pass',
+        contractSource: 'inline',
+        assertion: { kind: 'url', pattern: 'example' },
+        result: { verdict: 'pass' },
+        trace: { status: 'unavailable', reason: 'test' },
+      });
+      const server = new MCPServer(createMockSessionManager() as never);
+      let deleteHandler: ((sessionId: string) => void) | undefined;
+      const transport: MCPTransport & {
+        onSessionDelete: (handler: (sessionId: string) => void) => void;
+      } = {
+        onMessage: () => undefined,
+        send: () => undefined,
+        start: () => undefined,
+        close: async () => undefined,
+        onSessionDelete: (handler) => { deleteHandler = handler; },
+      };
+      server.wireRateLimiterCleanup(transport);
+
+      deleteHandler?.('transport-a');
+      await Promise.resolve();
+
+      expect(() => store.loadAuthorized(stored.evidence_handle, {
+        sessionId: 'mcp-transport-a',
+        tenantId: 'default',
+      })).toThrow(expect.objectContaining<Partial<AssertEvidenceStoreError>>({ code: 'not_found' }));
+    } finally {
+      setAssertEvidenceStoreForTests(null);
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
   });
 });

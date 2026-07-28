@@ -116,6 +116,7 @@ import { registerTotpGenerateTool } from './totp-generate';
 
 // Outcome Contracts (#784) — single-call assertion verifier
 import { registerOcAssertTool } from './oc-assert';
+import { registerOcEvidenceGetTool } from './oc-evidence-get';
 import { registerOcJournalCompactTool } from './oc-journal-compact';
 import { registerImageQaTool } from './image-qa';
 
@@ -236,6 +237,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_diff: 'core',
   oc_doctor_report: 'core',
   oc_evidence_bundle: 'core',
+  oc_evidence_get: 'core',
   oc_gate_inspect: 'core',
   oc_get_connection_info: 'core',
   image_qa: 'core',
@@ -515,6 +517,7 @@ export function registerAllTools(
 
   // Outcome Contracts (#784) — single-call assertion verifier
   registerOcAssertTool(proxy);
+  registerOcEvidenceGetTool(proxy);
   registerOcJournalCompactTool(proxy);
   registerImageQaTool(proxy);
 

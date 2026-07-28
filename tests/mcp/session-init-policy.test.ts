@@ -17,6 +17,7 @@ describe('MCP browser session initialization policy', () => {
     'oc_assert',
     'oc_diff',
     'oc_evidence_bundle',
+    'oc_evidence_get',
     'oc_output_fetch',
     'oc_performance_analyze',
     'oc_reflect',
