@@ -282,8 +282,9 @@ The retention contract is:
   256 artifacts per session/tenant owner, and caps one OpenChrome process at
   64 MiB or 1,024 artifacts; the assertion verdict still returns with
   `evidence_status: "unavailable"` when a retention quota is reached;
-- expired handles fail immediately by timestamp, while an unref periodic sweep
-  removes expired files and crash-left temporary writes from disk; persistence
+- expired handles fail immediately by timestamp without mutating storage, while
+  an unref periodic sweep removes expired files and crash-left temporary writes
+  from disk; persistence
   maintains a bounded in-memory index and does not synchronously rescan every
   artifact on each `oc_assert` call;
 - `oc_evidence_get` authorizes the owning OpenChrome process instance, MCP

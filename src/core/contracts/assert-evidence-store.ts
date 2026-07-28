@@ -291,9 +291,6 @@ export class AssertEvidenceStore {
     }
     const artifact = record.artifact;
     if (Date.parse(artifact.expires_at) <= this.now()) {
-      if (safeUnlink(this.filePath(handle))) {
-        this.removeIndexEntry(handle);
-      }
       throw new AssertEvidenceStoreError('expired', 'Evidence handle has expired');
     }
 
