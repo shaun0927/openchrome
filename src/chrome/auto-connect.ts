@@ -23,6 +23,8 @@ import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
+import { URL } from 'url';
+import { probeDebugPort, type DebugPortProbeResult } from './launcher-debug-port';
 
 export type ChromeChannel = 'stable' | 'beta' | 'dev' | 'canary';
 
@@ -40,10 +42,10 @@ export interface AutoConnectOptions {
 }
 
 export interface AutoConnectResult {
-  /** ws://127.0.0.1:<port><browser-target-path>. */
+  /** Validated browser WebSocket endpoint for the selected profile. */
   wsEndpoint: string;
   port: number;
-  /** The browser-target path Chrome wrote on line 2 of the file. */
+  /** Browser-target path from the file, or HTTP discovery for legacy one-line files. */
   browserTargetPath: string;
   /** Resolved user-data dir (after channel / default fallback). */
   userDataDir: string;
@@ -56,7 +58,10 @@ export class AutoConnectError extends Error {
     | 'devtools_active_port_malformed'
     | 'port_not_bound'
     | 'stale_active_port_file'
-    | 'invalid_user_data_dir';
+    | 'invalid_user_data_dir'
+    | 'port_changed'
+    | 'endpoint_mismatch'
+    | 'debug_endpoint_unavailable';
 
   constructor(
     message: string,
@@ -66,7 +71,10 @@ export class AutoConnectError extends Error {
       | 'devtools_active_port_malformed'
       | 'port_not_bound'
       | 'stale_active_port_file'
-      | 'invalid_user_data_dir',
+      | 'invalid_user_data_dir'
+      | 'port_changed'
+      | 'endpoint_mismatch'
+      | 'debug_endpoint_unavailable',
   ) {
     super(message);
     this.name = 'AutoConnectError';
@@ -199,8 +207,9 @@ interface ParsedActivePort {
 
 function parseDevToolsActivePort(raw: string): ParsedActivePort {
   // Chrome writes two lines: <port>\n<browser-target-path>. Tolerate trailing
-  // whitespace and an optional trailing newline. Browser-target-path may be
-  // empty (older Chrome), in which case we default to '/'.
+  // whitespace and an optional trailing newline. Older Chrome may omit the
+  // browser path; '/' is a legacy sentinel that requires successful HTTP
+  // discovery later and is never eligible for the 404 compatibility path.
   const lines = raw.split(/\r?\n/);
   const portLine = (lines[0] ?? '').trim();
   // Require the port line to be digits only so `parseInt`'s partial-number
@@ -335,6 +344,147 @@ export async function discoverActiveDevToolsPort(
   };
 }
 
+export interface RefreshAutoConnectOptions {
+  /** Port selected during CLI startup. A changed auto-assigned port requires restart. */
+  expectedPort: number;
+  /** Bounded wait for Chrome to rewrite DevToolsActivePort during restart. */
+  fileTimeoutMs?: number;
+  /** Bounded /json/version probe timeout. */
+  probeTimeoutMs?: number;
+}
+
+interface BrowserEndpointIdentity {
+  port: number;
+  browserTargetPath: string;
+  key: string;
+}
+
+function browserEndpointIdentity(endpoint: string): BrowserEndpointIdentity | null {
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') return null;
+    if (parsed.username || parsed.password) return null;
+
+    const host = parsed.hostname.toLowerCase();
+    if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) return null;
+
+    const port = parsed.port
+      ? Number.parseInt(parsed.port, 10)
+      : parsed.protocol === 'wss:'
+        ? 443
+        : 80;
+    const browserPathPrefix = '/devtools/browser/';
+    if (
+      !Number.isInteger(port)
+      || port <= 0
+      || port > 65535
+      || !parsed.pathname.startsWith(browserPathPrefix)
+      || parsed.pathname.length <= browserPathPrefix.length
+    ) return null;
+
+    return {
+      port,
+      browserTargetPath: parsed.pathname,
+      key: `${port}${parsed.pathname}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function debugProbeDetail(probe: DebugPortProbeResult): string {
+  if (probe.kind === 'ok') return 'a valid browser endpoint';
+  if (probe.kind === 'http-error') return `HTTP ${probe.statusCode}`;
+  if (probe.kind === 'network-error') {
+    return `network error${probe.code ? ` ${probe.code}` : ''}`;
+  }
+  return probe.kind;
+}
+
+/**
+ * Refresh the exact profile selected by `--auto-connect` and validate that the
+ * HTTP discovery endpoint, when available, identifies the same browser.
+ *
+ * Chrome configurations that intentionally return 404 for `/json/version`
+ * may use the freshly re-read DevToolsActivePort endpoint. Every other failure
+ * is rejected so a same-port process cannot silently replace the chosen
+ * profile.
+ */
+export async function refreshAutoConnectEndpoint(
+  current: Pick<AutoConnectResult, 'userDataDir' | 'port'>,
+  opts: RefreshAutoConnectOptions,
+): Promise<AutoConnectResult> {
+  const refreshed = await discoverActiveDevToolsPort({
+    userDataDir: current.userDataDir,
+    timeoutMs: opts.fileTimeoutMs ?? 1000,
+  });
+
+  if (refreshed.port !== opts.expectedPort) {
+    throw new AutoConnectError(
+      `DevToolsActivePort for ${refreshed.userDataDir} changed from port ${opts.expectedPort} ` +
+        `to ${refreshed.port}. Restart OpenChrome so transport and session routing use the new port.`,
+      'port_changed',
+    );
+  }
+
+  const fileIdentity = browserEndpointIdentity(refreshed.wsEndpoint);
+  if (!fileIdentity && refreshed.browserTargetPath !== '/') {
+    throw new AutoConnectError(
+      `DevToolsActivePort for ${refreshed.userDataDir} contains an invalid browser WebSocket path.`,
+      'devtools_active_port_malformed',
+    );
+  }
+
+  const probe = await probeDebugPort(refreshed.port, opts.probeTimeoutMs);
+  if (!fileIdentity) {
+    if (probe.kind !== 'ok') {
+      throw new AutoConnectError(
+        `DevToolsActivePort for ${refreshed.userDataDir} does not include a browser WebSocket path, ` +
+          `and /json/version returned ${debugProbeDetail(probe)}. Legacy one-line files require ` +
+          `a successful same-port browser endpoint and cannot use the HTTP 404 fallback.`,
+        'debug_endpoint_unavailable',
+      );
+    }
+
+    const httpIdentity = browserEndpointIdentity(probe.wsEndpoint);
+    if (!httpIdentity || httpIdentity.port !== opts.expectedPort) {
+      throw new AutoConnectError(
+        `/json/version on port ${refreshed.port} did not return a valid loopback browser endpoint ` +
+          `on the expected port. Refusing legacy one-line DevToolsActivePort attach.`,
+        'endpoint_mismatch',
+      );
+    }
+
+    return {
+      ...refreshed,
+      wsEndpoint: probe.wsEndpoint,
+      browserTargetPath: httpIdentity.browserTargetPath,
+    };
+  }
+
+  if (probe.kind === 'ok') {
+    const httpIdentity = browserEndpointIdentity(probe.wsEndpoint);
+    if (!httpIdentity || httpIdentity.key !== fileIdentity.key) {
+      throw new AutoConnectError(
+        `/json/version on port ${refreshed.port} points at a different browser than ` +
+          `${path.join(refreshed.userDataDir, 'DevToolsActivePort')}. Refusing cross-profile attach.`,
+        'endpoint_mismatch',
+      );
+    }
+    return refreshed;
+  }
+
+  if (probe.kind === 'http-error' && probe.statusCode === 404) {
+    return refreshed;
+  }
+
+  throw new AutoConnectError(
+    `Unable to validate the auto-connect Chrome on port ${refreshed.port}: /json/version returned ${debugProbeDetail(probe)}. ` +
+      `Only an exact matching endpoint or HTTP 404 with the current DevToolsActivePort path is accepted.`,
+    'debug_endpoint_unavailable',
+  );
+}
+
 /**
  * Internal helper: pure fns exported for unit tests.
  * Keep parsing deterministic and side-effect free.
@@ -345,4 +495,5 @@ export const __testing = {
   probePort,
   canonicalize,
   pathsEqual,
+  browserEndpointIdentity,
 };
