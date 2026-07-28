@@ -82,6 +82,7 @@ export const WRITE_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   // Navigation / tab lifecycle
   'navigate',
   'page_reload',
+  'tabs_activate',
   'tabs_create',
   'tabs_close',
 

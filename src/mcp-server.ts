@@ -98,6 +98,12 @@ import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 import { shouldInitializeBrowserSession } from './mcp/session-init-policy';
 
+const MCP_TRANSPORT_SESSION_PREFIX = 'mcp-';
+
+function implicitBrowserSessionId(mcpSessionId: string | undefined): string | undefined {
+  return mcpSessionId ? `${MCP_TRANSPORT_SESSION_PREFIX}${mcpSessionId}` : undefined;
+}
+
 function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   if (toolName === 'wait_for' && args.type === 'function' && typeof args.value === 'string') {
     return { ...args, value: redactPredicateSource(args.value) };
@@ -914,20 +920,19 @@ export class MCPServer {
     const hasDeleteHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
     if (hasDeleteHook) {
       (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
-        (sessionId: string) => {
+        (mcpSessionId: string) => {
+          const browserSessionId = implicitBrowserSessionId(mcpSessionId)!;
           if (this.rateLimiter) {
-            this.rateLimiter.removeSession(sessionId);
+            this.rateLimiter.removeSession(mcpSessionId);
+            this.rateLimiter.removeSession(browserSessionId);
           }
-          // Intentionally NOT clearing sessionTenants here: the transport
-          // callback receives the HTTP `Mcp-Session-Id` (a UUID assigned at
-          // initialize), whereas tenant claims are keyed by the tool-call
-          // sessionId (client-supplied via params/toolArgs, defaulting to
-          // 'default'). Those two spaces don't match, so deleting by this id
-          // would usually be a no-op, and on an unlucky collision would drop
-          // someone else's binding. sessionTenants is instead reclaimed by
-          // (a) the MCP `sessions/delete` handler and (b) the periodic
-          // `sweepSessionTenants()` tick scheduled in start().
-          cleanupConnectionState(sessionId);
+          this.sessionTenants.delete(browserSessionId);
+          if (typeof this.sessionManager.deleteSession === 'function') {
+            void this.sessionManager.deleteSession(browserSessionId).catch((error) => {
+              console.error(`[MCPServer] Failed to delete implicit browser session ${browserSessionId}: ${formatError(error)}`);
+            });
+          }
+          cleanupConnectionState(mcpSessionId);
         },
       );
     }
@@ -1042,7 +1047,7 @@ export class MCPServer {
     const request = parsed as unknown as MCPRequest;
 
     try {
-      return await this.handleRequest(request, principal, signal);
+      return await this.handleRequest(request, principal, signal, transportContext);
     } catch (error) {
       return {
         jsonrpc: '2.0' as const,
@@ -1147,6 +1152,7 @@ export class MCPServer {
     request: MCPRequest,
     principal?: Principal,
     signal?: AbortSignal,
+    transportContext?: TransportMessageContext,
   ): Promise<MCPResponse> {
     const { id, method, params } = request;
 
@@ -1159,11 +1165,11 @@ export class MCPServer {
           break;
 
         case 'tools/list':
-          result = await this.handleToolsList(params);
+          result = await this.handleToolsList(params, transportContext);
           break;
 
         case 'tools/call':
-          result = await this.handleToolsCall(params, id, principal, signal);
+          result = await this.handleToolsCall(params, id, principal, signal, transportContext);
           break;
 
         case 'resources/list':
@@ -1404,12 +1410,16 @@ export class MCPServer {
   /**
    * Handle tools/list request
    */
-  private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleToolsList(
+    params?: Record<string, unknown>,
+    transportContext?: TransportMessageContext,
+  ): Promise<MCPResult> {
     // Signal the hint engine that this session has consumed tool descriptions,
     // so rules whose guidance is already embedded in description "When to
     // use / When NOT to use" blocks can suppress themselves without affecting
     // other browser sessions that have not requested tools/list yet.
-    const sessionId = (params?.sessionId || 'default') as string;
+    const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+    const sessionId = (params?.sessionId || implicitBrowserSessionId(mcpSessionId) || 'default') as string;
     if (this.hintEngine) {
       this.hintEngine.markToolsListServed(sessionId);
     }
@@ -1586,6 +1596,7 @@ export class MCPServer {
     requestId?: number | string,
     principal?: Principal,
     signal?: AbortSignal,
+    transportContext?: TransportMessageContext,
   ): Promise<MCPResult> {
     if (!params) {
       throw new Error('Missing params for tools/call');
@@ -1594,8 +1605,16 @@ export class MCPServer {
     const toolName = params.name as string;
     const toolArgs = (params.arguments || {}) as Record<string, unknown>;
     const telemetryToolArgs = redactToolArgsForTelemetry(toolName, toolArgs);
-    // Use 'default' session if no sessionId is provided
-    const sessionId = (toolArgs.sessionId || params.sessionId || 'default') as string;
+    const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
+    // HTTP/broker clients get one implicit browser session per MCP transport
+    // session. Explicit logical session IDs remain an opt-in sharing surface;
+    // stdio callers retain the historical "default" session.
+    const sessionId = (
+      toolArgs.sessionId
+      || params.sessionId
+      || implicitBrowserSessionId(mcpSessionId)
+      || 'default'
+    ) as string;
 
     if (!toolName) {
       throw new Error('Missing tool name');
@@ -1799,7 +1818,7 @@ export class MCPServer {
     }
 
     const rootsDenial = this.enforceNetworkRootsForTool(
-      currentRequestContext()?.mcpSessionId ?? sessionId,
+      mcpSessionId ?? sessionId,
       toolName,
       substitutedArgs,
     );
@@ -1809,7 +1828,7 @@ export class MCPServer {
     }
 
     const fileRootsDenial = this.enforceFileRootsForTool(
-      currentRequestContext()?.mcpSessionId ?? sessionId,
+      mcpSessionId ?? sessionId,
       toolName,
       substitutedArgs,
     );
@@ -3089,7 +3108,7 @@ export class MCPServer {
     if (['read_page', 'find', 'page_content', 'query_dom', 'oc_query'].includes(toolName)) return 'content';
     if (toolName === 'javascript_tool') return 'javascript';
     if (['network', 'cookies', 'storage', 'request_intercept', 'http_auth'].includes(toolName)) return 'network';
-    if (['tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
+    if (['tabs_activate', 'tabs_context', 'tabs_create', 'tabs_close'].includes(toolName)) return 'tabs';
     if (['page_pdf', 'console_capture', 'performance_metrics', 'file_upload'].includes(toolName)) return 'media';
     if (['user_agent', 'geolocation', 'emulate_device'].includes(toolName)) return 'emulation';
     if (['workflow_init', 'workflow_status', 'workflow_collect', 'workflow_collect_partial', 'workflow_cleanup', 'execute_plan'].includes(toolName)) return 'orchestration';

@@ -72,6 +72,36 @@ describe('BrokerProxyStdioBridge', () => {
     expect(secondHeaders['Mcp-Session-Id']).toBe('abc-123');
   });
 
+  test('forwards tabs_activate unchanged through the owner broker session', async () => {
+    const fetchImpl = jest.fn<Promise<Response>, [string, RequestInit]>()
+      .mockResolvedValueOnce(createMockResponse({
+        body: '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}',
+        headers: { 'Mcp-Session-Id': 'activation-session' },
+      }))
+      .mockResolvedValueOnce(createMockResponse({
+        body: '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"ok"}]}}',
+      }));
+    const bridge = new BrokerProxyStdioBridge(broker, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      write: () => undefined,
+    });
+
+    await bridge.forwardLine('{"jsonrpc":"2.0","id":1,"method":"initialize"}');
+    await bridge.forwardLine('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tabs_activate","arguments":{"tabId":"target-1","workerId":"worker-1"}}}');
+
+    const request = fetchImpl.mock.calls[1][1] as RequestInit;
+    expect((request.headers as Record<string, string>)['Mcp-Session-Id']).toBe('activation-session');
+    expect(JSON.parse(String(request.body))).toEqual({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'tabs_activate',
+        arguments: { tabId: 'target-1', workerId: 'worker-1' },
+      },
+    });
+  });
+
   test('writes no body for 202 Accepted notifications', async () => {
     const fetchImpl = jest.fn(async () => createMockResponse({ status: 202 }));
     const output: string[] = [];

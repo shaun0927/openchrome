@@ -18,6 +18,7 @@ import { registerJavascriptTool } from './javascript';
 import { registerTabsContextTool } from './tabs-context';
 import { registerTabsCreateTool } from './tabs-create';
 import { registerTabsCloseTool } from './tabs-close';
+import { registerTabsActivateTool } from './tabs-activate';
 import { registerNetworkTool } from './network';
 import { registerWorkerTool } from './worker';
 import { registerOrchestrationTools } from './orchestration';
@@ -263,6 +264,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   oc_query: 'core',
   read_page: 'core',
   request_intercept: 'core',
+  tabs_activate: 'core',
   tabs_close: 'core',
   tabs_context: 'core',
   tabs_create: 'core',
@@ -439,6 +441,7 @@ export function registerAllTools(
   registerTabsContextTool(proxy);
   registerTabsCreateTool(proxy);
   registerTabsCloseTool(proxy);
+  registerTabsActivateTool(proxy);
 
   // Worker management (parallel browser operations)
   registerWorkerTool(proxy);
