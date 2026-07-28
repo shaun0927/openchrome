@@ -171,9 +171,8 @@ export function registerTabsCreateTool(server: MCPServer): void {
   // Snapshot-cache (#879): bump docEpoch defensively so a read against a
   // newly-created tab cannot inherit a stale entry from a recycled
   // target id.
-  const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid, undefined, 'tabs_create') : Promise.resolve(null),
+    tid ? getSessionManager().getPage(sid, tid, undefined, 'tabs_create') : Promise.resolve(null),
   );
   server.registerTool('tabs_create', wrapped, definition);
 }
