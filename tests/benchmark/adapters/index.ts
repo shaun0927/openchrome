@@ -39,6 +39,19 @@ export {
 } from './playwright-mcp-adapter';
 
 export {
+  BROWSER_RS_PIN,
+  BrowserRsMcpAdapter,
+  BrowserRsMcpAdapterOptions,
+  BrowserRsMcpTool,
+  BrowserRsMcpTransport,
+  BrowserRsPreflightResult,
+  BrowserRsPreflightStatus,
+  browserRsPlatformKey,
+  browserRsPlatformPin,
+  preflightBrowserRsBinary,
+} from './browser-rs-mcp-adapter';
+
+export {
   CrawleeAdapter,
   CrawleeAdapterOptions,
   CrawleeExtractor,
