@@ -23,7 +23,7 @@ function persist(store: AssertEvidenceStore, overrides: Record<string, unknown> 
     contractSource: 'inline',
     targetId: 'tab-a',
     workerId: 'worker-a',
-    pageUrl: 'https://example.com/account?token=super-secret-token-value',
+    pageUrl: 'https://alice:hunter2@example.com/account?token=super-secret-token-value',
     assertion: { kind: 'url', pattern: 'example\\.com' },
     result: {
       verdict: 'pass',
@@ -31,7 +31,7 @@ function persist(store: AssertEvidenceStore, overrides: Record<string, unknown> 
         passed: true,
         assertion_kind: 'url',
         details: {
-          url: 'https://example.com/account?token=super-secret-token-value',
+          url: 'https://alice:hunter2@example.com/account?token=super-secret-token-value',
           authorization: 'Bearer abcdefghijklmnop',
         },
       },
@@ -88,6 +88,9 @@ describe('AssertEvidenceStore', () => {
 
     expect(raw).not.toContain('super-secret-token-value');
     expect(raw).not.toContain('abcdefghijklmnop');
+    expect(raw).not.toContain('alice');
+    expect(raw).not.toContain('hunter2');
+    expect(raw).toContain('https://[REDACTED]@example.com/account?token=[REDACTED]');
     expect(raw).toContain('[REDACTED]');
 
     const artifact = store.loadAuthorized(stored.evidence_handle, {
@@ -96,6 +99,8 @@ describe('AssertEvidenceStore', () => {
     });
     expect(JSON.stringify(artifact)).not.toContain('super-secret-token-value');
     expect(JSON.stringify(artifact)).not.toContain('abcdefghijklmnop');
+    expect(JSON.stringify(artifact)).not.toContain('alice');
+    expect(JSON.stringify(artifact)).not.toContain('hunter2');
   });
 
   test('keeps authorization stable when configured secrets match owner identifiers', () => {
