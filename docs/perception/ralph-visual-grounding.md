@@ -32,6 +32,24 @@ When the visual fallback succeeds, the normal Ralph response includes:
 
 ## Current boundary
 
-This is the engine-level fallback hook. Tool-level callers can wire a
-`PerceptionSnapshot` from `vision_find` or an optional provider in follow-up
-integration without changing the deterministic safety gates.
+Ralph retains the engine-level fallback hook and deterministic candidate score.
+For a caller that has already selected an exact element, `interact
+mode="perception"` provides the direct tool-level path:
+
+```text
+vision_find format="snapshot"
+  -> host selects one snapshot element ID
+  -> interact mode="perception"
+  -> OpenChrome validates provenance and dispatches one action
+```
+
+These paths have different ownership boundaries:
+
+- Ralph visual grounding deterministically matches a requested label against
+  snapshot candidates as a late fallback.
+- `interact mode="perception"` never selects or ranks candidates. It consumes
+  the exact snapshot-local ID chosen by the MCP host.
+
+Both paths keep DOM/AX/CDP authority first when durable browser identity is
+available, reject unsafe visual-only targets, and add no server-side model or
+provider dependency.
