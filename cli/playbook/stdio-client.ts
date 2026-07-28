@@ -15,6 +15,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as readline from 'readline';
+import { resolveServeInvocation } from '../serve-invocation';
 
 export class TransportError extends Error {
   constructor(message: string) {
@@ -70,8 +71,9 @@ export class StdioMcpClient {
 
     // Resolve the serve entry — from dist/cli/playbook/ go up three levels to root.
     const serveEntry = path.join(__dirname, '..', '..', '..', 'dist', 'index.js');
+    const invocation = resolveServeInvocation(serveEntry, ['--server-mode']);
 
-    this.child = spawn(process.execPath, [serveEntry, 'serve', '--server-mode'], {
+    this.child = spawn(invocation.command, invocation.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
