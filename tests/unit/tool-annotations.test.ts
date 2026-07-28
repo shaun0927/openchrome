@@ -79,6 +79,15 @@ describe('TOOL_ANNOTATIONS table', () => {
     }
   });
 
+  test('tabs_activate is mutating, non-destructive, and closed-world', () => {
+    expect(TOOL_ANNOTATIONS.tabs_activate).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
+  });
+
   test('reverse direction — every table entry has a registered tool file', async () => {
     // Catches the "orphan entry" failure mode: a name in TOOL_ANNOTATIONS that
     // no longer corresponds to any tool, leaving dead metadata.

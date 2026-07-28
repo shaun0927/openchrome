@@ -28,6 +28,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_stop: 1,
 
   // Tier 2: Specialist (on demand)
+  tabs_activate: 2,
   javascript_tool: 2,
   network: 2,
   page_reload: 2,

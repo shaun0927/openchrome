@@ -2,7 +2,7 @@
 
 > Generated from `src/tools/index.ts`. Do not edit by hand; run `npm run docs:capability-map`.
 
-Total tools: 118
+Total tools: 119
 
 ## core
 
@@ -91,6 +91,7 @@ Total tools: 118
 - `query_dom` — Query DOM elements via CSS selector or XPath.
 - `read_page` — Get page as DOM, accessibility tree (ax), CSS diagnostics, semantic summary, or clean Markdown (article-shaped).
 - `request_intercept` — Intercept network requests (log, block, modify).
+- `tabs_activate` — Explicitly activate an authorized Chrome tab and verify document visibility.
 - `tabs_close` — Close one or more tabs by tabId, tabIds, or workerId.
 - `tabs_context` — Get session tab IDs grouped by worker.
 - `tabs_create` — Create a new tab with URL.

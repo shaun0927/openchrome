@@ -75,6 +75,7 @@ describe('isAllowed', () => {
 
   it('WRITE_TOOLS set contains expected browser-mutating tools', () => {
     expect(WRITE_TOOLS.has('navigate')).toBe(true);
+    expect(WRITE_TOOLS.has('tabs_activate')).toBe(true);
     expect(WRITE_TOOLS.has('fill_form')).toBe(true);
     expect(WRITE_TOOLS.has('javascript_tool')).toBe(true);
     expect(WRITE_TOOLS.has('cookies')).toBe(true);

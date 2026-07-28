@@ -43,7 +43,8 @@ const TOOL_ROUTING_MAP: Record<string, ToolRouting> = {
   // UX composite tools - prefer-lightpanda
   fill_form: 'prefer-lightpanda',
 
-  // Tab management tools - prefer-lightpanda
+  // Tab management tools
+  tabs_activate: 'chrome-only',
   tabs_context: 'prefer-lightpanda',
   tabs_create: 'prefer-lightpanda',
   tabs_close: 'prefer-lightpanda',

@@ -47,6 +47,7 @@ describe('MCP browser session initialization policy', () => {
 
   test.each([
     'navigate',
+    'tabs_activate',
     'tabs_create',
     'read_page',
     'oc_vitals',

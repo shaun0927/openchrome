@@ -166,6 +166,7 @@ export const TOOL_ANNOTATIONS = {
   user_agent: MUTATES,
   geolocation: MUTATES,
   emulate_device: MUTATES,
+  tabs_activate: MUTATES,
   tabs_create: MUTATES,
   lightweight_scroll: MUTATES,
   // `memory` validate-prune path deletes memory entries — destructive under
