@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import {
   AssertEvidenceStore,
+  AssertEvidencePersistError,
   AssertEvidenceStoreError,
 } from '../../../src/core/contracts/assert-evidence-store';
 import {
@@ -143,6 +144,61 @@ describe('AssertEvidenceStore', () => {
       sessionId: 'session-a',
       tenantId: 'tenant-a',
     }).evidence_handle).toBe(stored.evidence_handle);
+  });
+
+  test('rejects an oversized artifact before writing it', () => {
+    const store = new AssertEvidenceStore({ rootDir, maxArtifactBytes: 2_000 });
+
+    expect(() => persist(store, {
+      assertion: {
+        kind: 'image_qa',
+        question: 'x'.repeat(10_000),
+        expected_pattern: 'yes',
+      },
+    })).toThrow(expect.objectContaining<Partial<AssertEvidencePersistError>>({
+      code: 'artifact_too_large',
+    }));
+    expect(fs.readdirSync(rootDir).filter((file) => file.endsWith('.json'))).toHaveLength(0);
+  });
+
+  test('rebuilds quota usage once and enforces the owner cap across store instances', () => {
+    const first = new AssertEvidenceStore({
+      rootDir,
+      instanceId: 'quota-instance',
+      maxOwnerArtifacts: 1,
+    });
+    persist(first);
+
+    const second = new AssertEvidenceStore({
+      rootDir,
+      instanceId: 'quota-instance',
+      maxOwnerArtifacts: 1,
+    });
+    expect(() => persist(second)).toThrow(
+      expect.objectContaining<Partial<AssertEvidencePersistError>>({ code: 'owner_quota_exceeded' }),
+    );
+    expect(() => persist(second, { sessionId: 'session-b' })).not.toThrow();
+  });
+
+  test('enforces the aggregate instance artifact cap across different owners', () => {
+    const store = new AssertEvidenceStore({ rootDir, maxInstanceArtifacts: 1 });
+    persist(store);
+
+    expect(() => persist(store, { sessionId: 'session-b' })).toThrow(
+      expect.objectContaining<Partial<AssertEvidencePersistError>>({
+        code: 'instance_quota_exceeded',
+      }),
+    );
+  });
+
+  test('does not run the full cleanup sweep on each persist call', () => {
+    const store = new AssertEvidenceStore({ rootDir });
+    const cleanup = jest.spyOn(store, 'cleanupExpired');
+
+    persist(store);
+    persist(store, { sessionId: 'session-b' });
+
+    expect(cleanup).not.toHaveBeenCalled();
   });
 
   test('expires stale handles and deletes their files', () => {

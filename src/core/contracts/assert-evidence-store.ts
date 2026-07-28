@@ -10,6 +10,11 @@ import { redactValue } from '../trace/redactor';
 export const ASSERT_EVIDENCE_SCHEMA_VERSION = 1;
 export const DEFAULT_ASSERT_EVIDENCE_TTL_MS = 30 * 60 * 1000;
 export const DEFAULT_ASSERT_EVIDENCE_SWEEP_INTERVAL_MS = 60 * 1000;
+export const DEFAULT_ASSERT_EVIDENCE_MAX_ARTIFACT_BYTES = 1024 * 1024;
+export const DEFAULT_ASSERT_EVIDENCE_MAX_OWNER_BYTES = 16 * 1024 * 1024;
+export const DEFAULT_ASSERT_EVIDENCE_MAX_OWNER_ARTIFACTS = 256;
+export const DEFAULT_ASSERT_EVIDENCE_MAX_INSTANCE_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_ASSERT_EVIDENCE_MAX_INSTANCE_ARTIFACTS = 1024;
 
 const ASSERT_EVIDENCE_STORAGE_VERSION = 1;
 const PROCESS_ASSERT_EVIDENCE_INSTANCE_ID = randomUUID();
@@ -26,6 +31,10 @@ export type AssertEvidenceStoreErrorCode =
   | 'expired'
   | 'forbidden'
   | 'corrupt';
+export type AssertEvidencePersistErrorCode =
+  | 'artifact_too_large'
+  | 'owner_quota_exceeded'
+  | 'instance_quota_exceeded';
 
 export interface AssertEvidenceTraceUnavailable {
   status: 'unavailable';
@@ -89,6 +98,11 @@ export interface AssertEvidenceStoreOptions {
   sweepIntervalMs?: number;
   /** Stable for one OpenChrome process; separates otherwise-identical logical sessions. */
   instanceId?: string;
+  maxArtifactBytes?: number;
+  maxOwnerBytes?: number;
+  maxOwnerArtifacts?: number;
+  maxInstanceBytes?: number;
+  maxInstanceArtifacts?: number;
 }
 
 interface StoredAssertEvidenceRecord {
@@ -107,6 +121,18 @@ interface StoredAssertEvidenceEnvelope {
   artifact: unknown;
 }
 
+interface AssertEvidenceIndexEntry {
+  sizeBytes: number;
+  expiresAtMs: number;
+  sessionSha256: string;
+  tenantSha256: string;
+}
+
+interface AssertEvidenceUsage {
+  bytes: number;
+  count: number;
+}
+
 export class AssertEvidenceStoreError extends Error {
   constructor(
     public readonly code: AssertEvidenceStoreErrorCode,
@@ -114,6 +140,16 @@ export class AssertEvidenceStoreError extends Error {
   ) {
     super(message);
     this.name = 'AssertEvidenceStoreError';
+  }
+}
+
+export class AssertEvidencePersistError extends Error {
+  constructor(
+    public readonly code: AssertEvidencePersistErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AssertEvidencePersistError';
   }
 }
 
@@ -130,6 +166,16 @@ export class AssertEvidenceStore {
   private readonly now: () => number;
   private readonly sweepIntervalMs?: number;
   private readonly instanceId: string;
+  private readonly instanceSha256: string;
+  private readonly maxArtifactBytes: number;
+  private readonly maxOwnerBytes: number;
+  private readonly maxOwnerArtifacts: number;
+  private readonly maxInstanceBytes: number;
+  private readonly maxInstanceArtifacts: number;
+  private readonly artifactIndex = new Map<string, AssertEvidenceIndexEntry>();
+  private readonly ownerUsage = new Map<string, AssertEvidenceUsage>();
+  private instanceUsage: AssertEvidenceUsage = { bytes: 0, count: 0 };
+  private indexInitialized = false;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: AssertEvidenceStoreOptions = {}) {
@@ -138,14 +184,36 @@ export class AssertEvidenceStore {
     this.now = options.now ?? Date.now;
     this.sweepIntervalMs = normalizeSweepInterval(options.sweepIntervalMs);
     this.instanceId = normalizeInstanceId(options.instanceId);
+    this.instanceSha256 = hashOwnerPart('instance', this.instanceId);
+    this.maxArtifactBytes = normalizeLimit(
+      options.maxArtifactBytes,
+      DEFAULT_ASSERT_EVIDENCE_MAX_ARTIFACT_BYTES,
+    );
+    this.maxOwnerBytes = normalizeLimit(
+      options.maxOwnerBytes,
+      DEFAULT_ASSERT_EVIDENCE_MAX_OWNER_BYTES,
+    );
+    this.maxOwnerArtifacts = normalizeLimit(
+      options.maxOwnerArtifacts,
+      DEFAULT_ASSERT_EVIDENCE_MAX_OWNER_ARTIFACTS,
+    );
+    this.maxInstanceBytes = normalizeLimit(
+      options.maxInstanceBytes,
+      DEFAULT_ASSERT_EVIDENCE_MAX_INSTANCE_BYTES,
+    );
+    this.maxInstanceArtifacts = normalizeLimit(
+      options.maxInstanceArtifacts,
+      DEFAULT_ASSERT_EVIDENCE_MAX_INSTANCE_ARTIFACTS,
+    );
   }
 
   persist(input: AssertEvidencePersistInput): AssertEvidenceHandle {
     if (!input.sessionId) throw new Error('AssertEvidenceStore.persist: sessionId is required');
     if (!input.tenantId) throw new Error('AssertEvidenceStore.persist: tenantId is required');
     this.ensureSweepStarted();
-    this.cleanupExpired();
     this.ensureRoot();
+    this.ensureIndexInitialized();
+    this.pruneExpiredIndexedEntries();
 
     const nowMs = this.now();
     const handle = `ev_${randomUUID()}`;
@@ -177,16 +245,20 @@ export class AssertEvidenceStore {
       owner: ownerDigest(this.instanceId, input.sessionId, input.tenantId),
       artifact,
     };
+    const serialized = JSON.stringify(record, null, 2);
+    const sizeBytes = Buffer.byteLength(serialized, 'utf8');
+    this.assertWithinQuota(record.owner, sizeBytes);
 
     const target = this.filePath(handle);
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
     try {
-      fs.writeFileSync(temporary, JSON.stringify(record, null, 2), {
+      fs.writeFileSync(temporary, serialized, {
         encoding: 'utf8',
         mode: 0o600,
         flag: 'wx',
       });
       fs.renameSync(temporary, target);
+      this.addIndexEntry(handle, record, sizeBytes);
     } catch (error) {
       safeUnlink(temporary);
       throw error;
@@ -220,6 +292,7 @@ export class AssertEvidenceStore {
     const artifact = record.artifact;
     if (Date.parse(artifact.expires_at) <= this.now()) {
       safeUnlink(this.filePath(handle));
+      this.removeIndexEntry(handle);
       throw new AssertEvidenceStoreError('expired', 'Evidence handle has expired');
     }
 
@@ -228,23 +301,14 @@ export class AssertEvidenceStore {
 
   evictSession(sessionId: string): number {
     if (!sessionId || !fs.existsSync(this.rootDir)) return 0;
+    this.ensureIndexInitialized();
     let removed = 0;
-    const instanceDigest = hashOwnerPart('instance', this.instanceId);
     const sessionDigest = hashOwnerPart('session', sessionId);
-    for (const file of this.artifactFiles()) {
-      const filePath = path.join(this.rootDir, file);
-      try {
-        const record = this.readEnvelopeFile(filePath);
-        if (
-          record.owner.instance_sha256 !== instanceDigest
-          || record.owner.session_sha256 !== sessionDigest
-        ) continue;
-        safeUnlink(filePath);
-        removed += 1;
-      } catch {
-        // Session cleanup must not delete an artifact whose instance ownership
-        // cannot be proven. The periodic cleanup path removes corrupt files.
-      }
+    for (const [handle, entry] of Array.from(this.artifactIndex.entries())) {
+      if (entry.sessionSha256 !== sessionDigest) continue;
+      safeUnlink(this.filePath(handle));
+      this.removeIndexEntry(handle);
+      removed += 1;
     }
     return removed;
   }
@@ -255,13 +319,16 @@ export class AssertEvidenceStore {
     const nowMs = this.now();
     for (const file of this.artifactFiles()) {
       const filePath = path.join(this.rootDir, file);
+      const handle = file.slice(0, -'.json'.length);
       try {
-        const record = this.readRecordFile(filePath, file.slice(0, -'.json'.length));
+        const record = this.readRecordFile(filePath, handle);
         if (Date.parse(record.artifact.expires_at) > nowMs) continue;
         safeUnlink(filePath);
+        this.removeIndexEntry(handle);
         removed += 1;
       } catch {
         safeUnlink(filePath);
+        this.removeIndexEntry(handle);
         removed += 1;
       }
     }
@@ -286,6 +353,103 @@ export class AssertEvidenceStore {
     } catch {
       // Best-effort on filesystems that do not expose POSIX modes.
     }
+  }
+
+  private ensureIndexInitialized(): void {
+    if (this.indexInitialized) return;
+    this.indexInitialized = true;
+    const nowMs = this.now();
+    for (const file of this.artifactFiles()) {
+      const handle = file.slice(0, -'.json'.length);
+      const filePath = path.join(this.rootDir, file);
+      try {
+        const record = this.readRecordFile(filePath, handle);
+        if (Date.parse(record.artifact.expires_at) <= nowMs) {
+          safeUnlink(filePath);
+          continue;
+        }
+        if (record.owner.instance_sha256 !== this.instanceSha256) continue;
+        const sizeBytes = fs.statSync(filePath).size;
+        this.addIndexEntry(handle, record, sizeBytes);
+      } catch {
+        safeUnlink(filePath);
+      }
+    }
+  }
+
+  private pruneExpiredIndexedEntries(): void {
+    const nowMs = this.now();
+    for (const [handle, entry] of Array.from(this.artifactIndex.entries())) {
+      if (entry.expiresAtMs > nowMs) continue;
+      safeUnlink(this.filePath(handle));
+      this.removeIndexEntry(handle);
+    }
+  }
+
+  private assertWithinQuota(
+    owner: StoredAssertEvidenceRecord['owner'],
+    artifactBytes: number,
+  ): void {
+    if (artifactBytes > this.maxArtifactBytes) {
+      throw new AssertEvidencePersistError(
+        'artifact_too_large',
+        `Evidence artifact exceeds the ${this.maxArtifactBytes}-byte limit`,
+      );
+    }
+
+    const usage = this.ownerUsage.get(ownerKey(owner)) ?? { bytes: 0, count: 0 };
+    if (usage.bytes + artifactBytes > this.maxOwnerBytes || usage.count + 1 > this.maxOwnerArtifacts) {
+      throw new AssertEvidencePersistError(
+        'owner_quota_exceeded',
+        'Evidence retention quota exceeded for this OpenChrome session and tenant',
+      );
+    }
+    if (
+      this.instanceUsage.bytes + artifactBytes > this.maxInstanceBytes
+      || this.instanceUsage.count + 1 > this.maxInstanceArtifacts
+    ) {
+      throw new AssertEvidencePersistError(
+        'instance_quota_exceeded',
+        'Evidence retention quota exceeded for this OpenChrome instance',
+      );
+    }
+  }
+
+  private addIndexEntry(
+    handle: string,
+    record: StoredAssertEvidenceRecord,
+    sizeBytes: number,
+  ): void {
+    this.removeIndexEntry(handle);
+    const entry: AssertEvidenceIndexEntry = {
+      sizeBytes,
+      expiresAtMs: Date.parse(record.artifact.expires_at),
+      sessionSha256: record.owner.session_sha256,
+      tenantSha256: record.owner.tenant_sha256,
+    };
+    this.artifactIndex.set(handle, entry);
+    const key = ownerKey(record.owner);
+    const usage = this.ownerUsage.get(key) ?? { bytes: 0, count: 0 };
+    usage.bytes += sizeBytes;
+    usage.count += 1;
+    this.ownerUsage.set(key, usage);
+    this.instanceUsage.bytes += sizeBytes;
+    this.instanceUsage.count += 1;
+  }
+
+  private removeIndexEntry(handle: string): void {
+    const entry = this.artifactIndex.get(handle);
+    if (!entry) return;
+    this.artifactIndex.delete(handle);
+    const key = `${entry.sessionSha256}:${entry.tenantSha256}`;
+    const usage = this.ownerUsage.get(key);
+    if (usage) {
+      usage.bytes = Math.max(0, usage.bytes - entry.sizeBytes);
+      usage.count = Math.max(0, usage.count - 1);
+      if (usage.count === 0) this.ownerUsage.delete(key);
+    }
+    this.instanceUsage.bytes = Math.max(0, this.instanceUsage.bytes - entry.sizeBytes);
+    this.instanceUsage.count = Math.max(0, this.instanceUsage.count - 1);
   }
 
   stopSweep(): void {
@@ -366,6 +530,13 @@ function normalizeSweepInterval(value: number | undefined): number | undefined {
   return Math.floor(value);
 }
 
+function normalizeLimit(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    return fallback;
+  }
+  return value;
+}
+
 function normalizeInstanceId(value: string | undefined): string {
   if (typeof value === 'string' && value.trim().length > 0) return value;
   return PROCESS_ASSERT_EVIDENCE_INSTANCE_ID;
@@ -387,6 +558,10 @@ function ownerDigest(
     session_sha256: hashOwnerPart('session', sessionId),
     tenant_sha256: hashOwnerPart('tenant', tenantId),
   };
+}
+
+function ownerKey(owner: StoredAssertEvidenceRecord['owner']): string {
+  return `${owner.session_sha256}:${owner.tenant_sha256}`;
 }
 
 function hashOwnerPart(kind: 'instance' | 'session' | 'tenant', value: string): string {
