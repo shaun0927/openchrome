@@ -99,15 +99,12 @@ import { extractRunId, getRunStore } from './run-harness/store';
 import { shouldInitializeBrowserSession } from './mcp/session-init-policy';
 import { getAssertEvidenceStore } from './core/contracts/assert-evidence-store';
 import { DEFAULT_TENANT_ID } from './tenant/types';
+import { isTenantScopedPrincipal } from './auth/tenant-principal';
 
 const MCP_TRANSPORT_SESSION_PREFIX = 'mcp-';
 
 function implicitBrowserSessionId(mcpSessionId: string | undefined): string | undefined {
   return mcpSessionId ? `${MCP_TRANSPORT_SESSION_PREFIX}${mcpSessionId}` : undefined;
-}
-
-function isTenantScopedPrincipal(principal: Principal | undefined): principal is Principal {
-  return principal?.mode === 'api-key' || principal?.mode === 'jwt';
 }
 
 function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {

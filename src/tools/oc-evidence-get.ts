@@ -8,6 +8,7 @@ import {
 import { MCPServer } from '../mcp-server';
 import { currentRequestContext } from '../observability/request-id';
 import { DEFAULT_TENANT_ID } from '../tenant/types';
+import { resolveEffectiveTenantId } from '../auth/tenant-principal';
 import type { MCPResult, MCPToolDefinition, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 
@@ -81,8 +82,10 @@ const handlerFor = (store: AssertEvidenceStore): ToolHandler => async (
   }
   const handle = rawHandle;
 
-  const tenantId = context?.principal?.tenantId
-    ?? currentRequestContext()?.tenantId
+  const tenantId = resolveEffectiveTenantId(
+    context?.principal,
+    currentRequestContext()?.tenantId,
+  )
     ?? DEFAULT_TENANT_ID;
   try {
     const artifact = store.loadAuthorized(handle, { sessionId, tenantId });

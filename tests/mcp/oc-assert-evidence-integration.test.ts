@@ -11,6 +11,7 @@ import {
 } from '../../src/core/contracts/assert-evidence-store';
 import { MCPServer } from '../../src/mcp-server';
 import { PRINCIPAL_SYM } from '../../src/middleware/auth';
+import { runWithRequestContext } from '../../src/observability/request-id';
 import { registerOcAssertTool } from '../../src/tools/oc-assert';
 import { registerOcEvidenceGetTool } from '../../src/tools/oc-evidence-get';
 import type { MCPRequest, MCPResponse } from '../../src/types/mcp';
@@ -163,6 +164,42 @@ describe('oc_assert durable evidence through MCP', () => {
     expect(resultPayload(crossTenant)).toMatchObject({
       status: 'error',
       error: { code: 'EVIDENCE_FORBIDDEN' },
+    });
+  });
+
+  test.each([
+    ['disabled', { mode: 'disabled', tenantId: 'anonymous', scopes: ['admin'] } as Principal],
+    ['legacy', { mode: 'legacy', tenantId: 'legacy', scopes: ['admin'] } as Principal],
+  ])('%s auth uses the effective request tenant for persistence and retrieval', async (_mode, principal) => {
+    const requestContext = {
+      requestId: `request-${_mode}`,
+      tenantId: 'header-tenant',
+      mcpSessionId: 'client-a',
+    };
+    const asserted = await runWithRequestContext(requestContext, () => server.handleMessage(
+      authenticated(toolCall(1, 'oc_assert', {
+        contract: { kind: 'url', pattern: 'example' },
+        evidence: { snapshot: { url: 'https://example.com' } },
+      }), principal),
+      undefined,
+      { mcpSessionId: 'client-a', tenantId: 'header-tenant' },
+    )) as MCPResponse;
+    const handle = resultPayload(asserted).evidence_handle as string;
+
+    const retrieved = await runWithRequestContext(requestContext, () => server.handleMessage(
+      authenticated(toolCall(2, 'oc_evidence_get', { evidence_handle: handle }), principal),
+      undefined,
+      { mcpSessionId: 'client-a', tenantId: 'header-tenant' },
+    )) as MCPResponse;
+
+    expect(resultPayload(retrieved)).toMatchObject({
+      status: 'available',
+      artifact: {
+        provenance: {
+          session_id: 'mcp-client-a',
+          tenant_id: 'header-tenant',
+        },
+      },
     });
   });
 

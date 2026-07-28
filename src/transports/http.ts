@@ -26,6 +26,10 @@ import {
 import type { ApiKeyStore } from '../auth/api-key-store';
 import { createJwtVerifier, type JwtConfig, type JwtVerifier } from '../auth/jwt-verifier';
 import {
+  isTenantScopedPrincipal,
+  resolveEffectiveTenantId,
+} from '../auth/tenant-principal';
+import {
   authenticate,
   requestPrincipals,
   PRINCIPAL_SYM,
@@ -472,10 +476,12 @@ export class HTTPTransport implements MCPTransport {
       throw err;
     }
 
+    const principal = requestPrincipals.get(req);
+    const effectiveTenantId = resolveEffectiveTenantId(principal, tenantId) ?? tenantId;
     const mcpSessionId = req.headers['mcp-session-id'] as string | undefined;
     if (mcpSessionId) {
       const bound = this.sessionTenants.get(mcpSessionId);
-      if (bound !== undefined && bound !== tenantId) {
+      if (bound !== undefined && bound !== effectiveTenantId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -491,7 +497,7 @@ export class HTTPTransport implements MCPTransport {
         return null;
       }
     }
-    return tenantId;
+    return effectiveTenantId;
   }
 
   /**
@@ -885,7 +891,17 @@ export class HTTPTransport implements MCPTransport {
 
     if (sessionId && this.sessions.has(sessionId)) {
       const principal = requestPrincipals.get(req);
-      const tenantId = principal?.tenantId ?? this.sessionTenants.get(sessionId);
+      const boundTenantId = this.sessionTenants.get(sessionId);
+      if (
+        isTenantScopedPrincipal(principal)
+        && boundTenantId !== undefined
+        && boundTenantId !== principal.tenantId
+      ) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden', reason: 'tenant_mismatch' }));
+        return;
+      }
+      const tenantId = resolveEffectiveTenantId(principal, boundTenantId);
       this.sessions.delete(sessionId);
       this.sessionTenants.delete(sessionId);
 
