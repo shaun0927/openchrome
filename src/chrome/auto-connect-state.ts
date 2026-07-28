@@ -34,6 +34,19 @@ export function setAutoConnectState(result: AutoConnectResult): AutoConnectState
   return current;
 }
 
+/** Refresh endpoint metadata without changing when the attach mode began. */
+export function refreshAutoConnectState(result: AutoConnectResult): AutoConnectState {
+  current = {
+    mode: 'auto-connect',
+    userDataDir: result.userDataDir,
+    port: result.port,
+    wsEndpoint: result.wsEndpoint,
+    browserTargetPath: result.browserTargetPath,
+    attachedAt: current?.attachedAt ?? Date.now(),
+  };
+  return current;
+}
+
 export function getAutoConnectState(): AutoConnectState | null {
   return current;
 }

@@ -21,6 +21,7 @@ import type { AddressInfo } from 'net';
 import { ChildProcess } from 'child_process';
 
 import { waitForDebugPort, DebugPortTimeoutError } from '../../src/chrome/launcher';
+import { checkDebugPort, probeDebugPort } from '../../src/chrome/launcher-debug-port';
 
 jest.mock('../../src/config/global', () => ({
   getGlobalConfig: () => ({}),
@@ -100,6 +101,62 @@ describe('waitForDebugPort monotonic deadline', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }, 10_000);
+
+  it('distinguishes HTTP 404 from other debug-port failures', async () => {
+    const server = http.createServer((_req, res) => {
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      await expect(probeDebugPort(port, 500)).resolves.toEqual({
+        kind: 'http-error',
+        statusCode: 404,
+      });
+      await expect(checkDebugPort(port, 500)).resolves.toBeNull();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it.each([403, 500])('reports HTTP %s without treating it as a valid endpoint', async (statusCode) => {
+    const server = http.createServer((_req, res) => {
+      res.statusCode = statusCode;
+      res.end('blocked');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      await expect(probeDebugPort(port, 500)).resolves.toEqual({
+        kind: 'http-error',
+        statusCode,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reports malformed successful responses separately', async () => {
+    const server = http.createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end('{"Browser":"Chrome"}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      await expect(probeDebugPort(port, 500)).resolves.toEqual({
+        kind: 'invalid-response',
+        statusCode: 200,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 
   it('succeeds with sub-100ms timeout when port is already serving', async () => {
     // Regression: the previous implementation floored the HTTP probe timeout
