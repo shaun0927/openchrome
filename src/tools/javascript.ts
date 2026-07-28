@@ -450,9 +450,8 @@ export function registerJavascriptTool(server: MCPServer): void {
   // statically know whether the eval mutated the DOM, so we bump
   // docEpoch unconditionally on a successful eval. A subsequent
   // `read_page` therefore always recomputes.
-  const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid, undefined, 'javascript_tool') : Promise.resolve(null),
+    tid ? getSessionManager().getPage(sid, tid, undefined, 'javascript_tool') : Promise.resolve(null),
   );
   server.registerTool('javascript_tool', wrapped, definition);
 }

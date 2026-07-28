@@ -374,9 +374,8 @@ const handler: ToolHandler = async (
 };
 
 export function registerLightweightScrollTool(server: MCPServer): void {
-  const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid, undefined, 'lightweight_scroll') : Promise.resolve(null),
+    tid ? getSessionManager().getPage(sid, tid, undefined, 'lightweight_scroll') : Promise.resolve(null),
   );
   server.registerTool('lightweight_scroll', wrapped, definition);
 }

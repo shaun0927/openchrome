@@ -98,9 +98,8 @@ const handler: ToolHandler = async (
 
 export function registerPageReloadTool(server: MCPServer): void {
   // Snapshot-cache (#879): bump docEpoch after a successful reload.
-  const sm = getSessionManager();
   const wrapped = wrapMutatingHandler(handler, (sid, tid) =>
-    tid ? sm.getPage(sid, tid) : Promise.resolve(null),
+    tid ? getSessionManager().getPage(sid, tid) : Promise.resolve(null),
   );
   server.registerTool('page_reload', wrapped, definition);
 }
