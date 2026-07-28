@@ -27,6 +27,7 @@ export async function evaluateAnd(
     const r = await evaluate(child, ctx);
     childEvidence.push(r.evidence);
     if (!r.passed) {
+      const inconclusive = inconclusiveDetails(r.evidence);
       return {
         passed: false,
         evidence: {
@@ -37,6 +38,7 @@ export async function evaluateAnd(
             evaluated: childEvidence.length,
             total: assertion.children.length,
             children: childEvidence,
+            ...(inconclusive ?? {}),
           },
         },
       };
@@ -59,6 +61,7 @@ export async function evaluateOr(
   evaluate: AssertionEvaluator,
 ): Promise<EvaluationResult> {
   const childEvidence: Evidence[] = [];
+  let firstInconclusive: Record<string, unknown> | undefined;
   for (const child of assertion.children) {
     const r = await evaluate(child, ctx);
     childEvidence.push(r.evidence);
@@ -77,13 +80,18 @@ export async function evaluateOr(
         },
       };
     }
+    firstInconclusive ??= inconclusiveDetails(r.evidence);
   }
   return {
     passed: false,
     evidence: {
       passed: false,
       assertion_kind: 'or',
-      details: { evaluated: childEvidence.length, children: childEvidence },
+      details: {
+        evaluated: childEvidence.length,
+        children: childEvidence,
+        ...(firstInconclusive ?? {}),
+      },
     },
   };
 }
@@ -94,6 +102,17 @@ export async function evaluateNot(
   evaluate: AssertionEvaluator,
 ): Promise<EvaluationResult> {
   const inner = await evaluate(assertion.child, ctx);
+  const inconclusive = inconclusiveDetails(inner.evidence);
+  if (inconclusive) {
+    return {
+      passed: false,
+      evidence: {
+        passed: false,
+        assertion_kind: 'not',
+        details: { child: inner.evidence, ...inconclusive },
+      },
+    };
+  }
   return {
     passed: !inner.passed,
     evidence: {
@@ -101,5 +120,17 @@ export async function evaluateNot(
       assertion_kind: 'not',
       details: { child: inner.evidence },
     },
+  };
+}
+
+function inconclusiveDetails(evidence: Evidence): Record<string, unknown> | undefined {
+  const error = evidence.details.error;
+  if (typeof error !== 'string') return undefined;
+  const errorCode = evidence.details.error_code;
+  const reason = evidence.details.reason;
+  return {
+    error,
+    ...(typeof errorCode === 'string' ? { error_code: errorCode } : {}),
+    ...(typeof reason === 'string' ? { reason } : {}),
   };
 }

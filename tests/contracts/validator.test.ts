@@ -127,6 +127,50 @@ describe('validateAssertion', () => {
     expect(validateAssertion({ kind: 'no_dialog' }).ok).toBe(true);
   });
 
+  test('performance requires a versioned metric, explicit unit, comparison, and freshness bound', () => {
+    expect(validateAssertion({
+      kind: 'performance',
+      schema_version: 1,
+      metric: 'navigation.duration',
+      unit: 'ms',
+      op: 'lte',
+      value: 5000,
+      max_age_ms: 30000,
+    }).ok).toBe(true);
+    expect(validateAssertion({
+      kind: 'performance',
+      schema_version: 2,
+      metric: 'navigation.duration',
+      unit: 'milliseconds',
+      op: 'lte',
+      value: Number.NaN,
+      max_age_ms: 300001,
+    }).ok).toBe(false);
+  });
+
+  test('console validates bounded selectors, safe regex, count, and freshness', () => {
+    expect(validateAssertion({
+      kind: 'console',
+      schema_version: 1,
+      type: 'error',
+      message_pattern: 'checkout',
+      uncaught: true,
+      op: 'eq',
+      value: 0,
+      max_age_ms: 30000,
+    }).ok).toBe(true);
+    expect(validateAssertion({
+      kind: 'console',
+      schema_version: 1,
+      type: '',
+      message_pattern: '(',
+      uncaught: 'yes',
+      op: 'eq',
+      value: -1,
+      max_age_ms: -1,
+    }).ok).toBe(false);
+  });
+
   test('and/or require non-empty children and walk recursively', () => {
     expect(validateAssertion({ kind: 'and', children: [] }).ok).toBe(false);
     const r = validateAssertion({

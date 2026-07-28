@@ -15,6 +15,8 @@ import { evaluateNetwork } from './evaluators/network';
 import { evaluateNoDialog } from './evaluators/no-dialog';
 import { evaluateScreenshotClass } from './evaluators/screenshot-class';
 import { evaluateImageQa } from './evaluators/image-qa';
+import { evaluatePerformance } from './evaluators/performance';
+import { evaluateConsole } from './evaluators/console';
 import {
   evaluateAnd,
   evaluateNot,
@@ -41,6 +43,10 @@ export async function evaluate(
         return await evaluateNoDialog(assertion, ctx);
       case 'image_qa':
         return await evaluateImageQa(assertion, ctx);
+      case 'performance':
+        return await evaluatePerformance(assertion, ctx);
+      case 'console':
+        return await evaluateConsole(assertion, ctx);
       case 'and':
         return await evaluateAnd(assertion, ctx, evaluate);
       case 'or':

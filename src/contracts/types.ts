@@ -10,6 +10,8 @@
  * Refer to docs/contracts.md for the authoring guide.
  */
 
+import type { PerformanceUnit } from './contract-facts';
+
 export type ComparisonOp = 'eq' | 'gte' | 'lte';
 
 export type NetworkSinceMarker = 'contract_enter' | 'last_tool_call';
@@ -72,6 +74,27 @@ export interface ImageQaAssertion {
   expected_pattern: string;
 }
 
+export interface PerformanceAssertion {
+  kind: 'performance';
+  schema_version: 1;
+  metric: string;
+  unit: PerformanceUnit;
+  op: ComparisonOp;
+  value: number;
+  max_age_ms: number;
+}
+
+export interface ConsoleAssertion {
+  kind: 'console';
+  schema_version: 1;
+  type?: string;
+  message_pattern?: string;
+  uncaught?: boolean;
+  op: ComparisonOp;
+  value: number;
+  max_age_ms: number;
+}
+
 export interface AndAssertion {
   kind: 'and';
   /** At least one child required. */
@@ -97,7 +120,9 @@ export type LeafAssertion =
   | NetworkAssertion
   | ScreenshotClassAssertion
   | NoDialogAssertion
-  | ImageQaAssertion;
+  | ImageQaAssertion
+  | PerformanceAssertion
+  | ConsoleAssertion;
 
 export type Assertion = LeafAssertion | AndAssertion | OrAssertion | NotAssertion;
 

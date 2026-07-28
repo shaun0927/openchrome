@@ -40,6 +40,7 @@ import type {
   Evidence,
   NetworkSinceMarker,
 } from '../contracts/types';
+import type { ContractFactErrorCode } from '../contracts/contract-facts';
 import {
   AssertEvidenceStore,
   getAssertEvidenceStore,
@@ -53,7 +54,8 @@ type OcAssertErrorCode =
   | 'CONTRACT_ID_CONFLICT'
   | 'CONTRACT_ID_MALFORMED'
   | 'CONTRACT_ID_UNKNOWN'
-  | 'CONTRACT_TEMPLATE_NO_ASSERTIONS';
+  | 'CONTRACT_TEMPLATE_NO_ASSERTIONS'
+  | ContractFactErrorCode;
 
 interface FailedAssertion {
   name: string;
@@ -93,6 +95,8 @@ interface SnapshotInput {
   dom_text?: Record<string, string | null> | string | null;
   dom_count?: Record<string, number>;
   network?: NetworkLogEntry[];
+  /** Portable bounded facts emitted by performance_metrics/console_capture. */
+  contract_facts?: unknown;
   /** PNG bytes, base64 encoded. */
   screenshot_png_base64?: string;
   has_open_dialog?: boolean;
@@ -124,7 +128,8 @@ const definition: MCPToolDefinition = {
         type: 'object',
         description:
           'Assertion DSL object (see src/contracts/types.ts: kind ∈ ' +
-          'url|dom_text|dom_count|network|screenshot_class|no_dialog|image_qa|and|or|not). ' +
+          'url|dom_text|dom_count|network|screenshot_class|no_dialog|image_qa|' +
+          'performance|console|and|or|not). ' +
           'Validated via validateAssertion() before evaluation.',
       },
       args: {
@@ -158,6 +163,7 @@ const definition: MCPToolDefinition = {
               'Snapshot fields. Provide the subset the assertion needs: ' +
               '`url` (string), `dom_text` (string | { selector: string|null }), ' +
               '`dom_count` ({ selector: number }), `network` (NetworkLogEntry[]), ' +
+              '`contract_facts` (bounded facts from performance_metrics/console_capture), ' +
               '`screenshot_png_base64` (base64 PNG), `has_open_dialog` (boolean).',
           },
         },
@@ -171,6 +177,7 @@ const definition: MCPToolDefinition = {
 function buildEvalContext(
   snapshot: SnapshotInput | undefined,
   toolContext?: ToolContext,
+  factScope?: { sessionId: string; targetId?: string },
 ): EvalContext {
   const domTextMap =
     snapshot && typeof snapshot.dom_text === 'object' && snapshot.dom_text !== null
@@ -215,6 +222,16 @@ function buildEvalContext(
     },
     async hasOpenDialog() {
       return snapshot?.has_open_dialog ?? false;
+    },
+    async contractFacts() {
+      return snapshot?.contract_facts;
+    },
+    contractFactScope() {
+      return {
+        sessionId: factScope?.sessionId ?? '',
+        ...(factScope?.targetId ? { targetId: factScope.targetId } : {}),
+        nowMs: Date.now(),
+      };
     },
     // image_qa contract evaluator hook (#1432 Part 2 runtime wire-up).
     // Forwards to the host LLM via MCP sampling when the connected
@@ -357,6 +374,31 @@ function expectedActualFor(
         },
         actual: evidence.details,
       };
+    case 'performance':
+      return {
+        expected: {
+          metric: assertion.metric,
+          unit: assertion.unit,
+          op: assertion.op,
+          value: assertion.value,
+          max_age_ms: assertion.max_age_ms,
+        },
+        actual: evidence.details,
+      };
+    case 'console':
+      return {
+        expected: {
+          ...(assertion.type !== undefined ? { type: assertion.type } : {}),
+          ...(assertion.message_pattern !== undefined
+            ? { message_pattern: assertion.message_pattern }
+            : {}),
+          ...(assertion.uncaught !== undefined ? { uncaught: assertion.uncaught } : {}),
+          op: assertion.op,
+          value: assertion.value,
+          max_age_ms: assertion.max_age_ms,
+        },
+        actual: evidence.details,
+      };
     case 'and':
     case 'or':
     case 'not':
@@ -457,6 +499,7 @@ function createHandler(
     provenance?: EvidenceProvenanceInput;
   } | undefined;
   const snapshot = evidenceArg?.snapshot;
+  const provenance = evidenceArg?.provenance;
 
   // Without any snapshot the verdict is inconclusive — there is no live
   // browser binding in the core tool. The pilot runtime drives evaluation
@@ -471,7 +514,12 @@ function createHandler(
     return jsonResult(output);
   }
 
-  const ctx = buildEvalContext(snapshot, context);
+  const ctx = buildEvalContext(snapshot, context, {
+    sessionId,
+    ...(typeof provenance?.target_id === 'string'
+      ? { targetId: provenance.target_id }
+      : {}),
+  });
   let result: EvaluationResult;
   try {
     result = await evaluate(validation.value, ctx);
@@ -504,10 +552,16 @@ function createHandler(
     output.failure_category = classified.category;
     output.failure_reason = classified.reason;
   } else if (verdict === 'inconclusive') {
+    const evaluatorErrorCode = result.evidence.details.error_code;
+    if (typeof evaluatorErrorCode === 'string') {
+      output.error_code = evaluatorErrorCode as ContractFactErrorCode;
+    }
     output.inconclusive_reason =
-      typeof result.evidence.details.error === 'string'
-        ? (result.evidence.details.error as string)
-        : 'evaluation was inconclusive';
+      typeof result.evidence.details.reason === 'string'
+        ? (result.evidence.details.reason as string)
+        : typeof result.evidence.details.error === 'string'
+          ? (result.evidence.details.error as string)
+          : 'evaluation was inconclusive';
   }
 
   const traceUnavailableReason =
@@ -520,7 +574,6 @@ function createHandler(
     currentRequestContext()?.tenantId,
   )
     ?? DEFAULT_TENANT_ID;
-  const provenance = evidenceArg?.provenance;
   const capturedAt = normalizeCapturedAt(provenance?.captured_at);
   try {
     const stored = evidenceStore.persist({

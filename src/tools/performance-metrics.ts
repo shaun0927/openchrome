@@ -3,10 +3,11 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
+import { buildPerformanceContractFacts } from '../contracts/contract-facts';
 
 const definition: MCPToolDefinition = {
   name: 'performance_metrics',
@@ -54,9 +55,16 @@ interface PerformanceMetrics {
   };
 }
 
+interface ResourceContractSummary {
+  count: number;
+  totalTransferSize: number;
+  largestTransferSize: number;
+  maxDuration: number;
+}
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const tabId = args.tabId as string;
   const type = (args.type as string | undefined) ?? 'all';
@@ -81,10 +89,15 @@ const handler: ToolHandler = async (
     }
 
     const metrics: PerformanceMetrics = {};
-
+    let resourceContractSummary: ResourceContractSummary | undefined;
     // Puppeteer metrics
     if (type === 'all' || type === 'puppeteer') {
-      const puppeteerMetrics = await page.metrics();
+      const puppeteerMetrics = await withTimeout(
+        page.metrics(),
+        5000,
+        'performance_metrics',
+        context,
+      );
       metrics.puppeteer = {};
       for (const [key, value] of Object.entries(puppeteerMetrics)) {
         if (typeof value === 'number') {
@@ -109,7 +122,7 @@ const handler: ToolHandler = async (
           loadEventEnd: nav.loadEventEnd,
           duration: nav.duration,
         };
-      }), 5000, 'performance_metrics');
+      }), 5000, 'performance_metrics', context);
       if (navigationTiming) {
         metrics.navigation = navigationTiming;
       }
@@ -124,7 +137,7 @@ const handler: ToolHandler = async (
           result[paint.name] = paint.startTime;
         }
         return result;
-      }), 5000, 'performance_metrics');
+      }), 5000, 'performance_metrics', context);
       metrics.paint = paintTiming;
     }
 
@@ -132,14 +145,35 @@ const handler: ToolHandler = async (
     if ((type === 'all' && includeResources) || type === 'resource') {
       const resourceTiming = await withTimeout(page.evaluate(() => {
         const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
-        return resources.slice(0, 50).map(r => ({
-          name: r.name.split('?')[0].split('/').pop() || r.name,
-          type: r.initiatorType,
-          duration: Math.round(r.duration),
-          size: r.transferSize || 0,
-        }));
-      }), 5000, 'performance_metrics');
-      metrics.resource = resourceTiming;
+        const measured = resources.filter((resource) => (
+          Number.isFinite(resource.duration) && Number.isFinite(resource.transferSize)
+        ));
+        return {
+          entries: resources.slice(0, 50).map(r => ({
+            name: r.name.split('?')[0].split('/').pop() || r.name,
+            type: r.initiatorType,
+            duration: Math.round(r.duration),
+            size: r.transferSize || 0,
+          })),
+          summary: {
+            count: measured.length,
+            totalTransferSize: measured.reduce(
+              (sum, resource) => sum + Math.max(0, resource.transferSize),
+              0,
+            ),
+            largestTransferSize: measured.reduce(
+              (largest, resource) => Math.max(largest, Math.max(0, resource.transferSize)),
+              0,
+            ),
+            maxDuration: measured.reduce(
+              (largest, resource) => Math.max(largest, Math.max(0, resource.duration)),
+              0,
+            ),
+          },
+        };
+      }), 5000, 'performance_metrics', context);
+      metrics.resource = resourceTiming.entries;
+      resourceContractSummary = resourceTiming.summary;
     }
 
     // Calculate summary
@@ -160,18 +194,33 @@ const handler: ToolHandler = async (
       };
     }
 
+    const contractFacts = buildPerformanceContractFacts({
+      sessionId,
+      targetId: tabId,
+      capturedAt: new Date().toISOString(),
+      metrics: {
+        ...metrics,
+        ...(resourceContractSummary
+          ? { resource_summary: resourceContractSummary }
+          : {}),
+      },
+    });
+    const payload = {
+      action: 'performance_metrics',
+      type,
+      metrics,
+      contract_facts: contractFacts,
+      message: `Performance metrics collected (type: ${type})`,
+    };
+
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify({
-            action: 'performance_metrics',
-            type,
-            metrics,
-            message: `Performance metrics collected (type: ${type})`,
-          }),
+          text: JSON.stringify(payload),
         },
       ],
+      structuredContent: payload,
     };
   } catch (error) {
     return {

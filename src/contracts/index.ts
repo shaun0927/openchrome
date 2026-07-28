@@ -12,6 +12,7 @@ export type {
   ComparisonOp,
   DomCountAssertion,
   DomTextAssertion,
+  ConsoleAssertion,
   Evidence,
   EvaluationResult,
   LeafAssertion,
@@ -20,9 +21,20 @@ export type {
   NoDialogAssertion,
   NotAssertion,
   OrAssertion,
+  PerformanceAssertion,
   ScreenshotClassAssertion,
   UrlAssertion,
 } from './types';
+export type {
+  ConsoleContractFact,
+  ConsoleContractFactEntry,
+  ConsoleFactMessageEncoding,
+  ContractFact,
+  ContractFactBase,
+  ContractFactErrorCode,
+  PerformanceContractFact,
+  PerformanceUnit,
+} from './contract-facts';
 export type {
   BrowserTaskBudgets,
   BrowserTaskLoopGuard,
@@ -52,6 +64,18 @@ export {
   validateBrowserTaskSignature,
 } from './task-signature';
 export { evaluate } from './evaluate';
+export {
+  CONTRACT_FACT_SCHEMA_VERSION,
+  MAX_CONSOLE_FACT_ENTRIES,
+  MAX_CONSOLE_FACT_CAPTURE_TYPES,
+  MAX_CONSOLE_FACT_MESSAGE_CHARS,
+  MAX_CONTRACT_FACT_AGE_MS,
+  MAX_CONTRACT_FACTS,
+  buildConsoleContractFact,
+  buildPerformanceContractFacts,
+  selectConsoleContractFact,
+  selectPerformanceContractFact,
+} from './contract-facts';
 export {
   hamming,
   phashFromHex,

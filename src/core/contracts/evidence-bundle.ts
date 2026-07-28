@@ -26,6 +26,11 @@ import * as path from 'node:path';
 
 import { phashFromPng, phashToHex } from '../../contracts/phash';
 import {
+  CONTRACT_FACT_SCHEMA_VERSION,
+  MAX_CONTRACT_FACTS,
+} from '../../contracts/contract-facts';
+import { redactValue } from '../trace/redactor';
+import {
   diffAgainstSchema,
   SchemaDefinition,
   SchemaDiff,
@@ -37,6 +42,7 @@ export type EvidenceBundlePart =
   | 'screenshot'
   | 'network'
   | 'console'
+  | 'contract_facts'
   | 'phash'
   | 'gate'
   | 'schema_diff';
@@ -98,6 +104,8 @@ export interface EvidenceBundleSnapshot {
   network?: NetworkEntry[];
   /** All captured console entries — last N (by ts) are kept. */
   console?: ConsoleEntry[];
+  /** Portable facts previously emitted by bounded collector tools. */
+  contract_facts?: unknown[];
   /** Optional clock used for the network window. Defaults to `Date.now()`. */
   now_ms?: number;
   /**
@@ -232,6 +240,25 @@ export function writeEvidenceBundle(
     parts.push(filename);
   }
 
+  // ── Portable contract facts ───────────────────────────────────────────
+  if (include.has('contract_facts') && Array.isArray(snapshot.contract_facts)) {
+    const truncated = snapshot.contract_facts.length > MAX_CONTRACT_FACTS;
+    const facts = snapshot.contract_facts.slice(0, MAX_CONTRACT_FACTS);
+    const filename = 'contract_facts.json';
+    const payload = JSON.stringify(
+      redactValue({
+        schema_version: CONTRACT_FACT_SCHEMA_VERSION,
+        max_facts: MAX_CONTRACT_FACTS,
+        truncated,
+        facts,
+      }),
+      null,
+      2,
+    );
+    totalBytes += writePart(bundleDir, filename, payload);
+    parts.push(filename);
+  }
+
   // ── Gate fact ─────────────────────────────────────────────────────────
   if (include.has('gate') && snapshot.gate !== undefined) {
     const filename = 'gate.json';
@@ -308,6 +335,7 @@ function normalizeInclude(
     'screenshot',
     'network',
     'console',
+    'contract_facts',
     'phash',
     'gate',
     'schema_diff',
