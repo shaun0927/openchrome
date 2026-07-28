@@ -79,6 +79,15 @@ const failFastPlaybook: Playbook = {
   ],
 };
 
+const identifiedPlaybook: Playbook = {
+  name: 'identified steps',
+  steps: [
+    { id: 'open_home', verb: 'navigate', args: { url: 'https://example.com' } },
+    { id: 'verify_home', verb: 'assert', args: { kind: 'url', pattern: 'example\\.com' } },
+    { id: 'read_home', verb: 'read_page', args: { mode: 'ax' } },
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // Test 1: Call ordering
 // ---------------------------------------------------------------------------
@@ -144,6 +153,19 @@ describe('runPlaybook — call ordering', () => {
       args: { fields: { name: 'OpenChrome' }, tabId: 'tab-123' },
     });
   });
+
+  test('preserves step ids without forwarding them to MCP tool arguments', async () => {
+    const { client, calls } = makeMockClient();
+
+    const result = await runPlaybook(identifiedPlaybook, { reuse: false, varMap: {}, client });
+
+    expect(result.steps.map((step) => step.id)).toEqual(['open_home', 'verify_home', 'read_home']);
+    expect(calls).toEqual([
+      { tool: 'navigate', args: { url: 'https://example.com' } },
+      { tool: 'oc_assert', args: { contract: { kind: 'url', pattern: 'example\\.com' } } },
+      { tool: 'read_page', args: { mode: 'ax' } },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -203,6 +225,24 @@ describe('runPlaybook — fail-fast semantics', () => {
     expect(result.summary.passed).toBe(1);
     expect(result.summary.failed).toBe(1);
     expect(result.summary.skipped).toBe(1);
+  });
+
+  test('preserves ids on failed and skipped results and includes the failed id in diagnostics', async () => {
+    const { client } = makeMockClient({
+      results: {
+        navigate: { success: true, result: null },
+        oc_assert: { success: false, result: null, verdict: 'fail' },
+      },
+    });
+
+    const result = await runPlaybook(identifiedPlaybook, { reuse: false, varMap: {}, client });
+
+    expect(result.steps[1]).toMatchObject({
+      id: 'verify_home',
+      status: 'failed',
+      error: 'Step 1 [verify_home] (assert): assert verdict="fail"',
+    });
+    expect(result.steps[2]).toMatchObject({ id: 'read_home', status: 'skipped' });
   });
 });
 
@@ -288,6 +328,8 @@ describe('runPlaybook — JSON output shape', () => {
       expect(['ok', 'failed', 'skipped']).toContain(step.status);
       expect(typeof step.durationMs).toBe('number');
     }
+
+    expect(result.steps.every((step) => step.id === undefined)).toBe(true);
 
     // Summary shape
     const { summary } = result;
@@ -409,5 +451,26 @@ describe('runPlaybook — transport error escalation', () => {
     expect(result.steps[1].status).toBe('failed');
     expect(result.steps[1].error).toContain('network timeout');
     expect(result.steps[2].status).toBe('skipped');
+  });
+
+  test('callTool() rejection includes an authored step id in the diagnostic', async () => {
+    const client: RunOptions['client'] = {
+      async connect() {},
+      async callTool() {
+        throw new Error('network timeout');
+      },
+      async disconnect() {},
+    };
+
+    const result = await runPlaybook({
+      name: 'identified failure',
+      steps: [{ id: 'open_home', verb: 'navigate', args: { url: 'https://example.com' } }],
+    }, { reuse: false, varMap: {}, client });
+
+    expect(result.steps[0]).toMatchObject({
+      id: 'open_home',
+      status: 'failed',
+      error: 'Step 0 [open_home] (navigate): network timeout',
+    });
   });
 });

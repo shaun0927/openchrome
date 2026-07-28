@@ -3,7 +3,8 @@
  *
  * Validates:
  *   { name?: string, vars?: Record<string,string>, steps: Step[] }
- * Each step must have exactly one verb key from SUPPORTED_VERBS.
+ * Each step may have one stable `id` plus exactly one verb key from
+ * SUPPORTED_VERBS.
  */
 
 import * as fs from 'fs';
@@ -24,7 +25,11 @@ export const SUPPORTED_VERBS = [
 
 export type Verb = (typeof SUPPORTED_VERBS)[number];
 
+const STEP_METADATA_KEYS = new Set(['id']);
+const STEP_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+
 export interface Step {
+  id?: string;
   verb: Verb;
   args: Record<string, unknown>;
 }
@@ -55,7 +60,9 @@ function parseRawStep(raw: unknown, index: number): Step {
   }
   const keys = Object.keys(raw);
   const verbKeys = keys.filter((k) => SUPPORTED_VERBS.includes(k as Verb));
-  const unknownKeys = keys.filter((k) => !SUPPORTED_VERBS.includes(k as Verb));
+  const unknownKeys = keys.filter(
+    (k) => !SUPPORTED_VERBS.includes(k as Verb) && !STEP_METADATA_KEYS.has(k),
+  );
 
   if (verbKeys.length === 0) {
     if (unknownKeys.length > 0) {
@@ -72,16 +79,28 @@ function parseRawStep(raw: unknown, index: number): Step {
     );
   }
 
-  // P2 codex fix: strict validation — reject extra non-verb keys even when a
-  // valid verb is present. Without this, typos or misplaced fields at the step
-  // top level (e.g. `args:` alongside `navigate:`) would be silently dropped,
-  // making playbooks harder to debug. A step is exactly { <verb>: <args> }.
+  // Strict validation: reject extra keys even when a valid verb is present.
+  // `id` is the only reserved metadata key; all step parameters still belong
+  // inside the verb's value.
   if (unknownKeys.length > 0) {
     throw new ParseError(
       `Step ${index}: unexpected key "${unknownKeys[0]}" alongside verb "${verbKeys[0]}". ` +
-        `Each step must contain exactly one verb key; put step parameters inside the verb's value. ` +
+        `Each step may contain only an optional "id" plus exactly one verb key; ` +
+        `put step parameters inside the verb's value. ` +
         `Supported verbs: ${SUPPORTED_VERBS.join(', ')}`,
     );
+  }
+
+  const id = raw['id'];
+  if (id !== undefined) {
+    if (typeof id !== 'string') {
+      throw new ParseError(`Step ${index}: id must be a string`);
+    }
+    if (!STEP_ID_PATTERN.test(id)) {
+      throw new ParseError(
+        `Step ${index}: invalid id "${id}". IDs must match ${STEP_ID_PATTERN.source}`,
+      );
+    }
   }
 
   const verb = verbKeys[0] as Verb;
@@ -92,7 +111,11 @@ function parseRawStep(raw: unknown, index: number): Step {
     throw new ParseError(`Step ${index}: args for verb "${verb}" must be an object or null`);
   }
 
-  return { verb, args: (isRecord(args) ? args : {}) as Record<string, unknown> };
+  return {
+    ...(id !== undefined ? { id } : {}),
+    verb,
+    args: (isRecord(args) ? args : {}) as Record<string, unknown>,
+  };
 }
 
 function validateRawPlaybook(raw: unknown): Playbook {
@@ -120,6 +143,17 @@ function validateRawPlaybook(raw: unknown): Playbook {
   }
 
   const steps: Step[] = (raw['steps'] as unknown[]).map((s, i) => parseRawStep(s, i));
+  const stepIds = new Map<string, number>();
+  steps.forEach((step, index) => {
+    if (step.id === undefined) return;
+    const existingIndex = stepIds.get(step.id);
+    if (existingIndex !== undefined) {
+      throw new ParseError(
+        `Step ${index}: duplicate id "${step.id}" (already used by step ${existingIndex})`,
+      );
+    }
+    stepIds.set(step.id, index);
+  });
 
   return {
     name: raw['name'] as string | undefined,
