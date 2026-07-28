@@ -115,6 +115,7 @@ export class CDPClient {
   private cookieSourceCache: Map<string, { targetId: string; timestamp: number }> = new Map();
   private cookieDataCache: Map<string, { cookies: CookieEntry[]; timestamp: number }> = new Map();
   private targetIdIndex = new TargetPageIndex();
+  private startupPageReuseAttempted = new WeakSet<Browser>();
   private targetActivityAt: Map<string, number> = new Map();
   private inFlightCookieScans: Map<string, Promise<CookieScanResult>> = new Map();
   private lastCookieScanResult: CookieScanResult | null = null;
@@ -1774,7 +1775,10 @@ export class CDPClient {
 
 
   private async findReusableStartupPage(browser: Browser): Promise<Page | null> {
-    if (this.targetIdIndex.size !== 0 || this.getChromeLifecycleMode() !== 'isolated') return null;
+    if (this.getChromeLifecycleMode() !== 'isolated' || this.startupPageReuseAttempted.has(browser)) return null;
+    this.startupPageReuseAttempted.add(browser);
+    if (this.targetIdIndex.size !== 0) return null;
+
     const candidates = browser.targets().filter((target) => {
       if (target.type() !== 'page') return false;
       const targetId = getTargetId(target);
@@ -1786,11 +1790,22 @@ export class CDPClient {
         || targetUrl.startsWith('chrome://new-tab-page');
     });
     if (candidates.length !== 1) return null;
+    const targetId = getTargetId(candidates[0]);
+    if (!targetId) return null;
+
+    let page: Page | null;
     try {
-      return await candidates[0].page();
+      page = await candidates[0].page();
     } catch {
       return null;
     }
+
+    if (this.browser !== browser || !browser.isConnected()) {
+      throw new Error('Chrome connection changed while resolving the startup page');
+    }
+    if (!page || page.isClosed()) return null;
+    if (!browser.targets().some((target) => getTargetId(target) === targetId)) return null;
+    return page;
   }
 
   /**
