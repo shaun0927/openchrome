@@ -16,16 +16,23 @@ let mockIsRecording = false;
 let mockActiveRecordingId: string | null = null;
 let mockActiveMetadata: Record<string, unknown> | null = null;
 let mockActiveTrajectoryBundle: Record<string, unknown> | null = null;
+const mockRecorder = {
+  get isRecording() { return mockIsRecording; },
+  get activeRecordingId() { return mockActiveRecordingId; },
+  get activeMetadata() { return mockActiveMetadata; },
+  get activeTrajectoryBundle() { return mockActiveTrajectoryBundle; },
+  start: mockStart,
+  stop: mockStop,
+};
+const mockGetOrCreateActionRecorder = jest.fn(() => mockRecorder);
 
 jest.mock('../../src/recording/action-recorder', () => ({
-  getActionRecorder: jest.fn(() => ({
-    get isRecording() { return mockIsRecording; },
-    get activeRecordingId() { return mockActiveRecordingId; },
-    get activeMetadata() { return mockActiveMetadata; },
-    get activeTrajectoryBundle() { return mockActiveTrajectoryBundle; },
-    start: mockStart,
-    stop: mockStop,
-  })),
+  beginSessionRecorderDeletion: jest.fn(),
+  completeSessionRecorderDeletion: jest.fn(),
+  getOrCreateActionRecorder: mockGetOrCreateActionRecorder,
+  getActiveActionRecorder: jest.fn(() => mockIsRecording ? mockRecorder : undefined),
+  getActiveActionRecording: jest.fn(() => undefined),
+  isSessionRecorderRegistered: jest.fn(() => true),
   registerSessionRecorder: jest.fn(),
   unregisterSessionRecorder: jest.fn(),
 }));
@@ -185,6 +192,17 @@ describe('recording tools', () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('disk full');
+    });
+
+    test('returns error while recorder ownership is blocked by session deletion', async () => {
+      mockGetOrCreateActionRecorder.mockImplementationOnce(() => {
+        throw new Error('Session recording is unavailable while the session is being deleted.');
+      });
+
+      const result = await handler('default', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('being deleted');
     });
 
     test('includes label and profile in output when provided', async () => {

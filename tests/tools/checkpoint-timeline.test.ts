@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+const mockGetActiveActionRecording = jest.fn(() => undefined as unknown);
+
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(() => ({
     getAllSessionInfos: jest.fn(() => []),
@@ -13,7 +15,10 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 jest.mock('../../src/recording/action-recorder', () => ({
-  getActiveActionRecorder: jest.fn(() => undefined),
+  beginSessionRecorderDeletion: jest.fn(),
+  completeSessionRecorderDeletion: jest.fn(),
+  getActiveActionRecording: mockGetActiveActionRecording,
+  unregisterSessionRecorder: jest.fn(),
 }));
 
 type Handler = (sessionId: string, args: Record<string, unknown>) => Promise<{ content?: Array<{ type: string; text?: string }>; isError?: boolean }>;
@@ -42,6 +47,7 @@ describe('oc_checkpoint timeline (#1025)', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-checkpoint-timeline-'));
     process.env.OPENCHROME_CHECKPOINT_DIR = tmpDir;
     process.env.OPENCHROME_CHECKPOINT_TIMELINE_MAX = '10';
+    mockGetActiveActionRecording.mockReturnValue(undefined);
   });
 
   afterEach(() => {
@@ -81,6 +87,26 @@ describe('oc_checkpoint timeline (#1025)', () => {
     ]);
     expect(listed.checkpoints[0].label).toBe('second');
     expect(listed.checkpoints[0].pendingSteps).toBe(0);
+  });
+
+  test('save links the checkpoint through the captured recording generation', async () => {
+    const appendCheckpointForRecording = jest.fn().mockResolvedValue(undefined);
+    mockGetActiveActionRecording.mockReturnValue({
+      recorder: { appendCheckpointForRecording },
+      recordingId: 'rec-captured',
+    });
+    const handler = await loadHandler();
+
+    const saved = readJson(await handler('sess-1', {
+      action: 'save',
+      taskDescription: 'task',
+    }));
+
+    expect(saved.status).toBe('saved');
+    expect(appendCheckpointForRecording).toHaveBeenCalledWith(
+      'rec-captured',
+      expect.objectContaining({ sessionId: 'sess-1', checkpointId: saved.checkpointId }),
+    );
   });
 
   test('load supports latest compatibility and specific checkpoint id', async () => {

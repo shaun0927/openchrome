@@ -27,7 +27,7 @@ import { runImageQaSampling } from './image-qa';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { evaluate } from '../contracts/evaluate';
 import { validateAssertion } from '../contracts/validator';
-import { getActiveActionRecorder } from '../recording/action-recorder';
+import { getActiveActionRecording } from '../recording/action-recorder';
 import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
 import { primaryFailureCategory } from '../failure/classifier';
 import type { FailureCategory } from '../failure/categories';
@@ -333,6 +333,7 @@ const handler: ToolHandler = async (
   args: Record<string, unknown>,
   context?: ToolContext,
 ): Promise<MCPResult> => {
+  const recordingAtDispatch = getActiveActionRecording(sessionId);
   const contractInline = args.contract;
   const contractId = args.contract_id as string | undefined;
 
@@ -421,9 +422,9 @@ const handler: ToolHandler = async (
 
   // Wire into active recording: append verdict to most-recent action's contractResults.
   // No-op if no recording is active for this session or if no action has been recorded yet.
-  const recorder = getActiveActionRecorder(sessionId);
-  if (recorder) {
-    recorder.appendContractResult({
+  if (recordingAtDispatch) {
+    const { recorder, recordingId } = recordingAtDispatch;
+    recorder.appendContractResultForRecording(recordingId, {
       assertion: contractInline,
       verdict,
       details: result.evidence.details as Record<string, unknown> | undefined,

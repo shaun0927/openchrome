@@ -67,4 +67,20 @@ describe('ActionRecorder trajectory bundle', () => {
     expect(fs.readFileSync(path.join(bundle.dir, 'contracts', '000002.json'), 'utf8')).not.toContain('super-secret-fixture-password');
     expect(fs.readFileSync(path.join(bundle.dir, 'checkpoints', '000003.json'), 'utf8')).not.toContain('super-secret-fixture-password');
   });
+
+  it('rejects stale contract and checkpoint linkage after a recording restart', async () => {
+    const first = await recorder.start('sess-traj', { trajectoryBundle: true, trajectoryRootDir: trajectoryRoot });
+    await recorder.stop();
+
+    await recorder.start('sess-traj', { trajectoryBundle: true, trajectoryRootDir: trajectoryRoot });
+    const currentBundle = recorder.activeTrajectoryBundle!;
+    await recorder.recordAction('navigate', { url: 'https://example.com' }, 10, true);
+    await recorder.appendContractResultForRecording(first.id, { assertion: {}, verdict: 'pass' });
+    await recorder.appendCheckpointForRecording(first.id, { taskDescription: 'stale' });
+    await recorder.stop();
+
+    expect(jsonl(path.join(currentBundle.dir, 'events.jsonl')).map((event) => event.event)).toEqual([
+      'tool_call_end',
+    ]);
+  });
 });

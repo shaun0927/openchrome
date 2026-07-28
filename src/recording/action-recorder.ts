@@ -87,13 +87,11 @@ export class ActionRecorder {
   private _activeMetadata: RecordingMetadata | null = null;
   private _seq = 0;
   /**
-   * Promise-chain mutex serializing every write to this recorder. Without this,
-   * two concurrent recordAction() calls each read _seq before either has
-   * incremented it, producing duplicate seq values (observed in concurrent
-   * tests). appendContractResult() rides the same chain so contract rows can
-   * never interleave with an in-flight recordAction().
+   * Promise-chain mutex serializing lifecycle transitions and writes. Keeping
+   * start(), stop(), and append operations on one queue prevents late writes
+   * from slipping past finalization or into a restarted recording.
    */
-  private _writeChain: Promise<void> = Promise.resolve();
+  private _mutationChain: Promise<void> = Promise.resolve();
   private _trajectoryBundle: TrajectoryBundleWriter | null = null;
   private _lastTrajectoryReport: TrajectoryReport | null = null;
 
@@ -102,11 +100,11 @@ export class ActionRecorder {
     this.config = { ...DEFAULT_RECORDING_CONFIG, ...configOverrides };
   }
 
-  /** Queue `op` behind any in-flight writes. Errors are isolated per-task. */
-  private enqueueWrite<T>(op: () => Promise<T>): Promise<T> {
-    const next = this._writeChain.then(op, op);
-    // Keep the chain alive even if op rejects, so later writes still serialize.
-    this._writeChain = next.then(
+  /** Queue `op` behind any in-flight mutation. Errors are isolated per-task. */
+  private enqueueMutation<T>(op: () => Promise<T>): Promise<T> {
+    const next = this._mutationChain.then(op, op);
+    // Keep the chain alive even if op rejects, so later mutations still serialize.
+    this._mutationChain = next.then(
       () => undefined,
       () => undefined,
     );
@@ -144,47 +142,49 @@ export class ActionRecorder {
    * Throws if a recording is already active.
    */
   async start(sessionId: string, opts?: StartRecordingOptions): Promise<RecordingMetadata> {
-    if (this._isRecording) {
-      throw new Error('A recording is already active. Call stop() first.');
-    }
-
-    const id = generateRecordingId();
-    const metadata: RecordingMetadata = {
-      version: 1,
-      id,
-      sessionId,
-      startedAt: new Date().toISOString(),
-      actionCount: 0,
-      profile: opts?.profile,
-      label: opts?.label,
-    };
-
-    await this.store.init();
-    await this.store.createRecording(metadata);
-
-    this._trajectoryBundle = null;
-    this._lastTrajectoryReport = null;
-    if (opts?.trajectoryBundle === true) {
-      try {
-        this._trajectoryBundle = await TrajectoryBundleWriter.create({
-          sessionId,
-          recordingId: id,
-          rootDir: opts.trajectoryRootDir,
-        });
-        metadata.trajectoryBundle = this._trajectoryBundle.snapshot;
-        await this.store.writeMetadata(metadata);
-      } catch (err) {
-        console.error('[ActionRecorder] Trajectory bundle disabled:', err instanceof Error ? err.message : err);
-        metadata.trajectoryBundle = { enabled: false };
+    return this.enqueueMutation(async () => {
+      if (this._isRecording) {
+        throw new Error('A recording is already active. Call stop() first.');
       }
-    }
 
-    this._activeMetadata = metadata;
-    this._activeRecordingId = id;
-    this._isRecording = true;
-    this._seq = 0;
+      const id = generateRecordingId();
+      const metadata: RecordingMetadata = {
+        version: 1,
+        id,
+        sessionId,
+        startedAt: new Date().toISOString(),
+        actionCount: 0,
+        profile: opts?.profile,
+        label: opts?.label,
+      };
 
-    return { ...metadata };
+      await this.store.init();
+      await this.store.createRecording(metadata);
+
+      this._trajectoryBundle = null;
+      this._lastTrajectoryReport = null;
+      if (opts?.trajectoryBundle === true) {
+        try {
+          this._trajectoryBundle = await TrajectoryBundleWriter.create({
+            sessionId,
+            recordingId: id,
+            rootDir: opts.trajectoryRootDir,
+          });
+          metadata.trajectoryBundle = this._trajectoryBundle.snapshot;
+          await this.store.writeMetadata(metadata);
+        } catch (err) {
+          console.error('[ActionRecorder] Trajectory bundle disabled:', err instanceof Error ? err.message : err);
+          metadata.trajectoryBundle = { enabled: false };
+        }
+      }
+
+      this._activeMetadata = metadata;
+      this._activeRecordingId = id;
+      this._isRecording = true;
+      this._seq = 0;
+
+      return { ...metadata };
+    });
   }
 
   /**
@@ -192,39 +192,35 @@ export class ActionRecorder {
    * Throws if no recording is active.
    */
   async stop(): Promise<RecordingMetadata> {
-    if (!this._isRecording || !this._activeMetadata || !this._activeRecordingId) {
-      throw new Error('No active recording. Call start() first.');
-    }
+    return this.enqueueMutation(async () => {
+      if (!this._isRecording || !this._activeMetadata || !this._activeRecordingId) {
+        throw new Error('No active recording. Call start() first.');
+      }
 
-    // Drain any in-flight writes BEFORE flipping `_isRecording = false`.
-    // Otherwise recordAction()/appendContractResult() tasks still sitting on
-    // the queue would see `_isRecording === false` when their turn comes and
-    // silently no-op, losing recorded actions on a busy stop() (Codex P1).
-    await this._writeChain;
+      // The shared mutation queue guarantees all previously accepted writes
+      // have completed before final metadata is captured.
+      const metadata: RecordingMetadata = {
+        ...this._activeMetadata,
+        stoppedAt: new Date().toISOString(),
+      };
 
-    // After the chain has drained, take a final snapshot — actionCount may
-    // have grown while we were waiting.
-    const metadata: RecordingMetadata = {
-      ...this._activeMetadata,
-      stoppedAt: new Date().toISOString(),
-    };
+      if (this._trajectoryBundle) {
+        const report = await this._trajectoryBundle.finalize();
+        this._lastTrajectoryReport = report;
+        metadata.trajectoryBundle = { ...this._trajectoryBundle.snapshot, report: report as unknown as Record<string, unknown> };
+      }
 
-    if (this._trajectoryBundle) {
-      const report = await this._trajectoryBundle.finalize();
-      this._lastTrajectoryReport = report;
-      metadata.trajectoryBundle = { ...this._trajectoryBundle.snapshot, report: report as unknown as Record<string, unknown> };
-    }
+      await this.store.writeMetadata(metadata);
 
-    await this.store.writeMetadata(metadata);
+      // Reset state
+      this._isRecording = false;
+      this._activeMetadata = null;
+      this._activeRecordingId = null;
+      this._trajectoryBundle = null;
+      this._seq = 0;
 
-    // Reset state
-    this._isRecording = false;
-    this._activeMetadata = null;
-    this._activeRecordingId = null;
-    this._trajectoryBundle = null;
-    this._seq = 0;
-
-    return metadata;
+      return metadata;
+    });
   }
 
   /**
@@ -240,13 +236,26 @@ export class ActionRecorder {
     if (!this._isRecording || !this._activeRecordingId || !this._activeMetadata) {
       return;
     }
+    return this.recordActionForRecording(this._activeRecordingId, tool, args, durationMs, ok, opts);
+  }
 
-    const id = this._activeRecordingId;
+  /** Record an action only if `recordingId` is still the active generation. */
+  async recordActionForRecording(
+    recordingId: string,
+    tool: string,
+    args: Record<string, unknown>,
+    durationMs: number,
+    ok: boolean,
+    opts?: RecordActionOptions,
+  ): Promise<void> {
+    if (!this._isRecording || this._activeRecordingId !== recordingId || !this._activeMetadata) {
+      return;
+    }
+
     const sanitizedArgs = this.sanitizeArgs(args);
 
-    // Serialize every write so concurrent callers can't share the same _seq.
-    return this.enqueueWrite(async () => {
-      if (!this._isRecording || this._activeRecordingId !== id || !this._activeMetadata) {
+    return this.enqueueMutation(async () => {
+      if (!this._isRecording || this._activeRecordingId !== recordingId || !this._activeMetadata) {
         return;
       }
       try {
@@ -268,7 +277,7 @@ export class ActionRecorder {
           ...applyConsoleBounds(opts?.console),
         };
 
-        await this.store.appendAction(id, action);
+        await this.store.appendAction(recordingId, action);
         if (this._trajectoryBundle) {
           await this._trajectoryBundle.appendToolCall({
             tool,
@@ -306,20 +315,29 @@ export class ActionRecorder {
     if (!this._isRecording || !this._activeRecordingId) {
       return;
     }
-    const recordingIdAtCall = this._activeRecordingId;
+    return this.appendContractResultForRecording(this._activeRecordingId, entry);
+  }
+
+  /** Append a contract result only if `recordingId` is still active. */
+  async appendContractResultForRecording(
+    recordingId: string,
+    entry: ContractResultEntry,
+  ): Promise<void> {
+    if (!this._isRecording || this._activeRecordingId !== recordingId) {
+      return;
+    }
 
     // Serialize so we read _seq AFTER any in-flight recordAction() completes —
     // otherwise the contract row could reference an action index that doesn't
     // exist yet on disk, or, worse, point at the wrong action when the in-flight
     // write resolves first.
-    return this.enqueueWrite(async () => {
-      if (!this._isRecording || this._activeRecordingId !== recordingIdAtCall || this._seq === 0) {
+    return this.enqueueMutation(async () => {
+      if (!this._isRecording || this._activeRecordingId !== recordingId || this._seq === 0) {
         return;
       }
-      const id = this._activeRecordingId;
       const actionIndex = this._seq;
       try {
-        await this.store.appendContractResultRow(id, actionIndex, entry);
+        await this.store.appendContractResultRow(recordingId, actionIndex, entry);
         if (this._trajectoryBundle) {
           await this._trajectoryBundle.appendContract(entry);
         }
@@ -335,9 +353,18 @@ export class ActionRecorder {
    * No-op when recording or trajectory capture is disabled.
    */
   async appendCheckpoint(checkpoint: Record<string, unknown>): Promise<void> {
-    if (!this._isRecording || !this._trajectoryBundle) return;
-    return this.enqueueWrite(async () => {
-      if (!this._isRecording || !this._trajectoryBundle) return;
+    if (!this._isRecording || !this._activeRecordingId || !this._trajectoryBundle) return;
+    return this.appendCheckpointForRecording(this._activeRecordingId, checkpoint);
+  }
+
+  /** Append a checkpoint only if `recordingId` is still active. */
+  async appendCheckpointForRecording(
+    recordingId: string,
+    checkpoint: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this._isRecording || this._activeRecordingId !== recordingId || !this._trajectoryBundle) return;
+    return this.enqueueMutation(async () => {
+      if (!this._isRecording || this._activeRecordingId !== recordingId || !this._trajectoryBundle) return;
       await this._trajectoryBundle.appendCheckpoint(checkpoint);
     });
   }
@@ -488,37 +515,75 @@ function applyConsoleBounds(
 }
 
 // ---------------------------------------------------------------------------
-// Singleton registry: sessionId → ActionRecorder
-// Per-session recorders allow oc_assert to look up the active recorder for
-// a given MCP session without coupling to the global singleton.
+// Session recorder registry: sessionId → ActionRecorder
 // ---------------------------------------------------------------------------
 
-/** Map of sessionId → ActionRecorder instances (populated on start()) */
+/** Map of sessionId → stable ActionRecorder instances. */
 const sessionRecorderRegistry = new Map<string, ActionRecorder>();
+/** In-flight deletion count per session; recorder recreation stays blocked until zero. */
+const deletingSessionRecorderCounts = new Map<string, number>();
 
-/** Singleton instance (global recorder used by the recording MCP tool) */
-let instance: ActionRecorder | null = null;
+/** Immutable handle captured when a tool call begins. */
+export interface ActiveActionRecording {
+  recorder: ActionRecorder;
+  recordingId: string;
+}
 
-export function getActionRecorder(): ActionRecorder {
-  if (!instance) {
-    instance = new ActionRecorder();
+/** Get or create the recorder owned by one logical tool session. */
+export function getOrCreateActionRecorder(sessionId: string): ActionRecorder {
+  if ((deletingSessionRecorderCounts.get(sessionId) ?? 0) > 0) {
+    throw new Error('Session recording is unavailable while the session is being deleted.');
   }
-  return instance;
+  let recorder = sessionRecorderRegistry.get(sessionId);
+  if (!recorder) {
+    recorder = new ActionRecorder();
+    sessionRecorderRegistry.set(sessionId, recorder);
+  }
+  return recorder;
 }
 
 /**
- * Register an ActionRecorder for a given sessionId so that oc_assert can
- * retrieve it. Called by the recording tool on start.
+ * Register an ActionRecorder for a given sessionId so recorder-aware tools can
+ * retrieve it. Primarily used by tests and explicit recorder integrations.
  */
 export function registerSessionRecorder(sessionId: string, recorder: ActionRecorder): void {
+  if ((deletingSessionRecorderCounts.get(sessionId) ?? 0) > 0) {
+    throw new Error('Cannot register a recorder while the session is being deleted.');
+  }
   sessionRecorderRegistry.set(sessionId, recorder);
 }
 
+/** Whether `recorder` is still the registered owner for `sessionId`. */
+export function isSessionRecorderRegistered(sessionId: string, recorder: ActionRecorder): boolean {
+  return sessionRecorderRegistry.get(sessionId) === recorder;
+}
+
 /**
- * Unregister an ActionRecorder for a given sessionId. Called on stop.
+ * Unregister an ActionRecorder for a deleted session.
  */
 export function unregisterSessionRecorder(sessionId: string): void {
   sessionRecorderRegistry.delete(sessionId);
+  deletingSessionRecorderCounts.delete(sessionId);
+}
+
+/** Evict recorder ownership and block recreation while deletion is in progress. */
+export function beginSessionRecorderDeletion(sessionId: string): void {
+  sessionRecorderRegistry.delete(sessionId);
+  deletingSessionRecorderCounts.set(
+    sessionId,
+    (deletingSessionRecorderCounts.get(sessionId) ?? 0) + 1,
+  );
+}
+
+/** Finish deletion and permit a future session with the same ID to record. */
+export function completeSessionRecorderDeletion(sessionId: string): void {
+  sessionRecorderRegistry.delete(sessionId);
+  const remaining = (deletingSessionRecorderCounts.get(sessionId) ?? 0) - 1;
+  if (remaining > 0) {
+    deletingSessionRecorderCounts.set(sessionId, remaining);
+  } else {
+    deletingSessionRecorderCounts.delete(sessionId);
+  }
 }
 
 /**
@@ -531,10 +596,13 @@ export function getActiveActionRecorder(sessionId: string): ActionRecorder | und
   if (recorder && recorder.isRecording) {
     return recorder;
   }
-  // Also check the global singleton in case it was started without explicit registration
-  const global = getActionRecorder();
-  if (global.isRecording && global.activeMetadata?.sessionId === sessionId) {
-    return global;
-  }
   return undefined;
+}
+
+/** Capture the active recorder and recording generation for dispatch fencing. */
+export function getActiveActionRecording(sessionId: string): ActiveActionRecording | undefined {
+  const recorder = getActiveActionRecorder(sessionId);
+  const recordingId = recorder?.activeRecordingId;
+  if (!recorder || !recordingId) return undefined;
+  return { recorder, recordingId };
 }

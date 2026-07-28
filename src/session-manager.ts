@@ -641,6 +641,10 @@ export class SessionManager {
       return;
     }
 
+    // Notify session-owned sidecars before asynchronous cleanup begins so
+    // they can stop admitting new work during the deletion window.
+    this.emitEvent({ type: 'session:deleting', sessionId, timestamp: Date.now() });
+
     // Save storage state before cleanup (save first, then stop watchdog).
     // #848: flush ONE representative tab per named context so per-context
     // cookies / localStorage are partitioned in their own snapshot files.

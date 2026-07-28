@@ -58,7 +58,11 @@ import { isTimeoutError } from './errors/timeout';
 import { OpenChromeConnectionError } from './errors/connection';
 import { getTaskJournal } from './journal/task-journal';
 import { getDashboardState } from './desktop/dashboard-state';
-import { getActionRecorder } from './recording/action-recorder';
+import {
+  beginSessionRecorderDeletion,
+  completeSessionRecorderDeletion,
+  getActiveActionRecording,
+} from './recording/action-recorder';
 import { extractTaskId, getTaskStore, recordTaskToolCall } from './core/task-ledger';
 import {
   substituteSecrets,
@@ -598,9 +602,12 @@ export class MCPServer {
     // sessionManager uses, unlike the transport's Mcp-Session-Id.
     if (typeof this.sessionManager.addEventListener === 'function') {
       this.sessionManager.addEventListener((event) => {
-        if (event.type === 'session:deleted') {
+        if (event.type === 'session:deleting') {
+          beginSessionRecorderDeletion(event.sessionId);
+        } else if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
           getTaskDriftLedger().cleanupSession(event.sessionId);
+          completeSessionRecorderDeletion(event.sessionId);
         } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
           getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);
         }
@@ -2131,6 +2138,9 @@ export class MCPServer {
     const callId = this.activityTracker!.startCall(toolName, sessionId || 'default', telemetryToolArgs, requestId);
     getDashboardState().recordToolStart(sessionId || 'default', toolName, telemetryToolArgs, callId);
     const toolStartTime = Date.now();
+    const recordingAtDispatch = SKIP_RECORDING_TOOLS.has(toolName)
+      ? undefined
+      : getActiveActionRecording(sessionId);
 
     const runHarnessId = isRunHarnessEnabled() ? extractRunId(toolArgs) : undefined;
     if (runHarnessId && !toolName.startsWith('oc_run_')) {
@@ -2449,12 +2459,13 @@ export class MCPServer {
 
       // Record to session recording (best-effort, skip recording tools themselves)
       try {
-        const recorder = getActionRecorder();
-        if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
+        if (recordingAtDispatch) {
+          const { recorder, recordingId } = recordingAtDispatch;
           const tabId = toolArgs['tabId'] as string | undefined;
           const summary = (result as Record<string, unknown>)?._summary as string | undefined;
-          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, true, { tabId, summary }).then(() => {
-            if (recorder.activeRecordingId) this.emitResourceUpdated(recordingUri(recorder.activeRecordingId));
+          const actionSucceeded = result.isError !== true;
+          recorder.recordActionForRecording(recordingId, toolName, telemetryToolArgs, Date.now() - toolStartTime, actionSucceeded, { tabId, summary }).then(() => {
+            if (recorder.activeRecordingId === recordingId) this.emitResourceUpdated(recordingUri(recordingId));
           }).catch(() => {});
         }
       } catch {
@@ -2686,12 +2697,12 @@ export class MCPServer {
 
       // Record to session recording (best-effort, skip recording tools themselves)
       try {
-        const recorder = getActionRecorder();
-        if (recorder.isRecording && !SKIP_RECORDING_TOOLS.has(toolName)) {
+        if (recordingAtDispatch) {
+          const { recorder, recordingId } = recordingAtDispatch;
           const tabId = toolArgs['tabId'] as string | undefined;
           const errMsg = message;
-          recorder.recordAction(toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).then(() => {
-            if (recorder.activeRecordingId) this.emitResourceUpdated(recordingUri(recorder.activeRecordingId));
+          recorder.recordActionForRecording(recordingId, toolName, telemetryToolArgs, Date.now() - toolStartTime, false, { tabId, error: errMsg }).then(() => {
+            if (recorder.activeRecordingId === recordingId) this.emitResourceUpdated(recordingUri(recordingId));
           }).catch(() => {});
         }
       } catch {
