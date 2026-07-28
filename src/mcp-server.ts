@@ -1896,7 +1896,7 @@ export class MCPServer {
           const timeout = setTimeout(() => {
             cdpClient.removeConnectionListener(listener);
             resolve('timeout');
-          }, DEFAULT_SESSION_INIT_TIMEOUT_MS);
+          }, DEFAULT_RECONNECT_TIMEOUT_MS);
 
           const listener = (event: ConnectionEvent) => {
             if (event.type === 'reconnected' || event.type === 'connected') {

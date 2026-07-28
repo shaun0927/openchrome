@@ -37,7 +37,10 @@ describe('E2E-16: Rate limiter under flood', () => {
     // Step 1: Navigate to establish page context
     console.error('[e2e-16] Step 1: Navigate to page');
     const navResult = await server.callTool('navigate', { url: testUrl });
-    expect(navResult.text).toBeDefined();
+    expect(navResult.raw?.isError).not.toBe(true);
+    const tabIdMatch = navResult.text.match(/"tabId"\s*:\s*"([A-F0-9]{32})"/);
+    const tabId = tabIdMatch?.[1] ?? '';
+    expect(tabId).toBeTruthy();
     console.error('[e2e-16] Step 1 OK: Page loaded');
 
     await sleep(500);
@@ -51,6 +54,7 @@ describe('E2E-16: Rate limiter under flood', () => {
     for (let i = 0; i < 20; i++) {
       try {
         const result = await server.callTool('javascript_tool', {
+          tabId,
           code: `"flood-${i}"`,
         });
         // Check if the result indicates rate limiting (isError with rate limit message)
@@ -75,26 +79,20 @@ describe('E2E-16: Rate limiter under flood', () => {
     // Step 3: Expect some succeed, some rejected
     expect(successes).toBeGreaterThan(0);
     expect(rateLimited).toBeGreaterThan(0);
+    expect(errors).toBe(0);
     console.error('[e2e-16] Step 3 OK: Mix of successes and rate-limited responses');
 
     // Step 4: No hangs, no crashes — test reached this point
     console.error('[e2e-16] Step 4 OK: No hangs or crashes during flood');
 
-    // Step 5: Server still works after flood — wait for token refill then make a normal call
-    console.error('[e2e-16] Step 5: Waiting for rate limit recovery, then testing normal call');
-    await sleep(15000); // Wait generously for tokens to refill (10 RPM = 1 every 6s)
-
-    try {
-      const normalResult = await server.callTool('javascript_tool', {
-        code: '"post-flood-ok"',
-      });
-      // Accept either a successful result or a rate-limited response — server is alive
-      expect(normalResult.text).toBeDefined();
-      console.error(`[e2e-16] Step 5 OK: Post-flood call returned: ${normalResult.text.slice(0, 50)}`);
-    } catch (err) {
-      // If still rate-limited or recovering, that's acceptable — server didn't crash
-      console.error(`[e2e-16] Step 5: Post-flood call failed (acceptable): ${(err as Error).message.slice(0, 80)}`);
-    }
+    // Step 5: Wait for one real token refill (10 RPM = one every 6s), then
+    // verify a non-browser diagnostic succeeds without depending on Chrome.
+    console.error('[e2e-16] Step 5: Waiting for rate limit recovery, then testing diagnostic call');
+    await new Promise((resolve) => setTimeout(resolve, 6500));
+    const recoveryResult = await server.callTool('oc_profile_status', {});
+    expect(recoveryResult.raw?.isError).not.toBe(true);
+    expect(recoveryResult.text).not.toContain('Rate limit exceeded');
+    console.error('[e2e-16] Step 5 OK: Rate limiter accepted a post-refill diagnostic');
 
     // Step 6: Verify server health via HTTP
     console.error('[e2e-16] Step 6: Health check');

@@ -9,13 +9,18 @@
  * connection and fail pending/new calls within a bounded timeout.
  */
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { MCPClient } from '../harness/mcp-client';
 import { ChromeController } from '../harness/chrome-controller';
-import { sleep } from '../harness/time-scale';
 
-const CHROME_PORT = 9222;
+const CHROME_PORT = 19_500 + (process.pid % 500);
+const USER_DATA_DIR = path.join(os.tmpdir(), `openchrome-network-disruption-${process.pid}`);
+
+function realSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function getFixturePort(): number {
   const stateFile = path.join(process.cwd(), '.e2e-state.json');
@@ -58,6 +63,7 @@ describe('E2E: Network Disruption Recovery', () => {
     mcp = new MCPClient({
       timeoutMs: 60_000,
       env: { OPENCHROME_MAX_RECONNECT_ATTEMPTS: '0' }, // infinite reconnect
+      args: ['--port', String(CHROME_PORT), '--user-data-dir', USER_DATA_DIR],
     });
     await mcp.start();
     chrome = new ChromeController();
@@ -71,6 +77,7 @@ describe('E2E: Network Disruption Recovery', () => {
       frozenPids = [];
     }
     await mcp.stop();
+    fs.rmSync(USER_DATA_DIR, { recursive: true, force: true });
   }, 30_000);
 
   test('tool calls return errors during disruption and recover after', async () => {
@@ -112,7 +119,7 @@ describe('E2E: Network Disruption Recovery', () => {
         console.error(`[network-disruption] Step 3b OK: Tool call errored (disrupted) after ${(i + 1) * 2}s`);
         break;
       }
-      await sleep(2_000);
+      await realSleep(2_000);
     }
     expect(disrupted).toBe(true);
 
@@ -128,8 +135,13 @@ describe('E2E: Network Disruption Recovery', () => {
       const result = await mcp.callTool('navigate', { url: `http://localhost:${port}/site-b` }, 25_000);
       callReturned = true;
       const elapsed = Date.now() - callStart;
-      // Server auto-recovered by launching new Chrome — this is valid self-healing
-      console.error(`[network-disruption] Step 4: navigate succeeded in ${elapsed}ms (auto-recovery)`);
+      if (result.raw?.isError) {
+        expect(result.text).toContain('Chrome reconnection');
+        console.error(`[network-disruption] Step 4: Server rejected during reconnect in ${elapsed}ms`);
+      } else {
+        expect(result.text).toContain('tabId');
+        console.error(`[network-disruption] Step 4: navigate succeeded in ${elapsed}ms (auto-recovery)`);
+      }
       expect(elapsed).toBeLessThan(25_000);
     } catch (err) {
       callReturned = true;
@@ -160,7 +172,7 @@ describe('E2E: Network Disruption Recovery', () => {
       } catch {
         // Still reconnecting
       }
-      await sleep(2_000);
+      await realSleep(2_000);
     }
     if (!reconnected) {
       console.error('[network-disruption] Step 5b: Reconnect not confirmed via health, proceeding anyway');
@@ -184,7 +196,7 @@ describe('E2E: Network Disruption Recovery', () => {
         console.error(
           `[network-disruption] Step 6: Attempt ${attempt} failed: ${(err as Error).message}`,
         );
-        if (attempt < 5) await sleep(5_000);
+        if (attempt < 5) await realSleep(5_000);
       }
     }
     expect(recovered).toBe(true);
