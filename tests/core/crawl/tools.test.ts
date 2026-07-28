@@ -21,7 +21,13 @@ import {
   _setAdvanceOptionsForTests,
 } from '../../../src/tools/crawl-status';
 import { registerCrawlCancelTool } from '../../../src/tools/crawl-cancel';
-import { jobFilePath, loadJob, type CrawledPage } from '../../../src/core/crawl/job-store';
+import {
+  appendEvent,
+  createJob,
+  jobFilePath,
+  loadJob,
+  type CrawledPage,
+} from '../../../src/core/crawl/job-store';
 import type {
   MCPToolDefinition,
   MCPResult,
@@ -116,6 +122,96 @@ describe('crawl_start', () => {
     const res = await crawlStart!('s', { url: 'file:///etc/passwd' });
     expect(res.isError).toBe(true);
   });
+
+  test('persists clean-markdown filter options for later advances', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer([{ name: 'a' }]);
+    bootTools();
+
+    const body = parseResult(await crawlStart!('s', {
+      url: server.url('a'),
+      output_format: 'markdown-clean',
+      content_filter: 'prune',
+      query: 'enterprise pricing',
+      return_raw: true,
+      return_fit: false,
+    }));
+    const state = loadJob(body.jobId as string);
+    expect(state.config).toMatchObject({
+      output_format: 'markdown-clean',
+      content_filter: 'prune',
+      query: 'enterprise pricing',
+      return_raw: true,
+      return_fit: false,
+    });
+  });
+
+  test('rejects invalid filter and blank BM25 query before job creation', async () => {
+    const root = mkTmpRoot();
+    server = await startFixtureServer([{ name: 'a' }]);
+    bootTools();
+
+    const invalid = await crawlStart!('s', {
+      url: server.url('a'),
+      output_format: 'markdown-clean',
+      content_filter: 'unknown',
+    });
+    expect(invalid.isError).toBe(true);
+
+    const missingQuery = await crawlStart!('s', {
+      url: server.url('a'),
+      output_format: 'markdown-clean',
+      content_filter: 'bm25',
+      query: '   ',
+    });
+    expect(missingQuery.isError).toBe(true);
+    expect(fs.readdirSync(root).filter((name) => name.endsWith('.jsonl'))).toEqual([]);
+  });
+
+  test('ignores markdown projection options for non-clean output formats', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer([{ name: 'a' }]);
+    bootTools();
+
+    const res = await crawlStart!('s', {
+      url: server.url('a'),
+      output_format: 'text',
+      content_filter: 'bm25',
+      query: '   ',
+      return_raw: true,
+      return_fit: true,
+    });
+    expect(res.isError).toBeUndefined();
+
+    const state = loadJob(parseResult(res).jobId as string);
+    expect(state.config.content_filter).toBeUndefined();
+    expect(state.config.query).toBeUndefined();
+    expect(state.config.return_raw).toBeUndefined();
+    expect(state.config.return_fit).toBeUndefined();
+  });
+
+  test('rejects unsafe and oversized clean-markdown queries before job creation', async () => {
+    const root = mkTmpRoot();
+    server = await startFixtureServer([{ name: 'a' }]);
+    bootTools();
+
+    const unsafe = await crawlStart!('s', {
+      url: server.url('a'),
+      output_format: 'markdown-clean',
+      content_filter: 'bm25',
+      query: 'token=super-secret-value',
+    });
+    const oversized = await crawlStart!('s', {
+      url: server.url('a'),
+      output_format: 'markdown-clean',
+      content_filter: 'bm25',
+      query: 'x'.repeat(2049),
+    });
+
+    expect(unsafe.isError).toBe(true);
+    expect(oversized.isError).toBe(true);
+    expect(fs.readdirSync(root).filter((name) => name.endsWith('.jsonl'))).toEqual([]);
+  });
 });
 
 describe('crawl_status', () => {
@@ -166,6 +262,33 @@ describe('crawl_status', () => {
     expect(body!.completed).toBe(5);
     expect((body!.pages as CrawledPage[]).length).toBe(5);
     expect(spy.calls.length).toBe(5);
+  });
+
+  test('keeps the legacy resumable page shape when projection options are omitted', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer([{ name: 'a' }]);
+    bootTools();
+    const spy: SpyState = { calls: [] };
+    _setAdvanceOptionsForTests({ fetcher: makeSpyFetcher(spy) });
+
+    const start = parseResult(await crawlStart!('s', {
+      url: server.url('a'),
+      max_pages: 1,
+    }));
+    const body = parseResult(await crawlStatus!('s', {
+      jobId: start.jobId,
+      advance: 1,
+      includePages: true,
+    }));
+    const page = (body.pages as CrawledPage[])[0];
+
+    expect(Object.keys(page).sort()).toEqual([
+      'content',
+      'depth',
+      'links_found',
+      'title',
+      'url',
+    ]);
   });
 
   test('includePages caps at OC_CRAWL_STATUS_MAX_PAGES with pagesOmitted', async () => {
@@ -236,6 +359,135 @@ describe('crawl_status', () => {
     bootTools();
     const res = await crawlStatus!('s', { jobId: 'no-such-job', advance: 1 });
     expect(res.isError).toBe(true);
+  });
+
+  test('returns resumable raw/fit/filter parity without persisting duplicate fit content', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer([{ name: 'a' }]);
+    bootTools();
+    const calls: Array<Record<string, unknown>> = [];
+    _setAdvanceOptionsForTests({
+      fetcher: async (_sessionId, url, depth, opts) => {
+        calls.push(opts as unknown as Record<string, unknown>);
+        return {
+          url,
+          title: 'A',
+          content: 'fit body',
+          raw_markdown: 'raw navigation\n\nfit body',
+          fit_markdown: 'fit body',
+          filter: {
+            type: 'prune',
+            raw_chars: 24,
+            fit_chars: 8,
+            reduction_ratio: 0.667,
+            sections_seen: 2,
+            sections_kept: 1,
+            query: 'enterprise pricing',
+          },
+          depth,
+          links_found: 0,
+          _links: [],
+        };
+      },
+    });
+
+    const start = parseResult(await crawlStart!('s', {
+      url: server.url('a'),
+      max_pages: 1,
+      output_format: 'markdown-clean',
+      content_filter: 'prune',
+      query: 'enterprise pricing',
+      return_raw: true,
+    }));
+    const body = parseResult(await crawlStatus!('s', {
+      jobId: start.jobId,
+      advance: 1,
+      includePages: true,
+    }));
+    const page = (body.pages as CrawledPage[])[0];
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        outputFormat: 'markdown-clean',
+        contentFilter: 'prune',
+        returnRaw: true,
+        returnFit: true,
+      }),
+    ]);
+    expect(page).toMatchObject({
+      content: 'fit body',
+      raw_markdown: 'raw navigation\n\nfit body',
+      fit_markdown: 'fit body',
+      filter: expect.objectContaining({
+        type: 'prune',
+        query: 'enterprise pricing',
+      }),
+    });
+
+    const stored = loadJob(start.jobId as string).pages[0];
+    expect(stored.raw_markdown).toBe('raw navigation\n\nfit body');
+    expect(stored.fit_markdown).toBeUndefined();
+    expect(stored.filter?.query).toBeUndefined();
+  });
+
+  test('does not reconstruct markdown aliases for legacy non-clean jobs', async () => {
+    mkTmpRoot();
+    server = await startFixtureServer([{ name: 'a' }]);
+    bootTools();
+    const url = server.url('a');
+    const jobId = await createJob({
+      url,
+      max_depth: 0,
+      max_pages: 1,
+      scope: `${new URL(url).origin}/**`,
+      output_format: 'text',
+      content_filter: 'prune',
+      query: 'ignored',
+      return_raw: true,
+      return_fit: true,
+      respect_robots: false,
+      delay_ms: 0,
+      concurrency: 1,
+    });
+    await appendEvent(jobId, {
+      kind: 'fetched',
+      url,
+      depth: 0,
+      page: {
+        url,
+        title: 'A',
+        content: 'plain text',
+        raw_markdown: 'raw markdown',
+        fit_markdown: 'fit markdown',
+        filter: {
+          type: 'prune',
+          raw_chars: 12,
+          fit_chars: 8,
+          reduction_ratio: 0.333,
+          sections_seen: 1,
+          sections_kept: 1,
+        },
+        depth: 0,
+        links_found: 0,
+        truncated_fields: ['content', 'raw_markdown', 'fit_markdown'],
+      },
+      t: Date.now(),
+    });
+
+    const body = parseResult(await crawlStatus!('s', {
+      jobId,
+      advance: 0,
+      includePages: true,
+    }));
+    const page = (body.pages as CrawledPage[])[0];
+
+    expect(page).toMatchObject({
+      content: 'plain text',
+      truncated_fields: ['content'],
+    });
+    expect(page.raw_markdown).toBeUndefined();
+    expect(page.fit_markdown).toBeUndefined();
+    expect(page.filter).toBeUndefined();
   });
 });
 

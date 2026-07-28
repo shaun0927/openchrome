@@ -60,6 +60,48 @@ describe('job-store: createJob + loadJob', () => {
     expect(typeof header.createdAt).toBe('number');
   });
 
+  test('createJob persists safe projection options without mutating operational patterns', async () => {
+    const scope = 'http://example.test/**?token=scope-value';
+    const includePatterns = ['http://example.test/docs/**?token=include-value'];
+    const excludePatterns = ['http://example.test/private/**?token=exclude-value'];
+    const jobId = await createJob(makeConfig({
+      output_format: 'markdown-clean',
+      content_filter: 'bm25',
+      query: 'enterprise pricing',
+      return_raw: true,
+      return_fit: true,
+      scope,
+      include_patterns: includePatterns,
+      exclude_patterns: excludePatterns,
+    }));
+    const header = JSON.parse(fs.readFileSync(jobFilePath(jobId), 'utf8').trim());
+    expect(header.config).toMatchObject({
+      output_format: 'markdown-clean',
+      content_filter: 'bm25',
+      query: 'enterprise pricing',
+      return_raw: true,
+      return_fit: true,
+      scope,
+      include_patterns: includePatterns,
+      exclude_patterns: excludePatterns,
+    });
+  });
+
+  test('createJob rejects unsafe or oversized queries before writing a job', async () => {
+    await expect(createJob(makeConfig({
+      output_format: 'markdown-clean',
+      content_filter: 'bm25',
+      query: 'token=super-secret-value',
+    }))).rejects.toThrow(/credential-like material/);
+    await expect(createJob(makeConfig({
+      output_format: 'markdown-clean',
+      content_filter: 'bm25',
+      query: 'x'.repeat(2049),
+    }))).rejects.toThrow(/at most 2048 characters/);
+    expect(fs.readdirSync(process.env.OC_JOBS_ROOT!).filter((name) => name.endsWith('.jsonl')))
+      .toEqual([]);
+  });
+
   test('loadJob replays empty state for a fresh job', async () => {
     const jobId = await createJob(makeConfig());
     const state = loadJob(jobId);
@@ -85,6 +127,17 @@ describe('job-store: createJob + loadJob', () => {
         url: 'http://example.test/a',
         title: 'A',
         content: 'hi',
+        raw_markdown: 'raw hi',
+        filter: {
+          type: 'prune',
+          raw_chars: 6,
+          fit_chars: 2,
+          reduction_ratio: 0.667,
+          sections_seen: 2,
+          sections_kept: 1,
+          query: 'enterprise pricing',
+        },
+        truncated_fields: ['raw_markdown'],
         depth: 0,
         links_found: 0,
       },
@@ -95,6 +148,26 @@ describe('job-store: createJob + loadJob', () => {
     expect(state.visited.has('http://example.test/a')).toBe(true);
     expect(state.pages).toHaveLength(1);
     expect(state.pages[0].title).toBe('A');
+    expect(state.pages[0].raw_markdown).toBe('raw hi');
+    expect(state.pages[0].filter?.type).toBe('prune');
+    expect(state.pages[0].filter?.query).toBeUndefined();
+    expect(state.pages[0].truncated_fields).toEqual(['raw_markdown']);
+  });
+
+  test('loads pre-option JSONL headers with legacy defaults', () => {
+    const jobId = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+    const header = {
+      kind: 'header',
+      config: makeConfig(),
+      createdAt: Date.now(),
+    };
+    fs.writeFileSync(jobFilePath(jobId), `${JSON.stringify(header)}\n`, 'utf8');
+
+    const state = loadJob(jobId);
+    expect(state.config.content_filter).toBeUndefined();
+    expect(state.config.query).toBeUndefined();
+    expect(state.config.return_raw).toBeUndefined();
+    expect(state.config.return_fit).toBeUndefined();
   });
 
   test('setStatus: terminal cancelled is sticky across later running events', async () => {
