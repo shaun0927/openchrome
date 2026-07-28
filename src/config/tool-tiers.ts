@@ -50,6 +50,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   batch_execute: 2,
   lightweight_scroll: 2,
   batch_paginate: 2,
+  tabs_search: 2,
   inspect: 2,
   vision_find: 2,
   memory: 2,

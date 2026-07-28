@@ -40,6 +40,7 @@ const CHECKPOINT_MAX_AGE_MS = 5 * 60 * 1000;
 export const DEFAULT_TOOL_RISK_POLICIES: ToolRiskPolicy[] = [
   { tool: 'read_page', risk: 'read_only' },
   { tool: 'tabs_context', risk: 'read_only' },
+  { tool: 'tabs_search', risk: 'read_only' },
   { tool: 'query_dom', risk: 'read_only' },
   { tool: 'cookies', risk: 'destructive', trigger: 'action in delete/delete-all/clear', requiresDryRun: true, requiresElicitation: true },
   { tool: 'storage', risk: 'destructive', trigger: 'action in clear/delete/remove', requiresDryRun: true, requiresElicitation: true },

@@ -96,6 +96,15 @@ describe('BrowserTaskSignature evaluator', () => {
     })).resolves.toEqual({ status: 'stop', reasons: ['max_non_progress_calls exceeded: 2/2'] });
   });
 
+  it('classifies tabs_search as an observation for loop guards', async () => {
+    await expect(evaluateTaskSignature({
+      signature: validSignature({ loopGuards: [{ kind: 'max_observation_calls', limit: 2, window: 2 }] }),
+      recentTools: [{ tool: 'tabs_context' }, { tool: 'tabs_search' }],
+      elapsedMs: 100,
+      toolCount: 2,
+    })).resolves.toEqual({ status: 'stop', reasons: ['max_observation_calls exceeded: 2/2'] });
+  });
+
   it('preflights disallowed tools before execution', () => {
     expect(preflightAllowedTools(validSignature(), ['navigate', 'javascript_tool'])).toEqual({
       status: 'failure',

@@ -50,7 +50,7 @@ export class BrowserRouter {
    *
    * Decision order:
    * 1. Hybrid disabled → always Chrome
-   * 2. Visual tool → always Chrome
+   * 2. Chrome-only tool → always Chrome
    * 3. Circuit breaker open and cooldown not expired → Chrome (increment circuitBreakerTrips)
    * 4. Circuit breaker open and cooldown expired → reset, try LP
    * 5. LP page provided and page is healthy → LP
@@ -72,14 +72,16 @@ export class BrowserRouter {
       };
     }
 
-    // 2. Visual tool always goes to Chrome
-    if (ToolRoutingRegistry.isVisualTool(toolName)) {
+    // 2. Chrome-only tools bypass Lightpanda. Preserve the more specific
+    // visual discriminator for screenshot/PDF callers.
+    const isVisualTool = ToolRoutingRegistry.isVisualTool(toolName);
+    if (isVisualTool || ToolRoutingRegistry.getRouting(toolName) === 'chrome-only') {
       this.stats.chromeRequests++;
       return {
         backend: BrowserBackend.CHROME,
         page: chromePage,
         fallback: false,
-        reason: 'visual-tool',
+        reason: isVisualTool ? 'visual-tool' : 'chrome-only',
       };
     }
 

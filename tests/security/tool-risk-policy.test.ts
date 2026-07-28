@@ -5,6 +5,10 @@ describe('tool risk policy matrix', () => {
     const decision = evaluateToolRiskPolicy({ tool: 'read_page' });
     expect(decision.decision).toBe('allow');
     expect(decision.policy.risk).toBe('read_only');
+
+    const tabsSearch = evaluateToolRiskPolicy({ tool: 'tabs_search' });
+    expect(tabsSearch.decision).toBe('allow');
+    expect(tabsSearch.policy.risk).toBe('read_only');
   });
 
   it('requires dry-run preview for destructive cookie deletes', () => {

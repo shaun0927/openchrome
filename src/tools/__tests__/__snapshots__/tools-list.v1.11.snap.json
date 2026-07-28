@@ -316,6 +316,9 @@
       "name": "tabs_create"
     },
     {
+      "name": "tabs_search"
+    },
+    {
       "name": "user_agent"
     },
     {
