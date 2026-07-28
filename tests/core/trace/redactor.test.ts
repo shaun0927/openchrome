@@ -52,6 +52,14 @@ describe('trace redactor — scrubString patterns', () => {
     expect(out).not.toContain('hunter2');
   });
 
+  test('redacts complete URL userinfo when the password contains a raw at-sign', () => {
+    const out = scrubString('open https://alice:p@ss@example.com/private?view=1');
+    expect(out).toBe(`open https://${REDACTED}@example.com/private?view=1`);
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('p@ss');
+    expect(out).not.toContain('ss@example.com');
+  });
+
   test('leaves benign strings untouched', () => {
     expect(scrubString('hello world')).toBe('hello world');
     expect(scrubString('https://example.com/page')).toBe('https://example.com/page');

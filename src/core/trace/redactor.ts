@@ -95,9 +95,6 @@ const SENSITIVE_HEADER_NAMES = new Set(
 
 /** Patterns scanned in every string-typed value across the event tree. */
 const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
-  // URL userinfo — redact the entire username[:password] component while
-  // preserving the scheme, host, path, and query for useful provenance.
-  { name: 'url_userinfo', re: /\b(https?:\/\/)[^/\s@]+@/gi },
   // JWT — three base64url segments separated by dots
   { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
   // AWS Access Key ID
@@ -120,6 +117,37 @@ const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
   },
 ];
 
+const URL_CANDIDATE_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/gi;
+
+/**
+ * Redact URL userinfo using WHATWG parsing so raw `@` characters inside a
+ * password cannot be mistaken for the authority delimiter. The parser
+ * validates that the candidate actually carries credentials; reconstruction
+ * uses the final authority `@` so the original host/path/query spelling stays
+ * intact instead of being canonicalized by URL serialization.
+ */
+function redactUrlUserinfo(value: string): string {
+  return value.replace(URL_CANDIDATE_PATTERN, (candidate) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate);
+    } catch {
+      return candidate;
+    }
+    if (!parsed.username && !parsed.password) return candidate;
+
+    const schemeEnd = candidate.indexOf('//') + 2;
+    const authoritySuffix = candidate.slice(schemeEnd).search(/[/?#]/);
+    const authorityEnd = authoritySuffix < 0
+      ? candidate.length
+      : schemeEnd + authoritySuffix;
+    const userinfoEnd = candidate.lastIndexOf('@', authorityEnd - 1);
+    if (userinfoEnd < schemeEnd) return candidate;
+
+    return `${candidate.slice(0, schemeEnd)}${REDACTED}@${candidate.slice(userinfoEnd + 1)}`;
+  });
+}
+
 function isSensitiveKey(key: string): boolean {
   const lower = key.toLowerCase();
   return SENSITIVE_KEY_NAMES.some((s) => lower.includes(s));
@@ -131,15 +159,13 @@ function isSensitiveKey(key: string): boolean {
  * the value: `password=hunter2` → `password=[REDACTED]`.
  */
 export function scrubString(value: string): string {
-  let out = value;
+  let out = redactUrlUserinfo(value);
   for (const [plaintext, token] of VAULT_LITERAL_REDACTIONS) {
     out = out.split(plaintext).join(token);
   }
   for (const { name, re } of CREDENTIAL_PATTERNS) {
     if (name === 'url_credential_param') {
       out = out.replace(re, (_m, p1: string) => `${p1}=${REDACTED}`);
-    } else if (name === 'url_userinfo') {
-      out = out.replace(re, (_m, scheme: string) => `${scheme}${REDACTED}@`);
     } else if (name === 'auth_scheme') {
       out = out.replace(re, (_m, p1: string) => `${p1} ${REDACTED}`);
     } else {
