@@ -213,6 +213,34 @@ function stringifyResultPayload(result: MCPResult): string {
 export function isConnectionError(error: unknown): boolean {
   if (error instanceof OpenChromeConnectionError) return true;
   const message = formatError(error);
+  const lowerMessage = message.toLowerCase();
+
+  // User-authored Runtime.evaluate and its follow-up Runtime.awaitPromise may
+  // report renderer timeouts, unsupported parameters, or stale remote objects
+  // as protocol errors. Only clearly connection-scoped variants may reconnect;
+  // every other error is non-retryable because replaying the whole tool can
+  // duplicate side effects that completed before result formatting failed.
+  const replaySensitiveRuntimeError = [
+    'protocol error (runtime.evaluate)',
+    'protocol error (runtime.awaitpromise)',
+  ].some(pattern => lowerMessage.includes(pattern));
+  if (replaySensitiveRuntimeError) {
+    const runtimeConnectionPatterns = [
+      'connection closed',
+      'session closed',
+      'target closed',
+      'target page, context or browser has been closed',
+      'websocket is not open',
+      'browser has disconnected',
+      'browser disconnected',
+      'execution context was destroyed',
+      'cannot find context with specified id',
+      'inspected target navigated or closed',
+      'cdpsession connection closed',
+    ];
+    return runtimeConnectionPatterns.some(pattern => lowerMessage.includes(pattern));
+  }
+
   const patterns = [
     'not connected to chrome',
     'call connect() first',
@@ -231,7 +259,6 @@ export function isConnectionError(error: unknown): boolean {
     'puppeteer.connect() timed out',
     'session initialization timed out',
   ];
-  const lowerMessage = message.toLowerCase();
   return patterns.some(pattern => lowerMessage.includes(pattern));
 }
 

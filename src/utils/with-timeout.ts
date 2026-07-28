@@ -1,6 +1,46 @@
 import { OpenChromeTimeoutError } from '../errors/timeout';
 import { ToolContext, getRemainingBudget } from '../types/mcp';
 
+export const MAX_TIMEOUT_RESPONSE_GRACE_MS = 250;
+
+export function getTimeoutResponseGraceMs(ms: number): number {
+  if (!Number.isFinite(ms) || ms <= 1) return 0;
+  return Math.min(
+    MAX_TIMEOUT_RESPONSE_GRACE_MS,
+    Math.max(1, Math.ceil(ms * 0.2)),
+  );
+}
+
+/** Host-side wait budget that lets a bounded inner operation report its timeout. */
+export function addTimeoutResponseGraceMs(ms: number): number {
+  return ms + getTimeoutResponseGraceMs(ms);
+}
+
+/** Inner operation budget when the outer deadline leaves no separate response grace. */
+export function reserveTimeoutResponseGraceMs(outerMs: number): number {
+  if (!Number.isFinite(outerMs) || outerMs <= 0) return 0;
+  if (outerMs <= 1) return 1;
+  return Math.max(1, Math.floor(outerMs - getTimeoutResponseGraceMs(outerMs)));
+}
+
+export function getEffectiveTimeoutMs(ms: number, context?: ToolContext): number {
+  return context
+    ? Math.min(ms, getRemainingBudget(context))
+    : ms;
+}
+
+/** One absolute deadline shared by every phase of a bounded operation. */
+export function getTimeoutDeadlineAt(ms: number, context?: ToolContext): number {
+  const operationDeadlineAt = Date.now() + ms;
+  return context
+    ? Math.min(operationDeadlineAt, context.startTime + context.deadlineMs)
+    : operationDeadlineAt;
+}
+
+export function getRemainingTimeoutMs(deadlineAt: number): number {
+  return Math.max(0, deadlineAt - Date.now());
+}
+
 /**
  * Race a promise against a timeout. Rejects with an OpenChromeTimeoutError if the timeout fires first.
  *
@@ -14,9 +54,7 @@ import { ToolContext, getRemainingBudget } from '../types/mcp';
  *    blocked by an orphaned background CDP call.
  */
 export function withTimeout<T>(promise: Promise<T>, ms: number, label = 'Operation', context?: ToolContext): Promise<T> {
-  const effectiveMs = context
-    ? Math.min(ms, getRemainingBudget(context))
-    : ms;
+  const effectiveMs = getEffectiveTimeoutMs(ms, context);
 
   if (effectiveMs <= 0) {
     return Promise.reject(new OpenChromeTimeoutError(label, 0, false, true));

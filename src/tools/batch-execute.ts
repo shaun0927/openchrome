@@ -8,12 +8,32 @@
  */
 
 import { MCPServer } from '../mcp-server';
-import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
+import {
+  MCPToolDefinition,
+  MCPResult,
+  ToolContext,
+  ToolHandler,
+  getRemainingBudget,
+  throwIfAborted,
+} from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { formatCDPResult, CDPEvalResult } from './javascript';
+import {
+  CDPEvalResult,
+  formatCDPResult,
+  JavascriptCDPSendOptions,
+  normalizeJavascriptTimeoutMs,
+} from './javascript';
 import { getMetricsCollector } from '../metrics/collector';
 import { LruTtlCache } from '../core/idempotency/lru';
+import { OpenChromeTimeoutError } from '../errors/timeout';
+import {
+  addTimeoutResponseGraceMs,
+  getEffectiveTimeoutMs,
+  getRemainingTimeoutMs,
+  getTimeoutDeadlineAt,
+  withTimeout,
+} from '../utils/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'batch_execute',
@@ -172,7 +192,8 @@ function createLimiter(concurrency: number) {
 
 const handler: ToolHandler = async (
   sessionId: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolContext,
 ): Promise<MCPResult> => {
   const tasks = args.tasks as BatchTask[];
   const concurrency = (args.concurrency as number) || 10;
@@ -207,41 +228,108 @@ const handler: ToolHandler = async (
   const idempotencyCache = getIdempotencyCache(sessionId);
   let aborted = false;
 
+  const throwIfDeadlineExceeded = (label: string): void => {
+    if (context && getRemainingBudget(context) <= 0) {
+      throw new OpenChromeTimeoutError(label, 0, false, true);
+    }
+  };
+
+  const runInterItemDelay = async (delayMs: number): Promise<void> => {
+    const boundedDelayMs = Math.max(0, delayMs);
+    if (boundedDelayMs === 0) return;
+    throwIfAborted(context);
+    throwIfDeadlineExceeded('batch_execute inter-item wait');
+    let delayTimer: ReturnType<typeof setTimeout> | undefined;
+    await withTimeout(
+      new Promise<void>((resolve) => {
+        delayTimer = setTimeout(resolve, boundedDelayMs);
+      }),
+      boundedDelayMs + 1,
+      'batch_execute inter-item wait',
+      context,
+    ).finally(() => {
+      if (delayTimer) clearTimeout(delayTimer);
+    });
+    throwIfAborted(context);
+    throwIfDeadlineExceeded('batch_execute inter-item wait');
+  };
+
   const runWaitSpec = async (task: BatchTask, spec: WaitForSpec | undefined): Promise<BatchTaskResult['wait'] | undefined> => {
     if (!spec) return undefined;
     const waitStart = Date.now();
     const timeout = spec.timeout ?? 30000;
-    const page = await sessionManager.getPage(sessionId, task.tabId, undefined, 'batch_execute.wait');
-    if (!page) return { success: false, elapsedMs: Date.now() - waitStart, type: spec.type, error: `Tab ${task.tabId} not found` };
     try {
+      throwIfAborted(context);
+      throwIfDeadlineExceeded('batch_execute inter-item wait');
+      const page = await sessionManager.getPage(sessionId, task.tabId, undefined, 'batch_execute.wait');
+      if (!page) return { success: false, elapsedMs: Date.now() - waitStart, type: spec.type, error: `Tab ${task.tabId} not found` };
+      throwIfAborted(context);
+      throwIfDeadlineExceeded('batch_execute inter-item wait');
+      const effectiveTimeoutMs = getEffectiveTimeoutMs(timeout, context);
+      if (effectiveTimeoutMs <= 0) {
+        throw new OpenChromeTimeoutError('batch_execute inter-item wait', 0, false, true);
+      }
+
       switch (spec.type) {
         case 'selector':
           if (!spec.value) throw new Error('value is required for selector wait');
-          await page.waitForSelector(spec.value, { timeout, visible: spec.visible ?? false });
+          await withTimeout(
+            page.waitForSelector(spec.value, { timeout: effectiveTimeoutMs, visible: spec.visible ?? false }),
+            timeout,
+            'batch_execute selector wait',
+            context,
+          );
           break;
         case 'selector_hidden':
           if (!spec.value) throw new Error('value is required for selector_hidden wait');
-          await page.waitForSelector(spec.value, { timeout, hidden: true });
+          await withTimeout(
+            page.waitForSelector(spec.value, { timeout: effectiveTimeoutMs, hidden: true }),
+            timeout,
+            'batch_execute selector_hidden wait',
+            context,
+          );
           break;
         case 'function':
           if (!spec.value) throw new Error('value is required for function wait');
-          await page.waitForFunction(spec.value, { timeout, polling: Math.min(5000, Math.max(50, Math.floor(spec.pollIntervalMs ?? 200))) });
+          await withTimeout(
+            page.waitForFunction(spec.value, {
+              timeout: effectiveTimeoutMs,
+              polling: Math.min(5000, Math.max(50, Math.floor(spec.pollIntervalMs ?? 200))),
+            }),
+            timeout,
+            'batch_execute function wait',
+            context,
+          );
           break;
         case 'url_match':
           if (!spec.value) throw new Error('value is required for url_match wait');
-          await page.waitForFunction((pattern: string) => {
-            try { return new RegExp(pattern).test(window.location.href); } catch { return window.location.href.includes(pattern); }
-          }, { timeout }, spec.value);
+          await withTimeout(
+            page.waitForFunction((pattern: string) => {
+              try { return new RegExp(pattern).test(window.location.href); } catch { return window.location.href.includes(pattern); }
+            }, { timeout: effectiveTimeoutMs }, spec.value),
+            timeout,
+            'batch_execute url_match wait',
+            context,
+          );
           break;
         case 'navigation':
-          await page.waitForNavigation({ timeout, waitUntil: 'domcontentloaded' });
+          await withTimeout(
+            page.waitForNavigation({ timeout: effectiveTimeoutMs, waitUntil: 'domcontentloaded' }),
+            timeout,
+            'batch_execute navigation wait',
+            context,
+          );
           break;
-        case 'timeout':
-          await new Promise((resolve) => setTimeout(resolve, Math.min(60000, Math.max(0, parseInt(spec.value || String(timeout), 10)))));
+        case 'timeout': {
+          const delayMs = Math.min(60000, Math.max(0, parseInt(spec.value || String(timeout), 10)));
+          await runInterItemDelay(delayMs);
           break;
+        }
         default:
           throw new Error(`Unknown wait type ${(spec as { type?: string }).type}`);
       }
+      throwIfAborted(context);
+      throwIfDeadlineExceeded('batch_execute inter-item wait');
       return { success: true, elapsedMs: Date.now() - waitStart, type: spec.type };
     } catch (error) {
       return { success: false, elapsedMs: Date.now() - waitStart, type: spec.type, error: error instanceof Error ? error.message : String(error) };
@@ -252,28 +340,31 @@ const handler: ToolHandler = async (
     const taskStart = Date.now();
     const workerId = task.workerId || task.tabId;
 
-    if (aborted) {
-      const skipped: BatchTaskResult = {
-        tabId: task.tabId,
-        workerId,
-        success: false,
-        error: 'Aborted due to failFast',
-        durationMs: 0,
-        skipped: 'failfast-skip',
-      };
-      recordBatchItemMetric('failfast-skip');
-      return skipped;
-    }
-
-    if (task.idempotencyKey) {
-      const cached = idempotencyCache.get(task.idempotencyKey);
-      if (cached?.success) {
-        recordBatchItemMetric('skipped');
-        return { ...cached, skipped: 'idempotent' };
-      }
-    }
-
     try {
+      throwIfAborted(context);
+      throwIfDeadlineExceeded('batch_execute');
+
+      if (aborted) {
+        const skipped: BatchTaskResult = {
+          tabId: task.tabId,
+          workerId,
+          success: false,
+          error: 'Aborted due to failFast',
+          durationMs: 0,
+          skipped: 'failfast-skip',
+        };
+        recordBatchItemMetric('failfast-skip');
+        return skipped;
+      }
+
+      if (task.idempotencyKey) {
+        const cached = idempotencyCache.get(task.idempotencyKey);
+        if (cached?.success) {
+          recordBatchItemMetric('skipped');
+          return { ...cached, skipped: 'idempotent' };
+        }
+      }
+
       const page = await sessionManager.getPage(sessionId, task.tabId, undefined, 'batch_execute');
       if (!page) {
         const failed: BatchTaskResult = {
@@ -287,21 +378,34 @@ const handler: ToolHandler = async (
         return failed;
       }
 
-      const timeout = task.timeout || 30000;
+      const timeout = normalizeJavascriptTimeoutMs(task.timeout);
+      const commandTimeoutMs = addTimeoutResponseGraceMs(timeout);
+      const effectiveTimeoutMs = getEffectiveTimeoutMs(commandTimeoutMs, context);
+      if (effectiveTimeoutMs <= 0) {
+        throw new OpenChromeTimeoutError('batch_execute', 0, false, true);
+      }
+      throwIfAborted(context);
+      const invocationDeadlineAt = getTimeoutDeadlineAt(commandTimeoutMs, context);
+      const sendOptions: JavascriptCDPSendOptions = {
+        timeoutMs: commandTimeoutMs,
+        deadlineAt: invocationDeadlineAt,
+        signal: context?.signal,
+        reserveRuntimeEvaluateResponseGrace: true,
+      };
 
       // Execute via CDP Runtime.evaluate with full await support
-      let tid: ReturnType<typeof setTimeout>;
-      const cdpResult = await Promise.race([
+      const cdpResult = await withTimeout(
         cdpClient.send<CDPEvalResult>(page, 'Runtime.evaluate', {
           expression: task.script,
           returnByValue: false,
           awaitPromise: true,
           userGesture: true,
-        }).finally(() => clearTimeout(tid)),
-        new Promise<never>((_, reject) => {
-          tid = setTimeout(() => reject(new Error(`Timeout after ${timeout}ms`)), timeout);
-        }),
-      ]);
+          timeout,
+        }, sendOptions),
+        commandTimeoutMs,
+        'batch_execute',
+        context,
+      );
 
       if (cdpResult.exceptionDetails) {
         const errorMsg =
@@ -321,7 +425,16 @@ const handler: ToolHandler = async (
       }
 
       // Format result value using shared formatter (same as javascript_tool)
-      const resultValue = await formatCDPResult(cdpResult.result, cdpClient, page);
+      const formattingTimeoutMs = getRemainingTimeoutMs(invocationDeadlineAt);
+      if (formattingTimeoutMs <= 0) {
+        throw new OpenChromeTimeoutError('batch_execute Promise resolution', 0, false, true);
+      }
+      const resultValue = await withTimeout(
+        formatCDPResult(cdpResult.result, cdpClient, page, 0, sendOptions),
+        formattingTimeoutMs,
+        'batch_execute Promise resolution',
+        context,
+      );
 
       // Parse JSON result back if possible
       let data: unknown = resultValue;
@@ -362,9 +475,17 @@ const handler: ToolHandler = async (
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
       const result = await executeTask(task);
-      if (i < tasks.length - 1 && !result.skipped) {
-        if (typeof task.interItemWaitMs === 'number') {
-          await new Promise((resolve) => setTimeout(resolve, Math.max(0, task.interItemWaitMs!)));
+      if (i < tasks.length - 1 && !result.skipped && !context?.signal?.aborted) {
+        try {
+          if (typeof task.interItemWaitMs === 'number') {
+            await runInterItemDelay(task.interItemWaitMs);
+          }
+        } catch (error) {
+          result.success = false;
+          result.error = `inter-item wait failed: ${error instanceof Error ? error.message : String(error)}`;
+          recordBatchItemMetric('err');
+          results.push(result);
+          break;
         }
         const wait = await runWaitSpec(task, task.interItemWaitFor);
         if (wait) {

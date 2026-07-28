@@ -649,10 +649,44 @@ describe('MCPServer', () => {
       expect(response.result!.content![0].text).not.toContain('/mcp');
     });
 
+    test.each([
+      'Protocol error (Runtime.evaluate): Execution was terminated',
+      'Protocol error (Runtime.evaluate): Internal error',
+      'Protocol error (Runtime.evaluate): Invalid parameters Failed to deserialize params.timeout',
+      'Runtime.awaitPromise failed: Protocol error (Runtime.awaitPromise): Internal error',
+      'Runtime.awaitPromise failed: Protocol error (Runtime.awaitPromise): Could not find object with given id',
+    ])('does not reconnect or replay user JavaScript for %s', async (errorText) => {
+      const handler = jest.fn().mockResolvedValue({
+        content: [{ type: 'text', text: `JavaScript execution error: ${errorText}` }],
+        isError: true,
+      });
+      const definition: MCPToolDefinition = {
+        name: 'runtime_evaluate_error_tool',
+        description: 'Runtime.evaluate error',
+        inputSchema: { type: 'object' as const, properties: {}, required: [] },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      };
+      server.registerTool('runtime_evaluate_error_tool', handler, definition);
+
+      const response = (await server.handleRequest({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'runtime_evaluate_error_tool', arguments: {} },
+      })) as MCPResultResponse;
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(mockForceReconnect).not.toHaveBeenCalled();
+      expect(response.result!.isError).toBe(true);
+      expect(response.result!.content![0].text).toContain(errorText);
+    });
+
     test('detects various connection error patterns', async () => {
       const connectionErrors = [
         'Not connected to Chrome. Call connect() first.',
         'Protocol error (Runtime.callFunctionOn): Session closed.',
+        'Protocol error (Runtime.evaluate): Session closed.',
+        'Protocol error (Runtime.awaitPromise): Session closed.',
         'WebSocket is not open: readyState 3 (CLOSED)',
         'Navigation failed because browser has disconnected',
         'Execution context was destroyed',

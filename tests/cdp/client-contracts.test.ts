@@ -30,6 +30,10 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
 }));
 
 import { CDPClient } from '../../src/cdp/client';
+import {
+  addTimeoutResponseGraceMs,
+  reserveTimeoutResponseGraceMs,
+} from '../../src/utils/with-timeout';
 
 type MockPage = {
   target: jest.Mock;
@@ -138,6 +142,219 @@ describe('CDPClient target/page contracts (#687 Wave 4 prereq)', () => {
 
     await expect(client.getCDPSession(page as never)).rejects.toThrow(/stale-target.*no longer valid/);
     await expect(client.send(page as never, 'Runtime.evaluate', {})).rejects.toThrow(/stale-target.*no longer valid/);
+  });
+
+  it('applies a per-command timeout to Puppeteer and the OpenChrome send guard', async () => {
+    const page = makePage('timed-target');
+    const browser = makeBrowser([page]);
+    const client = connectedClient(browser);
+    await client.rebuildTargetIdIndex();
+
+    await client.send(page as never, 'Runtime.evaluate', { expression: '21 * 2' }, { timeoutMs: 750 });
+
+    const session = await page.createCDPSession.mock.results[0].value;
+    expect(session.send).toHaveBeenCalledTimes(1);
+    const [method, params, options] = session.send.mock.calls[0];
+    expect(method).toBe('Runtime.evaluate');
+    expect(params).toEqual({ expression: '21 * 2' });
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.timeout).toBeLessThanOrEqual(750);
+  });
+
+  it('recomputes Runtime.evaluate budgets after delayed CDP session acquisition', async () => {
+    jest.useFakeTimers({ now: 10_000 });
+    try {
+      const page = makePage('delayed-session-target');
+      const browser = makeBrowser([page]);
+      const client = connectedClient(browser);
+      await client.rebuildTargetIdIndex();
+
+      const session = {
+        send: jest.fn().mockResolvedValue({ result: { type: 'number', value: 42 } }),
+        detach: jest.fn().mockResolvedValue(undefined),
+      };
+      let resolveSession!: (value: typeof session) => void;
+      page.createCDPSession.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveSession = resolve;
+      }) as never);
+
+      const deadlineAt = Date.now() + 1_000;
+      const sendPromise = client.send(
+        page as never,
+        'Runtime.evaluate',
+        { expression: '21 * 2', timeout: 5_000 },
+        {
+          timeoutMs: addTimeoutResponseGraceMs(5_000),
+          deadlineAt,
+          reserveRuntimeEvaluateResponseGrace: true,
+        },
+      );
+
+      await jest.advanceTimersByTimeAsync(400);
+      resolveSession(session);
+      await jest.advanceTimersByTimeAsync(0);
+      await sendPromise;
+
+      expect(session.send).toHaveBeenCalledWith(
+        'Runtime.evaluate',
+        {
+          expression: '21 * 2',
+          timeout: reserveTimeoutResponseGraceMs(600),
+        },
+        { timeout: 600 },
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not dispatch after the parent deadline expires during session acquisition', async () => {
+    jest.useFakeTimers({ now: 20_000 });
+    try {
+      const page = makePage('expired-session-target');
+      const browser = makeBrowser([page]);
+      const client = connectedClient(browser);
+      await client.rebuildTargetIdIndex();
+
+      const session = {
+        send: jest.fn().mockResolvedValue({}),
+        detach: jest.fn().mockResolvedValue(undefined),
+      };
+      let resolveSession!: (value: typeof session) => void;
+      page.createCDPSession.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveSession = resolve;
+      }) as never);
+
+      const sendPromise = client.send(
+        page as never,
+        'Runtime.evaluate',
+        { expression: 'window.__shouldNotRun = true', timeout: 5_000 },
+        {
+          timeoutMs: addTimeoutResponseGraceMs(5_000),
+          deadlineAt: Date.now() + 1_000,
+          reserveRuntimeEvaluateResponseGrace: true,
+        },
+      );
+      let outcome: { status: 'fulfilled' } | { status: 'rejected'; error: unknown } | undefined;
+      void sendPromise.then(
+        () => { outcome = { status: 'fulfilled' }; },
+        (error: unknown) => { outcome = { status: 'rejected', error }; },
+      );
+
+      await jest.advanceTimersByTimeAsync(1_001);
+      const outcomeBeforeSessionResolution = outcome;
+      resolveSession(session);
+      await jest.advanceTimersByTimeAsync(0);
+      await sendPromise.catch(() => undefined);
+
+      expect(outcomeBeforeSessionResolution).toMatchObject({
+        status: 'rejected',
+        error: {
+          name: 'OpenChromeTimeoutError',
+          deadline: true,
+        },
+      });
+      expect(session.send).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not dispatch after the command timeout expires during session acquisition', async () => {
+    jest.useFakeTimers({ now: 30_000 });
+    try {
+      const page = makePage('command-timeout-session-target');
+      const browser = makeBrowser([page]);
+      const client = connectedClient(browser);
+      await client.rebuildTargetIdIndex();
+
+      const session = {
+        send: jest.fn().mockResolvedValue({}),
+        detach: jest.fn().mockResolvedValue(undefined),
+      };
+      let resolveSession!: (value: typeof session) => void;
+      page.createCDPSession.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveSession = resolve;
+      }) as never);
+
+      const sendPromise = client.send(
+        page as never,
+        'Runtime.evaluate',
+        { expression: 'window.__shouldNotRun = true', timeout: 250 },
+        {
+          timeoutMs: 300,
+          deadlineAt: Date.now() + 5_000,
+          reserveRuntimeEvaluateResponseGrace: true,
+        },
+      );
+      let outcome: { status: 'fulfilled' } | { status: 'rejected'; error: unknown } | undefined;
+      void sendPromise.then(
+        () => { outcome = { status: 'fulfilled' }; },
+        (error: unknown) => { outcome = { status: 'rejected', error }; },
+      );
+
+      await jest.advanceTimersByTimeAsync(301);
+      const outcomeBeforeSessionResolution = outcome;
+      resolveSession(session);
+      await jest.advanceTimersByTimeAsync(0);
+      await sendPromise.catch(() => undefined);
+
+      expect(outcomeBeforeSessionResolution).toMatchObject({
+        status: 'rejected',
+        error: {
+          name: 'OpenChromeTimeoutError',
+          deadline: true,
+        },
+      });
+      expect(session.send).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not dispatch after cancellation during session acquisition', async () => {
+    const page = makePage('aborted-session-target');
+    const browser = makeBrowser([page]);
+    const client = connectedClient(browser);
+    await client.rebuildTargetIdIndex();
+
+    const session = {
+      send: jest.fn().mockResolvedValue({}),
+      detach: jest.fn().mockResolvedValue(undefined),
+    };
+    let resolveSession!: (value: typeof session) => void;
+    page.createCDPSession.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSession = resolve;
+    }) as never);
+    const controller = new AbortController();
+
+    const sendPromise = client.send(
+      page as never,
+      'Runtime.evaluate',
+      { expression: 'window.__shouldNotRun = true', timeout: 5_000 },
+      {
+        timeoutMs: addTimeoutResponseGraceMs(5_000),
+        signal: controller.signal,
+        reserveRuntimeEvaluateResponseGrace: true,
+      },
+    );
+    let outcome: { status: 'fulfilled' } | { status: 'rejected'; error: unknown } | undefined;
+    void sendPromise.then(
+      () => { outcome = { status: 'fulfilled' }; },
+      (error: unknown) => { outcome = { status: 'rejected', error }; },
+    );
+
+    controller.abort(new Error('client disconnected'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const outcomeBeforeSessionResolution = outcome;
+    resolveSession(session);
+    await sendPromise.catch(() => undefined);
+
+    expect(outcomeBeforeSessionResolution).toMatchObject({
+      status: 'rejected',
+      error: { message: 'client disconnected' },
+    });
+    expect(session.send).not.toHaveBeenCalled();
   });
 
   it('createPage indexes new pages, configures defenses, and removes the index on navigation failure', async () => {
