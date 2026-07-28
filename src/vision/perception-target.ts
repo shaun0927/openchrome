@@ -11,6 +11,7 @@ const UNSAFE_VISUAL_LABEL = /\b(delete|deletion|remove|destroy|confirm|pay|payme
 
 export type PerceptionTargetFailureReason =
   | 'malformed_snapshot'
+  | 'unsupported_capture_mode'
   | 'tab_mismatch'
   | 'url_mismatch'
   | 'element_not_found'
@@ -67,6 +68,13 @@ export function resolvePerceptionTarget(input: ResolvePerceptionTargetInput): Re
   }
 
   const snapshot = input.snapshot as PerceptionSnapshot;
+  if (snapshot.captureMode === 'tiled') {
+    return failure(
+      'INVALID_PERCEPTION_TARGET',
+      'unsupported_capture_mode',
+      'Tiled perception snapshots use document-space coordinates and are not executable. Recapture the target viewport.',
+    );
+  }
   if (typeof input.elementId !== 'string' || input.elementId.length === 0) {
     return failure('INVALID_PERCEPTION_TARGET', 'element_not_found', 'perception.elementId must be a non-empty string.');
   }

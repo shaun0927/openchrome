@@ -82,6 +82,16 @@ describe('resolvePerceptionTarget', () => {
     });
   });
 
+  test('rejects tiled document-space snapshots before browser input', () => {
+    const result = resolve(snapshot({ captureMode: 'tiled' }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'INVALID_PERCEPTION_TARGET',
+      reason: 'unsupported_capture_mode',
+    });
+  });
+
   test.each([
     ['tab mismatch', snapshot({ tabId: 'tab-2' }), 'tab_mismatch'],
     ['URL mismatch', snapshot({ url: 'https://example.test/other' }), 'url_mismatch'],
