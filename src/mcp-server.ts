@@ -98,11 +98,16 @@ import { isRunHarnessEnabled } from './run-harness/flags';
 import { extractRunId, getRunStore } from './run-harness/store';
 import { shouldInitializeBrowserSession } from './mcp/session-init-policy';
 import { getAssertEvidenceStore } from './core/contracts/assert-evidence-store';
+import { DEFAULT_TENANT_ID } from './tenant/types';
 
 const MCP_TRANSPORT_SESSION_PREFIX = 'mcp-';
 
 function implicitBrowserSessionId(mcpSessionId: string | undefined): string | undefined {
   return mcpSessionId ? `${MCP_TRANSPORT_SESSION_PREFIX}${mcpSessionId}` : undefined;
+}
+
+function isTenantScopedPrincipal(principal: Principal | undefined): principal is Principal {
+  return principal?.mode === 'api-key' || principal?.mode === 'jwt';
 }
 
 function redactToolArgsForTelemetry(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
@@ -451,13 +456,12 @@ export class MCPServer {
   private stopPromise: Promise<void> | null = null;
   private rateLimiter: SessionRateLimiter | null = null;
   /**
-   * Per-session tenant binding for api-key mode. The first api-key principal
-   * to touch a given sessionId "claims" the session; subsequent tools/call
-   * requests that arrive with a different tenantId are rejected with a 403,
-   * preventing a tenant with a valid API key from operating on a session
-   * created by another tenant (cross-tenant session hijack via a guessed /
-   * leaked sessionId). Cleared when the session is deleted (DELETE /mcp) via
-   * the same hook that reclaims rate-limit buckets.
+   * Per-session tenant binding for tenant-scoped auth. The first API-key or
+   * JWT principal to touch a given sessionId "claims" the session; subsequent
+   * tools/call requests with a different tenantId are rejected, preventing a
+   * tenant with valid credentials from operating on another tenant's session
+   * through a guessed or leaked sessionId. Cleared when the session is deleted
+   * through the same hook that reclaims rate-limit buckets.
    *
    * Structural enforcement (binding at session-create time via TenantManager,
    * X-Tenant-Id header validation) lands in the tenant-propagation series
@@ -529,7 +533,9 @@ export class MCPServer {
         if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
           getTaskDriftLedger().cleanupSession(event.sessionId);
-          getAssertEvidenceStore().evictSession(event.sessionId);
+          if (event.tenantId) {
+            getAssertEvidenceStore().evictSession(event.sessionId, event.tenantId);
+          }
         } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
           getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);
         }
@@ -919,16 +925,18 @@ export class MCPServer {
       this.resourceSubscriptions.cleanupSession(sessionId);
     };
 
-    const hasDeleteHook = typeof (transport as unknown as { onSessionDelete?: unknown }).onSessionDelete === 'function';
-    if (hasDeleteHook) {
-      (transport as unknown as { onSessionDelete: (cb: (id: string) => void) => void }).onSessionDelete(
-        (mcpSessionId: string) => {
+    if (transport.onSessionDelete) {
+      transport.onSessionDelete(
+        (mcpSessionId: string, tenantId?: string) => {
           const browserSessionId = implicitBrowserSessionId(mcpSessionId)!;
           if (this.rateLimiter) {
             this.rateLimiter.removeSession(mcpSessionId);
             this.rateLimiter.removeSession(browserSessionId);
           }
-          getAssertEvidenceStore().evictSession(browserSessionId);
+          const ownerTenantId = tenantId ?? this.sessionTenants.get(browserSessionId);
+          if (ownerTenantId) {
+            getAssertEvidenceStore().evictSession(browserSessionId, ownerTenantId);
+          }
           this.sessionTenants.delete(browserSessionId);
           if (typeof this.sessionManager.deleteSession === 'function') {
             void this.sessionManager.deleteSession(browserSessionId).catch((error) => {
@@ -1623,16 +1631,17 @@ export class MCPServer {
       throw new Error('Missing tool name');
     }
 
-    // Session-tenant binding (api-key mode only): reject if the session was
-    // already claimed by a different tenant. First api-key caller to COMPLETE
+    // Session-tenant binding (API-key/JWT modes): reject if the session was
+    // already claimed by a different tenant. The first tenant-scoped caller to COMPLETE
     // an authorized + validated call wins — the claim itself is deferred
     // until after scope / tool / args checks pass, so a denied or invalid
     // request cannot lock a sessionId and block other tenants.
-    // Other auth modes (disabled/legacy) and stdio callers are not subject
+    // Disabled/legacy auth and stdio callers are not subject
     // to this check. Structural session-create binding lands in B-1
     // (#30/#31); this is the PR-2-scope defense-in-depth.
-    if (principal && principal.mode === 'api-key') {
-      const claimedBy = this.sessionTenants.get(sessionId);
+    if (isTenantScopedPrincipal(principal)) {
+      const claimedBy = this.sessionTenants.get(sessionId)
+        ?? this.sessionManager.getSession?.(sessionId)?.tenantId;
       if (claimedBy !== undefined && claimedBy !== principal.tenantId) {
         console.error(
           `[MCPServer] tenant binding violation: session=${sessionId} claimedBy=${claimedBy} requestedBy=${principal.tenantId} tool=${toolName}`,
@@ -1845,8 +1854,7 @@ export class MCPServer {
     // invalid call must NOT be able to lock a sessionId that would then
     // block other tenants. (Codex round-6 P1.)
     if (
-      principal &&
-      principal.mode === 'api-key' &&
+      isTenantScopedPrincipal(principal) &&
       !this.sessionTenants.has(sessionId)
     ) {
       this.sessionTenants.set(sessionId, principal.tenantId);
@@ -2756,7 +2764,7 @@ export class MCPServer {
   }
 
   /**
-   * Handle sessions/list request. In api-key mode the result is filtered to
+   * Handle sessions/list request. In tenant-scoped auth modes the result is filtered to
    * sessions claimed by the caller's tenant (see sessionTenants); other auth
    * modes and stdio callers see all sessions (no regression).
    */
@@ -2765,8 +2773,8 @@ export class MCPServer {
       return this.forbiddenResult('sessions/list', 'n/a', principal, `scope 'read' required`);
     }
     const all = this.sessionManager.getAllSessionInfos();
-    const visible = principal && principal.mode === 'api-key'
-      ? all.filter((s) => this.sessionTenants.get(s.id) === principal.tenantId)
+    const visible = isTenantScopedPrincipal(principal)
+      ? all.filter((s) => (this.sessionTenants.get(s.id) ?? s.tenantId) === principal.tenantId)
       : all;
     return {
       content: [
@@ -2780,7 +2788,7 @@ export class MCPServer {
 
   /**
    * Handle sessions/create request. Requires 'write' scope for authenticated
-   * callers. In api-key mode, a requested sessionId that is already claimed
+   * callers. In tenant-scoped auth modes, a requested sessionId that is already claimed
    * by a different tenant is rejected; on success the new session is bound
    * to the caller's tenantId in sessionTenants.
    */
@@ -2799,8 +2807,9 @@ export class MCPServer {
         `scope 'write' required`,
       );
     }
-    if (principal && principal.mode === 'api-key' && sessionId) {
-      const owner = this.sessionTenants.get(sessionId);
+    if (isTenantScopedPrincipal(principal) && sessionId) {
+      const owner = this.sessionTenants.get(sessionId)
+        ?? this.sessionManager.getSession?.(sessionId)?.tenantId;
       if (owner !== undefined && owner !== principal.tenantId) {
         return this.forbiddenResult(
           'sessions/create',
@@ -2814,9 +2823,10 @@ export class MCPServer {
     const session = await this.sessionManager.createSession({
       id: sessionId,
       name,
+      ...(isTenantScopedPrincipal(principal) ? { tenantId: principal.tenantId } : {}),
     });
 
-    if (principal && principal.mode === 'api-key') {
+    if (isTenantScopedPrincipal(principal)) {
       this.sessionTenants.set(session.id, principal.tenantId);
     }
 
@@ -2839,7 +2849,7 @@ export class MCPServer {
   }
 
   /**
-   * Handle sessions/delete request. Requires 'write' scope and, in api-key
+   * Handle sessions/delete request. Requires 'write' scope and, in tenant-scoped
    * mode, matching tenant ownership of the session. On successful delete
    * the session-tenant binding is released so a later caller (possibly a
    * different tenant) can claim the same sessionId — this is the MCP-method
@@ -2865,8 +2875,11 @@ export class MCPServer {
         `scope 'write' required`,
       );
     }
-    if (principal && principal.mode === 'api-key') {
-      const owner = this.sessionTenants.get(sessionId);
+    const managedSession = this.sessionManager.getSession?.(sessionId);
+    const managedTenantId = managedSession?.tenantId;
+    const boundTenantId = this.sessionTenants.get(sessionId);
+    if (isTenantScopedPrincipal(principal)) {
+      const owner = boundTenantId ?? managedTenantId;
       if (owner !== undefined && owner !== principal.tenantId) {
         return this.forbiddenResult(
           'sessions/delete',
@@ -2877,8 +2890,14 @@ export class MCPServer {
       }
     }
 
+    const tenantId = isTenantScopedPrincipal(principal)
+      ? principal.tenantId
+      : managedTenantId
+        ?? boundTenantId
+        ?? currentRequestContext()?.tenantId
+        ?? DEFAULT_TENANT_ID;
     await this.sessionManager.deleteSession(sessionId);
-    getAssertEvidenceStore().evictSession(sessionId);
+    getAssertEvidenceStore().evictSession(sessionId, tenantId);
     // Release the binding so sessionId (notably 'default') can be reclaimed
     // by a subsequent tenant after MCP-level deletion.
     this.sessionTenants.delete(sessionId);

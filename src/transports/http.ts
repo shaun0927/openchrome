@@ -96,7 +96,7 @@ export class HTTPTransport implements MCPTransport {
   private readonly serverOriginHost: string;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
-  private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
+  private sessionDeleteHandler: ((sessionId: string, tenantId?: string) => void) | null = null;
   private sessionCloseHandler: ((sessionId: string) => void) | null = null;
   private sessionManager: SessionManager | null = null;
   private readonly serverStartTime: number = Date.now();
@@ -160,7 +160,7 @@ export class HTTPTransport implements MCPTransport {
    * Register a callback to be invoked whenever a session is deleted.
    * Used by MCPServer to clean up per-session state (e.g. rate-limiter buckets).
    */
-  onSessionDelete(handler: (sessionId: string) => void): void {
+  onSessionDelete(handler: (sessionId: string, tenantId?: string) => void): void {
     this.sessionDeleteHandler = handler;
   }
 
@@ -884,12 +884,14 @@ export class HTTPTransport implements MCPTransport {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (sessionId && this.sessions.has(sessionId)) {
+      const principal = requestPrincipals.get(req);
+      const tenantId = principal?.tenantId ?? this.sessionTenants.get(sessionId);
       this.sessions.delete(sessionId);
       this.sessionTenants.delete(sessionId);
 
       // Notify session-delete listeners (e.g. rate-limiter cleanup)
       if (this.sessionDeleteHandler) {
-        this.sessionDeleteHandler(sessionId);
+        this.sessionDeleteHandler(sessionId, tenantId);
       }
       if (this.sessionCloseHandler) {
         this.sessionCloseHandler(sessionId);

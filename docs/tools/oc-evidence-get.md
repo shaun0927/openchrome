@@ -16,10 +16,11 @@ logical session and tenant IDs. Successful responses include the assertion,
 verdict/evaluator evidence, provenance, creation time, expiry time, and trace
 availability status.
 
-Artifacts expire after 30 minutes and are also deleted when their owner session
-is removed through HTTP `DELETE /mcp`, `sessions/delete`, or a SessionManager
-deletion event. Real browser sessions emit that event during TTL cleanup and
-shutdown. Expired handles fail immediately, and a periodic unref sweep removes
+Artifacts expire after 30 minutes and are also deleted when their matching
+session/tenant owner is removed through HTTP `DELETE /mcp`, `sessions/delete`,
+or a SessionManager deletion event. Real browser sessions emit that event
+during TTL cleanup and shutdown. Expired handles fail immediately, and a
+periodic unref sweep removes
 expired files and crash-left temporary writes from disk. Persistence is bounded
 to 1 MiB per artifact, 16 MiB or 256 artifacts per session/tenant owner, and
 64 MiB or 1,024 artifacts per OpenChrome process. Quota rejection leaves the

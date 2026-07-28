@@ -291,8 +291,9 @@ The retention contract is:
   an independent stdio/daemon process is rejected even when both processes use
   the default logical session and tenant IDs;
 - HTTP `DELETE /mcp`, `sessions/delete`, and SessionManager deletion events
-  delete every artifact owned by the ended session; real browser sessions emit
-  the same deletion event during TTL cleanup and shutdown;
+  delete artifacts only for the ended session/tenant owner; real browser
+  sessions emit the same tenant-scoped deletion event during TTL cleanup and
+  shutdown;
 - expired, deleted, malformed, corrupt, and unauthorized handles return stable
   error codes rather than filesystem paths or partial contents;
 - credential-pattern and configured-secret redaction runs before the artifact

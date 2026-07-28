@@ -35,6 +35,12 @@ const tenantBRead: Principal = {
   scopes: ['read'],
 };
 
+const tenantAJwtWrite: Principal = {
+  mode: 'jwt',
+  tenantId: 'tenant-a',
+  scopes: ['write'],
+};
+
 function toolCall(id: number, name: string, args: Record<string, unknown>): MCPRequest {
   return {
     jsonrpc: '2.0',
@@ -187,6 +193,43 @@ describe('oc_assert durable evidence through MCP', () => {
       status: 'error',
       error: { code: 'EVIDENCE_NOT_FOUND' },
     });
+  });
+
+  test('JWT sessions/delete evicts only the caller tenant for a shared logical session', async () => {
+    const tenantA = store.persist({
+      sessionId: 'shared-logical',
+      tenantId: 'tenant-a',
+      verdict: 'pass',
+      contractSource: 'inline',
+      assertion: { kind: 'url', pattern: 'example' },
+      result: { verdict: 'pass' },
+      trace: { status: 'unavailable', reason: 'test' },
+    });
+    const tenantB = store.persist({
+      sessionId: 'shared-logical',
+      tenantId: 'tenant-b',
+      verdict: 'pass',
+      contractSource: 'inline',
+      assertion: { kind: 'url', pattern: 'example' },
+      result: { verdict: 'pass' },
+      trace: { status: 'unavailable', reason: 'test' },
+    });
+
+    await server.handleMessage(authenticated({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'sessions/delete',
+      params: { sessionId: 'shared-logical' },
+    }, tenantAJwtWrite));
+
+    expect(() => store.loadAuthorized(tenantA.evidence_handle, {
+      sessionId: 'shared-logical',
+      tenantId: 'tenant-a',
+    })).toThrow();
+    expect(store.loadAuthorized(tenantB.evidence_handle, {
+      sessionId: 'shared-logical',
+      tenantId: 'tenant-b',
+    }).evidence_handle).toBe(tenantB.evidence_handle);
   });
 
   test('missing, expired, and malformed handles return stable MCP error codes', async () => {
