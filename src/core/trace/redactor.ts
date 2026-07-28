@@ -95,6 +95,9 @@ const SENSITIVE_HEADER_NAMES = new Set(
 
 /** Patterns scanned in every string-typed value across the event tree. */
 const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
+  // URL userinfo — redact the entire username[:password] component while
+  // preserving the scheme, host, path, and query for useful provenance.
+  { name: 'url_userinfo', re: /\b(https?:\/\/)[^/\s@]+@/gi },
   // JWT — three base64url segments separated by dots
   { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
   // AWS Access Key ID
@@ -135,6 +138,8 @@ export function scrubString(value: string): string {
   for (const { name, re } of CREDENTIAL_PATTERNS) {
     if (name === 'url_credential_param') {
       out = out.replace(re, (_m, p1: string) => `${p1}=${REDACTED}`);
+    } else if (name === 'url_userinfo') {
+      out = out.replace(re, (_m, scheme: string) => `${scheme}${REDACTED}@`);
     } else if (name === 'auth_scheme') {
       out = out.replace(re, (_m, p1: string) => `${p1} ${REDACTED}`);
     } else {

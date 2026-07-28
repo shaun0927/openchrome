@@ -45,6 +45,13 @@ describe('trace redactor — scrubString patterns', () => {
     expect(out).not.toContain('hunter2');
   });
 
+  test('redacts URL userinfo credentials while preserving the destination', () => {
+    const out = scrubString('open https://alice:hunter2@example.com/private?view=1');
+    expect(out).toBe(`open https://${REDACTED}@example.com/private?view=1`);
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('hunter2');
+  });
+
   test('leaves benign strings untouched', () => {
     expect(scrubString('hello world')).toBe('hello world');
     expect(scrubString('https://example.com/page')).toBe('https://example.com/page');
