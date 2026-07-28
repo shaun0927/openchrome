@@ -222,6 +222,8 @@ jest.mock('../../src/transports/http', () => ({
 // ---------------------------------------------------------------------------
 
 import { createOpenChromeServer, CreateServerOptions } from '../../src/core/server';
+import { getMCPServer } from '../../src/mcp-server';
+import { HTTPTransport } from '../../src/transports/http';
 
 const STDIO_OPTS: CreateServerOptions = { transport: 'stdio' };
 
@@ -295,6 +297,28 @@ describe('createOpenChromeServer() — HTTP transport with port:0', () => {
       expect(result.httpUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       const port = parseInt(result.httpUrl!.split(':')[2], 10);
       expect(port).toBeGreaterThan(0);
+    } finally {
+      await server.stop('caller');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('createOpenChromeServer() — dual transport context', () => {
+  test('forwards HTTP MCP session context to the shared MCP server', async () => {
+    const server = await createOpenChromeServer({
+      transport: { both: { httpPort: 3100, allowUnauthenticated: true } },
+    });
+    try {
+      await server.start();
+      const httpTransport = (HTTPTransport as unknown as jest.Mock).mock.results.at(-1)?.value;
+      const handler = httpTransport.onMessage.mock.calls[0][0];
+      const message = { jsonrpc: '2.0', id: 1, method: 'tools/list' };
+      const context = { mcpSessionId: 'dual-http-session', tenantId: 'tenant-a' };
+
+      await handler(message, undefined, context);
+
+      expect(getMCPServer().handleMessage).toHaveBeenLastCalledWith(message, undefined, context);
     } finally {
       await server.stop('caller');
     }

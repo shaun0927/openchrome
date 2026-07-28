@@ -15,7 +15,10 @@ jest.mock('../src/session-manager', () => ({
 
 import { getSessionManager } from '../src/session-manager';
 import { MCPServer } from '../src/mcp-server';
+import { runWithRequestContext } from '../src/observability/request-id';
 import { registerAllTools } from '../src/tools';
+import type { MCPResponse } from '../src/types/mcp';
+import type { MCPTransport } from '../src/transports';
 
 interface TestResponse {
   result?: {
@@ -33,24 +36,34 @@ function makeServer(): MCPServer {
   return server;
 }
 
-async function initializeAndList(server: MCPServer, clientName: string, capabilities: Record<string, unknown> = {}): Promise<{ init: TestResponse; toolDefs: Array<{ name: string }>; tools: string[] }> {
-  const init = await server.handleRequest({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities,
-      clientInfo: { name: clientName, version: '0.0.0' },
-    },
-  }) as TestResponse;
+async function inMcpSession<T>(mcpSessionId: string | undefined, fn: () => Promise<T>): Promise<T> {
+  if (!mcpSessionId) return fn();
+  return runWithRequestContext({ requestId: `req-${mcpSessionId}`, mcpSessionId }, fn);
+}
 
-  const listed = await server.handleRequest({
-    jsonrpc: '2.0',
-    id: 2,
-    method: 'tools/list',
-    params: {},
-  }) as TestResponse;
+async function initializeAndList(
+  server: MCPServer,
+  clientName: string,
+  capabilities: Record<string, unknown> = {},
+  mcpSessionId?: string,
+): Promise<{ init: TestResponse; toolDefs: Array<{ name: string }>; tools: string[] }> {
+  const init = await inMcpSession(mcpSessionId, () => server.handleRequest({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities,
+        clientInfo: { name: clientName, version: '0.0.0' },
+      },
+    })) as TestResponse;
+
+  const listed = await inMcpSession(mcpSessionId, () => server.handleRequest({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/list',
+      params: {},
+    })) as TestResponse;
 
   const toolDefs = listed.result?.tools ?? [];
   return { init, toolDefs, tools: toolDefs.map(t => t.name) };
@@ -112,5 +125,77 @@ describe('MCP progressive disclosure client detection', () => {
     expect(init.result?.capabilities?.tools?.listChanged).toBe(false);
     expect(tools).not.toContain('expand_tools');
     expect(tools.length).toBeGreaterThanOrEqual(118);
+  });
+
+  test('client detection is isolated between HTTP MCP sessions', async () => {
+    const server = makeServer();
+
+    const legacy = await initializeAndList(server, 'unknown-editor', {}, 'legacy-session');
+    const progressive = await initializeAndList(server, 'opencode', {}, 'progressive-session');
+
+    expect(legacy.tools).not.toContain('expand_tools');
+    expect(legacy.tools.length).toBeGreaterThanOrEqual(118);
+    expect(progressive.tools).toContain('expand_tools');
+    expect(progressive.tools.length).toBeLessThanOrEqual(16);
+  });
+
+  test('tier expansion changes only the originating MCP session', async () => {
+    const server = makeServer();
+    await initializeAndList(server, 'opencode', {}, 'session-a');
+    await initializeAndList(server, 'opencode', {}, 'session-b');
+
+    await inMcpSession('session-a', () => server.handleRequest({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'expand_tools', arguments: { tier: '2' } },
+    }));
+
+    const expanded = await initializeAndList(server, 'opencode', {}, 'session-a');
+    const untouched = await initializeAndList(server, 'opencode', {}, 'session-b');
+
+    expect(expanded.tools).toContain('drag_drop');
+    expect(untouched.tools).not.toContain('drag_drop');
+  });
+
+  test('list-change notifications target the originating session and state is reclaimed on close', async () => {
+    let closeHandler: ((sessionId: string) => void) | undefined;
+    const targeted: Array<{ sessionId: string; response: MCPResponse }> = [];
+    const broadcast: MCPResponse[] = [];
+    const transport: MCPTransport = {
+      onMessage: jest.fn(),
+      send: (response) => broadcast.push(response),
+      sendToSession: (sessionId, response) => {
+        targeted.push({ sessionId, response });
+        return true;
+      },
+      onSessionClose: (handler) => { closeHandler = handler; },
+      start: jest.fn(),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const server = makeServer();
+    // @ts-expect-error - inject the transport without starting background server state
+    server.transport = transport;
+    server.wireRateLimiterCleanup(transport);
+
+    await initializeAndList(server, 'opencode', {}, 'session-a');
+    await inMcpSession('session-a', () => server.handleRequest({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'expand_tools', arguments: { tier: '2' } },
+    }));
+
+    expect(targeted).toEqual([
+      expect.objectContaining({
+        sessionId: 'session-a',
+        response: expect.objectContaining({ method: 'notifications/tools/list_changed' }),
+      }),
+    ]);
+    expect(broadcast).toHaveLength(0);
+
+    closeHandler?.('session-a');
+    const reset = await initializeAndList(server, 'opencode', {}, 'session-a');
+    expect(reset.tools).not.toContain('drag_drop');
   });
 });

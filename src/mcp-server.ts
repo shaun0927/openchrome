@@ -421,6 +421,15 @@ export interface MCPServerOptions {
   capabilityFilter?: Set<ToolCapability>;
 }
 
+const STDIO_TOOL_EXPOSURE_SESSION = 'stdio';
+
+interface ToolExposureState {
+  exposedTier: ToolTier;
+  selectedToolNames: Set<string>;
+  clientSupportsListChanged: boolean;
+  clientDetected: boolean;
+}
+
 
 const TASK_ENVELOPE_BROWSER_TOOLS = new Set([
   'navigate',
@@ -460,11 +469,10 @@ export class MCPServer {
   private recoveryLedger: RecoveryTrajectoryLedger | null = null;
   private options: MCPServerOptions;
   private profileWarningShown = false;
-  private exposedTier: ToolTier = 1;
-  private clientSupportsListChanged = true;
+  private toolExposureBySession: Map<string, ToolExposureState> = new Map();
+  private sessionNotificationTransports: Set<MCPTransport> = new Set();
   /** Active capability filter. undefined = no filter (all capabilities exposed). */
   private capabilityFilter: Set<ToolCapability> | undefined;
-  private clientDetected = false;
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
   private stopPromise: Promise<void> | null = null;
   private rateLimiter: SessionRateLimiter | null = null;
@@ -522,10 +530,6 @@ export class MCPServer {
   constructor(sessionManager?: SessionManager, options: MCPServerOptions = {}) {
     this.sessionManager = sessionManager || getSessionManager();
     this.options = options;
-
-    if (options.initialToolTier) {
-      this.exposedTier = options.initialToolTier;
-    }
 
     if (options.capabilityFilter) {
       this.capabilityFilter = options.capabilityFilter;
@@ -662,16 +666,50 @@ export class MCPServer {
     this.manifestVersion++;
   }
 
+  private currentToolExposureSessionId(): string {
+    return currentRequestContext()?.mcpSessionId ?? STDIO_TOOL_EXPOSURE_SESSION;
+  }
+
+  private getToolExposureState(sessionId = this.currentToolExposureSessionId()): ToolExposureState {
+    let state = this.toolExposureBySession.get(sessionId);
+    if (!state) {
+      state = {
+        exposedTier: this.options.initialToolTier ?? 1,
+        selectedToolNames: new Set(),
+        clientSupportsListChanged: true,
+        clientDetected: false,
+      };
+      this.toolExposureBySession.set(sessionId, state);
+    }
+    return state;
+  }
+
+  private sendToolListChanged(sessionId: string): void {
+    const notification = {
+      jsonrpc: '2.0' as const,
+      method: 'notifications/tools/list_changed',
+    };
+    if (sessionId !== STDIO_TOOL_EXPOSURE_SESSION) {
+      for (const transport of this.sessionNotificationTransports) {
+        transport.sendToSession?.(sessionId, notification as unknown as MCPResponse);
+      }
+      return;
+    }
+    this.sendResponse(notification as unknown as MCPResponse);
+  }
+
   /**
    * Expand tool exposure to include a higher tier.
    * Sends tools/list_changed notification so clients re-fetch the tool list.
    */
   public expandToolTier(tier: ToolTier): void {
-    if (tier > this.exposedTier) {
-      this.exposedTier = tier;
+    const sessionId = this.currentToolExposureSessionId();
+    const state = this.getToolExposureState(sessionId);
+    if (tier > state.exposedTier) {
+      state.exposedTier = tier;
       // Only notify clients that support listChanged — unknown clients already have all tools
-      if (this.clientSupportsListChanged) {
-        this.sendNotification('notifications/tools/list_changed');
+      if (state.clientSupportsListChanged) {
+        this.sendToolListChanged(sessionId);
       }
     }
   }
@@ -924,9 +962,13 @@ export class MCPServer {
    * in start().
    */
   wireRateLimiterCleanup(transport: MCPTransport): void {
+    if (typeof transport.sendToSession === 'function') {
+      this.sessionNotificationTransports.add(transport);
+    }
     const cleanupConnectionState = (sessionId: string): void => {
       this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
       this.clientCapabilitiesBySession.delete(sessionId);
+      this.toolExposureBySession.delete(sessionId);
       this.resourceSubscriptions.cleanupSession(sessionId);
     };
 
@@ -1301,6 +1343,7 @@ export class MCPServer {
    * Handle initialize request
    */
   private async handleInitialize(params?: Record<string, unknown>): Promise<MCPResult> {
+    const exposureState = this.getToolExposureState();
     // #960 — capture client capabilities for downstream consumers (roots,
     // sampling, elicitation). Downstream issues check
     // `this.clientCapabilities.<feature>` before issuing the server→client
@@ -1328,8 +1371,8 @@ export class MCPServer {
       || clientCapabilities?.notifications?.tools?.listChanged === true;
 
     // Idempotency: only detect client on first initialize (reconnects preserve state)
-    if (!this.clientDetected) {
-      this.clientDetected = true;
+    if (!exposureState.clientDetected) {
+      exposureState.clientDetected = true;
 
       if (this.options.initialToolTier) {
         console.error(`[openchrome] Tool tier override: initialToolTier=${this.options.initialToolTier}, skipping client detection`);
@@ -1340,8 +1383,8 @@ export class MCPServer {
 
         if (!isKnownClient && !supportsToolListChanged) {
           // Unknown or absent client: expose all tools immediately (no progressive disclosure)
-          this.exposedTier = 3;
-          this.clientSupportsListChanged = false;
+          exposureState.exposedTier = 3;
+          exposureState.clientSupportsListChanged = false;
           console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" — progressive disclosure disabled, exposing all tools`);
         } else {
           // Known/capable client: keep progressive disclosure enabled.
@@ -1354,7 +1397,7 @@ export class MCPServer {
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
-        tools: { listChanged: this.clientSupportsListChanged },
+        tools: { listChanged: exposureState.clientSupportsListChanged },
         resources: { listChanged: true, subscribe: true },
         // #870 — advertise structured-logging support. Empty object per MCP
         // spec means "supported, no sub-capabilities yet". Clients drive the
@@ -1386,6 +1429,7 @@ export class MCPServer {
    * Handle tools/list request
    */
   private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
+    const exposureState = this.getToolExposureState();
     // Signal the hint engine that this session has consumed tool descriptions,
     // so rules whose guidance is already embedded in description "When to
     // use / When NOT to use" blocks can suppress themselves without affecting
@@ -1398,7 +1442,10 @@ export class MCPServer {
     const tools: MCPToolDefinition[] = [];
     for (const registry of this.tools.values()) {
       const tier = getToolTier(registry.definition.name);
-      if (tier <= this.exposedTier && this.isCapabilityAllowed(registry.definition.capability)) {
+      if (
+        (tier <= exposureState.exposedTier || exposureState.selectedToolNames.has(registry.definition.name))
+        && this.isCapabilityAllowed(registry.definition.capability)
+      ) {
         tools.push(registry.definition);
       }
     }
@@ -1406,9 +1453,10 @@ export class MCPServer {
     // Add hint about additional tools when not fully expanded.
     // Only inject expand_tools if the client supports notifications/tools/list_changed —
     // otherwise there's no point since the client can't react to the notification.
-    if (this.exposedTier < 3 && this.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
+    if (exposureState.exposedTier < 3 && exposureState.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
       const hiddenCount = Array.from(this.tools.values()).filter(
-        r => getToolTier(r.definition.name) > this.exposedTier &&
+        r => getToolTier(r.definition.name) > exposureState.exposedTier &&
+          !exposureState.selectedToolNames.has(r.definition.name) &&
           this.isCapabilityAllowed(r.definition.capability)
       ).length;
       if (hiddenCount > 0) {
@@ -1420,7 +1468,7 @@ export class MCPServer {
             properties: {
               tier: {
                 type: 'string',
-                enum: Array.from({ length: 3 - this.exposedTier }, (_, i) => String(this.exposedTier + 1 + i)),
+                enum: Array.from({ length: 3 - exposureState.exposedTier }, (_, i) => String(exposureState.exposedTier + 1 + i)),
                 description: 'Tool tier to expand to. 2=specialist, 3=all including orchestration',
               },
             },
@@ -1695,6 +1743,7 @@ export class MCPServer {
     // It is classified as a core tool, so capability filters that exclude
     // core must hide and reject it just like any other core tool.
     if (toolName === 'expand_tools') {
+      const exposureState = this.getToolExposureState();
       if (!this.isCapabilityAllowed('core')) {
         return {
           content: [{
@@ -1720,7 +1769,7 @@ export class MCPServer {
         }
       }
 
-      const oldTier = this.exposedTier;
+      const oldTier = exposureState.exposedTier;
       const tier = parseInt(String(toolArgs?.tier ?? '2'), 10) || 2;
       this.expandToolTier(Math.min(tier, 3) as ToolTier);
 
@@ -1729,17 +1778,17 @@ export class MCPServer {
       const newTools = Array.from(this.tools.values())
         .filter(r => {
           const t = getToolTier(r.definition.name);
-          return t <= this.exposedTier && t > oldTier &&
+          return t <= exposureState.exposedTier && t > oldTier &&
             this.isCapabilityAllowed(r.definition.capability);
         })
         .map(r => r.definition);
 
       const toolCount = Array.from(this.tools.values()).filter(
-        r => getToolTier(r.definition.name) <= this.exposedTier &&
+        r => (getToolTier(r.definition.name) <= exposureState.exposedTier || exposureState.selectedToolNames.has(r.definition.name)) &&
           this.isCapabilityAllowed(r.definition.capability)
       ).length;
 
-      let text = `Tool tier expanded to ${this.exposedTier}. Now exposing ${toolCount} tools.`;
+      let text = `Tool tier expanded to ${exposureState.exposedTier}. Now exposing ${toolCount} tools.`;
       if (newTools.length > 0) {
         text += `\n\nNewly available tools:\n${JSON.stringify(newTools, null, 2)}\n\nYou can now call these tools directly by name.`;
       }
@@ -1850,7 +1899,7 @@ export class MCPServer {
     // Auto-expand tier if a higher-tier tool is called directly
     // This handles the case where the AI learned about the tool from documentation
     const toolTier = getToolTier(toolName);
-    if (toolTier > this.exposedTier) {
+    if (toolTier > this.getToolExposureState().exposedTier) {
       this.expandToolTier(toolTier);
     }
 
@@ -3194,6 +3243,8 @@ export class MCPServer {
       await this.transport.close();
       this.transport = null;
     }
+    this.sessionNotificationTransports.clear();
+    this.toolExposureBySession.clear();
 
     // Scale timeout based on number of Chrome pool instances.
     // Each launcher.close() needs up to 5s for SIGTERM->SIGKILL escalation,

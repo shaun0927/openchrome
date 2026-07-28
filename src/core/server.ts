@@ -18,7 +18,7 @@
 import * as net from 'net';
 import { getMCPServer, setMCPServerOptions, _resetMCPServerForTesting } from '../mcp-server';
 import { registerAllTools } from '../tools';
-import { createTransport } from '../transports/index';
+import { createTransport, type TransportMessageContext } from '../transports/index';
 import { getGlobalConfig, setGlobalConfig } from '../config/global';
 import { resolveHeadlessMode } from '../config/headless-resolver';
 import { resolveWindowBoundsConfig } from '../config/window-bounds';
@@ -332,8 +332,11 @@ class OpenChromeServerImpl implements OpenChromeServer {
       );
       this._httpTransport = httpTrans;
       server.start();
-      httpTrans.onMessage(async (msg: Record<string, unknown>, signal?: AbortSignal) =>
-        server.handleMessage(msg, signal),
+      httpTrans.onMessage(async (
+        msg: Record<string, unknown>,
+        signal?: AbortSignal,
+        context?: TransportMessageContext,
+      ) => server.handleMessage(msg, signal, context),
       );
       server.wireRateLimiterCleanup(httpTrans);
       httpTrans.start();
