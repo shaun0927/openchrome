@@ -5,7 +5,7 @@
  * are marked 'skipped'. Returns a structured RunResult.
  */
 
-import type { Playbook, Step } from './parse';
+import type { Playbook, Step, Verb } from './parse';
 import { expandStep } from './expand';
 import { substituteValue } from './vars';
 import { StdioMcpClient, TransportError } from './stdio-client';
@@ -46,7 +46,7 @@ export interface RunOptions {
   client?: Pick<StdioMcpClient, 'connect' | 'callTool' | 'disconnect'>;
 }
 
-const VERBS_THAT_CAN_REUSE_CURRENT_TAB = new Set<string>([
+const VERBS_THAT_CAN_REUSE_CURRENT_TAB = new Set<Verb>([
   'interact',
   'act',
   'fill_form',
@@ -56,14 +56,14 @@ const VERBS_THAT_CAN_REUSE_CURRENT_TAB = new Set<string>([
   'javascript_tool',
 ]);
 
-function maybeInjectCurrentTab(
-  step: Step,
+export function injectCurrentTab(
+  verb: Verb,
   args: Record<string, unknown>,
   currentTabId: string | undefined,
 ): Record<string, unknown> {
   if (
     currentTabId &&
-    VERBS_THAT_CAN_REUSE_CURRENT_TAB.has(step.verb) &&
+    VERBS_THAT_CAN_REUSE_CURRENT_TAB.has(verb) &&
     typeof args.tabId !== 'string'
   ) {
     return { ...args, tabId: currentTabId };
@@ -116,7 +116,7 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
 
       // Substitute vars in args
       const substitutedArgs = substituteValue(step.args, options.varMap, i) as Record<string, unknown>;
-      const callArgs = maybeInjectCurrentTab(step, substitutedArgs, currentTabId);
+      const callArgs = injectCurrentTab(step.verb, substitutedArgs, currentTabId);
 
       // Expand to MCP tool call
       const expanded = expandStep(step.verb, callArgs);
