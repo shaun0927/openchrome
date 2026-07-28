@@ -138,7 +138,7 @@ const handler: ToolHandler = async (
     const modeArg = args.mode;
     const mode: 'viewport' | 'tiled' = modeArg === 'tiled' ? 'tiled' : 'viewport';
 
-    const provider = new DomAnnotatorPerceptionProvider(page);
+    const provider = new DomAnnotatorPerceptionProvider(page, sessionManager.getCDPClient());
     const { result, snapshot } = await provider.captureAnnotated(tabId, page.url(), {
       showGrid,
       showBoundingBoxes,

@@ -213,6 +213,7 @@ describe('interact tool - perception mode', () => {
   });
 
   test.each([
+    ['tiled capture', perceptionSnapshot({ captureMode: 'tiled' }), 'unsupported_capture_mode'],
     ['wrong tab', perceptionSnapshot({ tabId: 'tab-2' }), 'tab_mismatch'],
     ['wrong URL', perceptionSnapshot({ url: 'https://example.test/other' }), 'url_mismatch'],
     ['stale capture', visualSnapshot(), 'snapshot_stale'],

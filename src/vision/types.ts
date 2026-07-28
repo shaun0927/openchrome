@@ -115,6 +115,8 @@ export interface PerceptionElement {
 export interface PerceptionSnapshot {
   version: 1;
   provider: string;
+  /** Coordinate space of this capture. Tiled snapshots are document-space and non-executable. */
+  captureMode?: VisionAnalysisMode;
   tabId: string;
   url: string;
   capturedAt: number;

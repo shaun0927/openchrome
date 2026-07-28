@@ -16,6 +16,7 @@
  */
 
 import type { Frame, Page } from 'puppeteer-core';
+import type { CDPClient } from '../cdp/client';
 import {
   DEFAULT_SCREENSHOT_QUALITY,
   DEFAULT_DOM_SETTLE_DELAY_MS,
@@ -31,6 +32,7 @@ import type {
 } from './types';
 import { bufferToBase64WithPayloadGuard, resolveViewportDimensions, validateCaptureArea } from '../utils/screenshot-guards';
 import { detectImageMimeType } from '../utils/image-mime';
+import { cleanupTags, resolveBackendNodeIds } from '../utils/element-discovery';
 
 /** Raw element collected from the page */
 export interface RawElement {
@@ -65,6 +67,13 @@ const DEFAULT_OPTIONS: Required<Omit<AnnotationOptions, 'occlusionFilter' | 'ifr
 
 /** Overlay element ID — must not collide with page content */
 const OVERLAY_ID = '__oc_vision_overlay__';
+const VISION_ELEMENT_TAG = '__ocVisionIdx';
+let visionElementTagCounter = 0;
+
+function nextVisionElementTag(): string {
+  visionElementTagCounter = (visionElementTagCounter + 1) % Number.MAX_SAFE_INTEGER;
+  return `${VISION_ELEMENT_TAG}_${process.pid}_${visionElementTagCounter}`;
+}
 
 /** Hard caps for tiled mode (per spec). */
 const TILED_MAX_TILES = 20;
@@ -82,8 +91,8 @@ const IFRAME_MAX_COUNT = 20;
  * Returns rects in the frame's local viewport coordinates. The caller is responsible for
  * translating to top-frame document coordinates when collected from an iframe.
  */
-function collectInPage(filterInteractive: boolean, occlusionFilter: boolean): {
-  elements: Array<{ role: string; name: string; x: number; y: number; width: number; height: number }>;
+function collectInPage(filterInteractive: boolean, occlusionFilter: boolean, tagProperty?: string): {
+  elements: Array<{ role: string; name: string; x: number; y: number; width: number; height: number; backendDOMNodeId?: number }>;
   occludedDropped: number;
 } {
   const INTERACTIVE_SELECTORS = [
@@ -108,6 +117,7 @@ function collectInPage(filterInteractive: boolean, occlusionFilter: boolean): {
     y: number;
     width: number;
     height: number;
+    backendDOMNodeId?: number;
   }> = [];
 
   const seen = new Set<Element>();
@@ -183,6 +193,10 @@ function collectInPage(filterInteractive: boolean, occlusionFilter: boolean): {
           }
         }
 
+        const index = results.length;
+        if (tagProperty) {
+          (el as unknown as Record<string, number>)[tagProperty] = index;
+        }
         results.push({
           role: resolveRole(el),
           name: resolveName(el),
@@ -190,6 +204,7 @@ function collectInPage(filterInteractive: boolean, occlusionFilter: boolean): {
           y: Math.round(rect.y),
           width: Math.round(rect.width),
           height: Math.round(rect.height),
+          ...(tagProperty ? { backendDOMNodeId: 0 } : {}),
         });
 
         if (results.length >= 500) break;
@@ -234,24 +249,59 @@ export async function collectInteractiveElements(
   const wantsCount = occlusionFilter !== undefined;
   const flag = occlusionFilter === true;
 
-  const raw = await page.evaluate(collectInPage, interactiveOnly, flag);
-  // Tolerate legacy mocks that return a bare array.
-  const elements = Array.isArray(raw)
-    ? (raw as Array<{ role: string; name: string; x: number; y: number; width: number; height: number }>)
-    : raw.elements;
-  const occludedDropped = Array.isArray(raw) ? 0 : raw.occludedDropped;
-
-  const sorted = elements.slice().sort((a, b) => {
-    const rowA = Math.floor(a.y / 50);
-    const rowB = Math.floor(b.y / 50);
-    if (rowA !== rowB) return rowA - rowB;
-    return a.x - b.x;
-  });
+  const { elements: sorted, occludedDropped } = await collectInteractiveElementsInternal(
+    page,
+    interactiveOnly,
+    flag,
+  );
 
   if (wantsCount) {
     return { elements: sorted, occludedDropped };
   }
   return sorted;
+}
+
+async function collectInteractiveElementsInternal(
+  page: Page,
+  interactiveOnly: boolean,
+  occlusionFilter: boolean,
+  cdpClient?: CDPClient,
+): Promise<{ elements: RawElement[]; occludedDropped: number }> {
+  const tagProperty = cdpClient ? nextVisionElementTag() : undefined;
+  let raw: Awaited<ReturnType<typeof collectInPage>> | RawElement[];
+  try {
+    raw = await page.evaluate(collectInPage, interactiveOnly, occlusionFilter, tagProperty);
+    const elements = Array.isArray(raw)
+      ? raw
+      : raw.elements;
+
+    if (cdpClient && elements.length > 0) {
+      try {
+        await resolveBackendNodeIds(page, cdpClient, tagProperty!, elements);
+      } catch {
+        // Identity enrichment is best-effort. Unresolved elements remain visual-only.
+      }
+      for (const element of elements) {
+        if (!Number.isInteger(element.backendDOMNodeId) || (element.backendDOMNodeId ?? 0) <= 0) {
+          delete element.backendDOMNodeId;
+        }
+      }
+    }
+
+    const occludedDropped = Array.isArray(raw) ? 0 : raw.occludedDropped;
+    const sorted = elements.slice().sort((a, b) => {
+      const rowA = Math.floor(a.y / 50);
+      const rowB = Math.floor(b.y / 50);
+      if (rowA !== rowB) return rowA - rowB;
+      return a.x - b.x;
+    });
+
+    return { elements: sorted, occludedDropped };
+  } finally {
+    if (tagProperty) {
+      await cleanupTags(page, tagProperty);
+    }
+  }
 }
 
 /**
@@ -840,7 +890,8 @@ async function analyzeTiledScreenshot(
  */
 export async function analyzeScreenshot(
   page: Page,
-  options?: AnnotationOptions
+  options?: AnnotationOptions,
+  cdpClient?: CDPClient,
 ): Promise<AnnotatedScreenshotResult> {
   const startTime = Date.now();
   const opts = { ...DEFAULT_OPTIONS, ...options } as typeof DEFAULT_OPTIONS;
@@ -886,7 +937,16 @@ export async function analyzeScreenshot(
   // (which return a bare array from page.evaluate) keep working.
   let elements: RawElement[];
   let occludedDropped = 0;
-  if (opts.occlusionFilter) {
+  if (cdpClient) {
+    const result = await collectInteractiveElementsInternal(
+      page,
+      opts.interactiveOnly,
+      opts.occlusionFilter,
+      cdpClient,
+    );
+    elements = result.elements;
+    occludedDropped = result.occludedDropped;
+  } else if (opts.occlusionFilter) {
     const result = await collectInteractiveElements(page, opts.interactiveOnly, true);
     elements = result.elements;
     occludedDropped = result.occludedDropped;

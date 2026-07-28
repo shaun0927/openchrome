@@ -533,12 +533,12 @@ export async function resolveBackendNodeIds(
   page: Page,
   cdpClient: CDPClient,
   tagProperty: string,
-  results: Array<{ backendDOMNodeId: number }>,
+  results: Array<{ backendDOMNodeId?: number }>,
 ): Promise<void> {
   if (results.length === 0) return;
 
   // Skip if all elements already have valid backendDOMNodeIds (e.g., from CDP path)
-  if (results.every(r => r.backendDOMNodeId > 0)) return;
+  if (results.every(r => (r.backendDOMNodeId ?? 0) > 0)) return;
 
   // Step 1: Single Runtime.evaluate to collect tagged elements in index order
   // Uses deep walk to find elements inside open shadow roots
@@ -576,7 +576,7 @@ export async function resolveBackendNodeIds(
   for (const prop of properties) {
     const index = parseInt(prop.name, 10);
     if (isNaN(index) || index >= results.length || !prop.value?.objectId) continue;
-    if (results[index].backendDOMNodeId > 0) continue; // already resolved
+    if ((results[index].backendDOMNodeId ?? 0) > 0) continue; // already resolved
 
     describePromises.push(
       cdpClient
