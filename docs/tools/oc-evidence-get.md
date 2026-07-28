@@ -8,10 +8,13 @@ Retrieve the redacted artifact referenced by an `oc_assert` `evidence_handle`.
 }
 ```
 
-The tool is read-only and launch-free. It succeeds only when the caller is in
-the same OpenChrome session and tenant that created the handle. Successful
-responses include the assertion, verdict/evaluator evidence, provenance,
-creation time, expiry time, and trace availability status.
+The tool is read-only and launch-free. It succeeds only inside the same
+OpenChrome process instance, session, and tenant that created the handle. This
+prevents independent stdio or daemon processes under one OS account from
+reading or deleting each other's artifacts even when they both use the default
+logical session and tenant IDs. Successful responses include the assertion,
+verdict/evaluator evidence, provenance, creation time, expiry time, and trace
+availability status.
 
 Artifacts expire after 30 minutes and are also deleted when their owner session
 is removed through HTTP `DELETE /mcp`, `sessions/delete`, or a SessionManager

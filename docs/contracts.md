@@ -280,8 +280,10 @@ The retention contract is:
 - artifacts remain retrievable for 30 minutes;
 - expired handles fail immediately by timestamp, while an unref periodic sweep
   removes expired files and crash-left temporary writes from disk;
-- `oc_evidence_get` authorizes both the owning MCP session and tenant before
-  returning artifact contents;
+- `oc_evidence_get` authorizes the owning OpenChrome process instance, MCP
+  session, and tenant before returning artifact contents; a handle disclosed to
+  an independent stdio/daemon process is rejected even when both processes use
+  the default logical session and tenant IDs;
 - HTTP `DELETE /mcp`, `sessions/delete`, and SessionManager deletion events
   delete every artifact owned by the ended session; real browser sessions emit
   the same deletion event during TTL cleanup and shutdown;
