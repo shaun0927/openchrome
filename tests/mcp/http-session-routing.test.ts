@@ -140,4 +140,43 @@ describe('HTTP MCP session routing', () => {
       fs.rmSync(rootDir, { recursive: true, force: true });
     }
   });
+
+  test('DELETE /mcp continues session cleanup when evidence eviction fails', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-http-evidence-failure-'));
+    const store = new AssertEvidenceStore({
+      rootDir,
+    });
+    const evict = jest.spyOn(store, 'evictSession').mockImplementation(() => {
+      throw Object.assign(new Error('EIO: transient evidence scan failure'), { code: 'EIO' });
+    });
+    const log = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    setAssertEvidenceStoreForTests(store);
+    try {
+      const sessionManager = createMockSessionManager();
+      const server = new MCPServer(sessionManager as never);
+      let deleteHandler: ((sessionId: string, tenantId?: string) => void) | undefined;
+      const transport: MCPTransport & {
+        onSessionDelete: (handler: (sessionId: string, tenantId?: string) => void) => void;
+      } = {
+        onMessage: () => undefined,
+        send: () => undefined,
+        start: () => undefined,
+        close: async () => undefined,
+        onSessionDelete: (handler) => { deleteHandler = handler; },
+      };
+      server.wireRateLimiterCleanup(transport);
+
+      expect(() => deleteHandler?.('transport-a', 'tenant-a')).not.toThrow();
+      await Promise.resolve();
+
+      expect(evict).toHaveBeenCalledWith('mcp-transport-a', 'tenant-a');
+      expect(sessionManager.deleteSession).toHaveBeenCalledWith('mcp-transport-a');
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('HTTP transport deletion'));
+    } finally {
+      setAssertEvidenceStoreForTests(null);
+      evict.mockRestore();
+      log.mockRestore();
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -64,6 +64,7 @@ describe('TOOL_ANNOTATIONS table', () => {
       'oc_get_connection_info',
       'oc_connection_health',
       'oc_skill_recall',
+      'oc_evidence_get',
       'performance_metrics',
       'vision_find',
     ];

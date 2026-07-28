@@ -208,7 +208,7 @@ describe('AssertEvidenceStore', () => {
     expect(cleanup).not.toHaveBeenCalled();
   });
 
-  test('expires stale handles and deletes their files', () => {
+  test('reports stale handles without mutating storage during retrieval', () => {
     let now = 1_000;
     const store = new AssertEvidenceStore({
       rootDir,
@@ -222,7 +222,10 @@ describe('AssertEvidenceStore', () => {
       sessionId: 'session-a',
       tenantId: 'tenant-a',
     })).toThrow(expect.objectContaining<Partial<AssertEvidenceStoreError>>({ code: 'expired' }));
-    expect(fs.existsSync(path.join(rootDir, `${stored.evidence_handle}.json`))).toBe(false);
+    const artifactPath = path.join(rootDir, `${stored.evidence_handle}.json`);
+    expect(fs.existsSync(artifactPath)).toBe(true);
+    expect(store.cleanupExpired()).toBe(1);
+    expect(fs.existsSync(artifactPath)).toBe(false);
   });
 
   test('removes crash-left temporary files after the retention window', () => {

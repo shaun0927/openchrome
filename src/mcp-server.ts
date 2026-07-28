@@ -533,7 +533,11 @@ export class MCPServer {
           getTaskDriftLedger().cleanupSession(event.sessionId);
           const ownerTenantId = boundTenantId ?? event.tenantId;
           if (ownerTenantId) {
-            getAssertEvidenceStore().evictSession(event.sessionId, ownerTenantId);
+            this.evictAssertEvidenceBestEffort(
+              event.sessionId,
+              ownerTenantId,
+              'session lifecycle deletion',
+            );
           }
         } else if ((event.type === 'session:target-closed' || event.type === 'session:target-removed') && event.sessionId && event.targetId) {
           getTaskDriftLedger().cleanupTab(event.sessionId, event.targetId);
@@ -934,7 +938,11 @@ export class MCPServer {
           }
           const ownerTenantId = tenantId ?? this.sessionTenants.get(browserSessionId);
           if (ownerTenantId) {
-            getAssertEvidenceStore().evictSession(browserSessionId, ownerTenantId);
+            this.evictAssertEvidenceBestEffort(
+              browserSessionId,
+              ownerTenantId,
+              'HTTP transport deletion',
+            );
           }
           this.sessionTenants.delete(browserSessionId);
           if (typeof this.sessionManager.deleteSession === 'function') {
@@ -950,6 +958,21 @@ export class MCPServer {
     const hasCloseHook = typeof (transport as unknown as { onSessionClose?: unknown }).onSessionClose === 'function';
     if (hasCloseHook) {
       (transport as unknown as { onSessionClose: (cb: (id: string) => void) => void }).onSessionClose(cleanupConnectionState);
+    }
+  }
+
+  private evictAssertEvidenceBestEffort(
+    sessionId: string,
+    tenantId: string,
+    trigger: string,
+  ): void {
+    try {
+      getAssertEvidenceStore().evictSession(sessionId, tenantId);
+    } catch (error) {
+      console.error(
+        `[MCPServer] Failed to evict assertion evidence during ${trigger} `
+        + `for session ${sessionId}: ${formatError(error)}`,
+      );
     }
   }
 
@@ -2907,7 +2930,7 @@ export class MCPServer {
       ?? managedTenantId
       ?? DEFAULT_TENANT_ID;
     await this.sessionManager.deleteSession(sessionId);
-    getAssertEvidenceStore().evictSession(sessionId, tenantId);
+    this.evictAssertEvidenceBestEffort(sessionId, tenantId, 'MCP sessions/delete');
     // Release the binding so sessionId (notably 'default') can be reclaimed
     // by a subsequent tenant after MCP-level deletion.
     this.sessionTenants.delete(sessionId);
