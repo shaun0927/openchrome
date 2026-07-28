@@ -14,6 +14,7 @@ export type StepStatus = 'ok' | 'failed' | 'skipped';
 
 export interface StepResult {
   index: number;
+  id?: string;
   verb: string;
   tool: string;
   args: Record<string, unknown>;
@@ -76,6 +77,11 @@ function extractTabId(result: unknown): string | undefined {
   return typeof tabId === 'string' && tabId.length > 0 ? tabId : undefined;
 }
 
+function formatStepContext(index: number, step: Step): string {
+  const id = step.id === undefined ? '' : ` [${step.id}]`;
+  return `Step ${index}${id} (${step.verb})`;
+}
+
 export async function runPlaybook(playbook: Playbook, options: RunOptions): Promise<RunResult> {
   const client = options.client ?? new StdioMcpClient();
 
@@ -98,6 +104,7 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
       if (failed) {
         stepResults.push({
           index: i,
+          ...(step.id !== undefined ? { id: step.id } : {}),
           verb: step.verb,
           tool: '',
           args: {},
@@ -125,9 +132,9 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
         if (!callResult.success) {
           status = 'failed';
           failed = true;
-          error = `Step ${i} (${step.verb}): tool call returned failure`;
+          error = `${formatStepContext(i, step)}: tool call returned failure`;
           if (callResult.verdict) {
-            error = `Step ${i} (${step.verb}): assert verdict="${callResult.verdict}"`;
+            error = `${formatStepContext(i, step)}: assert verdict="${callResult.verdict}"`;
           }
         }
         currentTabId = extractTabId(callResult.result) ?? currentTabId;
@@ -144,11 +151,12 @@ export async function runPlaybook(playbook: Playbook, options: RunOptions): Prom
         }
         status = 'failed';
         failed = true;
-        error = `Step ${i} (${step.verb}): ${err instanceof Error ? err.message : String(err)}`;
+        error = `${formatStepContext(i, step)}: ${err instanceof Error ? err.message : String(err)}`;
       }
 
       stepResults.push({
         index: i,
+        ...(step.id !== undefined ? { id: step.id } : {}),
         verb: step.verb,
         tool: expanded.tool,
         args: expanded.callArgs,

@@ -25,7 +25,8 @@ function formatPlain(result: RunResult): string {
   for (const step of result.steps) {
     const icon = STATUS_ICON[step.status] ?? step.status.toUpperCase();
     const dur = step.status === 'skipped' ? '-' : `${step.durationMs}ms`;
-    lines.push(`  [${icon}] step ${step.index}: ${step.verb} (${dur})`);
+    const id = step.id === undefined ? '' : ` [${step.id}]`;
+    lines.push(`  [${icon}] step ${step.index}${id}: ${step.verb} (${dur})`);
     if (step.error) {
       lines.push(`         ${step.error}`);
     }
@@ -40,14 +41,25 @@ function formatPlain(result: RunResult): string {
 function formatMarkdown(result: RunResult): string {
   const name = result.name ?? '(unnamed playbook)';
   const lines: string[] = [];
+  const includesIds = result.steps.some((step) => step.id !== undefined);
   lines.push(`# Playbook: ${name}`);
   lines.push('');
-  lines.push('| # | Verb | Tool | Status | Duration |');
-  lines.push('|---|------|------|--------|----------|');
+  if (includesIds) {
+    lines.push('| # | ID | Verb | Tool | Status | Duration |');
+    lines.push('|---|----|------|------|--------|----------|');
+  } else {
+    lines.push('| # | Verb | Tool | Status | Duration |');
+    lines.push('|---|------|------|--------|----------|');
+  }
 
   for (const step of result.steps) {
     const dur = step.status === 'skipped' ? '-' : `${step.durationMs}ms`;
-    lines.push(`| ${step.index} | \`${step.verb}\` | \`${step.tool || '-'}\` | ${step.status.toUpperCase()} | ${dur} |`);
+    if (includesIds) {
+      const id = step.id === undefined ? '-' : `\`${step.id}\``;
+      lines.push(`| ${step.index} | ${id} | \`${step.verb}\` | \`${step.tool || '-'}\` | ${step.status.toUpperCase()} | ${dur} |`);
+    } else {
+      lines.push(`| ${step.index} | \`${step.verb}\` | \`${step.tool || '-'}\` | ${step.status.toUpperCase()} | ${dur} |`);
+    }
   }
 
   lines.push('');

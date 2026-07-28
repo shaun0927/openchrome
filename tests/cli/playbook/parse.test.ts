@@ -39,6 +39,58 @@ describe('parsePlaybookContent — YAML', () => {
     expect(pb.steps).toHaveLength(1);
   });
 
+  test('accepts optional stable step ids in YAML', () => {
+    const pb = loadPlaybook(path.join(FIXTURES, 'step-ids.yaml'));
+
+    expect(pb.steps).toEqual([
+      { id: 'open_home', verb: 'navigate', args: { url: 'https://example.com' } },
+      { id: 'verify_home', verb: 'assert', args: { kind: 'url', pattern: 'example\\.com' } },
+    ]);
+  });
+
+  test('accepts optional stable step ids in JSON', () => {
+    const pb = loadPlaybook(path.join(FIXTURES, 'step-ids.json'));
+
+    expect(pb.steps.map((step) => step.id)).toEqual(['open_home', 'verify_home']);
+  });
+
+  test('accepts an id at the 64-character boundary', () => {
+    const id = `a${'b'.repeat(63)}`;
+    const yaml = `steps:\n  - id: ${id}\n    navigate:\n      url: https://example.com\n`;
+
+    expect(parsePlaybookContent(yaml, 'test.yaml').steps[0].id).toBe(id);
+  });
+
+  test.each([
+    ['uppercase', 'Open_home'],
+    ['leading digit', '1_open_home'],
+    ['Unicode', '열기'],
+    ['empty', ''],
+    ['too long', `a${'b'.repeat(64)}`],
+  ])('rejects %s step id', (_label, id) => {
+    const yaml = `steps:\n  - id: ${JSON.stringify(id)}\n    navigate:\n      url: https://example.com\n`;
+
+    expect(() => parsePlaybookContent(yaml, 'test.yaml')).toThrow(/invalid id/i);
+  });
+
+  test('rejects non-string step id', () => {
+    const yaml = `steps:\n  - id: 42\n    navigate:\n      url: https://example.com\n`;
+
+    expect(() => parsePlaybookContent(yaml, 'test.yaml')).toThrow(/id.*string/i);
+  });
+
+  test('rejects duplicate step ids before execution', () => {
+    const yaml = `steps:\n  - id: open_home\n    navigate:\n      url: https://example.com\n  - id: open_home\n    read_page:\n      mode: ax\n`;
+
+    expect(() => parsePlaybookContent(yaml, 'test.yaml')).toThrow(/duplicate id "open_home".*step 0/i);
+  });
+
+  test('rejects unknown metadata alongside id and verb', () => {
+    const yaml = `steps:\n  - id: open_home\n    description: Open the fixture\n    navigate:\n      url: https://example.com\n`;
+
+    expect(() => parsePlaybookContent(yaml, 'test.yaml')).toThrow(/unexpected key "description"/i);
+  });
+
   test('rejects unknown verb', () => {
     const yaml = `steps:\n  - unknown_verb:\n      foo: bar\n`;
     expect(() => parsePlaybookContent(yaml, 'test.yaml')).toThrow(ParseError);
