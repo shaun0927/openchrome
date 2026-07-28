@@ -3,9 +3,18 @@ import fs from 'fs';
 import path from 'path';
 
 const DIST_WRAPPER = path.join(process.cwd(), 'dist', 'cli', 'index.js');
+const DIST_SERVER = path.join(process.cwd(), 'dist', 'index.js');
 
 function runWrapper(args: string[]) {
   return spawnSync(process.execPath, [DIST_WRAPPER, ...args], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: { ...process.env, OPENCHROME_UPDATE_CHECK: '0' },
+  });
+}
+
+function runServer(args: string[]) {
+  return spawnSync(process.execPath, [DIST_SERVER, ...args], {
     cwd: process.cwd(),
     encoding: 'utf8',
     env: { ...process.env, OPENCHROME_UPDATE_CHECK: '0' },
@@ -50,5 +59,17 @@ describe('CLI entrypoint parity', () => {
     expect(source).not.toContain("process.on('SIGHUP'");
     expect(source).toContain("child.on('exit', (code, signal)");
     expect(source).toContain('SIGNAL_EXIT_CODES');
+  });
+
+  test('full and minimal introspection expose different deterministic surfaces', () => {
+    const full = runServer(['serve', '--introspect-tools-list']);
+    const minimal = runServer(['serve', '--minimal', '--introspect-tools-list']);
+    expect(full.status).toBe(0);
+    expect(minimal.status).toBe(0);
+    const fullTools = JSON.parse(full.stdout) as Array<{ name: string }>;
+    const minimalTools = JSON.parse(minimal.stdout) as Array<{ name: string }>;
+    expect(fullTools.length).toBeGreaterThan(minimalTools.length);
+    expect(fullTools.some((tool) => tool.name === 'expand_tools')).toBe(false);
+    expect(minimalTools.some((tool) => tool.name === 'expand_tools')).toBe(true);
   });
 });
