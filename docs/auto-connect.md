@@ -42,6 +42,39 @@ The discovered port and the resolved user-data dir are exposed via
 }
 ```
 
+### Endpoint validation and Chrome restarts
+
+OpenChrome re-reads `DevToolsActivePort` from the exact `userDataDir` selected
+by `--auto-connect` whenever the launcher needs to attach or refresh its cached
+endpoint. The selected profile's file remains the browser identity source of
+truth:
+
+- when `GET /json/version` returns a matching browser WebSocket endpoint,
+  OpenChrome uses the freshly read file endpoint;
+- when `/json/version` returns HTTP 404, OpenChrome uses the freshly read file
+  endpoint directly, which supports default-profile configurations where Chrome
+  disables HTTP discovery;
+- when `/json/version` names a different browser path on the same port,
+  OpenChrome refuses the attach instead of crossing profile boundaries;
+- 403, 500, malformed successful responses, network failures, and timeouts do
+  not enter the 404 compatibility path.
+
+Legacy one-line `DevToolsActivePort` files do not contain a browser path. They
+remain supported only when `/json/version` succeeds with a valid loopback
+WebSocket endpoint on the selected port; that HTTP endpoint supplies the path.
+HTTP 404 cannot recover a one-line file because there is no file-backed browser
+identity to validate.
+
+If Chrome restarts on the same port and writes a new browser UUID, OpenChrome
+refreshes the cached endpoint. If Chrome chooses a different port, restart the
+OpenChrome server so its transport and session routing cannot silently drift to
+another port.
+
+This behavior applies only to explicit `--auto-connect`. Generic attach,
+auto-launch, broker ownership, and managed Chrome lifecycle behavior are
+unchanged. `/json/list`-based inspector metadata may remain unavailable when
+Chrome disables the `/json/*` HTTP surface.
+
 ## Environment variable
 
 `OPENCHROME_AUTO_CONNECT=<userDataDir>` mirrors the CLI flag. An empty value

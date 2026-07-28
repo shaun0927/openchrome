@@ -21,6 +21,8 @@ import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-sh
 import { classifyExit, ExitClassification, quiesceMs } from './exit-classifier';
 import { getLifecycleBus } from '../core/lifecycle';
 import type { ChromeExitReason } from '../core/lifecycle';
+import { refreshAutoConnectEndpoint } from './auto-connect';
+import { getAutoConnectState, refreshAutoConnectState } from './auto-connect-state';
 import {
   resolveLaunchMode,
   AttachConsentRequiredError,
@@ -103,6 +105,15 @@ export interface ProfileState {
   profileDirectory?: string;     // Chrome profile directory name (e.g., "Profile 1", "Default")
 }
 
+async function refreshKnownAutoConnectWsEndpoint(port: number): Promise<string | null> {
+  const state = getAutoConnectState();
+  if (!state || state.port !== port) return null;
+
+  const refreshed = await refreshAutoConnectEndpoint(state, { expectedPort: port });
+  refreshAutoConnectState(refreshed);
+  return refreshed.wsEndpoint;
+}
+
 export class ChromeLauncher {
   private instance: ChromeInstance | null = null;
   private pendingProcess: ChildProcess | null = null;
@@ -146,6 +157,21 @@ export class ChromeLauncher {
 
     // Check if already connected and instance is still valid
     if (this.instance) {
+      if (this.instance.launchMode === 'attach' && getAutoConnectState()?.port === port) {
+        try {
+          const currentWs = await refreshKnownAutoConnectWsEndpoint(port);
+          if (currentWs) {
+            if (currentWs !== this.instance.wsEndpoint) {
+              console.error('[ChromeLauncher] Auto-connect browser endpoint changed; refreshing cached instance.');
+              this.instance = { ...this.instance, wsEndpoint: currentWs };
+            }
+            return this.instance;
+          }
+        } catch (err) {
+          this.instance = null;
+          throw err;
+        }
+      }
       // Verify the cached instance is still valid by checking the debug port
       const currentWs = await checkDebugPort(port);
       if (currentWs && currentWs === this.instance.wsEndpoint) {
@@ -206,10 +232,15 @@ export class ChromeLauncher {
       }
       console.error('[ChromeLauncher] Launch mode: isolated — skipping debug-port attach.');
     } else {
-      // Check if Chrome is already running with debug port.
-      // Use a brief retry window (5s) instead of a single-shot check, because Chrome
-      // may still be binding the debug port during startup (1-5s window).
-      existingWs = await waitForDebugPort(port, 5000).catch(() => null);
+      const autoConnectState = launchMode === 'attach' ? getAutoConnectState() : null;
+      if (autoConnectState?.port === port) {
+        existingWs = await refreshKnownAutoConnectWsEndpoint(port);
+      } else {
+        // Check if Chrome is already running with debug port.
+        // Use a brief retry window (5s) instead of a single-shot check, because Chrome
+        // may still be binding the debug port during startup (1-5s window).
+        existingWs = await waitForDebugPort(port, 5000).catch(() => null);
+      }
     }
 
     // 'attach' mode: must attach. If no debug port responded, surface a
