@@ -266,14 +266,17 @@ async function main() {
   try {
     child = spawn(options.binary, [
       'serve',
-      '--auto-launch',
-      '--headless',
+      '--server-mode',
       '--no-auto-elect',
       '--port', String(cdpPort),
       '--user-data-dir', userDataDir,
       '--chrome-binary', chrome,
     ], { stdio: ['pipe', 'pipe', 'pipe'], env: cleanEnv, detached: process.platform !== 'win32' });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      if (process.env.OPENCHROME_STANDALONE_DEBUG === '1') process.stderr.write(text);
+    });
     rpc = new StdioRpcClient(child, () => stderr.split('\n').slice(-20).join('\n'));
 
     await waitForLog(() => stderr, /STDIO transport enabled/, child);
@@ -322,6 +325,9 @@ async function main() {
   } finally {
     rpc?.close();
     if (child && child.exitCode === null) {
+      if (process.env.OPENCHROME_STANDALONE_DEBUG === '1') {
+        console.error('[standalone-live-smoke] Cleanup is sending SIGTERM to OpenChrome');
+      }
       child.kill('SIGTERM');
       try {
         await waitForExit(child, 5_000);
