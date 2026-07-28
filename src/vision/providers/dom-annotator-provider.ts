@@ -1,4 +1,5 @@
 import type { Page } from 'puppeteer-core';
+import type { CDPClient } from '../../cdp/client';
 import type { AnnotatedScreenshotResult, AnnotationOptions, PerceptionSnapshot } from '../types';
 import { analyzeScreenshot } from '../screenshot-analyzer';
 import { buildPerceptionSnapshotFromAnnotatedResult, type PerceptionProviderOptions } from '../perception-provider';
@@ -11,7 +12,10 @@ export interface DomAnnotatorCaptureResult {
 export class DomAnnotatorPerceptionProvider {
   readonly name = 'dom-annotator';
 
-  constructor(private readonly page: Page) {}
+  constructor(
+    private readonly page: Page,
+    private readonly cdpClient?: CDPClient,
+  ) {}
 
   async capture(
     tabId: string,
@@ -26,7 +30,7 @@ export class DomAnnotatorPerceptionProvider {
     url: string,
     options?: PerceptionProviderOptions & AnnotationOptions
   ): Promise<DomAnnotatorCaptureResult> {
-    const result = await analyzeScreenshot(this.page, options);
+    const result = await analyzeScreenshot(this.page, options, this.cdpClient);
     const snapshot = buildPerceptionSnapshotFromAnnotatedResult(result, {
       provider: this.name,
       tabId,

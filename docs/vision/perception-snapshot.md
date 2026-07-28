@@ -4,6 +4,8 @@
 
 The snapshot contract is exported from `src/vision/perception-types.ts` and is intentionally provider-neutral: DOM annotation, future OmniParser-compatible HTTP providers, and tests can all describe visible elements with stable snapshot-local IDs, labels, viewport-relative CSS pixel boxes, normalized ratios, provenance, and bounded warnings.
 
+OpenChrome-emitted snapshots include `captureMode`. `viewport` uses live viewport coordinates and may be executed after the checks below. `tiled` aggregates document-space coordinates and is rejected by `interact mode="perception"`; recapture the target viewport first. Older provider snapshots may omit this additive field and retain viewport semantics.
+
 ## Execute a caller-selected target
 
 The MCP host can select one exact snapshot-local element ID and pass the original viewport snapshot to `interact`:

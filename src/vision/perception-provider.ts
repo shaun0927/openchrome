@@ -110,6 +110,7 @@ export function buildPerceptionSnapshotFromAnnotatedResult(
   return {
     version: 1,
     provider,
+    captureMode: result.tiling ? 'tiled' : 'viewport',
     tabId: args.tabId,
     url: args.url,
     capturedAt: args.capturedAt ?? Date.now(),
@@ -171,6 +172,9 @@ export function validatePerceptionSnapshot(
   const row = snapshot as Record<string, unknown>;
   if (row.version !== 1) addError('version must be 1');
   if (typeof row.provider !== 'string' || row.provider.length === 0) addError('provider is required');
+  if (row.captureMode !== undefined && row.captureMode !== 'viewport' && row.captureMode !== 'tiled') {
+    addError('captureMode must be "viewport" or "tiled" when present');
+  }
   if (typeof row.tabId !== 'string' || row.tabId.length === 0) addError('tabId is required');
   if (typeof row.url !== 'string') addError('url must be a string');
   if (typeof row.capturedAt !== 'number' || !Number.isFinite(row.capturedAt)) addError('capturedAt must be a finite number');

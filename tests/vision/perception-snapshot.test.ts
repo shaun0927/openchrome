@@ -47,6 +47,7 @@ describe('perception snapshot helpers', () => {
     expect(snapshot).toMatchObject({
       version: 1,
       provider: 'dom-annotator',
+      captureMode: 'viewport',
       tabId: 'tab-1',
       url: 'https://example.test',
       capturedAt: 123,
@@ -116,6 +117,23 @@ describe('perception snapshot helpers', () => {
     const parsed = JSON.parse(formatPerceptionSnapshotAsText(snapshot));
     expect(parsed).toEqual(snapshot);
   });
+
+  test('marks tiled annotated results as document-space captures', () => {
+    const result = annotated({});
+    result.tiling = {
+      tileCount: 1,
+      tileHeight: 500,
+      tiles: [{ tileTop: 0, imageBase64: 'tile', mimeType: 'image/webp' }],
+      truncated: false,
+    };
+
+    const snapshot = buildPerceptionSnapshotFromAnnotatedResult(result, {
+      tabId: 'tab',
+      url: 'https://example.test',
+    });
+
+    expect(snapshot.captureMode).toBe('tiled');
+  });
 });
 
 
@@ -179,6 +197,21 @@ describe('perception snapshot schema validation', () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors.join('\n')).toContain('elements[0].type');
+  });
+
+  test('rejects unknown capture modes', () => {
+    const snapshot = {
+      ...buildPerceptionSnapshotFromAnnotatedResult(annotated({}), {
+        tabId: 'tab',
+        url: 'https://example.test',
+      }),
+      captureMode: 'document',
+    };
+
+    const result = validatePerceptionSnapshot(snapshot);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join('\n')).toContain('captureMode');
   });
 
   test('limits validation diagnostics for hostile provider output', () => {

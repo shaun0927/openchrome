@@ -61,13 +61,10 @@ describe('collectInteractiveElements', () => {
   it('passes interactiveOnly flag to page.evaluate', async () => {
     const page = createMockPage([]);
     await collectInteractiveElements(page as any, true);
-    // Updated for #932 P1 iframe-offset fix: the in-page collector now also
-    // receives a third arg (a translation-mode flag) so the assertion accepts
-    // any trailing argument.
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), true, expect.anything());
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), true, false, undefined);
 
     await collectInteractiveElements(page as any, false);
-    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), false, expect.anything());
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), false, false, undefined);
   });
 
   it('handles empty page', async () => {
@@ -157,6 +154,44 @@ describe('formatElementMapAsText', () => {
 // ─── analyzeScreenshot ───
 
 describe('analyzeScreenshot', () => {
+  it('enriches viewport elements with live backend DOM identity when CDP is available', async () => {
+    const page = createMockPage([
+      { role: 'button', name: 'Click Me', x: 50, y: 60, width: 100, height: 35 },
+    ]);
+    const cdpClient = {
+      send: jest.fn()
+        .mockResolvedValueOnce({ result: { objectId: 'vision-batch' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'vision-element-0' } },
+        ] })
+        .mockResolvedValueOnce({ node: { backendNodeId: 4242 } }),
+    };
+
+    const result = await analyzeScreenshot(page as any, {}, cdpClient as any);
+
+    expect(result.elementMap[1].backendDOMNodeId).toBe(4242);
+    expect(cdpClient.send).toHaveBeenCalledWith(page, 'DOM.describeNode', {
+      objectId: 'vision-element-0',
+    });
+  });
+
+  it('keeps viewport elements visual-only when backend identity enrichment fails', async () => {
+    const page = createMockPage([
+      { role: 'button', name: 'Click Me', x: 50, y: 60, width: 100, height: 35 },
+    ]);
+    const cdpClient = {
+      send: jest.fn().mockRejectedValue(new Error('CDP unavailable')),
+    };
+
+    const result = await analyzeScreenshot(page as any, {}, cdpClient as any);
+
+    expect(result.elementMap[1].backendDOMNodeId).toBeUndefined();
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.stringMatching(/^__ocVisionIdx_\d+_\d+$/),
+    );
+  });
+
   it('returns complete result with screenshot, map, and metadata', async () => {
     const mockElements = [
       { role: 'button', name: 'Click Me', x: 50, y: 60, width: 100, height: 35 },

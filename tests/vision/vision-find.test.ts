@@ -72,7 +72,10 @@ describe('VisionFindTool', () => {
   const getVisionFindHandler = async (mockSessionManager: Record<string, jest.Mock>) => {
     jest.resetModules();
     jest.doMock('../../src/session-manager', () => ({
-      getSessionManager: jest.fn(() => mockSessionManager),
+      getSessionManager: jest.fn(() => ({
+        getCDPClient: jest.fn(() => undefined),
+        ...mockSessionManager,
+      })),
     }));
 
     const { registerVisionFindTool } = await import('../../src/tools/vision-find');
@@ -117,6 +120,39 @@ describe('VisionFindTool', () => {
     expect(result.content[1].type).toBe('image');
     expect(result.content[1].data).toBeTruthy();
     expect(result.content[1].mimeType).toMatch(/^image\//);
+  });
+
+  it('emits a viewport snapshot with live backend DOM identity when CDP resolves it', async () => {
+    const page = createMockPage([
+      { role: 'button', name: 'Submit', x: 100, y: 200, width: 80, height: 30 },
+    ]);
+    const cdpClient = {
+      send: jest.fn()
+        .mockResolvedValueOnce({ result: { objectId: 'vision-batch' } })
+        .mockResolvedValueOnce({ result: [
+          { name: '0', value: { objectId: 'vision-element-0' } },
+        ] })
+        .mockResolvedValueOnce({ node: { backendNodeId: 5150 } }),
+    };
+    const mockSessionManager = {
+      getPage: jest.fn().mockResolvedValue(page),
+      getAvailableTargets: jest.fn().mockResolvedValue([]),
+      getCDPClient: jest.fn().mockReturnValue(cdpClient),
+    };
+
+    const handler = await getVisionFindHandler(mockSessionManager);
+    const context = { startTime: Date.now(), deadlineMs: 60000 };
+    const result = await handler('session-1', {
+      tabId: 'tab-1',
+      mode: 'viewport',
+      format: 'snapshot',
+      includeImage: false,
+    }, context) as any;
+    const snapshot = JSON.parse(result.content[0].text);
+
+    expect(snapshot.captureMode).toBe('viewport');
+    expect(snapshot.elements[0].backendDOMNodeId).toBe(5150);
+    expect(mockSessionManager.getCDPClient).toHaveBeenCalledTimes(1);
   });
 
   it('writes opt-in visual trajectory artifacts without inline images', async () => {
