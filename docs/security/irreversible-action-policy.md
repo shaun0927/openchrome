@@ -6,7 +6,7 @@ OpenChrome classifies high-risk browser actions deterministically so host agents
 
 | Tool/action | Risk | Trigger | Required prerequisite |
 | --- | --- | --- | --- |
-| `read_page`, `tabs_context`, `query_dom` | read_only | always | none |
+| `read_page`, `tabs_context`, `tabs_search`, `query_dom` | read_only | always | none |
 | `cookies` | destructive | delete/delete-all/clear/remove | `dryRun:true`, then elicitation |
 | `storage` | destructive | clear/delete/remove | `dryRun:true`, then elicitation |
 | `oc_stop` | destructive | always | elicitation and checkpoint ≤ 5 minutes old |

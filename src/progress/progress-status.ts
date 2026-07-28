@@ -33,7 +33,7 @@ export interface ProgressDiagnosticResult {
 
 const REDACT_KEYS = /password|token|secret|credential|api[_-]?key/i;
 const REDACT_TOOLS = new Set(['http_auth', 'cookies']);
-const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context']);
+const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context', 'tabs_search']);
 const NON_PROGRESS_ERROR = /stale|not found|timeout|timed out|captcha|blocked|forbidden|access denied|not interactive|protocol error|net::err_/i;
 
 function isObservation(call: ToolCallEvent): boolean {

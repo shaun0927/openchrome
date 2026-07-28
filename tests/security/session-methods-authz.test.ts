@@ -5,9 +5,15 @@
 //   P2: `sessions/delete` via JSON-RPC must clear the sessionTenants binding
 //       so the sessionId can be reclaimed by another tenant afterwards.
 
+jest.mock('../../src/security/audit-logger', () => {
+  const actual = jest.requireActual('../../src/security/audit-logger');
+  return { ...actual, logAuditEntry: jest.fn() };
+});
+
 import { MCPServer } from '../../src/mcp-server';
 import type { Principal } from '../../src/auth/api-key-types';
 import { PRINCIPAL_SYM } from '../../src/middleware/auth';
+import { logAuditEntry } from '../../src/security/audit-logger';
 
 const originalEnv = { ...process.env };
 
@@ -45,6 +51,7 @@ describe('sessions/* authz (MCPServer round-5)', () => {
   });
 
   beforeEach(() => {
+    jest.clearAllMocks();
     server = new MCPServer();
     server.registerTool(
       'noop',
@@ -69,6 +76,18 @@ describe('sessions/* authz (MCPServer round-5)', () => {
       const { text, isError } = extractResult(resp);
       expect(isError).toBe(true);
       expect(text).toContain("scope 'write' required");
+      expect(logAuditEntry).toHaveBeenCalledWith(
+        'sessions/create',
+        's-create-1',
+        {},
+        undefined,
+        expect.objectContaining({
+          tenantId: 'alice',
+          status: 'error',
+          errorMessage: "Forbidden: scope 'write' required",
+          billable: false,
+        }),
+      );
     });
 
     it('write-scoped tenant that does not own the requested sessionId is rejected', async () => {

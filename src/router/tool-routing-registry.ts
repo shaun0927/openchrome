@@ -10,6 +10,8 @@ const TOOL_ROUTING_MAP: Record<string, ToolRouting> = {
   // Chrome-only tools (visual capabilities)
   computer: 'chrome-only',
   page_pdf: 'chrome-only',
+  // Cross-tab search must inspect the real authenticated Chrome session.
+  tabs_search: 'chrome-only',
 
   // Core tools - prefer-lightpanda
   navigate: 'prefer-lightpanda',
@@ -61,6 +63,8 @@ const TOOL_ROUTING_MAP: Record<string, ToolRouting> = {
   workflow_cleanup: 'prefer-lightpanda',
 };
 
+const VISUAL_TOOLS = new Set(['computer', 'page_pdf']);
+
 export class ToolRoutingRegistry {
   /**
    * Returns the routing preference for a given tool name.
@@ -74,7 +78,7 @@ export class ToolRoutingRegistry {
    * Returns true if the tool requires Chrome (screenshot/PDF capability).
    */
   static isVisualTool(toolName: string): boolean {
-    return TOOL_ROUTING_MAP[toolName] === 'chrome-only';
+    return VISUAL_TOOLS.has(toolName);
   }
 
   /**

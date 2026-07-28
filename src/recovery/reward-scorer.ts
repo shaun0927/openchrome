@@ -62,7 +62,7 @@ const FAILURE_SIGNALS = [
   'no longer available',
 ];
 
-const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context', 'page_content', 'find', 'query_dom', 'inspect']);
+const OBSERVATION_TOOLS = new Set(['read_page', 'tabs_context', 'tabs_search', 'page_content', 'find', 'query_dom', 'inspect']);
 
 export function scoreRecoveryOutcome(input: RecoveryRewardInput): RecoveryRewardScore {
   const reasons: string[] = [];

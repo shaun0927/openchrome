@@ -84,7 +84,7 @@ describe('isAllowed', () => {
   });
 
   it('read-only tools are in READ_TOOLS and NOT in WRITE_TOOLS', () => {
-    for (const t of ['page_screenshot', 'read_page', 'query_dom', 'find', 'wait_for']) {
+    for (const t of ['page_screenshot', 'read_page', 'query_dom', 'find', 'tabs_search', 'wait_for']) {
       expect(READ_TOOLS.has(t)).toBe(true);
       expect(WRITE_TOOLS.has(t)).toBe(false);
     }

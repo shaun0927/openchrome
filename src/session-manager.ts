@@ -28,7 +28,7 @@ import { BrowserRouter } from './router';
 import { BrowserBackend, HybridConfig, RouteReason } from './types/browser-backend';
 import { StorageStateManager } from './storage-state';
 import { StorageStateConfig } from './config';
-import { assertDomainAllowed } from './security/domain-guard';
+import { assertDomainAllowed, DomainPolicyError } from './security/domain-guard';
 import { getTargetId } from './utils/puppeteer-helpers';
 import { safeTitle } from './utils/safe-title';
 import { getMetricsCollector } from './metrics/collector';
@@ -1481,11 +1481,11 @@ export class SessionManager {
 
       return page;
     } catch (error) {
-      // Re-throw domain guard errors — they must not be silently swallowed
-      if (error instanceof Error && (
+      // Re-throw domain guard errors without unregistering a live target.
+      if (error instanceof DomainPolicyError || (error instanceof Error && (
         error.message.includes('blocked by security policy') ||
         error.message.includes('blocked when domain restrictions are active')
-      )) {
+      ))) {
         throw error;
       }
       console.error(`[SessionManager] getPage failed for target ${targetId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);

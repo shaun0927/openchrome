@@ -110,7 +110,7 @@ isolated profile, broker mode, 향후 auto-elect mode)로 이동하라고 안내
 - **검증 가능한 실행** — `oc_assert`가 페이지 상태를 Outcome Contract로 검증 (pass / fail / inconclusive) — 추측 대신 계약.
 
 기본 도구 표면은 내비게이션·상호작용·읽기·추출·병렬 워크플로·계약·스킬·복구·진단에
-걸쳐 118개입니다. 전체 목록: [`docs/agent/capability-map.md`](docs/agent/capability-map.md).
+걸쳐 119개입니다. 전체 목록: [`docs/agent/capability-map.md`](docs/agent/capability-map.md).
 
 ---
 

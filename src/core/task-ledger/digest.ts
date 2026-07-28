@@ -39,6 +39,7 @@ export interface BuildTaskEvidenceDigestOptions {
 const DEFAULT_MAX_EVENTS = 20;
 const DEFAULT_MAX_SUMMARY_CHARS = 240;
 const SECRET_KEY_RE = /(password|passwd|secret|token|api[_-]?key|authorization|cookie)/i;
+const OBSERVATION_TOOLS = new Set(['tabs_search']);
 
 export function buildTaskEvidenceDigest(
   store: TaskStore,
@@ -117,7 +118,7 @@ function categoryFor(tool: string, event: TaskEvent, data: Record<string, unknow
     return explicit as TaskEvidenceCategory;
   }
   if (/navigate|goto|crawl|sitemap/i.test(tool)) return 'navigation';
-  if (/read|snapshot|extract|observe|find|context|console|network/i.test(tool)) return 'observation';
+  if (OBSERVATION_TOOLS.has(tool) || /read|snapshot|extract|observe|find|context|console|network/i.test(tool)) return 'observation';
   if (/assert|verify/i.test(tool)) return 'assertion';
   if (/recover|hint|ralph|handoff/i.test(tool)) return 'recovery';
   if (/interact|click|fill|type|input|act|computer/i.test(tool)) return 'interaction';

@@ -6,6 +6,7 @@ import {
   isInitializedNotification,
   isJsonRpcNotification,
   isServerToClientResponseMessage,
+  MAX_MCP_REQUEST_ID_BYTES,
 } from '../../src/mcp/request-ingress';
 import { PRINCIPAL_SYM } from '../../src/middleware/auth';
 
@@ -24,6 +25,32 @@ describe('mcp request ingress helpers', () => {
         code: -32600,
         message: 'Invalid JSON-RPC 2.0 request: missing jsonrpc or method field',
       },
+    });
+    const oversizedId = 'x'.repeat(MAX_MCP_REQUEST_ID_BYTES + 1);
+    const oversized = buildInvalidJsonRpcRequestResponse({ id: oversizedId });
+    expect(oversized).toMatchObject({ id: null, error: { code: -32600 } });
+    expect(Buffer.byteLength(`data: ${JSON.stringify(oversized)}\n\n`, 'utf8')).toBeLessThan(1_000);
+  });
+
+  test('rejects unsupported or oversized request ids with a null error id', () => {
+    const oversizedId = 'x'.repeat(MAX_MCP_REQUEST_ID_BYTES + 1);
+    const request = { jsonrpc: '2.0', method: 'tools/list' };
+
+    expect(buildInvalidJsonRpcRequestResponse({ ...request, id: oversizedId })).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32600,
+        message: expect.stringContaining('request id'),
+      },
+    });
+    expect(buildInvalidJsonRpcRequestResponse({ ...request, id: { nested: true } })).toMatchObject({
+      id: null,
+      error: { code: -32600 },
+    });
+    expect(buildInvalidJsonRpcRequestResponse({ ...request, id: Number.POSITIVE_INFINITY })).toMatchObject({
+      id: null,
+      error: { code: -32600 },
     });
   });
 

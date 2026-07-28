@@ -30,7 +30,8 @@
       { "path": "cookies[*].value", "mode": "hash" }
     ],
     "fill_form": [
-      { "path": "fields[*].value", "mode": "redactIfSensitiveName" }
+      { "path": "fields[*]", "mode": "redact" },
+      { "path": "refs[*]", "mode": "redact" }
     ],
     "form_input": [
       { "path": "value", "mode": "redact" }
@@ -47,6 +48,9 @@
     ],
     "storage": [
       { "path": "value", "mode": "truncate", "maxBytes": 200 }
+    ],
+    "tabs_search": [
+      { "path": "query", "mode": "hash" }
     ]
   }
 }

@@ -208,7 +208,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
         'request_intercept', 'http_auth', 'user_agent', 'geolocation',
         'emulate_device', 'page_pdf', 'page_content',
         'console_capture', 'performance_metrics', 'file_upload',
-        'batch_execute', 'batch_paginate', 'javascript_tool', 'page_reload',
+        'batch_execute', 'batch_paginate', 'tabs_search', 'javascript_tool', 'page_reload',
         'cookies', 'storage', 'fill_form', 'inspect', 'memory', 'oc_query',
         'oc_checkpoint', 'list_profiles',
         'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
@@ -304,7 +304,7 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       'request_intercept', 'http_auth', 'user_agent', 'geolocation',
       'emulate_device', 'page_pdf', 'page_screenshot', 'page_content',
       'console_capture', 'performance_metrics', 'file_upload',
-      'batch_execute', 'batch_paginate',
+      'batch_execute', 'batch_paginate', 'tabs_search',
       'oc_recording_start', 'oc_recording_stop', 'oc_recording_status', 'oc_recording_list', 'oc_recording_export',
       'crawl', 'crawl_sitemap', 'vision_find', 'extract_data', 'oc_totp_generate',
     ];

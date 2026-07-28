@@ -108,7 +108,7 @@ Ask your agent in plain language — these all map to OpenChrome tools:
 - **Crawling** — async `crawl_start` / `crawl_status` / `crawl_cancel` jobs with cursor pagination.
 - **Verifiable runs** — `oc_assert` checks page state against an Outcome Contract (pass / fail / inconclusive) instead of guessing.
 
-The default surface is 118 tools across navigation, interaction, reading,
+The default surface is 119 tools across navigation, interaction, reading,
 extraction, parallel workflows, contracts, skills, recovery, and diagnostics.
 Full catalogue: [`docs/agent/capability-map.md`](docs/agent/capability-map.md).
 

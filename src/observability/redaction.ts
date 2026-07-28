@@ -77,7 +77,8 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
       { path: 'cookies[*].value', mode: 'hash' },
     ],
     fill_form: [
-      { path: 'fields[*].value', mode: 'redactIfSensitiveName' },
+      { path: 'fields[*]', mode: 'redact' },
+      { path: 'refs[*]', mode: 'redact' },
     ],
     form_input: [
       { path: 'value', mode: 'redact' },
@@ -94,6 +95,9 @@ export const BUILTIN_REDACTION_CONFIG: RedactionConfig = {
     ],
     storage: [
       { path: 'value', mode: 'truncate', maxBytes: 200 },
+    ],
+    tabs_search: [
+      { path: 'query', mode: 'hash' },
     ],
   },
 };

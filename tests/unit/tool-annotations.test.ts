@@ -59,6 +59,7 @@ describe('TOOL_ANNOTATIONS table', () => {
       'find',
       'inspect',
       'tabs_context',
+      'tabs_search',
       'list_profiles',
       'oc_profile_status',
       'oc_get_connection_info',

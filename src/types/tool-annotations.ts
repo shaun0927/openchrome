@@ -69,6 +69,7 @@ export const TOOL_ANNOTATIONS = {
   read_page: READ_ONLY,
   page_content: READ_ONLY,
   tabs_context: READ_ONLY,
+  tabs_search: READ_ONLY,
   list_profiles: READ_ONLY,
   // `console_capture` supports `clear` which deletes buffered logs, plus
   // `start`/`stop` which mutate module-level capture state — destructive

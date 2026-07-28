@@ -348,7 +348,12 @@ export class HTTPTransport implements MCPTransport {
           'anonymous',
           { path: pathname, status: result.status },
           undefined,
-          result.keyId ? { keyId: result.keyId } : undefined,
+          {
+            keyId: result.keyId,
+            status: 'error',
+            errorMessage: result.error,
+            billable: false,
+          },
         );
       } catch {
         // best-effort

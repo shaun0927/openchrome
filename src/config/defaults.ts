@@ -14,6 +14,12 @@ export const DEFAULT_SCREENSHOT_QUALITY = 60;
 /** Maximum characters returned in page content output (read_page, DOM serializer, batch_paginate). */
 export const MAX_OUTPUT_CHARS = 50000;
 
+/** Maximum transport bytes for a tabs_search JSON-RPC response, including SSE framing. */
+export const TABS_SEARCH_MAX_RESPONSE_BYTES = 32_000;
+
+/** Handler-level result budget that reserves room for JSON-RPC and server metadata. */
+export const TABS_SEARCH_MAX_RESULT_BYTES = 30_000;
+
 /** Default browser viewport dimensions. */
 export const DEFAULT_VIEWPORT = { width: 1920, height: 1080 } as const;
 

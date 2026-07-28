@@ -78,6 +78,7 @@ const OBSERVATION_TOOLS: ReadonlySet<string> = new Set([
   'console_log',
   'console_capture',
   'tabs_context',
+  'tabs_search',
   'wait_for',
   'validate_page',
   'find',

@@ -8,6 +8,14 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import type { AddressInfo } from 'node:net';
 
+jest.mock('../../src/security/audit-logger', () => {
+  const actual = jest.requireActual('../../src/security/audit-logger');
+  return { ...actual, logAuditEntry: jest.fn() };
+});
+
+const { logAuditEntry } = require('../../src/security/audit-logger') as {
+  logAuditEntry: jest.Mock;
+};
 // Inline require to avoid TS module resolution issues with dynamic transport loading
 const { HTTPTransport } = require('../../src/transports/http');
 
@@ -140,6 +148,10 @@ describe('HTTP Bearer Token Auth', () => {
   const originalCorsOrigins = process.env.OPENCHROME_HTTP_CORS_ORIGINS;
   const originalAllowUnauthenticated = process.env.OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP;
 
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   afterEach(async () => {
     if (transport) {
       await transport.close();
@@ -184,6 +196,17 @@ describe('HTTP Bearer Token Auth', () => {
         'Authorization': 'Bearer wrong-token',
       }, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }));
       expect(res.status).toBe(401);
+      expect(logAuditEntry).toHaveBeenCalledWith(
+        'auth_failure',
+        'anonymous',
+        { path: '/mcp', status: 401 },
+        undefined,
+        expect.objectContaining({
+          status: 'error',
+          errorMessage: 'Unauthorized',
+          billable: false,
+        }),
+      );
     });
 
     it('returns 200 for /mcp with correct token', async () => {

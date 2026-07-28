@@ -2,7 +2,7 @@
 
 > Generated from `src/tools/index.ts`. Do not edit by hand; run `npm run docs:capability-map`.
 
-Total tools: 118
+Total tools: 119
 
 ## core
 
@@ -94,6 +94,7 @@ Total tools: 118
 - `tabs_close` — Close one or more tabs by tabId, tabIds, or workerId.
 - `tabs_context` — Get session tab IDs grouped by worker.
 - `tabs_create` — Create a new tab with URL.
+- `tabs_search` — Search title, URL, and bounded visible body text across tabs in the selected logical session.
 - `user_agent` — Set or reset browser user agent.
 - `validate_page` — Composite health check: navigate, wait, capture console errors, return structured summary (title, errors, interactive count, body sample).
 - `vision_find` — Find elements using vision-based screenshot analysis.

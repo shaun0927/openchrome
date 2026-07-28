@@ -247,7 +247,7 @@ export function getMetricsCollector(): MetricsCollector {
     instance.registerCounter('openchrome_tool_calls_total', 'Total MCP tool calls');
     instance.registerHistogram('openchrome_tool_duration_seconds', 'Tool call duration in seconds',
       [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120]);
-    instance.registerHistogram('openchrome_tool_output_bytes', 'Final MCP tool result payload size in bytes',
+    instance.registerHistogram('openchrome_tool_output_bytes', 'Final MCP tool output size in bytes; bounded tools include the JSON-RPC transport frame',
       [128, 512, 1024, 4096, 16384, 65536, 262144, 1048576]);
     instance.registerHistogram('openchrome_tool_estimated_tokens', 'Estimated MCP tool result output tokens (chars / 4 heuristic)',
       [32, 128, 256, 1024, 4096, 16384, 65536, 262144]);

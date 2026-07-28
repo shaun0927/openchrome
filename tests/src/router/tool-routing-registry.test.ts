@@ -23,6 +23,11 @@ describe('ToolRoutingRegistry', () => {
     expect(ToolRoutingRegistry.getRouting('read_page')).toBe<ToolRouting>('prefer-lightpanda');
   });
 
+  it('should classify "tabs_search" as chrome-only without treating it as visual', () => {
+    expect(ToolRoutingRegistry.getRouting('tabs_search')).toBe<ToolRouting>('chrome-only');
+    expect(ToolRoutingRegistry.isVisualTool('tabs_search')).toBe(false);
+  });
+
   it('should classify all non-visual tools as prefer-lightpanda', () => {
     const preferLightpandaTools = ToolRoutingRegistry.getPreferLightpandaTools();
     for (const tool of preferLightpandaTools) {
@@ -30,11 +35,12 @@ describe('ToolRoutingRegistry', () => {
     }
   });
 
-  it('should return chrome-only count of exactly 2', () => {
+  it('should return chrome-only count of exactly 3', () => {
     const chromeOnlyTools = ToolRoutingRegistry.getChromeOnlyTools();
-    expect(chromeOnlyTools).toHaveLength(2);
+    expect(chromeOnlyTools).toHaveLength(3);
     expect(chromeOnlyTools).toContain('computer');
     expect(chromeOnlyTools).toContain('page_pdf');
+    expect(chromeOnlyTools).toContain('tabs_search');
   });
 
   it('should return prefer-lightpanda count of at least 31', () => {
@@ -58,6 +64,7 @@ describe('ToolRoutingRegistry', () => {
     expect(ToolRoutingRegistry.isVisualTool('page_pdf')).toBe(true);
     expect(ToolRoutingRegistry.isVisualTool('navigate')).toBe(false);
     expect(ToolRoutingRegistry.isVisualTool('read_page')).toBe(false);
+    expect(ToolRoutingRegistry.isVisualTool('tabs_search')).toBe(false);
     expect(ToolRoutingRegistry.isVisualTool('find')).toBe(false);
     expect(ToolRoutingRegistry.isVisualTool('unknown_tool')).toBe(false);
   });

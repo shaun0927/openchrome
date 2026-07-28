@@ -24,7 +24,7 @@ export interface RunBudgetVerdict {
   };
 }
 
-const OBSERVATION_ONLY_TOOLS = new Set(['read_page', 'page_screenshot', 'screenshot', 'tabs_context', 'find', 'query_dom', 'oc_progress_status']);
+const OBSERVATION_ONLY_TOOLS = new Set(['read_page', 'page_screenshot', 'screenshot', 'tabs_context', 'tabs_search', 'find', 'query_dom', 'oc_progress_status']);
 const BATCH_EXEMPT_TOOLS = new Set(['batch_execute', 'batch_paginate', 'crawl', 'crawl_start', 'crawl_status', 'oc_task_get', 'oc_task_wait', 'oc_task_list']);
 
 export function evaluateRunBudget(record: RunRecord, budget: RunBudget, now = Date.now()): RunBudgetVerdict {

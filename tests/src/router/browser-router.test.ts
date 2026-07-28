@@ -86,6 +86,7 @@ describe('BrowserRouter', () => {
 
     it('should route non-visual tool to Lightpanda when hybrid enabled', async () => {
       MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(false);
+      MockedToolRoutingRegistry.getRouting = jest.fn().mockReturnValue('prefer-lightpanda');
 
       const chromePage = createMockPage();
       const lightpandaPage = createMockPage();
@@ -95,6 +96,24 @@ describe('BrowserRouter', () => {
       expect(result.backend).toBe(BrowserBackend.LIGHTPANDA);
       expect(result.page).toBe(lightpandaPage);
       expect(result.fallback).toBe(false);
+    });
+
+    it('should route non-visual chrome-only tools directly to Chrome', async () => {
+      MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(false);
+      MockedToolRoutingRegistry.getRouting = jest.fn().mockReturnValue('chrome-only');
+
+      const chromePage = createMockPage();
+      const lightpandaPage = createMockPage();
+
+      const result = await router.route('tabs_search', chromePage as any, lightpandaPage as any);
+
+      expect(result).toMatchObject({
+        backend: BrowserBackend.CHROME,
+        page: chromePage,
+        fallback: false,
+        reason: 'chrome-only',
+      });
+      expect(router.getStats()).toMatchObject({ chromeRequests: 1, lightpandaRequests: 0, fallbacks: 0 });
     });
 
     it('should route all tools to Chrome when hybrid disabled', async () => {
@@ -346,6 +365,22 @@ describe('BrowserRouter', () => {
       );
       expect(result.reason).toBe('visual-tool');
       expect(result.backend).toBe(BrowserBackend.CHROME);
+    });
+
+    it('returns reason="chrome-only" for non-visual Chrome tools', async () => {
+      MockedToolRoutingRegistry.isVisualTool = jest.fn().mockReturnValue(false);
+      MockedToolRoutingRegistry.getRouting = jest.fn().mockReturnValue('chrome-only');
+      const chromePage = createMockPage();
+      const lightpandaPage = createMockPage();
+
+      const result = await router.route(
+        'tabs_search',
+        chromePage as any,
+        lightpandaPage as any,
+      );
+      expect(result.reason).toBe('chrome-only');
+      expect(result.backend).toBe(BrowserBackend.CHROME);
+      expect(result.fallback).toBe(false);
     });
 
     it('returns reason="lp-served" when LP page is healthy', async () => {

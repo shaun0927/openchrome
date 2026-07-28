@@ -17,7 +17,8 @@ const cfg: RedactionConfig = {
       { path: 'cookies[*].value', mode: 'hash' },
     ],
     fill_form: [
-      { path: 'fields[*].value', mode: 'redactIfSensitiveName' },
+      { path: 'fields[*]', mode: 'redact' },
+      { path: 'refs[*]', mode: 'redact' },
     ],
     javascript_tool: [
       { path: 'code', mode: 'truncate', maxBytes: 16 },
@@ -40,17 +41,14 @@ describe('redactArgs', () => {
     expect(v).not.toContain('super-secret');
   });
 
-  test('array wildcard rule redacts sensitive field in array', () => {
+  test('object wildcard rules redact actual fill_form field and ref maps', () => {
     const args = {
-      fields: [
-        { name: 'email', value: 'a@b.c' },
-        { name: 'password', value: 'hunter2' },
-      ],
+      fields: { email: 'a@b.c', password: 'hunter2' },
+      refs: { ref_12: 'temporary-code' },
     };
     const out = redactArgs('fill_form', args, cfg);
-    const fields = out.redacted.fields as Array<{ name: string; value: string }>;
-    expect(fields[0].value).toBe('a@b.c');
-    expect(fields[1].value).toBe(REDACTED);
+    expect(out.redacted.fields).toEqual({ email: REDACTED, password: REDACTED });
+    expect(out.redacted.refs).toEqual({ ref_12: REDACTED });
   });
 
   test('built-in config always redacts form_input values', () => {

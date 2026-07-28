@@ -11,7 +11,7 @@ The tool never stops an episode, retries a failed action, restores a checkpoint,
 - `stop_episode` advisory: `consecutiveNonProgress >= 8` or `consecutiveErrors >= 5`.
 - `switch_strategy` advisory: coordinate-click streak, tool oscillation, or repeated same-tool streak.
 
-Observation-only calls such as `read_page`, `tabs_context`, and `computer` screenshots count as non-progress for streak purposes.
+Observation-only calls such as `read_page`, `tabs_context`, `tabs_search`, and `computer` screenshots count as non-progress for streak purposes.
 
 ## Privacy and bounds
 

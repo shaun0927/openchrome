@@ -16,6 +16,7 @@ import { registerFindTool } from './find';
 import { registerFormInputTool } from './form-input';
 import { registerJavascriptTool } from './javascript';
 import { registerTabsContextTool } from './tabs-context';
+import { registerTabsSearchTool } from './tabs-search';
 import { registerTabsCreateTool } from './tabs-create';
 import { registerTabsCloseTool } from './tabs-close';
 import { registerNetworkTool } from './network';
@@ -265,6 +266,7 @@ export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
   request_intercept: 'core',
   tabs_close: 'core',
   tabs_context: 'core',
+  tabs_search: 'core',
   tabs_create: 'core',
   user_agent: 'core',
   validate_page: 'core',
@@ -428,6 +430,7 @@ export function registerAllTools(server: MCPServer): void {
 
   // Tab management
   registerTabsContextTool(proxy);
+  registerTabsSearchTool(proxy);
   registerTabsCreateTool(proxy);
   registerTabsCloseTool(proxy);
 

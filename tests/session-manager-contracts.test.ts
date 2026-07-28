@@ -45,6 +45,8 @@ jest.mock('../src/utils/ref-id-manager', () => ({
 }));
 
 import { SessionManager } from '../src/session-manager';
+import { setGlobalConfig } from '../src/config/global';
+import { DomainPolicyError } from '../src/security/domain-guard';
 
 function page(url: string) {
   return {
@@ -60,6 +62,7 @@ describe('SessionManager ownership and stale-target contracts (#687 Wave 3 prere
     jest.clearAllMocks();
     pages.clear();
     jest.spyOn(console, 'error').mockImplementation(() => {});
+    setGlobalConfig({ security: { blocked_domains: [], allow_hosts: [] } });
     sm = new SessionManager(undefined, {
       autoCleanup: false,
       useConnectionPool: false,
@@ -68,6 +71,7 @@ describe('SessionManager ownership and stale-target contracts (#687 Wave 3 prere
   });
 
   afterEach(() => {
+    setGlobalConfig({ security: { blocked_domains: [], allow_hosts: [] } });
     jest.restoreAllMocks();
   });
 
@@ -115,5 +119,17 @@ describe('SessionManager ownership and stale-target contracts (#687 Wave 3 prere
 
     expect(sm.getTargetOwner('chrome-target')).toBeUndefined();
     expect(sm.getSessionTargetIds('active-session')).toEqual(['known-target']);
+  });
+
+  it('preserves target ownership when domain policy blocks page access', async () => {
+    await sm.createSession({ id: 'policy-session' });
+    await sm.registerExternalTarget('blocked-target', 'policy-session', 'default');
+    pages.set('blocked-target', page('https://blocked.example/path'));
+    setGlobalConfig({ security: { blocked_domains: [], allow_hosts: ['allowed.example'] } });
+
+    await expect(sm.getPage('policy-session', 'blocked-target')).rejects.toBeInstanceOf(DomainPolicyError);
+
+    expect(sm.getTargetOwner('blocked-target')).toEqual({ sessionId: 'policy-session', workerId: 'default' });
+    expect(sm.getSessionTargetIds('policy-session')).toEqual(['blocked-target']);
   });
 });
