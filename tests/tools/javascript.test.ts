@@ -16,6 +16,7 @@ import {
   formatCDPResult,
   JAVASCRIPT_HELPER_INJECTION,
 } from '../../src/tools/javascript';
+import { addTimeoutResponseGraceMs } from '../../src/utils/with-timeout';
 
 describe('JavaScriptTool', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
@@ -30,10 +31,22 @@ describe('JavaScriptTool', () => {
 
     const { registerJavascriptTool } = await import('../../src/tools/javascript');
 
-    const tools: Map<string, { handler: (sessionId: string, args: Record<string, unknown>) => Promise<unknown> }> = new Map();
+    const tools: Map<string, {
+      handler: (
+        sessionId: string,
+        args: Record<string, unknown>,
+        context?: { startTime: number; deadlineMs: number; signal?: AbortSignal },
+      ) => Promise<unknown>;
+    }> = new Map();
     const mockServer = {
       registerTool: (name: string, handler: unknown) => {
-        tools.set(name, { handler: handler as (sessionId: string, args: Record<string, unknown>) => Promise<unknown> });
+        tools.set(name, {
+          handler: handler as (
+            sessionId: string,
+            args: Record<string, unknown>,
+            context?: { startTime: number; deadlineMs: number; signal?: AbortSignal },
+          ) => Promise<unknown>,
+        });
       },
     };
 
@@ -75,7 +88,12 @@ describe('JavaScriptTool', () => {
           returnByValue: false,
           awaitPromise: true,
           userGesture: true,
-        })
+          timeout: 30000,
+        }),
+        expect.objectContaining({
+          timeoutMs: addTimeoutResponseGraceMs(30000),
+          reserveRuntimeEvaluateResponseGrace: true,
+        }),
       );
 
       expect(result.content[0].text).toBe('42');
@@ -481,7 +499,8 @@ describe('JavaScriptTool', () => {
       expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
         expect.anything(),
         'Runtime.evaluate',
-        expect.objectContaining({ awaitPromise: true })
+        expect.objectContaining({ awaitPromise: true }),
+        expect.objectContaining({ reserveRuntimeEvaluateResponseGrace: true }),
       );
 
       expect(result.isError).toBeUndefined();
@@ -503,7 +522,8 @@ describe('JavaScriptTool', () => {
       expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
         expect.anything(),
         'Runtime.evaluate',
-        expect.objectContaining({ awaitPromise: true })
+        expect.objectContaining({ awaitPromise: true }),
+        expect.objectContaining({ reserveRuntimeEvaluateResponseGrace: true }),
       );
 
       expect(result.isError).toBeUndefined();
@@ -525,7 +545,8 @@ describe('JavaScriptTool', () => {
       expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
         expect.anything(),
         'Runtime.evaluate',
-        expect.objectContaining({ awaitPromise: true })
+        expect.objectContaining({ awaitPromise: true }),
+        expect.objectContaining({ reserveRuntimeEvaluateResponseGrace: true }),
       );
 
       expect(result.isError).toBeUndefined();
@@ -559,6 +580,45 @@ describe('JavaScriptTool', () => {
         returnByValue: false,
       });
       expect(mockSender.send).toHaveBeenCalledWith({}, 'Runtime.releaseObject', { objectId: 'promise-1' });
+    });
+
+    test('threads the caller guard into Runtime.awaitPromise', async () => {
+      const controller = new AbortController();
+      const sendOptions = {
+        timeoutMs: 300,
+        deadlineAt: Date.now() + 1_000,
+        signal: controller.signal,
+        reserveRuntimeEvaluateResponseGrace: true,
+      };
+      const mockSender = {
+        send: jest.fn()
+          .mockResolvedValueOnce({ result: { type: 'number', value: 42, description: '42' } })
+          .mockResolvedValue({}),
+      };
+
+      await expect(formatCDPResult(
+        {
+          type: 'object',
+          subtype: 'promise',
+          className: 'Promise',
+          description: 'Promise',
+          objectId: 'promise-guarded',
+        },
+        mockSender,
+        {},
+        0,
+        sendOptions,
+      )).resolves.toBe('42');
+
+      expect(mockSender.send).toHaveBeenCalledWith(
+        {},
+        'Runtime.awaitPromise',
+        {
+          promiseObjectId: 'promise-guarded',
+          returnByValue: false,
+        },
+        sendOptions,
+      );
     });
 
     test('resolves Promise remote object to object output', async () => {
@@ -663,6 +723,125 @@ describe('JavaScriptTool', () => {
   });
 
   describe('Timeout', () => {
+    test('reserves response grace inside a custom timeout', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'number', value: 42, description: '42' },
+      });
+
+      await handler(testSessionId, {
+        tabId: testTargetId,
+        text: '21 * 2',
+        timeout: 250,
+      });
+
+      expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledWith(
+        expect.anything(),
+        'Runtime.evaluate',
+        expect.objectContaining({ timeout: 250 }),
+        expect.objectContaining({
+          timeoutMs: addTimeoutResponseGraceMs(250),
+          reserveRuntimeEvaluateResponseGrace: true,
+        }),
+      );
+    });
+
+    test('threads the absolute parent deadline to the CDP dispatch guard', async () => {
+      const handler = await getJavascriptHandler();
+
+      mockSessionManager.mockCDPClient.send.mockResolvedValueOnce({
+        result: { type: 'number', value: 42, description: '42' },
+      });
+
+      const startTime = Date.now() - 750;
+      await handler(
+        testSessionId,
+        { tabId: testTargetId, text: '21 * 2', timeout: 5_000 },
+        { startTime, deadlineMs: 1_000 },
+      );
+
+      const params = mockSessionManager.mockCDPClient.send.mock.calls[0][2];
+      const options = mockSessionManager.mockCDPClient.send.mock.calls[0][3];
+      expect(params.timeout).toBe(5_000);
+      expect(options).toMatchObject({
+        timeoutMs: addTimeoutResponseGraceMs(5_000),
+        deadlineAt: startTime + 1_000,
+        reserveRuntimeEvaluateResponseGrace: true,
+      });
+    });
+
+    test('shares one timeout window with Runtime.awaitPromise formatting', async () => {
+      const handler = await getJavascriptHandler();
+      jest.useFakeTimers({ now: 10_000 });
+      try {
+        mockSessionManager.mockCDPClient.send
+          .mockImplementationOnce(() => new Promise((resolve) => {
+            setTimeout(() => resolve({
+              result: {
+                type: 'object',
+                subtype: 'promise',
+                className: 'Promise',
+                description: 'Promise',
+                objectId: 'pending-promise',
+              },
+            }), 250);
+          }))
+          .mockImplementationOnce(() => new Promise(() => {}));
+
+        let settled = false;
+        const resultPromise = handler(testSessionId, {
+          tabId: testTargetId,
+          text: 'new Promise(() => {})',
+          timeout: 250,
+        }).then((result) => {
+          settled = true;
+          return result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+        });
+
+        await jest.advanceTimersByTimeAsync(299);
+        expect(settled).toBe(false);
+        await jest.advanceTimersByTimeAsync(2);
+
+        const result = await resultPromise;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain('Promise resolution timed out');
+        expect(mockSessionManager.mockCDPClient.send).toHaveBeenCalledTimes(2);
+        expect(mockSessionManager.mockCDPClient.send.mock.calls[0][3].deadlineAt).toBe(10_300);
+        expect(mockSessionManager.mockCDPClient.send.mock.calls[1][3].deadlineAt).toBe(10_300);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('does not dispatch JavaScript after the parent budget is exhausted', async () => {
+      const handler = await getJavascriptHandler();
+
+      const result = await handler(
+        testSessionId,
+        { tabId: testTargetId, text: 'window.__shouldNotRun = true', timeout: 5_000 },
+        { startTime: Date.now() - 2_000, deadlineMs: 1_000 },
+      ) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('deadline exceeded');
+      expect(mockSessionManager.mockCDPClient.send).not.toHaveBeenCalled();
+    });
+
+    test('rejects a negative timeout without dispatching JavaScript', async () => {
+      const handler = await getJavascriptHandler();
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        text: 'window.__shouldNotRun = true',
+        timeout: -1,
+      }) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('positive finite number');
+      expect(mockSessionManager.mockCDPClient.send).not.toHaveBeenCalled();
+    });
+
     test('handles timeout', async () => {
       const handler = await getJavascriptHandler();
 

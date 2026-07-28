@@ -230,6 +230,21 @@ cancellation (propagating the signal into specific CDP/Puppeteer calls and
 reconciling page state afterward) is a **future improvement, not part of the
 contract**.
 
+**Narrow best-effort exception.** User-supplied synchronous JavaScript sent by
+`javascript_tool` and `batch_execute` may pass the remaining tool budget to
+CDP `Runtime.evaluate.timeout`. The requested/default execution timeout is
+forwarded unchanged when the parent deadline has room for a small bounded
+response grace. If the parent deadline is tighter, the execution timeout is
+capped immediately before dispatch so Chrome can terminate CPU-bound evaluation
+and report the result before the caller-side guard wins. Session acquisition
+time is included in that calculation, and follow-up `Runtime.awaitPromise`
+formatting reuses the same absolute invocation deadline rather than starting a
+second timeout window. This does not roll back completed side
+effects or cancel unresolved promises, timers, fetches, workers, or other CDP
+operations. The general D5 contract therefore remains unchanged.
+`Runtime.evaluate.timeout` is an experimental CDP field; unsupported endpoints
+fail boundedly, with no fallback dispatch and no replay of user JavaScript.
+
 ---
 
 ## Still open

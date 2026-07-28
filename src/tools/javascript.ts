@@ -7,8 +7,27 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, throwIfAborted 
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
-import { withTimeout } from '../utils/with-timeout';
+import { OpenChromeTimeoutError } from '../errors/timeout';
+import {
+  addTimeoutResponseGraceMs,
+  getEffectiveTimeoutMs,
+  getRemainingTimeoutMs,
+  getTimeoutDeadlineAt,
+  withTimeout,
+} from '../utils/with-timeout';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+
+export const DEFAULT_JAVASCRIPT_TIMEOUT_MS = 30_000;
+
+export function normalizeJavascriptTimeoutMs(value: unknown): number {
+  if (value === undefined || value === null || value === 0) {
+    return DEFAULT_JAVASCRIPT_TIMEOUT_MS;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error('timeout must be a positive finite number');
+  }
+  return value;
+}
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',
@@ -53,6 +72,13 @@ export interface CDPEvalResult {
   };
 }
 
+export interface JavascriptCDPSendOptions {
+  timeoutMs?: number;
+  deadlineAt?: number;
+  signal?: AbortSignal;
+  reserveRuntimeEvaluateResponseGrace?: boolean;
+}
+
 /**
  * Interface for the CDP client needed by formatCDPResult to do lazy value fetching.
  */
@@ -60,7 +86,8 @@ export interface CDPSender {
   send<T = unknown>(
     page: unknown,
     method: string,
-    params?: Record<string, unknown>
+    params?: Record<string, unknown>,
+    options?: JavascriptCDPSendOptions,
   ): Promise<T>;
 }
 
@@ -169,7 +196,8 @@ export async function formatCDPResult(
   evalResult: CDPEvalResult['result'],
   cdpClient?: CDPSender,
   page?: unknown,
-  promiseDepth = 0
+  promiseDepth = 0,
+  sendOptions?: JavascriptCDPSendOptions,
 ): Promise<string> {
   const { type, subtype, value, description, className, objectId } = evalResult;
 
@@ -205,14 +233,13 @@ export async function formatCDPResult(
       }
 
       try {
-        const awaited = await cdpClient.send<CDPEvalResult>(
-          page,
-          'Runtime.awaitPromise',
-          {
-            promiseObjectId: objectId,
-            returnByValue: false,
-          }
-        );
+        const awaitParams = {
+          promiseObjectId: objectId,
+          returnByValue: false,
+        };
+        const awaited = await (sendOptions
+          ? cdpClient.send<CDPEvalResult>(page, 'Runtime.awaitPromise', awaitParams, sendOptions)
+          : cdpClient.send<CDPEvalResult>(page, 'Runtime.awaitPromise', awaitParams));
         releasePromise();
 
         if (awaited.exceptionDetails) {
@@ -223,7 +250,7 @@ export async function formatCDPResult(
           throw new Error(`Runtime.awaitPromise rejected: ${errorMsg}`);
         }
 
-        return formatCDPResult(awaited.result, cdpClient, page, promiseDepth + 1);
+        return formatCDPResult(awaited.result, cdpClient, page, promiseDepth + 1, sendOptions);
       } catch (error) {
         releasePromise();
         throw new Error(`Runtime.awaitPromise failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -295,16 +322,15 @@ export async function formatCDPResult(
   // Plain objects and arrays: lazy-fetch via CDP callFunctionOn to serialize
   if (type === 'object' && objectId && cdpClient && page) {
     try {
-      const serialized = await cdpClient.send<{ result: { value?: unknown } }>(
-        page,
-        'Runtime.callFunctionOn',
-        {
-          objectId,
-          functionDeclaration:
-            'function() { try { return JSON.stringify(this, null, 2); } catch(e) { return String(this); } }',
-          returnByValue: true,
-        }
-      );
+      const serializeParams = {
+        objectId,
+        functionDeclaration:
+          'function() { try { return JSON.stringify(this, null, 2); } catch(e) { return String(this); } }',
+        returnByValue: true,
+      };
+      const serialized = await (sendOptions
+        ? cdpClient.send<{ result: { value?: unknown } }>(page, 'Runtime.callFunctionOn', serializeParams, sendOptions)
+        : cdpClient.send<{ result: { value?: unknown } }>(page, 'Runtime.callFunctionOn', serializeParams));
       releaseObject(cdpClient, page, objectId);
       if (serialized.result?.value !== undefined) {
         return String(serialized.result.value);
@@ -356,7 +382,6 @@ const handler: ToolHandler = async (
   throwIfAborted(context);
   const tabId = args.tabId as string;
   const code = (args.code as string) || (args.text as string);
-  const timeout = (args.timeout as number) || 30000;
 
   const sessionManager = getSessionManager();
 
@@ -382,6 +407,7 @@ const handler: ToolHandler = async (
   }
 
   try {
+    const timeout = normalizeJavascriptTimeoutMs(args.timeout);
     const page = await sessionManager.getPage(sessionId, tabId, undefined, 'javascript_tool');
     if (!page) {
       const available = await sessionManager.getAvailableTargets(sessionId);
@@ -398,6 +424,19 @@ const handler: ToolHandler = async (
     assertDomainAllowed(page.url());
 
     const cdpClient = sessionManager.getCDPClient();
+    const commandTimeoutMs = addTimeoutResponseGraceMs(timeout);
+    const effectiveTimeoutMs = getEffectiveTimeoutMs(commandTimeoutMs, context);
+    if (effectiveTimeoutMs <= 0) {
+      throw new OpenChromeTimeoutError('javascript_tool', 0, false, true);
+    }
+    throwIfAborted(context);
+    const invocationDeadlineAt = getTimeoutDeadlineAt(commandTimeoutMs, context);
+    const sendOptions: JavascriptCDPSendOptions = {
+      timeoutMs: commandTimeoutMs,
+      deadlineAt: invocationDeadlineAt,
+      signal: context?.signal,
+      reserveRuntimeEvaluateResponseGrace: true,
+    };
 
     const cdpResult = await withTimeout(
       cdpClient.send<CDPEvalResult>(page, 'Runtime.evaluate', {
@@ -406,8 +445,9 @@ const handler: ToolHandler = async (
         awaitPromise: true,
         userGesture: true,
         replMode: true,
-      }),
-      timeout,
+        timeout,
+      }, sendOptions),
+      commandTimeoutMs,
       'javascript_tool',
       context,
     );
@@ -427,7 +467,16 @@ const handler: ToolHandler = async (
       };
     }
 
-    const output = await formatCDPResult(cdpResult.result, cdpClient, page);
+    const formattingTimeoutMs = getRemainingTimeoutMs(invocationDeadlineAt);
+    if (formattingTimeoutMs <= 0) {
+      throw new OpenChromeTimeoutError('javascript_tool Promise resolution', 0, false, true);
+    }
+    const output = await withTimeout(
+      formatCDPResult(cdpResult.result, cdpClient, page, 0, sendOptions),
+      formattingTimeoutMs,
+      'javascript_tool Promise resolution',
+      context,
+    );
 
     return {
       content: [{ type: 'text', text: output }],
