@@ -9,6 +9,11 @@ import { Session, SessionInfo, SessionCreateOptions, SessionEvent, Worker, Worke
 import { TargetOwnershipRegistry } from './session/target-registry';
 import { TargetLeaseConflictError, TargetLeaseRegistry, type TargetLeaseRecord } from './session/target-lease-registry';
 import { TargetQueueManager } from './session/target-command-queue';
+import {
+  TargetCreationLedger,
+  type OpenedTabFact,
+  type TargetCreationQueryResult,
+} from './session/target-creation-ledger';
 import { CDPClient, getCDPClient, CDPClientFactory, getCDPClientFactory } from './cdp/client';
 import { CDPConnectionPool, getCDPConnectionPool, PoolStats } from './cdp/connection-pool';
 import { ChromePool, getChromePool } from './chrome/pool';
@@ -104,6 +109,17 @@ export interface SessionManagerStats {
   connectionPool?: PoolStats;
 }
 
+export interface ExternalTargetRegistrationOptions {
+  inheritContextFromTargetId?: string;
+  openerTargetId?: string;
+}
+
+export interface PopupTargetRegistrationOptions {
+  state: 'provisional' | 'ready' | 'blocked';
+  url?: string;
+  title?: string;
+}
+
 const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'strictTenantIsolation'>> = {
   sessionTTL: 30 * 60 * 1000,      // 30 minutes
   cleanupInterval: 60 * 1000,       // 1 minute
@@ -140,6 +156,8 @@ export class SessionManager {
   private cdpFactory: CDPClientFactory;
   private queueManager: RequestQueueManager;
   private targetQueueManager = new TargetQueueManager();
+  private targetCreationLedger = new TargetCreationLedger();
+  private targetLifecycleClients = new WeakSet<CDPClient>();
   private eventListeners: ((event: SessionEvent) => void)[] = [];
   private browserRouter: BrowserRouter | null = null;
   /**
@@ -159,7 +177,9 @@ export class SessionManager {
   private storageStateManagers = new Map<string, StorageStateManager>();
   private storageStateConfig: StorageStateConfig | null = null;
   private pendingCreations = new Map<string, Promise<Session>>();
-  private externalTargetRegistrationLocks = new Map<string, Promise<void>>();
+  private externalTargetRegistrationLocks = new Map<string, Promise<boolean>>();
+  private deletingSessions = new Set<string>();
+  private deletingWorkers = new Set<string>();
 
   // Stealth mode tracking — targets opened via createTargetStealth
   private stealthTargets = new Set<string>();
@@ -197,10 +217,7 @@ export class SessionManager {
       this.startAutoCleanup();
     }
 
-    // Register target destroyed listener
-    this.cdpClient.addTargetDestroyedListener((targetId) => {
-      this.onTargetClosed(targetId);
-    });
+    this.bindTargetLifecycle(this.cdpClient);
 
     // Validate stale targets after reconnection
     this.cdpClient.addConnectionListener((event) => {
@@ -250,6 +267,14 @@ export class SessionManager {
     try { return new URL(url).origin; } catch { return undefined; }
   }
 
+  private bindTargetLifecycle(client: CDPClient): void {
+    if (this.targetLifecycleClients.has(client)) return;
+    this.targetLifecycleClients.add(client);
+    client.addTargetDestroyedListener((targetId) => {
+      this.onTargetClosed(targetId);
+    });
+  }
+
   /**
    * Get the CDPClient for a specific worker (may be on a different Chrome instance)
    */
@@ -257,8 +282,12 @@ export class SessionManager {
     const worker = this.getWorker(sessionId, workerId);
     if (worker?.port) {
       const client = this.cdpFactory.get(worker.port);
-      if (client) return client;
+      if (client) {
+        this.bindTargetLifecycle(client);
+        return client;
+      }
     }
+    this.bindTargetLifecycle(this.cdpClient);
     return this.cdpClient;
   }
 
@@ -310,6 +339,32 @@ export class SessionManager {
 
   getTargetQueueStats(): ReturnType<TargetQueueManager['getStats']> {
     return this.targetQueueManager.getStats();
+  }
+
+  getTargetCreationCursor(): number {
+    return this.targetCreationLedger.getCursor();
+  }
+
+  hasTargetCreationRecord(targetId: string): boolean {
+    return this.targetCreationLedger.has(targetId);
+  }
+
+  markPopupTargetReady(targetId: string, metadata: { url?: string; title?: string }): boolean {
+    return this.targetCreationLedger.markReady(targetId, metadata);
+  }
+
+  markPopupTargetBlocked(targetId: string): boolean {
+    return this.targetCreationLedger.markBlocked(targetId);
+  }
+
+  getOpenedTabsAfter(input: {
+    afterSequence: number;
+    sessionId: string;
+    workerId: string;
+    openerTargetId: string;
+    limit?: number;
+  }): TargetCreationQueryResult & { tabs: OpenedTabFact[] } {
+    return this.targetCreationLedger.query(input);
   }
 
   getTargetDiagnostics(tenantId: TenantId = DEFAULT_TENANT_ID): { leases: Array<Record<string, unknown>>; queues: Array<Record<string, unknown>> } {
@@ -640,6 +695,7 @@ export class SessionManager {
     if (!session) {
       return;
     }
+    this.deletingSessions.add(sessionId);
 
     // Save storage state before cleanup (save first, then stop watchdog).
     // #848: flush ONE representative tab per named context so per-context
@@ -680,10 +736,12 @@ export class SessionManager {
 
     // Clean up ref IDs
     getRefIdManager().clearSessionRefs(sessionId);
+    this.targetCreationLedger.clearSession(sessionId);
 
     // Remove session
     this.sessions.delete(sessionId);
     this.targetLeases.releaseSession(sessionId);
+    this.deletingSessions.delete(sessionId);
     this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
     this.emitLifecycle({ kind: 'session:destroy', sessionId, reason, ts: Date.now() });
 
@@ -820,6 +878,7 @@ export class SessionManager {
         const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
           autoLaunch: getGlobalConfig().autoLaunch,
         });
+        this.bindTargetLifecycle(workerCdpClient);
         if (!workerCdpClient.isConnected()) {
           await workerCdpClient.connect();
         }
@@ -836,6 +895,7 @@ export class SessionManager {
         const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
           autoLaunch: false,
         });
+        this.bindTargetLifecycle(workerCdpClient);
         if (!workerCdpClient.isConnected()) {
           await workerCdpClient.connect();
         }
@@ -856,6 +916,7 @@ export class SessionManager {
           const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
             autoLaunch: getGlobalConfig().autoLaunch,
           });
+          this.bindTargetLifecycle(workerCdpClient);
           if (!workerCdpClient.isConnected()) {
             await workerCdpClient.connect();
           }
@@ -1000,6 +1061,8 @@ export class SessionManager {
   private async deleteWorkerInternal(session: Session, workerId: string): Promise<void> {
     const worker = session.workers.get(workerId);
     if (!worker) return;
+    const deletionKey = `${session.id}:${workerId}`;
+    this.deletingWorkers.add(deletionKey);
 
     // Determine which CDPClient to use for this worker
     const workerCdpClient = worker.port
@@ -1055,7 +1118,9 @@ export class SessionManager {
       getRefIdManager().clearTargetRefs(session.id, targetId);
     }
 
+    this.targetCreationLedger.clearWorker(session.id, workerId);
     session.workers.delete(workerId);
+    this.deletingWorkers.delete(deletionKey);
     console.error(`[SessionManager] Deleted worker ${workerId} from session ${session.id}`);
   }
 
@@ -1614,11 +1679,66 @@ export class SessionManager {
    */
   async registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): Promise<void> {
     // Register target ownership (no parent — headed pages are top-level navigations).
-    await this.registerExternalTarget(targetId, sessionId, workerId);
+    const registered = await this.registerExternalTarget(targetId, sessionId, workerId);
+    if (!registered) return;
 
     // Inject the page into the main CDPClient's index so getPageByTargetId()
     // returns it and the stale-target guards in getCDPSession()/send() pass.
     this.cdpClient.indexExternalPage(targetId, page);
+  }
+
+  /**
+   * Register a page target opened by an already-managed opener.
+   *
+   * The opener owner and creation sequence are captured synchronously before
+   * the worker-level registration lock is awaited. Registration later
+   * revalidates the opener so a close/delete race cannot transfer the child to
+   * an unrelated owner.
+   */
+  async registerPopupTarget(
+    targetId: string,
+    openerTargetId: string,
+    options: PopupTargetRegistrationOptions,
+  ): Promise<boolean> {
+    const ownerInfo = this.targetToWorker.get(openerTargetId);
+    if (!ownerInfo) return false;
+    if (
+      this.deletingSessions.has(ownerInfo.sessionId) ||
+      this.deletingWorkers.has(`${ownerInfo.sessionId}:${ownerInfo.workerId}`)
+    ) return false;
+
+    this.targetCreationLedger.register({
+      targetId,
+      sessionId: ownerInfo.sessionId,
+      workerId: ownerInfo.workerId,
+      openerTargetId,
+      state: options.state,
+      url: options.url,
+      title: options.title,
+      ownershipCommitted: false,
+    });
+
+    if (options.state === 'blocked') return false;
+
+    const registered = await this.registerExternalTarget(
+      targetId,
+      ownerInfo.sessionId,
+      ownerInfo.workerId,
+      {
+        inheritContextFromTargetId: openerTargetId,
+        openerTargetId,
+      },
+    );
+    if (!registered) {
+      this.targetCreationLedger.markBlocked(targetId);
+      return false;
+    }
+
+    if (!this.targetCreationLedger.markOwnershipCommitted(targetId)) {
+      this.onTargetClosed(targetId);
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -1635,17 +1755,17 @@ export class SessionManager {
     targetId: string,
     sessionId: string,
     workerId: string,
-    opts?: { inheritContextFromTargetId?: string },
-  ): Promise<void> {
+    opts?: ExternalTargetRegistrationOptions,
+  ): Promise<boolean> {
     const lockKey = `${sessionId}:${workerId}`;
-    const previous = this.externalTargetRegistrationLocks.get(lockKey) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() =>
+    const previous = this.externalTargetRegistrationLocks.get(lockKey) ?? Promise.resolve(false);
+    const next = previous.catch(() => false).then(() =>
       this.registerExternalTargetLocked(targetId, sessionId, workerId, opts),
     );
 
     this.externalTargetRegistrationLocks.set(lockKey, next);
     try {
-      await next;
+      return await next;
     } finally {
       if (this.externalTargetRegistrationLocks.get(lockKey) === next) {
         this.externalTargetRegistrationLocks.delete(lockKey);
@@ -1657,16 +1777,35 @@ export class SessionManager {
     targetId: string,
     sessionId: string,
     workerId: string,
-    opts?: { inheritContextFromTargetId?: string },
-  ): Promise<void> {
+    opts?: ExternalTargetRegistrationOptions,
+  ): Promise<boolean> {
+    if (this.deletingSessions.has(sessionId) || this.deletingWorkers.has(`${sessionId}:${workerId}`)) {
+      return false;
+    }
+    if (opts?.openerTargetId && !this.targetCreationLedger.canCommitOwnership(targetId)) {
+      return false;
+    }
     // Don't overwrite existing entries
-    if (this.targetToWorker.has(targetId)) return;
+    const existingOwner = this.targetToWorker.get(targetId);
+    if (existingOwner) {
+      return existingOwner.sessionId === sessionId && existingOwner.workerId === workerId;
+    }
 
     const session = this.sessions.get(sessionId);
-    if (!session) return;
+    if (!session) return false;
 
     const worker = session.workers.get(workerId);
-    if (!worker) return;
+    if (!worker) return false;
+
+    if (opts?.openerTargetId) {
+      const openerOwner = this.targetToWorker.get(opts.openerTargetId);
+      if (openerOwner?.sessionId !== sessionId || openerOwner.workerId !== workerId) return false;
+      if (!this.targetCreationLedger.canCommitOwnership(targetId)) return false;
+    }
+
+    const inheritedContext = opts?.inheritContextFromTargetId
+      ? this.targetToContext.get(opts.inheritContextFromTargetId)
+      : undefined;
 
     // Enforce per-worker tab limit for externally-created targets too
     // (popups, headed fallback pages, and other out-of-band registrations).
@@ -1675,11 +1814,24 @@ export class SessionManager {
     // wrapper serializes this block per worker so concurrent popups cannot all
     // close the same oldest target and then overfill the worker.
     if (worker.targets.size >= this.config.maxTargetsPerWorker) {
-      const oldestTargetId = worker.targets.values().next().value;
+      const oldestTargetId = Array.from(worker.targets).find((candidate) => candidate !== opts?.openerTargetId);
       if (oldestTargetId) {
         console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest external tab ${oldestTargetId}`);
         await this.closeTarget(sessionId, oldestTargetId);
+      } else {
+        return false;
       }
+    }
+
+    if (
+      this.deletingSessions.has(sessionId) ||
+      this.deletingWorkers.has(`${sessionId}:${workerId}`) ||
+      this.sessions.get(sessionId) !== session ||
+      session.workers.get(workerId) !== worker
+    ) return false;
+    if (opts?.openerTargetId) {
+      const openerOwner = this.targetToWorker.get(opts.openerTargetId);
+      if (openerOwner?.sessionId !== sessionId || openerOwner.workerId !== workerId) return false;
     }
 
     worker.targets.add(targetId);
@@ -1690,12 +1842,9 @@ export class SessionManager {
     // #848 Codex P1: inherit named-context mapping from the opener so popup
     // tab accounting matches the parent. Skip when the parent lives in the
     // default BrowserContext (no entry in `targetToContext`).
-    if (opts?.inheritContextFromTargetId) {
-      const parent = this.targetToContext.get(opts.inheritContextFromTargetId);
-      if (parent) {
-        this.targetToContext.set(targetId, { browser: parent.browser, name: parent.name });
-        this.namedContextRegistry.incrementTabCount(parent.browser, parent.name);
-      }
+    if (inheritedContext) {
+      this.targetToContext.set(targetId, { browser: inheritedContext.browser, name: inheritedContext.name });
+      this.namedContextRegistry.incrementTabCount(inheritedContext.browser, inheritedContext.name);
     }
 
     this.emitEvent({
@@ -1709,6 +1858,7 @@ export class SessionManager {
 
     this.touchSession(sessionId);
     console.error(`[SessionManager] Registered external target ${targetId} in worker ${workerId} of session ${sessionId}`);
+    return true;
   }
 
   /**
@@ -1725,6 +1875,7 @@ export class SessionManager {
     }
 
     try {
+      this.targetCreationLedger.markClosed(targetId);
       // Close the page via CDP (use worker's CDPClient if on pool)
       const cdpClient = this.getCDPClientForWorker(sessionId, ownerInfo.workerId);
 
@@ -1812,6 +1963,30 @@ export class SessionManager {
   }
 
   /**
+   * Serialize an arbitrary mutation/observation window for one managed target.
+   * Different target IDs retain independent queues and continue in parallel.
+   */
+  async runTargetExclusive<T>(
+    sessionId: string,
+    targetId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    if (!this.validateTargetOwnership(sessionId, targetId)) {
+      throw new Error(this.buildStaleTargetError(sessionId, targetId));
+    }
+
+    this.touchSession(sessionId);
+    this.targetLeases.touch(targetId);
+
+    return this.targetQueueManager.enqueue(targetId, async () => {
+      if (!this.validateTargetOwnership(sessionId, targetId)) {
+        throw new Error(this.buildStaleTargetError(sessionId, targetId));
+      }
+      return fn();
+    });
+  }
+
+  /**
    * Execute a CDP command through the session's queue
    */
   async executeCDP<T = unknown>(
@@ -1820,21 +1995,11 @@ export class SessionManager {
     method: string,
     params?: Record<string, unknown>
   ): Promise<T> {
-    if (!this.validateTargetOwnership(sessionId, targetId)) {
-      throw new Error(this.buildStaleTargetError(sessionId, targetId));
-    }
-
-    this.touchSession(sessionId);
-    // Slide the target lease forward on activity so an actively used tab is never
-    // reclaimed by the idle-TTL sweep (#1359 backlog item 7).
-    this.targetLeases.touch(targetId);
-
-    const ownerInfo = this.targetToWorker.get(targetId);
-    const cdpClient = ownerInfo
-      ? this.getCDPClientForWorker(sessionId, ownerInfo.workerId)
-      : this.cdpClient;
-
-    return this.targetQueueManager.enqueue(targetId, async () => {
+    return this.runTargetExclusive(sessionId, targetId, async () => {
+      const ownerInfo = this.targetToWorker.get(targetId);
+      const cdpClient = ownerInfo
+        ? this.getCDPClientForWorker(sessionId, ownerInfo.workerId)
+        : this.cdpClient;
       const page = await cdpClient.getPageByTargetId(targetId);
       if (!page) {
         throw new Error(`Page not found for target ${targetId}`);
@@ -1848,9 +2013,10 @@ export class SessionManager {
    */
   onTargetClosed(targetId: string): void {
     flushRecorderBuffer(targetId);
+    this.targetCreationLedger.markClosed(targetId);
     const ownerInfo = this.targetToWorker.get(targetId);
+    const session = ownerInfo ? this.sessions.get(ownerInfo.sessionId) : undefined;
     if (ownerInfo) {
-      const session = this.sessions.get(ownerInfo.sessionId);
       if (session) {
         const worker = session.workers.get(ownerInfo.workerId);
         if (worker) {
@@ -1859,23 +2025,6 @@ export class SessionManager {
 
         // Clean up ref IDs before removing from targetToWorker mapping
         getRefIdManager().clearTargetRefs(ownerInfo.sessionId, targetId);
-
-        this.targetToWorker.delete(targetId);
-        this.targetLeases.release(targetId, ownerInfo.sessionId);
-        this.targetQueueManager.cancelTarget(targetId);
-        this.stealthTargets.delete(targetId);
-        this.lastRoutingByTarget.delete(targetId);
-
-        // #848: drop the named-context association and let the registry
-        // GC the BrowserContext when the last tab closes AND no
-        // oc_session_resume token still pins it.
-        const ctxEntry = this.targetToContext.get(targetId);
-        if (ctxEntry) {
-          this.targetToContext.delete(targetId);
-          this.namedContextRegistry.decrementTabCount(ctxEntry.browser, ctxEntry.name).catch((err) => {
-            console.error(`[SessionManager] decrementTabCount(${ctxEntry.name}) failed:`, err);
-          });
-        }
 
         this.emitEvent({
           type: 'session:target-removed',
@@ -1886,6 +2035,22 @@ export class SessionManager {
         });
         this.emitLifecycle({ kind: 'target:close', sessionId: ownerInfo.sessionId, workerId: ownerInfo.workerId, targetId, ts: Date.now() });
       }
+    }
+
+    this.targetToWorker.delete(targetId);
+    this.targetLeases.release(targetId, ownerInfo?.sessionId);
+    this.targetQueueManager.cancelTarget(targetId);
+    this.stealthTargets.delete(targetId);
+    this.lastRoutingByTarget.delete(targetId);
+
+    // #848: drop the named-context association and let the registry GC the
+    // BrowserContext when the last tab closes and no resume token pins it.
+    const ctxEntry = this.targetToContext.get(targetId);
+    if (ctxEntry) {
+      this.targetToContext.delete(targetId);
+      this.namedContextRegistry.decrementTabCount(ctxEntry.browser, ctxEntry.name).catch((err) => {
+        console.error(`[SessionManager] decrementTabCount(${ctxEntry.name}) failed:`, err);
+      });
     }
   }
 
@@ -2083,6 +2248,7 @@ export class SessionManager {
         // Update targetToWorker mapping
         this.targetToWorker.delete(targetId);
         this.targetToWorker.set(newTargetId, ownerInfo);
+        this.targetCreationLedger.remapTargetId(targetId, newTargetId);
         // #1359 backlog item 3: reconcileAliveTargetIds above already dropped
         // the old targetId from the lease registry. Acquire a fresh lease
         // for the re-mapped targetId so diagnostics and cleanup observe the
@@ -2116,6 +2282,7 @@ export class SessionManager {
       this.onTargetClosed(targetId);
       removed++;
     }
+    this.targetCreationLedger.reconcileAliveTargetIds(aliveTargetIds);
 
     // Rebuild the CDP client's targetIdIndex from surviving targets.
     // The index was cleared during disconnect (handleDisconnect / forceReconnect)

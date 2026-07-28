@@ -6,6 +6,7 @@
 
 import { Page } from 'puppeteer-core';
 import { createMockPage, createMockCDPClient } from './mock-cdp';
+import { TargetCreationLedger } from '../../src/session/target-creation-ledger';
 
 export interface MockWorker {
   id: string;
@@ -45,6 +46,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
   const targetToWorker: Map<string, { sessionId: string; workerId: string }> = new Map();
   const pages: Map<string, Page> = new Map();
   const mockCDPClient = createMockCDPClient();
+  const targetCreationLedger = new TargetCreationLedger();
 
   // Initialize with provided sessions
   if (options.initialSessions) {
@@ -114,6 +116,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
             targetToWorker.delete(targetId);
           }
         }
+        targetCreationLedger.clearSession(sessionId);
         sessions.delete(sessionId);
       }
     }),
@@ -186,6 +189,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
           pages.delete(targetId);
           targetToWorker.delete(targetId);
         }
+        targetCreationLedger.clearWorker(sessionId, workerId);
         session.workers.delete(workerId);
       }
     }),
@@ -200,14 +204,55 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
 
     registerExternalTarget: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string) => {
       const session = sessions.get(sessionId);
-      if (!session) return;
+      if (!session) return false;
       const worker = session.workers.get(workerId);
-      if (!worker) return;
-      if (targetToWorker.has(targetId)) return;
+      if (!worker) return false;
+      if (targetToWorker.has(targetId)) return true;
       worker.targets.add(targetId);
       worker.lastActivityAt = Date.now();
       targetToWorker.set(targetId, { sessionId, workerId });
+      return true;
     }),
+
+    registerPopupTarget: jest.fn().mockImplementation(async (
+      targetId: string,
+      openerTargetId: string,
+      options: { state: 'provisional' | 'ready' | 'blocked'; url?: string; title?: string },
+    ) => {
+      const owner = targetToWorker.get(openerTargetId);
+      if (!owner) return false;
+      targetCreationLedger.register({
+        targetId,
+        sessionId: owner.sessionId,
+        workerId: owner.workerId,
+        openerTargetId,
+        state: options.state,
+        url: options.url,
+        title: options.title,
+        ownershipCommitted: false,
+      });
+      if (options.state === 'blocked') return false;
+      const registered = await manager.registerExternalTarget(targetId, owner.sessionId, owner.workerId);
+      if (!registered) {
+        targetCreationLedger.markBlocked(targetId);
+        return false;
+      }
+      return targetCreationLedger.markOwnershipCommitted(targetId);
+    }),
+
+    getTargetCreationCursor: jest.fn().mockImplementation(() => targetCreationLedger.getCursor()),
+    hasTargetCreationRecord: jest.fn().mockImplementation((targetId: string) => targetCreationLedger.has(targetId)),
+    markPopupTargetReady: jest.fn().mockImplementation((targetId: string, metadata: { url?: string; title?: string }) =>
+      targetCreationLedger.markReady(targetId, metadata)),
+    markPopupTargetBlocked: jest.fn().mockImplementation((targetId: string) => targetCreationLedger.markBlocked(targetId)),
+    getOpenedTabsAfter: jest.fn().mockImplementation((input: {
+      afterSequence: number;
+      sessionId: string;
+      workerId: string;
+      openerTargetId: string;
+      limit?: number;
+    }) => targetCreationLedger.query(input)),
+    runTargetExclusive: jest.fn().mockImplementation(async (_sessionId: string, _targetId: string, fn: () => Promise<unknown>) => fn()),
 
     registerHeadedPage: jest.fn().mockImplementation((targetId: string, sessionId: string, workerId: string, page: Page) => {
       manager.registerExternalTarget(targetId, sessionId, workerId);
@@ -295,6 +340,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
         }
         targetToWorker.delete(targetId);
         pages.delete(targetId);
+        targetCreationLedger.markClosed(targetId);
       }
     }),
 
@@ -358,6 +404,7 @@ export function createMockSessionManager(options: MockSessionManagerOptions = {}
 
     _getPages: () => pages,
     _getSessions: () => sessions,
+    _getTargetCreationLedger: () => targetCreationLedger,
   };
 
   return manager;

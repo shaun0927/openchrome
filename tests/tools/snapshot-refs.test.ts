@@ -218,6 +218,36 @@ describe('Snapshot Refs (#831)', () => {
       expect(resolveElementsByAXTree).not.toHaveBeenCalled();
     });
 
+    test('fresh ref click reports opener-correlated tabs', async () => {
+      const handler = await getInteractHandler();
+      const refId = mockRefIdManager.generateRef(testSessionId, testTargetId, 4242, 'button', 'Open report');
+      mockSessionManager.mockCDPClient.send
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ model: { content: [10, 20, 110, 20, 110, 60, 10, 60] } });
+      (mockSessionManager.getTargetCreationCursor as jest.Mock).mockReturnValue(12);
+      (mockSessionManager.getOpenedTabsAfter as jest.Mock).mockReturnValue({
+        total: 1,
+        truncated: false,
+        pendingCount: 0,
+        tabs: [{
+          tabId: 'popup-ref',
+          workerId: 'default',
+          url: 'https://example.com/report',
+          title: 'Report',
+          status: 'ready',
+        }],
+      });
+
+      const result = await handler(testSessionId, {
+        tabId: testTargetId,
+        ref: refId,
+        action: 'click',
+      }) as { openedTabCount?: number; content: Array<{ text: string }> };
+
+      expect(result.openedTabCount).toBe(1);
+      expect(result.content[0].text).toContain('tabId=popup-ref');
+    });
+
     test('stale ref (TTL expired) → STALE_REF error', async () => {
       const handler = await getInteractHandler();
 
