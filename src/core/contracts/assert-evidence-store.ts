@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { redactSecretString } from '../secrets/redactor';
 import { redactValue } from '../trace/redactor';
 
 export const ASSERT_EVIDENCE_SCHEMA_VERSION = 1;
@@ -23,6 +24,7 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const HANDLE_RE = new RegExp(`^ev_${UUID_SOURCE}$`, 'i');
 const ARTIFACT_FILE_RE = new RegExp(`^ev_${UUID_SOURCE}\\.json$`, 'i');
 const TEMP_FILE_RE = new RegExp(`^ev_${UUID_SOURCE}\\.json\\.\\d+\\.${UUID_SOURCE}\\.tmp$`, 'i');
+const OPAQUE_CDP_ID_RE = /^[0-9a-f]{32}$/i;
 
 export type AssertEvidenceVerdict = 'pass' | 'fail' | 'inconclusive';
 export type AssertEvidenceStoreErrorCode =
@@ -597,6 +599,12 @@ function redactArtifact(
   owner?: AssertEvidenceOwner,
 ): AssertEvidenceArtifact {
   const redacted = redactValue(artifact) as AssertEvidenceArtifact;
+  const targetId = artifact.provenance.target_id === undefined
+    ? undefined
+    : redactProvenanceIdentifier(artifact.provenance.target_id);
+  const workerId = artifact.provenance.worker_id === undefined
+    ? undefined
+    : redactProvenanceIdentifier(artifact.provenance.worker_id);
   const ownerProvenance = owner
     ? redactValue({ session_id: owner.sessionId, tenant_id: owner.tenantId }) as {
       session_id: string;
@@ -612,6 +620,8 @@ function redactArtifact(
     provenance: {
       ...redacted.provenance,
       ...(ownerProvenance ?? {}),
+      ...(targetId !== undefined ? { target_id: targetId } : {}),
+      ...(workerId !== undefined ? { worker_id: workerId } : {}),
       contract_source: artifact.provenance.contract_source,
       verified_at: artifact.provenance.verified_at,
       verdict: artifact.provenance.verdict,
@@ -625,6 +635,14 @@ function redactArtifact(
       status: 'unavailable',
     },
   };
+}
+
+function redactProvenanceIdentifier(value: string): string {
+  // Chrome target IDs are exactly 32 hex characters and are identifiers, not
+  // bearer credentials. Preserve that contract while still honoring explicit
+  // --secrets literals; every other shape keeps the generic credential scrub.
+  if (OPAQUE_CDP_ID_RE.test(value)) return redactSecretString(value);
+  return redactValue(value) as string;
 }
 
 function isStoredEnvelope(value: unknown): value is StoredAssertEvidenceEnvelope {

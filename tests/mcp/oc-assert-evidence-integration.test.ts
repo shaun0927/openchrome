@@ -85,8 +85,10 @@ describe('oc_assert durable evidence through MCP', () => {
   });
 
   test('assert -> persist -> retrieve preserves provenance and explicit trace unavailability', async () => {
+    const logicalSessionId = 'logical-evidence-session';
     const asserted = await server.handleMessage(
       authenticated(toolCall(1, 'oc_assert', {
+        sessionId: logicalSessionId,
         contract: { kind: 'url', pattern: '^https://example\\.com/account$' },
         evidence: {
           provenance: {
@@ -108,9 +110,20 @@ describe('oc_assert durable evidence through MCP', () => {
       trace_status: 'unavailable',
     });
     const handle = assertion.evidence_handle as string;
+    const evidenceGet = assertion.evidence_get as {
+      tool: string;
+      arguments: Record<string, unknown>;
+    };
+    expect(evidenceGet).toEqual({
+      tool: 'oc_evidence_get',
+      arguments: {
+        evidence_handle: handle,
+        sessionId: logicalSessionId,
+      },
+    });
 
     const retrieved = await server.handleMessage(
-      authenticated(toolCall(2, 'oc_evidence_get', { evidence_handle: handle }), tenantARead),
+      authenticated(toolCall(2, evidenceGet.tool, evidenceGet.arguments), tenantARead),
       undefined,
       { mcpSessionId: 'client-a' },
     ) as MCPResponse;
@@ -121,7 +134,7 @@ describe('oc_assert durable evidence through MCP', () => {
     expect(payload.artifact).toMatchObject({
       evidence_handle: handle,
       provenance: {
-        session_id: 'mcp-client-a',
+        session_id: logicalSessionId,
         tenant_id: 'tenant-a',
         target_id: 'tab-a',
         worker_id: 'worker-a',
@@ -131,6 +144,16 @@ describe('oc_assert durable evidence through MCP', () => {
         verdict: 'pass',
       },
       trace: { status: 'unavailable' },
+    });
+
+    const implicitSession = await server.handleMessage(
+      authenticated(toolCall(3, 'oc_evidence_get', { evidence_handle: handle }), tenantARead),
+      undefined,
+      { mcpSessionId: 'client-a' },
+    ) as MCPResponse;
+    expect(resultPayload(implicitSession)).toMatchObject({
+      status: 'error',
+      error: { code: 'EVIDENCE_FORBIDDEN' },
     });
   });
 

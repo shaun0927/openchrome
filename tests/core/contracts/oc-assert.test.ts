@@ -111,7 +111,10 @@ describe('oc_assert — verdicts', () => {
     expect(typeof out.evidence_expires_at).toBe('string');
     expect(out.evidence_get).toEqual({
       tool: 'oc_evidence_get',
-      arguments: { evidence_handle: out.evidence_handle },
+      arguments: {
+        evidence_handle: out.evidence_handle,
+        sessionId: 'test-session',
+      },
     });
     expect(out.trace_status).toBe('unavailable');
     expect(typeof out.trace_unavailable_reason).toBe('string');

@@ -77,7 +77,7 @@ interface OcAssertOutput {
   evidence_expires_at?: string;
   evidence_get?: {
     tool: 'oc_evidence_get';
-    arguments: { evidence_handle: string };
+    arguments: { evidence_handle: string; sessionId: string };
   };
   evidence_persistence_reason?: string;
   trace_status?: 'unavailable';
@@ -542,7 +542,10 @@ function createHandler(
     output.evidence_expires_at = stored.expires_at;
     output.evidence_get = {
       tool: 'oc_evidence_get',
-      arguments: { evidence_handle: stored.evidence_handle },
+      arguments: {
+        evidence_handle: stored.evidence_handle,
+        sessionId,
+      },
     };
   } catch (error) {
     output.evidence_status = 'unavailable';
