@@ -48,8 +48,16 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry, redactToolArgsForPersistence } from './security/audit-logger';
-import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
+import {
+  assertFilePathAllowedByMcpRoots,
+  assertUrlAllowedByMcpRoots,
+  getSessionMcpRoots,
+  parseMcpRoots,
+  setSessionMcpRoots,
+  type ParsedMcpRoots,
+} from './security/mcp-roots';
 import { isClientDisconnect } from './errors/abort';
+import { isMcpInputRequiredError } from './errors/mcp-input-required';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
 import { isAllowed, requiredScope } from './auth/scope-policy';
 import type { Principal } from './auth/api-key-types';
@@ -83,6 +91,7 @@ import {
   assertLiveResourceAccess,
   liveResourceDefinitions,
   readLiveResource,
+  parseLiveResourceUri,
   sessionStateUri,
   sessionTabsUri,
   journalUri,
@@ -677,6 +686,7 @@ export class MCPServer {
    * PR 2/4 does not ship with a cross-tenant access path.
    */
   private sessionTenants: Map<string, string> = new Map();
+  private deletingSessionTenants: Map<string, string> = new Map();
   /**
    * Timer that periodically reclaims idle rate-limit buckets. Required because
    * tenant-keyed buckets (used in api-key mode) are shared across sessions, so
@@ -730,6 +740,11 @@ export class MCPServer {
       this.sessionManager.addEventListener((event) => {
         if (event.type === 'session:deleting') {
           beginSessionRecorderDeletion(event.sessionId);
+          const session = typeof this.sessionManager.getSession === 'function'
+            ? this.sessionManager.getSession(event.sessionId)
+            : undefined;
+          const tenantId = session?.tenantId ?? this.sessionTenants.get(event.sessionId);
+          if (tenantId) this.deletingSessionTenants.set(event.sessionId, tenantId);
         } else if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
           getTaskDriftLedger().cleanupSession(event.sessionId);
@@ -791,6 +806,13 @@ export class MCPServer {
     // codebase will emit `notifications/message` to connected clients (at or
     // above the active level) AND mirror error-level events to stderr.
     setLogSender((level: LogLevel, logger: string, data: Record<string, unknown>) => {
+      const sdkLogger = currentRequestContext()?.logClient;
+      if (sdkLogger) {
+        void sdkLogger(level, logger, data).catch((error) => {
+          console.error('[MCPServer] request-scoped log notification failed:', error);
+        });
+        return;
+      }
       this.sendNotification('notifications/message', { level, logger, data });
     });
   }
@@ -860,6 +882,19 @@ export class MCPServer {
   }
 
   private getToolExposureState(sessionId = this.currentToolExposureSessionId()): ToolExposureState {
+    // The modern protocol has no protocol session in which hidden tool-list
+    // state can safely live. Expose the complete capability-filtered registry
+    // on every request; application state remains explicit in sessionId/tabId
+    // tool arguments.
+    if (currentRequestContext()?.protocolEra === 'modern') {
+      return {
+        exposedTier: 3,
+        selectedToolNames: new Set(),
+        selectedSchemaBytes: 0,
+        clientSupportsListChanged: false,
+        clientDetected: true,
+      };
+    }
     let state = this.toolExposureBySession.get(sessionId);
     if (!state) {
       state = {
@@ -872,6 +907,41 @@ export class MCPServer {
       this.toolExposureBySession.set(sessionId, state);
     }
     return state;
+  }
+
+  private configureToolExposureForClient(
+    state: ToolExposureState,
+    clientInfo?: { name?: string; version?: string },
+    clientCapabilities?: {
+      tools?: { listChanged?: boolean };
+      notifications?: { tools?: { listChanged?: boolean } };
+    },
+  ): void {
+    if (state.clientDetected) return;
+    state.clientDetected = true;
+
+    const rawName = clientInfo?.name ?? '';
+    const nameLower = rawName.toLowerCase();
+    const supportsToolListChanged = clientCapabilities?.tools?.listChanged === true
+      || clientCapabilities?.notifications?.tools?.listChanged === true;
+
+    if (this.options.initialToolTier) {
+      console.error(`[openchrome] Tool tier override: initialToolTier=${this.options.initialToolTier}, skipping client detection`);
+      return;
+    }
+
+    const isKnownClient = rawName !== '' && Array.from(PROGRESSIVE_DISCLOSURE_CLIENTS).some(known =>
+      nameLower.includes(known)
+    );
+    if (!isKnownClient && !supportsToolListChanged) {
+      state.exposedTier = 3;
+      state.clientSupportsListChanged = false;
+      console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" - progressive disclosure disabled, exposing all tools`);
+      return;
+    }
+
+    const source = supportsToolListChanged && !isKnownClient ? 'capability' : 'known-client';
+    console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" supports tool list changes (${source}) - progressive disclosure enabled`);
   }
 
   private sendToolListChanged(sessionId: string): void {
@@ -1014,11 +1084,23 @@ export class MCPServer {
   }
 
   private getCurrentClientCapabilities(): { roots?: object; sampling?: object; elicitation?: object } {
+    const requestCapabilities = currentRequestContext()?.clientCapabilities;
+    if (requestCapabilities) {
+      return {
+        ...(requestCapabilities.roots !== undefined ? { roots: requestCapabilities.roots } : {}),
+        ...(requestCapabilities.sampling !== undefined ? { sampling: requestCapabilities.sampling } : {}),
+        ...(requestCapabilities.elicitation !== undefined ? { elicitation: requestCapabilities.elicitation } : {}),
+      };
+    }
     const mcpSessionId = currentRequestContext()?.mcpSessionId;
     if (mcpSessionId) {
       return this.clientCapabilitiesBySession.get(mcpSessionId) ?? {};
     }
     return this.clientCapabilities;
+  }
+
+  private getCurrentRequestClient(): NonNullable<ToolContext['requestClient']> {
+    return currentRequestContext()?.requestClient ?? this.requestFromClient.bind(this);
   }
 
   /**
@@ -1081,12 +1163,20 @@ export class MCPServer {
     const send = (update: ToolProgress): void => {
       if (closed) return;
       try {
-        this.sendNotification('notifications/progress', {
+        const params = {
           progressToken,
           progress: update.progress,
           ...(update.total !== undefined ? { total: update.total } : {}),
           ...(update.message !== undefined ? { message: update.message } : {}),
-        });
+        };
+        const sdkNotifier = currentRequestContext()?.notifyClient;
+        if (sdkNotifier) {
+          void sdkNotifier('notifications/progress', params).catch((error) => {
+            console.error('[MCPServer] request-scoped progress notification failed:', error);
+          });
+        } else {
+          this.sendNotification('notifications/progress', params);
+        }
         lastEmittedAt = Date.now();
       } catch (err) {
         // Best-effort: a wedged transport must not break the parent tool call.
@@ -1141,6 +1231,29 @@ export class MCPServer {
     return { reporter, flush };
   }
 
+  private settleHeartbeatAfterToolCall(): void {
+    try {
+      const cdpClient = getCDPClient();
+      cdpClient.setHeartbeatMode?.('active');
+    } catch {
+      // CDP client may not be initialized.
+    }
+
+    if (this.heartbeatIdleTimer) {
+      clearTimeout(this.heartbeatIdleTimer);
+    }
+    this.heartbeatIdleTimer = setTimeout(() => {
+      try {
+        const cdpClient = getCDPClient();
+        cdpClient.setHeartbeatMode?.('idle');
+      } catch {
+        // CDP client may be disconnected.
+      }
+      this.heartbeatIdleTimer = null;
+    }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
+    this.heartbeatIdleTimer.unref?.();
+  }
+
   /**
    * Wire rate-limiter session cleanup into the given transport so that
    * bucket memory is freed immediately when a client sends DELETE /mcp.
@@ -1152,9 +1265,7 @@ export class MCPServer {
    * in start().
    */
   wireRateLimiterCleanup(transport: MCPTransport): void {
-    if (typeof transport.sendToSession === 'function') {
-      this.sessionNotificationTransports.add(transport);
-    }
+    this.sessionNotificationTransports.add(transport);
     const cleanupConnectionState = (sessionId: string): void => {
       this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
       this.clientCapabilitiesBySession.delete(sessionId);
@@ -1295,6 +1406,7 @@ export class MCPServer {
     try {
       return await this.handleRequest(request, principal, signal);
     } catch (error) {
+      if (isMcpInputRequiredError(error)) throw error;
       return {
         jsonrpc: '2.0' as const,
         id: request.id,
@@ -1410,7 +1522,7 @@ export class MCPServer {
           break;
 
         case 'tools/list':
-          result = await this.handleToolsList(params);
+          result = await this.handleToolsList(params, principal);
           break;
 
         case 'tools/call':
@@ -1473,6 +1585,7 @@ export class MCPServer {
         result,
       };
     } catch (error) {
+      if (isMcpInputRequiredError(error)) throw error;
       if (error instanceof ResourceRpcError) {
         return this.errorResponse(id, error.code, error.message, error.data);
       }
@@ -1482,15 +1595,38 @@ export class MCPServer {
   }
 
 
-  private async refreshSessionRoots(mcpSessionId: string): Promise<void> {
-    const caps = this.clientCapabilitiesBySession.get(mcpSessionId) ?? this.clientCapabilities;
-    if (!caps.roots) return;
-    const roots = await this.requestFromClient<unknown>('roots/list', undefined, { timeoutMs: 250 });
-    setSessionMcpRoots(mcpSessionId, roots);
+  private async listCurrentClientRoots(): Promise<unknown | undefined> {
+    const caps = this.getCurrentClientCapabilities();
+    if (!caps.roots) return undefined;
+    return await this.getCurrentRequestClient()<unknown>(
+      'roots/list',
+      undefined,
+      { timeoutMs: 250 },
+    );
+  }
+
+  private async refreshSessionRoots(rootScopeId: string): Promise<void> {
+    const roots = await this.listCurrentClientRoots();
+    if (roots === undefined) return;
+    setSessionMcpRoots(rootScopeId, roots);
+  }
+
+  private async modernRootsForTool(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<ParsedMcpRoots | undefined> {
+    if (currentRequestContext()?.protocolEra !== 'modern') return undefined;
+    const hasEgressCandidate =
+      extractNetworkRootCandidateUrls(toolName, args).length > 0
+      || extractFileRootCandidatePaths(toolName, args).length > 0;
+    if (!hasEgressCandidate) return undefined;
+    const roots = await this.listCurrentClientRoots();
+    return roots === undefined ? undefined : parseMcpRoots(roots);
   }
 
   private enforceNetworkRootsForTool(
-    mcpSessionId: string,
+    rootScopeId: string,
+    roots: ParsedMcpRoots | undefined,
     toolName: string,
     args: Record<string, unknown>,
   ): MCPResult | null {
@@ -1498,7 +1634,7 @@ export class MCPServer {
     if (urls.length === 0) return null;
     try {
       for (const url of urls) {
-        assertUrlAllowedBySessionRoots(mcpSessionId, url);
+        assertUrlAllowedByMcpRoots(roots, url, rootScopeId);
       }
       return null;
     } catch (error) {
@@ -1510,7 +1646,8 @@ export class MCPServer {
   }
 
   private enforceFileRootsForTool(
-    mcpSessionId: string,
+    rootScopeId: string,
+    roots: ParsedMcpRoots | undefined,
     toolName: string,
     args: Record<string, unknown>,
   ): MCPResult | null {
@@ -1518,7 +1655,7 @@ export class MCPServer {
     if (paths.length === 0) return null;
     try {
       for (const filePath of paths) {
-        assertFilePathAllowedBySessionRoots(mcpSessionId, filePath);
+        assertFilePathAllowedByMcpRoots(roots, filePath, rootScopeId);
       }
       return null;
     } catch (error) {
@@ -1552,37 +1689,9 @@ export class MCPServer {
       }
     }
 
-    // Detect client identity for progressive disclosure decisions
     const clientInfo = params?.clientInfo as { name?: string; version?: string } | undefined;
     const clientCapabilities = params?.capabilities as { tools?: { listChanged?: boolean }; notifications?: { tools?: { listChanged?: boolean } } } | undefined;
-    const rawName = clientInfo?.name ?? '';
-    const nameLower = rawName.toLowerCase();
-    const supportsToolListChanged = clientCapabilities?.tools?.listChanged === true
-      || clientCapabilities?.notifications?.tools?.listChanged === true;
-
-    // Idempotency: only detect client on first initialize (reconnects preserve state)
-    if (!exposureState.clientDetected) {
-      exposureState.clientDetected = true;
-
-      if (this.options.initialToolTier) {
-        console.error(`[openchrome] Tool tier override: initialToolTier=${this.options.initialToolTier}, skipping client detection`);
-      } else {
-        const isKnownClient = rawName !== '' && Array.from(PROGRESSIVE_DISCLOSURE_CLIENTS).some(known =>
-          nameLower.includes(known)
-        );
-
-        if (!isKnownClient && !supportsToolListChanged) {
-          // Unknown or absent client: expose all tools immediately (no progressive disclosure)
-          exposureState.exposedTier = 3;
-          exposureState.clientSupportsListChanged = false;
-          console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" — progressive disclosure disabled, exposing all tools`);
-        } else {
-          // Known/capable client: keep progressive disclosure enabled.
-          const source = supportsToolListChanged && !isKnownClient ? 'capability' : 'known-client';
-          console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" supports tool list changes (${source}) — progressive disclosure enabled`);
-        }
-      }
-    }
+    this.configureToolExposureForClient(exposureState, clientInfo, clientCapabilities);
 
     return {
       protocolVersion: '2024-11-05',
@@ -1615,11 +1724,30 @@ export class MCPServer {
     return this.capabilityFilter.has(capability ?? 'core');
   }
 
+  private isToolAllowedForPrincipal(toolName: string, principal?: Principal): boolean {
+    return !principal || isAllowed(toolName, principal.scopes);
+  }
+
   /**
    * Handle tools/list request
    */
-  private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleToolsList(
+    params?: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     const exposureState = this.getToolExposureState();
+    const requestContext = currentRequestContext();
+    if (
+      requestContext?.protocolEra === 'modern'
+      || requestContext?.clientInfo !== undefined
+      || requestContext?.clientCapabilities !== undefined
+    ) {
+      this.configureToolExposureForClient(
+        exposureState,
+        requestContext.clientInfo,
+        requestContext.clientCapabilities,
+      );
+    }
     // Signal the hint engine that this session has consumed tool descriptions,
     // so rules whose guidance is already embedded in description "When to
     // use / When NOT to use" blocks can suppress themselves without affecting
@@ -1635,6 +1763,7 @@ export class MCPServer {
       if (
         (tier <= exposureState.exposedTier || exposureState.selectedToolNames.has(registry.definition.name))
         && this.isCapabilityAllowed(registry.definition.capability)
+        && this.isToolAllowedForPrincipal(registry.definition.name, principal)
       ) {
         tools.push(registry.definition);
       }
@@ -1643,11 +1772,17 @@ export class MCPServer {
     // Add hint about additional tools when not fully expanded.
     // Only inject expand_tools if the client supports notifications/tools/list_changed —
     // otherwise there's no point since the client can't react to the notification.
-    if (exposureState.exposedTier < 3 && exposureState.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
+    if (
+      exposureState.exposedTier < 3
+      && exposureState.clientSupportsListChanged
+      && this.isCapabilityAllowed('core')
+      && this.isToolAllowedForPrincipal('expand_tools', principal)
+    ) {
       const hiddenCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) > exposureState.exposedTier &&
           !exposureState.selectedToolNames.has(r.definition.name) &&
-          this.isCapabilityAllowed(r.definition.capability)
+          this.isCapabilityAllowed(r.definition.capability) &&
+          this.isToolAllowedForPrincipal(r.definition.name, principal)
       ).length;
       if (hiddenCount > 0) {
         tools.push({
@@ -1689,7 +1824,12 @@ export class MCPServer {
     for (const resource of this.resources.values()) {
       resources.push(resource);
     }
-    resources.push(...liveResourceDefinitions(this.sessionManager));
+    resources.push(
+      ...liveResourceDefinitions(
+        this.sessionManager,
+        currentRequestContext()?.tenantId,
+      ),
+    );
     return { resources };
   }
 
@@ -1747,7 +1887,11 @@ export class MCPServer {
 
     const resource = this.resources.get(uri);
     if (!resource) {
-      throw new Error(`Unknown resource: ${uri}`);
+      throw new ResourceRpcError(
+        MCPErrorCodes.INVALID_PARAMS,
+        `Unknown resource: ${uri}`,
+        { uri },
+      );
     }
 
     // Get content based on resource type
@@ -1773,7 +1917,14 @@ export class MCPServer {
 
   private async tryReadLiveResource(uri: string): Promise<{ mimeType: string; text: string } | null> {
     if (!uri.startsWith('oc://')) return null;
-    return readLiveResource(this.sessionManager, uri);
+    try {
+      return await readLiveResource(this.sessionManager, uri);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Unknown resource:')) {
+        throw new ResourceRpcError(MCPErrorCodes.INVALID_PARAMS, error.message, { uri });
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1814,8 +1965,10 @@ export class MCPServer {
           this.emitResourceUpdated(sessionStateUri(event.sessionId));
         }
         if (event.type === 'session:created' || event.type === 'session:deleted') {
-          this.emitResourceUpdated(sessionStateUri(event.sessionId));
-          this.emitResourcesListChanged();
+          const uri = sessionStateUri(event.sessionId);
+          const tenantId = this.resourceNotificationTenant(uri);
+          this.emitResourceUpdated(uri);
+          this.emitResourcesListChanged(tenantId);
         }
       });
     }
@@ -1827,8 +1980,13 @@ export class MCPServer {
           this.emitResourceUpdated(sessionStateUri(event.sessionId));
         }
         if (event.kind.startsWith('session:')) {
-          this.emitResourceUpdated(sessionStateUri(event.sessionId));
-          this.emitResourcesListChanged();
+          const uri = sessionStateUri(event.sessionId);
+          const tenantId = this.resourceNotificationTenant(uri);
+          this.emitResourceUpdated(uri);
+          this.emitResourcesListChanged(tenantId);
+          if (event.kind === 'session:destroy') {
+            this.deletingSessionTenants.delete(event.sessionId);
+          }
         }
       }
     });
@@ -1836,10 +1994,48 @@ export class MCPServer {
 
   private emitResourceUpdated(uri: string): void {
     this.resourceSubscriptions.emitUpdated(uri, this.transport);
+    const tenantId = this.resourceNotificationTenant(uri);
+    for (const transport of this.sessionNotificationTransports) {
+      transport.publishResourceUpdated?.(uri, tenantId);
+    }
   }
 
-  private emitResourcesListChanged(): void {
+  private emitResourcesListChanged(tenantId = currentRequestContext()?.tenantId): void {
     this.resourceSubscriptions.emitListChanged(this.transport);
+    for (const transport of this.sessionNotificationTransports) {
+      transport.publishResourcesChanged?.(tenantId);
+    }
+  }
+
+  private resourceNotificationTenant(uri: string): string | undefined {
+    const parsed = parseLiveResourceUri(uri);
+    if (
+      parsed?.id &&
+      (parsed.kind === 'session-tabs' ||
+        parsed.kind === 'session-state' ||
+        parsed.kind === 'journal')
+    ) {
+      const session = typeof this.sessionManager.getSession === 'function'
+        ? this.sessionManager.getSession(parsed.id)
+        : undefined;
+      return session?.tenantId
+        ?? this.sessionTenants.get(parsed.id)
+        ?? this.deletingSessionTenants.get(parsed.id)
+        ?? currentRequestContext()?.tenantId;
+    }
+    return currentRequestContext()?.tenantId;
+  }
+
+  /** Publish a registry change to legacy clients and modern subscriptions. */
+  public emitListChanged(): void {
+    const notification = {
+      jsonrpc: '2.0' as const,
+      method: 'notifications/tools/list_changed',
+    } as unknown as MCPResponse;
+    for (const transport of this.sessionNotificationTransports) {
+      transport.send(notification);
+      transport.publishToolsChanged?.();
+    }
   }
 
   /**
@@ -2107,8 +2303,14 @@ export class MCPServer {
       throw err;
     }
 
+    const rootScopeId = currentRequestContext()?.mcpSessionId ?? sessionId;
+    const roots = currentRequestContext()?.protocolEra === 'modern'
+      ? await this.modernRootsForTool(toolName, substitutedArgs)
+      : getSessionMcpRoots(rootScopeId);
+
     const rootsDenial = this.enforceNetworkRootsForTool(
-      currentRequestContext()?.mcpSessionId ?? sessionId,
+      rootScopeId,
+      roots,
       toolName,
       substitutedArgs,
     );
@@ -2118,7 +2320,8 @@ export class MCPServer {
     }
 
     const fileRootsDenial = this.enforceFileRootsForTool(
-      currentRequestContext()?.mcpSessionId ?? sessionId,
+      rootScopeId,
+      roots,
       toolName,
       substitutedArgs,
     );
@@ -2376,7 +2579,7 @@ export class MCPServer {
           signal,
           principal,
           clientCapabilities: this.getCurrentClientCapabilities(),
-          requestClient: this.requestFromClient.bind(this),
+          requestClient: this.getCurrentRequestClient(),
           reportProgress,
         };
         let tid: ReturnType<typeof setTimeout>;
@@ -2416,7 +2619,7 @@ export class MCPServer {
               signal,
               principal,
               clientCapabilities: this.getCurrentClientCapabilities(),
-              requestClient: this.requestFromClient.bind(this),
+              requestClient: this.getCurrentRequestClient(),
               reportProgress,
             };
             let tid2: ReturnType<typeof setTimeout>;
@@ -2486,7 +2689,7 @@ export class MCPServer {
               signal,
               principal,
               clientCapabilities: this.getCurrentClientCapabilities(),
-              requestClient: this.requestFromClient.bind(this),
+              requestClient: this.getCurrentRequestClient(),
               reportProgress,
             };
             // Race the retry against the tool-execution timeout, exactly like the
@@ -2616,34 +2819,7 @@ export class MCPServer {
         // Best-effort recording
       }
 
-      // Transition from heavy back to active after tool completes
-      try {
-        const cdpClient = getCDPClient();
-        if (cdpClient.setHeartbeatMode) {
-          cdpClient.setHeartbeatMode('active');
-        }
-      } catch {
-        // CDP client may not be initialized
-      }
-
-      // Schedule heartbeat idle mode transition
-      if (this.heartbeatIdleTimer) {
-        clearTimeout(this.heartbeatIdleTimer);
-      }
-      this.heartbeatIdleTimer = setTimeout(() => {
-        try {
-          const cdpClient = getCDPClient();
-          if (cdpClient.setHeartbeatMode) {
-            cdpClient.setHeartbeatMode('idle');
-          }
-        } catch {
-          // CDP client may be disconnected
-        }
-        this.heartbeatIdleTimer = null;
-      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
-      if (this.heartbeatIdleTimer.unref) {
-        this.heartbeatIdleTimer.unref();
-      }
+      this.settleHeartbeatAfterToolCall();
 
       const compressionConfig = getGlobalConfig().compression;
       const verbosity = compressionConfig?.verbosity ?? 'normal';
@@ -2791,6 +2967,46 @@ export class MCPServer {
       this.recordToolOutputObservability(toolName, finalResult, requestId);
       return finalResult;
     } catch (error) {
+      if (isMcpInputRequiredError(error)) {
+        this.activityTracker!.endCall(callId, 'input_required');
+        getDashboardState().recordToolEnd(callId, 'input_required');
+        this.emitResourceUpdated('oc://dashboard/state');
+
+        if (runHarnessId && !toolName.startsWith('oc_run_')) {
+          try {
+            const runStore = getRunStore();
+            const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+            const durationMs = Date.now() - toolStartTime;
+            runStore.appendToolFinished({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              tool: toolName,
+              args: telemetryToolArgs,
+              duration_ms: durationMs,
+              message: 'MCP client input required',
+              metadata: { stage: 'input_required' },
+            });
+            if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+              runStore.appendRunEvent({
+                run_id: runHarnessId,
+                session_id: sessionId,
+                tab_id: runTabId,
+                kind: 'partial_result',
+                tool: toolName,
+                duration_ms: durationMs,
+                message: 'MCP client input required',
+                metadata: { stage: 'input_required' },
+              });
+            }
+          } catch {
+            // Best-effort run ledger; never alter MRTR behavior.
+          }
+        }
+
+        this.settleHeartbeatAfterToolCall();
+        throw error;
+      }
       const message = formatError(error);
       const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
@@ -2856,34 +3072,7 @@ export class MCPServer {
         // Best-effort recording
       }
 
-      // Transition from heavy back to active after tool completes
-      try {
-        const cdpClient = getCDPClient();
-        if (cdpClient.setHeartbeatMode) {
-          cdpClient.setHeartbeatMode('active');
-        }
-      } catch {
-        // CDP client may not be initialized
-      }
-
-      // Schedule heartbeat idle mode transition
-      if (this.heartbeatIdleTimer) {
-        clearTimeout(this.heartbeatIdleTimer);
-      }
-      this.heartbeatIdleTimer = setTimeout(() => {
-        try {
-          const cdpClient = getCDPClient();
-          if (cdpClient.setHeartbeatMode) {
-            cdpClient.setHeartbeatMode('idle');
-          }
-        } catch {
-          // CDP client may be disconnected
-        }
-        this.heartbeatIdleTimer = null;
-      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
-      if (this.heartbeatIdleTimer.unref) {
-        this.heartbeatIdleTimer.unref();
-      }
+      this.settleHeartbeatAfterToolCall();
 
       // Append reconnection guidance for connection errors
       const displayMessage = isConnectionError(error)
@@ -3769,6 +3958,7 @@ export class MCPServer {
     }
     this.sessionNotificationTransports.clear();
     this.toolExposureBySession.clear();
+    this.deletingSessionTenants.clear();
 
     // Scale timeout based on number of Chrome pool instances.
     // Each launcher.close() needs up to 5s for SIGTERM->SIGKILL escalation,

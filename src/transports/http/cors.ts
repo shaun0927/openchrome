@@ -68,8 +68,29 @@ export function applyCors(
     res.setHeader('Vary', 'Origin');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', `Content-Type, Mcp-Session-Id, Authorization, X-Tenant-Id, ${REQUEST_ID_HEADER}`);
-  res.setHeader('Access-Control-Expose-Headers', `Mcp-Session-Id, ${REQUEST_ID_HEADER}`);
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    [
+      'Content-Type',
+      'Mcp-Session-Id',
+      'Authorization',
+      'X-Tenant-Id',
+      REQUEST_ID_HEADER,
+      'MCP-Protocol-Version',
+      'Mcp-Method',
+      'Mcp-Name',
+    ].join(', '),
+  );
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    [
+      'Mcp-Session-Id',
+      REQUEST_ID_HEADER,
+      'MCP-Protocol-Version',
+      'Mcp-Method',
+      'Mcp-Name',
+    ].join(', '),
+  );
 
   const isMcpEndpoint = pathname === '/mcp' || pathname === '/mcp/sse';
   if (originValue && isMcpEndpoint && !sameOrigin && !corsAllowedOrigins.has(originValue)) {

@@ -10,7 +10,12 @@ export interface DashboardConfig {
 
 export type ViewMode = 'activity' | 'sessions' | 'tabs' | 'connect';
 
-export type ToolCallResult = 'success' | 'error' | 'aborted' | 'pending';
+export type ToolCallResult =
+  | 'success'
+  | 'error'
+  | 'aborted'
+  | 'input_required'
+  | 'pending';
 
 export interface ToolCallEvent {
   id: string;

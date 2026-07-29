@@ -12,7 +12,7 @@ describe('check: node-version', () => {
   });
 
   test('ok when current Node meets minimum', async () => {
-    // Current Node is always >= 18 in this project's CI
+    // Current Node is always >= 20 in this project's CI
     const result = await checkNodeVersion();
     expect(result.id).toBe('node-version');
     expect(result.title).toBe('Node.js version');
