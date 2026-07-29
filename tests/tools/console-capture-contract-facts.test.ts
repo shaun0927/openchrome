@@ -140,4 +140,44 @@ describe('console_capture contract facts', () => {
     expect(payload.contract_facts[0].entries).toEqual([expect.objectContaining({ count: 3 })]);
     expect(payload.contract_facts[0].truncated).toBe(true);
   });
+
+  test('deduplicates repeated capture filters without marking the fact truncated', async () => {
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 10, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({ type: 'error', text: 'checkout failed', timestamp: 1 }, 50);
+
+    captureStates.set('tab-a', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      filter: ['error', 'error'],
+      maxLogs: 10,
+      maxBytes: 4096,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+
+    const result = await server.tools.get('console_capture')!.handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    });
+    const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as {
+      contract_facts: Array<{
+        captured_types: string[] | null;
+        truncated: boolean;
+      }>;
+    };
+
+    expect(payload.contract_facts[0].captured_types).toEqual(['error']);
+    expect(payload.contract_facts[0].truncated).toBe(false);
+  });
 });

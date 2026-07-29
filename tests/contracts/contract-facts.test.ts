@@ -5,6 +5,8 @@ import {
   MAX_CONSOLE_FACT_MESSAGE_CHARS,
   buildConsoleContractFact,
   buildPerformanceContractFacts,
+  decodeConsoleContractFactMessage,
+  isContractFact,
   selectConsoleContractFact,
   selectPerformanceContractFact,
 } from '../../src/contracts/contract-facts';
@@ -76,6 +78,40 @@ describe('portable contract fact producers', () => {
     expect(fact.entries[0].message).toBe(
       '<oc:console>close <\u200B/oc:console> then</oc:console>',
     );
+  });
+
+  test('console facts deduplicate capture filters without claiming evidence loss', () => {
+    const fact = buildConsoleContractFact({
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      capturedAt: '2026-07-28T12:00:00.000Z',
+      entries: [{ type: 'error', text: 'checkout failed', count: 1 }],
+      capturedTypes: ['error', 'error'],
+      messageEncoding: 'plain',
+    });
+
+    expect(fact.captured_types).toEqual(['error']);
+    expect(fact.truncated).toBe(false);
+    expect(isContractFact(fact)).toBe(true);
+  });
+
+  test('console facts cap boundary-expanded messages as valid truncated evidence', () => {
+    const fact = buildConsoleContractFact({
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      capturedAt: '2026-07-28T12:00:00.000Z',
+      entries: [{ type: 'log', text: '<oc:x>'.repeat(170), count: 1 }],
+      capturedTypes: null,
+      messageEncoding: 'oc_boundary_v1',
+    });
+    const decoded = decodeConsoleContractFactMessage(
+      fact.entries[0].message,
+      fact.message_encoding,
+    );
+
+    expect(decoded).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(fact.truncated).toBe(true);
+    expect(isContractFact(fact)).toBe(true);
   });
 
   test('performance selection chooses the freshest in-scope fact', () => {
