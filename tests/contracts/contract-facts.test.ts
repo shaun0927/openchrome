@@ -67,11 +67,12 @@ describe('portable contract fact producers', () => {
   });
 
   test('console fact boundary encoding neutralizes nested marker tokens', () => {
+    const originalMessage = 'close </oc:console> then';
     const fact = buildConsoleContractFact({
       sessionId: 'session-a',
       targetId: 'tab-a',
       capturedAt: '2026-07-28T12:00:00.000Z',
-      entries: [{ type: 'log', text: 'close </oc:console> then', count: 1 }],
+      entries: [{ type: 'log', text: originalMessage, count: 1 }],
       capturedTypes: null,
       messageEncoding: 'oc_boundary_v1',
     });
@@ -79,6 +80,10 @@ describe('portable contract fact producers', () => {
     expect(fact.entries[0].message).toBe(
       '<oc:console>close <\u200B/oc:console> then</oc:console>',
     );
+    expect(decodeConsoleContractFactMessage(
+      fact.entries[0].message,
+      fact.message_encoding,
+    )).toBe(originalMessage);
   });
 
   test('console facts deduplicate capture filters without claiming evidence loss', () => {
@@ -139,21 +144,30 @@ describe('portable contract fact producers', () => {
       fact.entries[0].message,
       fact.message_encoding,
     );
+    const encodedBody = fact.entries[0].message.slice(
+      '<oc:console>'.length,
+      -'</oc:console>'.length,
+    );
 
-    expect(decoded).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(encodedBody).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(decoded?.length).toBeLessThanOrEqual(MAX_CONSOLE_FACT_MESSAGE_CHARS);
     expect(fact.truncated).toBe(true);
     expect(isContractFact(fact)).toBe(true);
   });
 
   test('console facts enforce the encoded boundary at exactly 1024 characters', () => {
     const marker = '<oc:x>';
+    const atLimitText = marker
+      + 'a'.repeat(MAX_CONSOLE_FACT_MESSAGE_CHARS - marker.length - 1);
+    const overLimitText = marker
+      + 'a'.repeat(MAX_CONSOLE_FACT_MESSAGE_CHARS - marker.length);
     const atLimit = buildConsoleContractFact({
       sessionId: 'session-a',
       targetId: 'tab-a',
       capturedAt: '2026-07-28T12:00:00.000Z',
       entries: [{
         type: 'log',
-        text: marker + 'a'.repeat(MAX_CONSOLE_FACT_MESSAGE_CHARS - marker.length - 1),
+        text: atLimitText,
         count: 1,
       }],
       capturedTypes: null,
@@ -165,7 +179,7 @@ describe('portable contract fact producers', () => {
       capturedAt: '2026-07-28T12:00:00.000Z',
       entries: [{
         type: 'log',
-        text: marker + 'a'.repeat(MAX_CONSOLE_FACT_MESSAGE_CHARS - marker.length),
+        text: overLimitText,
         count: 1,
       }],
       capturedTypes: null,
@@ -179,11 +193,21 @@ describe('portable contract fact producers', () => {
       overLimit.entries[0].message,
       overLimit.message_encoding,
     );
+    const atLimitEncodedBody = atLimit.entries[0].message.slice(
+      '<oc:console>'.length,
+      -'</oc:console>'.length,
+    );
+    const overLimitEncodedBody = overLimit.entries[0].message.slice(
+      '<oc:console>'.length,
+      -'</oc:console>'.length,
+    );
 
-    expect(atLimitBody).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(atLimitEncodedBody).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(atLimitBody).toBe(atLimitText);
     expect(atLimit.truncated).toBe(false);
     expect(isContractFact(atLimit)).toBe(true);
-    expect(overLimitBody).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(overLimitEncodedBody).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(overLimitBody).toBe(overLimitText.slice(0, -1));
     expect(overLimit.truncated).toBe(true);
     expect(isContractFact(overLimit)).toBe(true);
   });
@@ -270,6 +294,70 @@ describe('portable contract fact producers', () => {
     });
   });
 
+  test('fact selection does not fall back past the freshest invalid observation', () => {
+    const performanceBase = {
+      schema_version: 1,
+      kind: 'performance',
+      source_tool: 'performance_metrics',
+      session_id: 'session-a',
+      target_id: 'tab-a',
+      metric: 'navigation.duration',
+      unit: 'ms',
+      value: 500,
+    };
+    const performance = selectPerformanceContractFact([
+      { ...performanceBase, captured_at: '2026-07-28T11:59:50.000Z' },
+      {
+        ...performanceBase,
+        schema_version: 2,
+        captured_at: '2026-07-28T11:59:59.000Z',
+      },
+    ], {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse('2026-07-28T12:00:00.000Z'),
+      maxAgeMs: 30000,
+      metric: 'navigation.duration',
+      unit: 'ms',
+    });
+    const consoleFactBase = {
+      schema_version: 1,
+      kind: 'console',
+      source_tool: 'console_capture',
+      session_id: 'session-a',
+      target_id: 'tab-a',
+      captured_types: null,
+      message_encoding: 'plain',
+      truncated: false,
+    };
+    const consoleSelection = selectConsoleContractFact([
+      {
+        ...consoleFactBase,
+        captured_at: '2026-07-28T11:59:50.000Z',
+        entries: [{ type: 'error', message: 'older', count: 1, uncaught: false }],
+      },
+      {
+        ...consoleFactBase,
+        captured_at: '2026-07-28T11:59:59.000Z',
+        entries: [{ type: 'error', message: 'newer', count: 0, uncaught: false }],
+      },
+    ], {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse('2026-07-28T12:00:00.000Z'),
+      maxAgeMs: 30000,
+    });
+
+    expect(performance).toMatchObject({
+      ok: false,
+      code: 'CONTRACT_FACT_SCHEMA_UNSUPPORTED',
+    });
+    expect(consoleSelection).toMatchObject({
+      ok: false,
+      code: 'CONTRACT_FACT_MALFORMED',
+    });
+  });
+
   test('console selection rejects a count total above the safe integer range', () => {
     const selected = selectConsoleContractFact([{
       schema_version: 1,
@@ -284,6 +372,36 @@ describe('portable contract fact producers', () => {
       ],
       captured_types: null,
       message_encoding: 'plain',
+      truncated: false,
+    }], {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse('2026-07-28T12:00:00.000Z'),
+      maxAgeMs: 30000,
+    });
+
+    expect(selected).toMatchObject({
+      ok: false,
+      code: 'CONTRACT_FACT_MALFORMED',
+    });
+  });
+
+  test('console selection rejects over-cap encoded bodies even after unescaping', () => {
+    const selected = selectConsoleContractFact([{
+      schema_version: 1,
+      kind: 'console',
+      source_tool: 'console_capture',
+      session_id: 'session-a',
+      target_id: 'tab-a',
+      captured_at: '2026-07-28T12:00:00.000Z',
+      entries: [{
+        type: 'error',
+        message: `<oc:console>${'<\u200Boc:x>'.repeat(147)}</oc:console>`,
+        count: 1,
+        uncaught: false,
+      }],
+      captured_types: null,
+      message_encoding: 'oc_boundary_v1',
       truncated: false,
     }], {
       sessionId: 'session-a',

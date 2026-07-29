@@ -289,9 +289,10 @@ you can re-derive the threshold later.
   `CONTRACT_FACT_CAPTURE_FILTERED` rather than inferring zero matches.
 - Console messages remain inside the default `<oc:console>` page-origin
   boundary in collector output. Facts declare `message_encoding`, and the
-  evaluator matches `message_pattern` against the bounded text inside that
-  boundary. Callers that explicitly disable boundary markers receive
-  `message_encoding: "plain"` instead.
+  evaluator removes the outer boundary and reverses marker-token escapes before
+  matching `message_pattern` against the original bounded page text. Evidence
+  retains the exact encoded message. Callers that explicitly disable boundary
+  markers receive `message_encoding: "plain"` instead.
 - Each fact contains at most 200 entries, each message is capped at 1024
   characters, and unbounded raw console retention is never introduced.
 - A fact marked `truncated: true` is always inconclusive, even when the
