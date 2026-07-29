@@ -121,27 +121,32 @@ const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
 ];
 
 const URL_SCHEME_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//g;
-const URL_TERMINATOR_PATTERN = /[\s"'<>]/;
+const URL_AUTHORITY_TERMINATOR_PATTERN = /[\s"'<>/?#]/;
 const ENCODED_URL_CANDIDATE_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*%3A%2F%2F[^\s&;"'<>]+/gi;
 
 /**
  * Redact URL userinfo using WHATWG parsing so raw `@` characters inside a
  * password cannot be mistaken for the authority delimiter. The parser
- * validates that the candidate actually carries credentials; reconstruction
- * uses the final authority `@` so the original host/path/query spelling stays
- * intact instead of being canonicalized by URL serialization.
+ * validates that the candidate actually carries credentials. Only each URL's
+ * authority is scanned, and redaction ranges are assembled once at the end so
+ * repeated `scheme://` markers cannot trigger quadratic suffix copies.
  */
 function redactRawUrlUserinfo(value: string): string {
-  const starts = Array.from(value.matchAll(URL_SCHEME_PATTERN), (match) => match.index);
-  let out = value;
+  const redactions: Array<{ start: number; end: number }> = [];
 
-  // Process from right to left so an outer URL cannot consume and hide a
-  // credentialed URL embedded in one of its query values.
-  for (let index = starts.length - 1; index >= 0; index -= 1) {
-    const start = starts[index];
-    const relativeEnd = out.slice(start).search(URL_TERMINATOR_PATTERN);
-    const end = relativeEnd < 0 ? out.length : start + relativeEnd;
-    const candidate = out.slice(start, end);
+  for (const match of value.matchAll(URL_SCHEME_PATTERN)) {
+    const schemeStart = match.index;
+    const authorityStart = schemeStart + match[0].length;
+    let authorityEnd = authorityStart;
+    while (
+      authorityEnd < value.length
+      && !URL_AUTHORITY_TERMINATOR_PATTERN.test(value[authorityEnd])
+    ) {
+      authorityEnd += 1;
+    }
+    if (authorityEnd === authorityStart) continue;
+
+    const candidate = value.slice(schemeStart, authorityEnd);
     let parsed: URL;
     try {
       parsed = new URL(candidate);
@@ -150,19 +155,22 @@ function redactRawUrlUserinfo(value: string): string {
     }
     if (!parsed.username && !parsed.password) continue;
 
-    const schemeEnd = candidate.indexOf('//') + 2;
-    const authoritySuffix = candidate.slice(schemeEnd).search(/[/?#]/);
-    const authorityEnd = authoritySuffix < 0
-      ? candidate.length
-      : schemeEnd + authoritySuffix;
-    const userinfoEnd = candidate.lastIndexOf('@', authorityEnd - 1);
-    if (userinfoEnd < schemeEnd) continue;
-
-    const redacted = `${candidate.slice(0, schemeEnd)}${REDACTED}@${candidate.slice(userinfoEnd + 1)}`;
-    out = `${out.slice(0, start)}${redacted}${out.slice(end)}`;
+    const userinfoEnd = value.lastIndexOf('@', authorityEnd - 1);
+    if (userinfoEnd < authorityStart) continue;
+    redactions.push({ start: authorityStart, end: userinfoEnd });
   }
 
-  return out;
+  if (redactions.length === 0) return value;
+
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const redaction of redactions) {
+    if (redaction.start < cursor) continue;
+    parts.push(value.slice(cursor, redaction.start), REDACTED);
+    cursor = redaction.end;
+  }
+  parts.push(value.slice(cursor));
+  return parts.join('');
 }
 
 function redactCredentialPatterns(value: string): string {

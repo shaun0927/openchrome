@@ -100,6 +100,17 @@ describe('trace redactor — scrubString patterns', () => {
     expect(out).not.toContain('ya29.example');
   });
 
+  test('redacts many URL candidates without repeated suffix scans', () => {
+    const dirty = Array.from(
+      { length: 4_000 },
+      (_, index) => `https://user${index}:secret@host${index}.example/path`,
+    ).join('|');
+
+    const out = scrubString(dirty);
+    expect(out.split(`${REDACTED}@`)).toHaveLength(4_001);
+    expect(out).not.toContain(':secret@');
+  });
+
   test('leaves benign strings untouched', () => {
     expect(scrubString('hello world')).toBe('hello world');
     expect(scrubString('https://example.com/page')).toBe('https://example.com/page');
