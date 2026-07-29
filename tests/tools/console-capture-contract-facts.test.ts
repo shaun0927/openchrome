@@ -114,6 +114,75 @@ describe('console_capture contract facts', () => {
     expect(result.structuredContent?.contract_facts).toEqual(payload.contract_facts);
   });
 
+  test('clear resets the fact eviction watermark while preserving audit counters', async () => {
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 2, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({ type: 'log', text: 'first', timestamp: 1 }, 50);
+    logs.push({ type: 'log', text: 'second', timestamp: 2 }, 50);
+    logs.push({ type: 'log', text: 'third', timestamp: 3 }, 50);
+
+    captureStates.set('tab-a', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      maxLogs: 2,
+      maxBytes: 4096,
+      factEvictedTotalBaseline: 0,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+    const handler = server.tools.get('console_capture')!.handler;
+
+    const before = JSON.parse((await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    })).content?.[0]?.text ?? '{}') as {
+      bufferStats: { evictedTotal: number };
+      contract_facts: Array<{ truncated: boolean }>;
+    };
+    expect(before.bufferStats.evictedTotal).toBe(1);
+    expect(before.contract_facts[0].truncated).toBe(true);
+
+    await handler('session-a', { tabId: 'tab-a', action: 'clear' });
+    const afterClear = JSON.parse((await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    })).content?.[0]?.text ?? '{}') as {
+      bufferStats: { evictedTotal: number };
+      contract_facts: Array<{ entries: unknown[]; truncated: boolean }>;
+    };
+    expect(afterClear.bufferStats.evictedTotal).toBe(1);
+    expect(afterClear.contract_facts[0]).toMatchObject({
+      entries: [],
+      truncated: false,
+    });
+
+    logs.push({ type: 'log', text: 'fourth', timestamp: 4 }, 50);
+    logs.push({ type: 'log', text: 'fifth', timestamp: 5 }, 50);
+    logs.push({ type: 'log', text: 'sixth', timestamp: 6 }, 50);
+    const afterNewEviction = JSON.parse((await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    })).content?.[0]?.text ?? '{}') as {
+      bufferStats: { evictedTotal: number };
+      contract_facts: Array<{ truncated: boolean }>;
+    };
+    expect(afterNewEviction.bufferStats.evictedTotal).toBe(2);
+    expect(afterNewEviction.contract_facts[0].truncated).toBe(true);
+  });
+
   test('keeps the fact inconclusive when deduplication collapses oversized placeholders', async () => {
     const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
       { maxLines: 10, maxBytes: 10 },

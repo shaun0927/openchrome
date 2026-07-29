@@ -128,4 +128,29 @@ describe('performance_metrics contract facts', () => {
     expect(payload.contract_facts).toEqual([]);
     expect(result.structuredContent).toEqual(payload);
   });
+
+  test('suppresses navigation facts until the current load has completed', async () => {
+    (getSessionManager as jest.Mock).mockReturnValue({
+      getPage: jest.fn().mockResolvedValue({
+        evaluate: jest.fn().mockResolvedValue({
+          duration: 0,
+          loadEventEnd: 0,
+          requestTime: -12,
+        }),
+      }),
+    });
+    const server = new MockServer();
+    registerPerformanceMetricsTool(server as never);
+
+    const result = await server.tools.get('performance_metrics')!.handler('session-a', {
+      tabId: 'tab-a',
+      type: 'navigation',
+    });
+    const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as {
+      contract_facts: Array<{ metric: string }>;
+    };
+
+    expect(payload.contract_facts).toEqual([]);
+    expect(result.structuredContent).toEqual(payload);
+  });
 });

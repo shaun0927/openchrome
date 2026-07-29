@@ -19,7 +19,7 @@ describe('portable contract fact producers', () => {
       targetId: 'tab-a',
       capturedAt: '2026-07-28T12:00:00.000Z',
       metrics: {
-        navigation: { duration: 123.4 },
+        navigation: { duration: 123.4, loadEventEnd: 150 },
         paint: { 'first-contentful-paint': 50 },
         puppeteer: { JSHeapUsedSize: 1024, Documents: 3, UnknownMetric: 9 },
         resource_summary: {
@@ -42,6 +42,28 @@ describe('portable contract fact producers', () => {
       expect.objectContaining({ metric: 'resource.maxDuration', unit: 'ms', value: 25 }),
     ]));
     expect(facts.some((fact) => fact.metric.includes('UnknownMetric'))).toBe(false);
+  });
+
+  test('performance facts suppress incomplete or negative navigation timing', () => {
+    const facts = buildPerformanceContractFacts({
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      capturedAt: '2026-07-28T12:00:00.000Z',
+      metrics: {
+        navigation: {
+          duration: 0,
+          loadEventEnd: 0,
+          requestTime: -5,
+        },
+        puppeteer: { Documents: 1 },
+      },
+    });
+
+    expect(facts.some((fact) => fact.metric.startsWith('navigation.'))).toBe(false);
+    expect(facts).toContainEqual(expect.objectContaining({
+      metric: 'puppeteer.Documents',
+      value: 1,
+    }));
   });
 
   test('console facts cap entries and messages while marking truncation', () => {
