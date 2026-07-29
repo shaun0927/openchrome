@@ -99,7 +99,7 @@ import { extractRunId, getRunStore } from './run-harness/store';
 import { shouldInitializeBrowserSession } from './mcp/session-init-policy';
 import { getAssertEvidenceStore } from './core/contracts/assert-evidence-store';
 import { DEFAULT_TENANT_ID } from './tenant/types';
-import { isTenantScopedPrincipal } from './auth/tenant-principal';
+import { isTenantScopedPrincipal, resolveEffectiveTenantId } from './auth/tenant-principal';
 
 const MCP_TRANSPORT_SESSION_PREFIX = 'mcp-';
 
@@ -453,17 +453,12 @@ export class MCPServer {
   private stopPromise: Promise<void> | null = null;
   private rateLimiter: SessionRateLimiter | null = null;
   /**
-   * Per-session tenant binding for tenant-scoped auth. The first API-key or
-   * JWT principal to touch a given sessionId "claims" the session; subsequent
-   * tools/call requests with a different tenantId are rejected, preventing a
-   * tenant with valid credentials from operating on another tenant's session
-   * through a guessed or leaked sessionId. Cleared when the session is deleted
-   * through the same hook that reclaims rate-limit buckets.
-   *
-   * Structural enforcement (binding at session-create time via TenantManager,
-   * X-Tenant-Id header validation) lands in the tenant-propagation series
-   * (B-1, PRs #30 / #31). This map is the minimum defense-in-depth so
-   * PR 2/4 does not ship with a cross-tenant access path.
+   * Per-session tenant binding for authenticated principals and explicit
+   * transport/header tenants. The first validated caller claims the session;
+   * later tools/call requests from a different tenant are rejected. The same
+   * binding supplies the evidence owner when SessionManager emits a default
+   * tenant during TTL or shutdown cleanup. Disabled/legacy calls without an
+   * explicit request tenant and stdio calls remain unbound for compatibility.
    */
   private sessionTenants: Map<string, string> = new Map();
   /**
@@ -1648,34 +1643,43 @@ export class MCPServer {
       || implicitBrowserSessionId(mcpSessionId)
       || 'default'
     ) as string;
+    const requestTenantId = transportContext?.tenantId ?? currentRequestContext()?.tenantId;
+    const effectiveTenantId = resolveEffectiveTenantId(principal, requestTenantId);
+    const shouldBindTenant = isTenantScopedPrincipal(principal) || requestTenantId !== undefined;
 
     if (!toolName) {
       throw new Error('Missing tool name');
     }
 
-    // Session-tenant binding (API-key/JWT modes): reject if the session was
-    // already claimed by a different tenant. The first tenant-scoped caller to COMPLETE
+    // Session-tenant binding: reject if the session was already claimed by a
+    // different authenticated or explicit transport/header tenant. The first caller to COMPLETE
     // an authorized + validated call wins — the claim itself is deferred
     // until after scope / tool / args checks pass, so a denied or invalid
     // request cannot lock a sessionId and block other tenants.
-    // Disabled/legacy auth and stdio callers are not subject
-    // to this check. Structural session-create binding lands in B-1
-    // (#30/#31); this is the PR-2-scope defense-in-depth.
-    if (isTenantScopedPrincipal(principal)) {
+    // Disabled/legacy callers without an explicit request tenant and stdio
+    // callers remain backward-compatible and unbound.
+    if (shouldBindTenant && effectiveTenantId) {
+      const managedTenantId = this.sessionManager.getSession?.(sessionId)?.tenantId;
       const claimedBy = this.sessionTenants.get(sessionId)
-        ?? this.sessionManager.getSession?.(sessionId)?.tenantId;
-      if (claimedBy !== undefined && claimedBy !== principal.tenantId) {
-        console.error(
-          `[MCPServer] tenant binding violation: session=${sessionId} claimedBy=${claimedBy} requestedBy=${principal.tenantId} tool=${toolName}`,
+        ?? (
+          managedTenantId === DEFAULT_TENANT_ID && !isTenantScopedPrincipal(principal)
+            ? undefined
+            : managedTenantId
         );
-        try {
-          logAuditEntry(toolName, sessionId, toolArgs, undefined, {
-            keyId: principal.keyId,
-            tenantId: principal.tenantId,
-            scopes: principal.scopes,
-          });
-        } catch {
-          // best-effort
+      if (claimedBy !== undefined && claimedBy !== effectiveTenantId) {
+        console.error(
+          `[MCPServer] tenant binding violation: session=${sessionId} claimedBy=${claimedBy} requestedBy=${effectiveTenantId} tool=${toolName}`,
+        );
+        if (principal) {
+          try {
+            logAuditEntry(toolName, sessionId, toolArgs, undefined, {
+              keyId: principal.keyId,
+              tenantId: effectiveTenantId,
+              scopes: principal.scopes,
+            });
+          } catch {
+            // best-effort
+          }
         }
         const deniedResult: MCPResult = {
           content: [
@@ -1875,11 +1879,8 @@ export class MCPServer {
     // now do we claim the session for the caller's tenant — a denied or
     // invalid call must NOT be able to lock a sessionId that would then
     // block other tenants. (Codex round-6 P1.)
-    if (
-      isTenantScopedPrincipal(principal) &&
-      !this.sessionTenants.has(sessionId)
-    ) {
-      this.sessionTenants.set(sessionId, principal.tenantId);
+    if (shouldBindTenant && effectiveTenantId && !this.sessionTenants.has(sessionId)) {
+      this.sessionTenants.set(sessionId, effectiveTenantId);
     }
 
     // Auto-expand tier if a higher-tier tool is called directly

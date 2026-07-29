@@ -135,6 +135,39 @@ describe('AssertEvidenceStore', () => {
     expect(retrieved).toContain('token_type=Bearer');
   });
 
+  test('redacts nested raw and encoded URL credentials in durable artifacts', () => {
+    const store = new AssertEvidenceStore({ rootDir });
+    const nestedUrl = 'https://example.com/?next=https://alice:secret@evil.example/private';
+    const encodedUrl = 'https://example.com/?next=https%3A%2F%2Fbob%3Asecret%40evil.example%2Fprivate';
+    const stored = persist(store, {
+      pageUrl: nestedUrl,
+      result: {
+        verdict: 'pass',
+        evidence: {
+          passed: true,
+          assertion_kind: 'url',
+          details: { url: encodedUrl },
+        },
+      },
+    });
+    const raw = fs.readFileSync(path.join(rootDir, `${stored.evidence_handle}.json`), 'utf8');
+
+    expect(raw).not.toContain('alice');
+    expect(raw).not.toContain('bob');
+    expect(raw).not.toContain('secret');
+    expect(raw).toContain('next=https://[REDACTED]@evil.example/private');
+    expect(raw).toContain('next=https%3A%2F%2F%5BREDACTED%5D%40evil.example%2Fprivate');
+
+    const artifact = store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    });
+    const retrieved = JSON.stringify(artifact);
+    expect(retrieved).not.toContain('alice');
+    expect(retrieved).not.toContain('bob');
+    expect(retrieved).not.toContain('secret');
+  });
+
   test('keeps authorization stable when configured secrets match owner identifiers', () => {
     setSecretStore(makeSecretStore(new Map([
       ['SESSION_ID', 'session-a'],

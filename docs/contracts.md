@@ -300,7 +300,9 @@ The retention contract is:
   shutdown, and HTTP DELETE rejects a request whose authenticated/header tenant
   does not match the tenant bound to the MCP session; MCP `sessions/delete`
   applies the same effective request-tenant check before deleting a managed
-  browser session or evidence;
+  browser session or evidence; disabled/legacy HTTP tool calls with an explicit
+  `X-Tenant-Id` retain that effective tenant binding so later lifecycle events
+  cannot fall back to the synthetic/default tenant and leave evidence behind;
 - expired, deleted, malformed, corrupt, and unauthorized handles return stable
   error codes rather than filesystem paths or partial contents;
 - credential-pattern and configured-secret redaction runs before the artifact
