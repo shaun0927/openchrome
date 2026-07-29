@@ -225,4 +225,29 @@ describe('MCP progressive disclosure client detection', () => {
     const reset = await initializeAndList(server, 'opencode', {}, 'session-a');
     expect(reset.tools).not.toContain('drag_drop');
   });
+
+  test('global list changes reach legacy and modern clients on every transport', () => {
+    const transports = Array.from({ length: 2 }, () => ({
+      onMessage: jest.fn(),
+      send: jest.fn(),
+      publishToolsChanged: jest.fn(),
+      start: jest.fn(),
+      close: jest.fn().mockResolvedValue(undefined),
+    } satisfies MCPTransport));
+    const server = makeServer();
+    for (const transport of transports) {
+      server.wireRateLimiterCleanup(transport);
+    }
+
+    server.emitListChanged();
+
+    for (const transport of transports) {
+      expect(transport.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'notifications/tools/list_changed',
+        }),
+      );
+      expect(transport.publishToolsChanged).toHaveBeenCalledTimes(1);
+    }
+  });
 });

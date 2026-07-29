@@ -413,14 +413,14 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       }
     });
 
-    test('Unknown client initializes with listChanged=false', async () => {
+    test('Unknown client sees the server list-change capability', async () => {
       const { response } = await sendAndReceive(unknownServer, 'initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
         clientInfo: { name: 'unknown-editor', version: '1.0.0' },
       });
 
-      expect(response.result.capabilities.tools.listChanged).toBe(false);
+      expect(response.result.capabilities.tools.listChanged).toBe(true);
     });
 
     test('Unknown client gets all tools immediately (no expand_tools)', async () => {

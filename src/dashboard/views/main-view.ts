@@ -148,9 +148,13 @@ export class MainView {
       status = showSpinner ? `${ANSI.cyan}${spinner}${ANSI.reset}` : `${ANSI.cyan}...${ANSI.reset}`;
     } else {
       duration = pad(formatDuration(call.duration || 0), 6);
-      status = call.result === 'success'
-        ? `${ANSI.green}\u2713${ANSI.reset}`
-        : `${ANSI.red}\u2717${ANSI.reset}`;
+      if (call.result === 'success') {
+        status = `${ANSI.green}\u2713${ANSI.reset}`;
+      } else if (call.result === 'input_required') {
+        status = `${ANSI.yellow}?${ANSI.reset}`;
+      } else {
+        status = `${ANSI.red}\u2717${ANSI.reset}`;
+      }
     }
 
     const prefix = call.result === 'pending' ? `${ANSI.cyan}\u25B6${ANSI.reset}` : ' ';

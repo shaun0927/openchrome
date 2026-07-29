@@ -48,11 +48,13 @@ import type { Principal } from '../src/auth/api-key-types';
 import { EMPTY_SECRET_STORE, makeSecretStore, setSecretStore } from '../src/core/secrets';
 import { getActivityTracker } from '../src/dashboard/activity-tracker';
 import { getDashboardState } from '../src/desktop/dashboard-state';
+import { McpInputRequiredError } from '../src/errors/mcp-input-required';
 import { getMetricsCollector } from '../src/metrics/collector';
 import { PRINCIPAL_SYM } from '../src/middleware/auth';
 import { logAuditEntry } from '../src/security/audit-logger';
 import { recordTaskToolCall } from '../src/core/task-ledger';
 import * as taskJournal from '../src/journal/task-journal';
+import * as runHarnessStore from '../src/run-harness/store';
 import { TABS_SEARCH_MAX_RESPONSE_BYTES } from '../src/config/defaults';
 
 describe('MCPServer returned-error accounting', () => {
@@ -196,6 +198,106 @@ describe('MCPServer returned-error accounting', () => {
       false,
       'invalid query',
     );
+  });
+
+  test('settles first-round tracking when a tool requires modern MCP input', async () => {
+    const sessionId = 'input-required-session';
+    server = new MCPServer({
+      getOrCreateSession: jest.fn().mockResolvedValue({ id: sessionId }),
+      addEventListener: jest.fn(),
+      cleanupAllSessions: jest.fn().mockResolvedValue(undefined),
+      getStats: jest.fn(() => ({ totalTargets: 0 })),
+      sessionCount: 0,
+    } as any);
+    const toolName = `input_required_accounting_${Date.now()}`;
+    const inputResult = {
+      resultType: 'input_required',
+      inputRequests: {
+        confirm: {
+          type: 'elicitation',
+          message: 'Continue?',
+        },
+      },
+    };
+    const runStore = {
+      appendToolStarted: jest.fn(),
+      appendToolFinished: jest.fn(),
+      appendRunEvent: jest.fn(),
+    };
+    jest.spyOn(runHarnessStore, 'getRunStore').mockReturnValue(runStore as any);
+    server.registerTool(
+      toolName,
+      jest.fn(() => {
+        throw new McpInputRequiredError(inputResult);
+      }),
+      {
+        name: toolName,
+        description: 'input required accounting test',
+        inputSchema: { type: 'object', properties: {} },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+    );
+
+    await expect(server.handleRequest({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: toolName,
+        arguments: { run_id: 'run-input-required' },
+        sessionId,
+      },
+    } as any)).rejects.toMatchObject({ result: inputResult });
+
+    expect(
+      getActivityTracker().getActiveCalls()
+        .filter((call) => call.toolName === toolName),
+    ).toHaveLength(0);
+    expect(
+      getActivityTracker().getRecentCalls(20, sessionId)
+        .find((call) => call.toolName === toolName),
+    ).toMatchObject({ result: 'input_required' });
+    expect(
+      getDashboardState().getToolCalls(sessionId)
+        .find((call) => call.toolName === toolName),
+    ).toMatchObject({ status: 'input_required' });
+    expect(
+      getDashboardState().getToolCallTotals()
+        .filter((row) => row.toolName === toolName),
+    ).toHaveLength(0);
+    expect(logAuditEntry).not.toHaveBeenCalledWith(
+      toolName,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(recordTaskToolCall).not.toHaveBeenCalled();
+    expect(journal.record).not.toHaveBeenCalled();
+    expect(runStore.appendToolStarted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        run_id: 'run-input-required',
+        tool: toolName,
+      }),
+    );
+    expect(runStore.appendToolFinished).toHaveBeenCalledWith(
+      expect.objectContaining({
+        run_id: 'run-input-required',
+        tool: toolName,
+        metadata: { stage: 'input_required' },
+      }),
+    );
+
+    const cdpClient = (jest.requireMock('../src/cdp/client') as {
+      getCDPClient: jest.Mock;
+    }).getCDPClient();
+    expect(cdpClient.setHeartbeatMode).toHaveBeenCalledWith('heavy');
+    expect(cdpClient.setHeartbeatMode).toHaveBeenCalledWith('active');
   });
 
   test('bounds and redacts returned error summaries before persistence', async () => {

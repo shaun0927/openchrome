@@ -733,8 +733,10 @@ export class MCPServer {
       this.sessionManager.addEventListener((event) => {
         if (event.type === 'session:deleting') {
           beginSessionRecorderDeletion(event.sessionId);
-          const tenantId = this.sessionManager.getSession(event.sessionId)?.tenantId
-            ?? this.sessionTenants.get(event.sessionId);
+          const session = typeof this.sessionManager.getSession === 'function'
+            ? this.sessionManager.getSession(event.sessionId)
+            : undefined;
+          const tenantId = session?.tenantId ?? this.sessionTenants.get(event.sessionId);
           if (tenantId) this.deletingSessionTenants.set(event.sessionId, tenantId);
         } else if (event.type === 'session:deleted') {
           this.sessionTenants.delete(event.sessionId);
@@ -1222,6 +1224,29 @@ export class MCPServer {
     return { reporter, flush };
   }
 
+  private settleHeartbeatAfterToolCall(): void {
+    try {
+      const cdpClient = getCDPClient();
+      cdpClient.setHeartbeatMode?.('active');
+    } catch {
+      // CDP client may not be initialized.
+    }
+
+    if (this.heartbeatIdleTimer) {
+      clearTimeout(this.heartbeatIdleTimer);
+    }
+    this.heartbeatIdleTimer = setTimeout(() => {
+      try {
+        const cdpClient = getCDPClient();
+        cdpClient.setHeartbeatMode?.('idle');
+      } catch {
+        // CDP client may be disconnected.
+      }
+      this.heartbeatIdleTimer = null;
+    }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
+    this.heartbeatIdleTimer.unref?.();
+  }
+
   /**
    * Wire rate-limiter session cleanup into the given transport so that
    * bucket memory is freed immediately when a client sends DELETE /mcp.
@@ -1678,11 +1703,17 @@ export class MCPServer {
   private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
     const exposureState = this.getToolExposureState();
     const requestContext = currentRequestContext();
-    this.configureToolExposureForClient(
-      exposureState,
-      requestContext?.clientInfo,
-      requestContext?.clientCapabilities,
-    );
+    if (
+      requestContext?.protocolEra === 'modern'
+      || requestContext?.clientInfo !== undefined
+      || requestContext?.clientCapabilities !== undefined
+    ) {
+      this.configureToolExposureForClient(
+        exposureState,
+        requestContext.clientInfo,
+        requestContext.clientCapabilities,
+      );
+    }
     // Signal the hint engine that this session has consumed tool descriptions,
     // so rules whose guidance is already embedded in description "When to
     // use / When NOT to use" blocks can suppress themselves without affecting
@@ -1943,7 +1974,10 @@ export class MCPServer {
         parsed.kind === 'session-state' ||
         parsed.kind === 'journal')
     ) {
-      return this.sessionManager.getSession(parsed.id)?.tenantId
+      const session = typeof this.sessionManager.getSession === 'function'
+        ? this.sessionManager.getSession(parsed.id)
+        : undefined;
+      return session?.tenantId
         ?? this.sessionTenants.get(parsed.id)
         ?? this.deletingSessionTenants.get(parsed.id)
         ?? currentRequestContext()?.tenantId;
@@ -1953,8 +1987,12 @@ export class MCPServer {
 
   /** Publish a registry change to legacy clients and modern subscriptions. */
   public emitListChanged(): void {
-    this.sendToolListChanged(STDIO_TOOL_EXPOSURE_SESSION);
+    const notification = {
+      jsonrpc: '2.0' as const,
+      method: 'notifications/tools/list_changed',
+    } as unknown as MCPResponse;
     for (const transport of this.sessionNotificationTransports) {
+      transport.send(notification);
       transport.publishToolsChanged?.();
     }
   }
@@ -2733,34 +2771,7 @@ export class MCPServer {
         // Best-effort recording
       }
 
-      // Transition from heavy back to active after tool completes
-      try {
-        const cdpClient = getCDPClient();
-        if (cdpClient.setHeartbeatMode) {
-          cdpClient.setHeartbeatMode('active');
-        }
-      } catch {
-        // CDP client may not be initialized
-      }
-
-      // Schedule heartbeat idle mode transition
-      if (this.heartbeatIdleTimer) {
-        clearTimeout(this.heartbeatIdleTimer);
-      }
-      this.heartbeatIdleTimer = setTimeout(() => {
-        try {
-          const cdpClient = getCDPClient();
-          if (cdpClient.setHeartbeatMode) {
-            cdpClient.setHeartbeatMode('idle');
-          }
-        } catch {
-          // CDP client may be disconnected
-        }
-        this.heartbeatIdleTimer = null;
-      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
-      if (this.heartbeatIdleTimer.unref) {
-        this.heartbeatIdleTimer.unref();
-      }
+      this.settleHeartbeatAfterToolCall();
 
       const compressionConfig = getGlobalConfig().compression;
       const verbosity = compressionConfig?.verbosity ?? 'normal';
@@ -2908,7 +2919,46 @@ export class MCPServer {
       this.recordToolOutputObservability(toolName, finalResult, requestId);
       return finalResult;
     } catch (error) {
-      if (isMcpInputRequiredError(error)) throw error;
+      if (isMcpInputRequiredError(error)) {
+        this.activityTracker!.endCall(callId, 'input_required');
+        getDashboardState().recordToolEnd(callId, 'input_required');
+        this.emitResourceUpdated('oc://dashboard/state');
+
+        if (runHarnessId && !toolName.startsWith('oc_run_')) {
+          try {
+            const runStore = getRunStore();
+            const runTabId = typeof toolArgs.tabId === 'string' ? toolArgs.tabId : undefined;
+            const durationMs = Date.now() - toolStartTime;
+            runStore.appendToolFinished({
+              run_id: runHarnessId,
+              session_id: sessionId,
+              tab_id: runTabId,
+              tool: toolName,
+              args: telemetryToolArgs,
+              duration_ms: durationMs,
+              message: 'MCP client input required',
+              metadata: { stage: 'input_required' },
+            });
+            if (RUN_HARNESS_LONG_TASK_TOOLS.has(toolName)) {
+              runStore.appendRunEvent({
+                run_id: runHarnessId,
+                session_id: sessionId,
+                tab_id: runTabId,
+                kind: 'partial_result',
+                tool: toolName,
+                duration_ms: durationMs,
+                message: 'MCP client input required',
+                metadata: { stage: 'input_required' },
+              });
+            }
+          } catch {
+            // Best-effort run ledger; never alter MRTR behavior.
+          }
+        }
+
+        this.settleHeartbeatAfterToolCall();
+        throw error;
+      }
       const message = formatError(error);
       const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
@@ -2974,34 +3024,7 @@ export class MCPServer {
         // Best-effort recording
       }
 
-      // Transition from heavy back to active after tool completes
-      try {
-        const cdpClient = getCDPClient();
-        if (cdpClient.setHeartbeatMode) {
-          cdpClient.setHeartbeatMode('active');
-        }
-      } catch {
-        // CDP client may not be initialized
-      }
-
-      // Schedule heartbeat idle mode transition
-      if (this.heartbeatIdleTimer) {
-        clearTimeout(this.heartbeatIdleTimer);
-      }
-      this.heartbeatIdleTimer = setTimeout(() => {
-        try {
-          const cdpClient = getCDPClient();
-          if (cdpClient.setHeartbeatMode) {
-            cdpClient.setHeartbeatMode('idle');
-          }
-        } catch {
-          // CDP client may be disconnected
-        }
-        this.heartbeatIdleTimer = null;
-      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
-      if (this.heartbeatIdleTimer.unref) {
-        this.heartbeatIdleTimer.unref();
-      }
+      this.settleHeartbeatAfterToolCall();
 
       // Append reconnection guidance for connection errors
       const displayMessage = isConnectionError(error)

@@ -13,7 +13,7 @@ export interface DashboardToolCall {
   toolName: string;
   sessionId: string;
   args: string;
-  status: 'running' | 'success' | 'error' | 'aborted';
+  status: 'running' | 'success' | 'error' | 'aborted' | 'input_required';
   startTime: number;
   endTime?: number;
   duration?: number;
@@ -128,7 +128,11 @@ export class DashboardState {
   /**
    * Record the end of a tool call.
    */
-  recordToolEnd(callId: string, status: 'success' | 'error' | 'aborted', error?: string): void {
+  recordToolEnd(
+    callId: string,
+    status: 'success' | 'error' | 'aborted' | 'input_required',
+    error?: string,
+  ): void {
     const call = this.activeCalls.get(callId);
     if (!call) return;
 
@@ -139,6 +143,10 @@ export class DashboardState {
       call.error = error;
     }
     this.activeCalls.delete(callId);
+
+    // An MRTR input_required response completes this protocol round without
+    // completing or failing the logical tool operation.
+    if (status === 'input_required') return;
 
     // Increment the monotonic Prometheus counter. `aborted` is folded into
     // `error` to match the dashboard's two-bucket exposition.
