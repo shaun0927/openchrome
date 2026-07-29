@@ -11,6 +11,7 @@
 import { MCPServer } from '../../src/mcp-server';
 import type { Principal } from '../../src/auth/api-key-types';
 import { PRINCIPAL_SYM } from '../../src/middleware/auth';
+import { runWithRequestContext } from '../../src/observability/request-id';
 
 const originalEnv = { ...process.env };
 
@@ -117,6 +118,31 @@ describe('tenant-session binding (MCPServer)', () => {
     );
     expect(JSON.stringify(r1)).not.toContain('owned by another tenant');
     expect(JSON.stringify(r2)).not.toContain('owned by another tenant');
+  }, 20000);
+
+  it.each([
+    ['disabled', { tenantId: 'anonymous', scopes: ['admin'], mode: 'disabled' } as Principal],
+    ['legacy', { tenantId: 'legacy', scopes: ['admin'], mode: 'legacy' } as Principal],
+  ])('binds %s HTTP sessions when an explicit header tenant is present', async (_mode, caller) => {
+    await runWithRequestContext(
+      { requestId: `req-${_mode}-alice`, tenantId: 'alice' },
+      () => server.handleMessage(
+        msg('tools/call', { name: 'noop', arguments: { sessionId: 'header-bound' } }, caller),
+        undefined,
+        { tenantId: 'alice' },
+      ),
+    );
+
+    const response = await runWithRequestContext(
+      { requestId: `req-${_mode}-bob`, tenantId: 'bob' },
+      () => server.handleMessage(
+        msg('tools/call', { name: 'noop', arguments: { sessionId: 'header-bound' } }, caller, 2),
+        undefined,
+        { tenantId: 'bob' },
+      ),
+    );
+
+    expect(JSON.stringify(response)).toContain('owned by another tenant');
   }, 20000);
 
   it('stdio callers (no principal) are unaffected', async () => {

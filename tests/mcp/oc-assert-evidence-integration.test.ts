@@ -357,6 +357,48 @@ describe('oc_assert durable evidence through MCP', () => {
     })).toThrow();
   });
 
+  test.each([
+    ['disabled', { mode: 'disabled', tenantId: 'anonymous', scopes: ['admin'] } as Principal],
+    ['legacy', { mode: 'legacy', tenantId: 'legacy', scopes: ['admin'] } as Principal],
+  ])('%s lifecycle deletion preserves the effective header tenant for evidence eviction', async (_mode, principal) => {
+    const sessionManager = createMockSessionManager();
+    const lifecycleListeners: Array<(event: SessionEvent) => void> = [];
+    sessionManager.addEventListener.mockImplementation((listener: (event: SessionEvent) => void) => {
+      lifecycleListeners.push(listener);
+    });
+    server = new MCPServer(sessionManager as never);
+    registerOcAssertTool(server, undefined, store);
+    registerOcEvidenceGetTool(server, store);
+    const requestContext = {
+      requestId: `request-${_mode}-lifecycle`,
+      tenantId: 'header-tenant',
+      mcpSessionId: 'client-a',
+    };
+
+    const asserted = await runWithRequestContext(requestContext, () => server.handleMessage(
+      authenticated(toolCall(1, 'oc_assert', {
+        contract: { kind: 'url', pattern: 'example' },
+        evidence: { snapshot: { url: 'https://example.com' } },
+      }), principal),
+      undefined,
+      { mcpSessionId: 'client-a', tenantId: 'header-tenant' },
+    )) as MCPResponse;
+    const handle = resultPayload(asserted).evidence_handle as string;
+
+    const deletedEvent: SessionEvent = {
+      type: 'session:deleted',
+      sessionId: 'mcp-client-a',
+      tenantId: 'default',
+      timestamp: Date.now(),
+    };
+    for (const listener of lifecycleListeners) listener(deletedEvent);
+
+    expect(() => store.loadAuthorized(handle, {
+      sessionId: 'mcp-client-a',
+      tenantId: 'header-tenant',
+    })).toThrow();
+  });
+
   test('missing, expired, and malformed handles return stable MCP error codes', async () => {
     let now = 1_000;
     store = new AssertEvidenceStore({ rootDir, ttlMs: 10, now: () => now });

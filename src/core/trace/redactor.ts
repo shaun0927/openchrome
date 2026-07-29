@@ -120,7 +120,9 @@ const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
   },
 ];
 
-const URL_CANDIDATE_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g;
+const URL_SCHEME_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//g;
+const URL_TERMINATOR_PATTERN = /[\s"'<>]/;
+const ENCODED_URL_CANDIDATE_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*%3A%2F%2F[^\s&;"'<>]+/gi;
 
 /**
  * Redact URL userinfo using WHATWG parsing so raw `@` characters inside a
@@ -129,15 +131,24 @@ const URL_CANDIDATE_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g;
  * uses the final authority `@` so the original host/path/query spelling stays
  * intact instead of being canonicalized by URL serialization.
  */
-function redactUrlUserinfo(value: string): string {
-  return value.replace(URL_CANDIDATE_PATTERN, (candidate) => {
+function redactRawUrlUserinfo(value: string): string {
+  const starts = Array.from(value.matchAll(URL_SCHEME_PATTERN), (match) => match.index);
+  let out = value;
+
+  // Process from right to left so an outer URL cannot consume and hide a
+  // credentialed URL embedded in one of its query values.
+  for (let index = starts.length - 1; index >= 0; index -= 1) {
+    const start = starts[index];
+    const relativeEnd = out.slice(start).search(URL_TERMINATOR_PATTERN);
+    const end = relativeEnd < 0 ? out.length : start + relativeEnd;
+    const candidate = out.slice(start, end);
     let parsed: URL;
     try {
       parsed = new URL(candidate);
     } catch {
-      return candidate;
+      continue;
     }
-    if (!parsed.username && !parsed.password) return candidate;
+    if (!parsed.username && !parsed.password) continue;
 
     const schemeEnd = candidate.indexOf('//') + 2;
     const authoritySuffix = candidate.slice(schemeEnd).search(/[/?#]/);
@@ -145,10 +156,30 @@ function redactUrlUserinfo(value: string): string {
       ? candidate.length
       : schemeEnd + authoritySuffix;
     const userinfoEnd = candidate.lastIndexOf('@', authorityEnd - 1);
-    if (userinfoEnd < schemeEnd) return candidate;
+    if (userinfoEnd < schemeEnd) continue;
 
-    return `${candidate.slice(0, schemeEnd)}${REDACTED}@${candidate.slice(userinfoEnd + 1)}`;
+    const redacted = `${candidate.slice(0, schemeEnd)}${REDACTED}@${candidate.slice(userinfoEnd + 1)}`;
+    out = `${out.slice(0, start)}${redacted}${out.slice(end)}`;
+  }
+
+  return out;
+}
+
+function redactEncodedUrlUserinfo(value: string): string {
+  return value.replace(ENCODED_URL_CANDIDATE_PATTERN, (candidate) => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(candidate);
+    } catch {
+      return candidate;
+    }
+    const redacted = redactRawUrlUserinfo(decoded);
+    return redacted === decoded ? candidate : encodeURIComponent(redacted);
   });
+}
+
+function redactUrlUserinfo(value: string): string {
+  return redactEncodedUrlUserinfo(redactRawUrlUserinfo(value));
 }
 
 function isSensitiveKey(key: string): boolean {

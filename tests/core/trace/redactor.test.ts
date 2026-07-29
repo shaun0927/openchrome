@@ -81,6 +81,22 @@ describe('trace redactor — scrubString patterns', () => {
     },
   );
 
+  test('redacts credentialed URLs nested inside another URL value', () => {
+    const out = scrubString('https://example.com/?next=https://alice:secret@evil.example/private');
+    expect(out).toBe(`https://example.com/?next=https://${REDACTED}@evil.example/private`);
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('secret');
+  });
+
+  test('redacts percent-encoded credentialed URL components', () => {
+    const out = scrubString(
+      'https://example.com/?next=https%3A%2F%2Falice%3Asecret%40evil.example%2Fprivate',
+    );
+    expect(out).toContain('next=https%3A%2F%2F%5BREDACTED%5D%40evil.example%2Fprivate');
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('secret');
+  });
+
   test('leaves benign strings untouched', () => {
     expect(scrubString('hello world')).toBe('hello world');
     expect(scrubString('https://example.com/page')).toBe('https://example.com/page');
