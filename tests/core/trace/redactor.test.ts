@@ -45,6 +45,16 @@ describe('trace redactor — scrubString patterns', () => {
     expect(out).not.toContain('hunter2');
   });
 
+  test.each(['access_token', 'oauth_token', 'client_secret', 'csrf-token'])(
+    'redacts URL credential param %s without over-redacting token metadata',
+    (param) => {
+      const out = scrubString(`https://x.com/callback?${param}=ya29.example&token_type=Bearer`);
+      expect(out).toContain(`${param}=${REDACTED}`);
+      expect(out).not.toContain('ya29.example');
+      expect(out).toContain('token_type=Bearer');
+    },
+  );
+
   test('redacts URL userinfo credentials while preserving the destination', () => {
     const out = scrubString('open https://alice:hunter2@example.com/private?view=1');
     expect(out).toBe(`open https://${REDACTED}@example.com/private?view=1`);

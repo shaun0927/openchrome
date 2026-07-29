@@ -110,10 +110,13 @@ const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'hex_token', re: /\b[a-fA-F0-9]{32,}\b/g },
   // SSN (US): 3-2-4 digits
   { name: 'ssn', re: /\b\d{3}-\d{2}-\d{4}\b/g },
-  // URL-encoded credential params: `password=...`, `token=...`, `secret=...`
+  // URL-encoded credential params. Match credential-bearing suffixes so
+  // OAuth-style names such as `access_token`, `oauth_token`, and
+  // `client_secret` are covered without treating benign names such as
+  // `token_type` as credentials.
   {
     name: 'url_credential_param',
-    re: /\b(password|passwd|pwd|secret|token|api_key|apikey|access_key|refresh_token|id_token|session_token|credit_card|ssn)=([^\s&;"'<>]+)/gi,
+    re: /\b((?:[a-z0-9]+[_-])*(?:password|passwd|pwd|secret|token)|api[_-]?key|apikey|access[_-]?key|credit[_-]?card|ssn)=([^\s&;"'<>]+)/gi,
   },
 ];
 
