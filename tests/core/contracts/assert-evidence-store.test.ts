@@ -105,6 +105,36 @@ describe('AssertEvidenceStore', () => {
     expect(JSON.stringify(artifact)).not.toContain('ss@example.com');
   });
 
+  test('redacts OAuth access tokens from persisted and retrieved URLs', () => {
+    const store = new AssertEvidenceStore({ rootDir });
+    const callbackUrl = 'https://example.com/callback?access_token=ya29.example&token_type=Bearer';
+    const stored = persist(store, {
+      pageUrl: callbackUrl,
+      result: {
+        verdict: 'pass',
+        evidence: {
+          passed: true,
+          assertion_kind: 'url',
+          details: { url: callbackUrl },
+        },
+      },
+    });
+    const raw = fs.readFileSync(path.join(rootDir, `${stored.evidence_handle}.json`), 'utf8');
+
+    expect(raw).not.toContain('ya29.example');
+    expect(raw).toContain('access_token=[REDACTED]');
+    expect(raw).toContain('token_type=Bearer');
+
+    const artifact = store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    });
+    const retrieved = JSON.stringify(artifact);
+    expect(retrieved).not.toContain('ya29.example');
+    expect(retrieved).toContain('access_token=[REDACTED]');
+    expect(retrieved).toContain('token_type=Bearer');
+  });
+
   test('keeps authorization stable when configured secrets match owner identifiers', () => {
     setSecretStore(makeSecretStore(new Map([
       ['SESSION_ID', 'session-a'],
