@@ -48,6 +48,7 @@ describe('console_capture contract facts', () => {
       cdpSession: {} as CaptureState['cdpSession'],
       consoleHandler: jest.fn(),
       exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
       startedAt: Date.now() - 100,
       filter: ['error'],
       maxLogs: 2,
@@ -114,6 +115,7 @@ describe('console_capture contract facts', () => {
       cdpSession: {} as CaptureState['cdpSession'],
       consoleHandler: jest.fn(),
       exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
       startedAt: Date.now() - 100,
       maxLogs: 10,
       maxBytes: 10,
@@ -153,6 +155,7 @@ describe('console_capture contract facts', () => {
       cdpSession: {} as CaptureState['cdpSession'],
       consoleHandler: jest.fn(),
       exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
       startedAt: Date.now() - 100,
       filter: ['error', 'error'],
       maxLogs: 10,
@@ -179,5 +182,143 @@ describe('console_capture contract facts', () => {
 
     expect(payload.contract_facts[0].captured_types).toEqual(['error']);
     expect(payload.contract_facts[0].truncated).toBe(false);
+  });
+
+  test('retracts an unhandled rejection after Runtime.exceptionRevoked', async () => {
+    const listeners = new Map<string, (event: Record<string, unknown>) => void>();
+    const cdpSession = {
+      send: jest.fn().mockResolvedValue(undefined),
+      on: jest.fn((event: string, listener: (payload: Record<string, unknown>) => void) => {
+        listeners.set(event, listener);
+      }),
+      off: jest.fn(),
+      detach: jest.fn().mockResolvedValue(undefined),
+    } as unknown as CaptureState['cdpSession'];
+    const page = {
+      createCDPSession: jest.fn().mockResolvedValue(cdpSession),
+      url: () => 'https://example.test/',
+    };
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue(page),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+    const handler = server.tools.get('console_capture')!.handler;
+
+    await handler('session-a', { tabId: 'tab-a', action: 'start' });
+    listeners.get('Runtime.exceptionThrown')?.({
+      timestamp: 1,
+      exceptionDetails: {
+        exceptionId: 7,
+        text: 'Uncaught (in promise)',
+        exception: { description: 'Error: late-handled rejection' },
+      },
+    });
+    listeners.get('Runtime.exceptionThrown')?.({
+      timestamp: 2,
+      exceptionDetails: {
+        exceptionId: 8,
+        text: 'Uncaught (in promise)',
+        exception: { description: 'Error: persistent rejection' },
+      },
+    });
+
+    const before = JSON.parse((await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    })).content?.[0]?.text ?? '{}') as {
+      logs: Array<{ text: string; uncaught?: boolean }>;
+      contract_facts: Array<{ entries: Array<{ message: string; uncaught: boolean }> }>;
+    };
+    expect(before.logs).toHaveLength(2);
+    expect(before.logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: 'Error: late-handled rejection', uncaught: true }),
+      expect.objectContaining({ text: 'Error: persistent rejection', uncaught: true }),
+    ]));
+    expect(before.contract_facts[0].entries).toHaveLength(2);
+
+    listeners.get('Runtime.exceptionRevoked')?.({ reason: 'handled', exceptionId: 7 });
+    const after = JSON.parse((await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    })).content?.[0]?.text ?? '{}') as {
+      logs: Array<{ text: string }>;
+      stats: { total: number };
+      bufferStats: { retained: number };
+      contract_facts: Array<{ entries: Array<{ message: string }> }>;
+    };
+    expect(after.logs).toEqual([
+      expect.objectContaining({ text: 'Error: persistent rejection' }),
+    ]);
+    expect(after.stats.total).toBe(1);
+    expect(after.bufferStats.retained).toBe(1);
+    expect(after.contract_facts[0].entries).toEqual([
+      expect.objectContaining({ message: 'Error: persistent rejection' }),
+    ]);
+
+    listeners.get('Runtime.exceptionRevoked')?.({ reason: 'handled', exceptionId: 8 });
+
+    const stopped = JSON.parse((await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'stop',
+    })).content?.[0]?.text ?? '{}') as { capturedLogs: number };
+    expect(stopped.capturedLogs).toBe(0);
+    expect(cdpSession.off).toHaveBeenCalledWith(
+      'Runtime.exceptionRevoked',
+      expect.any(Function),
+    );
+  });
+
+  test('retracts an oversized exception placeholder by exception ID', async () => {
+    const listeners = new Map<string, (event: Record<string, unknown>) => void>();
+    const cdpSession = {
+      send: jest.fn().mockResolvedValue(undefined),
+      on: jest.fn((event: string, listener: (payload: Record<string, unknown>) => void) => {
+        listeners.set(event, listener);
+      }),
+      off: jest.fn(),
+      detach: jest.fn().mockResolvedValue(undefined),
+    } as unknown as CaptureState['cdpSession'];
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({
+        createCDPSession: jest.fn().mockResolvedValue(cdpSession),
+        url: () => 'https://example.test/',
+      }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+    const handler = server.tools.get('console_capture')!.handler;
+
+    await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'start',
+      maxBytes: 1,
+    });
+    listeners.get('Runtime.exceptionThrown')?.({
+      timestamp: 1,
+      exceptionDetails: {
+        exceptionId: 9,
+        text: 'Uncaught (in promise)',
+        exception: { description: 'Error: oversized late-handled rejection' },
+      },
+    });
+    listeners.get('Runtime.exceptionRevoked')?.({ reason: 'handled', exceptionId: 9 });
+
+    const payload = JSON.parse((await handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    })).content?.[0]?.text ?? '{}') as {
+      logs: unknown[];
+      bufferStats: { retained: number };
+      contract_facts: Array<{ entries: unknown[] }>;
+    };
+    expect(payload.logs).toEqual([]);
+    expect(payload.bufferStats.retained).toBe(0);
+    expect(payload.contract_facts[0].entries).toEqual([]);
   });
 });

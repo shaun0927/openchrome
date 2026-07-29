@@ -33,7 +33,7 @@ const DEFAULT_MAX_BYTES = parsePositiveIntEnv('OPENCHROME_CONSOLE_BUFFER_MAX_BYT
  * Create a truncated placeholder entry for an oversized push.
  * The caller is responsible for providing a typed placeholder factory.
  */
-export type PlaceholderFactory<T> = (originalSizeBytes: number) => T;
+export type PlaceholderFactory<T> = (originalSizeBytes: number, originalEntry: T) => T;
 
 class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
   private readonly maxLines: number;
@@ -83,7 +83,7 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
     //     not an eviction).
     const ts = this._entryTimestamp(entry);
     const oversized = sizeBytes > this.maxBytes;
-    const target: T = oversized ? this.placeholder(sizeBytes) : entry;
+    const target: T = oversized ? this.placeholder(sizeBytes, entry) : entry;
     const accountedBytes = oversized ? 0 : sizeBytes;
 
     // Single linear evict-then-insert. This is the ONLY code path from
@@ -100,6 +100,40 @@ class ConsoleRingBufferImpl<T> implements ConsoleRingBuffer<T> {
       this._evictOldest();
     }
     this._insert(target, accountedBytes, ts);
+  }
+
+  removeWhere(predicate: (entry: T) => boolean): number {
+    if (this.count === 0) return 0;
+    const survivors: Array<{ entry: T; sizeBytes: number; timestamp: number }> = [];
+    let removed = 0;
+    for (let i = 0; i < this.count; i++) {
+      const idx = (this._head + i) % this.maxLines;
+      const entry = this.buf[idx] as T;
+      if (predicate(entry)) {
+        removed++;
+      } else {
+        survivors.push({
+          entry,
+          sizeBytes: this.sizes[idx],
+          timestamp: this.timestamps[idx],
+        });
+      }
+    }
+    if (removed === 0) return 0;
+
+    for (let i = 0; i < this.maxLines; i++) this.buf[i] = undefined;
+    this.sizes.fill(0);
+    this.timestamps.fill(0);
+    this._head = 0;
+    this._tail = 0;
+    this.count = 0;
+    this.retainedBytes = 0;
+    this.firstAt = null;
+    this.lastAt = null;
+    for (const survivor of survivors) {
+      this._insert(survivor.entry, survivor.sizeBytes, survivor.timestamp);
+    }
+    return removed;
   }
 
   tail(n: number): T[] {
