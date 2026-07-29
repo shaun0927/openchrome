@@ -22,7 +22,7 @@ jobs:
           # CI wall-clock is bounded by the slowest shard instead of one long
           # serial test job.
           - os: ubuntu-latest
-            node-version: 18
+            node-version: 24
             test-shard: ''
           - os: ubuntu-latest
             node-version: 20

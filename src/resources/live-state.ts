@@ -63,7 +63,10 @@ export const LIVE_RESOURCE_TEMPLATES: MCPResourceTemplateDefinition[] = [
   },
 ];
 
-export function liveResourceDefinitions(sessionManager: SessionManager): MCPResourceDefinition[] {
+export function liveResourceDefinitions(
+  sessionManager: SessionManager,
+  tenantId?: TenantId,
+): MCPResourceDefinition[] {
   const resources: MCPResourceDefinition[] = [
     {
       uri: 'oc://diagnostics/targets',
@@ -79,6 +82,12 @@ export function liveResourceDefinitions(sessionManager: SessionManager): MCPReso
     },
   ];
   for (const session of sessionManager.getAllSessionInfos()) {
+    if (
+      tenantId !== undefined &&
+      (session.tenantId ?? DEFAULT_TENANT_ID) !== tenantId
+    ) {
+      continue;
+    }
     resources.push({
       uri: sessionTabsUri(session.id),
       name: `openchrome-session-tabs-${session.id}`,

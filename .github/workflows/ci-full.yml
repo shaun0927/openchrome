@@ -20,7 +20,7 @@ jobs:
           # Main-branch full matrix keeps OS/Node smoke coverage, while the
           # expensive Ubuntu/Node 20 Jest suite runs as three parallel shards.
           - os: ubuntu-latest
-            node-version: 18
+            node-version: 24
             test-shard: ''
           - os: ubuntu-latest
             node-version: 20
@@ -35,7 +35,7 @@ jobs:
             node-version: 22
             test-shard: ''
           - os: macos-latest
-            node-version: 18
+            node-version: 24
             test-shard: ''
           - os: macos-latest
             node-version: 20
@@ -44,7 +44,7 @@ jobs:
             node-version: 22
             test-shard: ''
           - os: windows-latest
-            node-version: 18
+            node-version: 24
             test-shard: ''
           - os: windows-latest
             node-version: 20

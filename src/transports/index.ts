@@ -43,6 +43,11 @@ export interface MCPTransport {
   /** Send to one logical MCP session when the transport supports it. */
   sendToSession?(sessionId: string, response: MCPResponse): boolean;
 
+  /** Publish modern subscription events without broadcasting to legacy SSE clients. */
+  publishToolsChanged?(): void;
+  publishResourcesChanged?(tenantId?: string): void;
+  publishResourceUpdated?(uri: string, tenantId?: string): void;
+
   /** Register cleanup for logical MCP session close/disconnect when supported. */
   onSessionClose?(handler: (sessionId: string) => void): void;
 
@@ -99,6 +104,6 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
     );
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { StdioTransport } = require('./stdio');
-  return new StdioTransport();
+  const { SdkStdioTransport } = require('./sdk-stdio');
+  return new SdkStdioTransport();
 }

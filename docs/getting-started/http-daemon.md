@@ -1,9 +1,10 @@
 # HTTP Daemon Mode
 
 OpenChrome's HTTP transport turns the MCP server into a long-running daemon that
-multiple callers can reach concurrently over plain HTTP + JSON-RPC. This page is
-the single reference for operators who need a shared, persistent OpenChrome
-instance — for CI pipelines, multi-client setups, or dashboard integrations.
+multiple callers can reach concurrently over HTTP + JSON-RPC. It serves
+stateless MCP `2026-07-28` requests and retains the legacy sessionful path for
+older clients. This page is the single reference for operators who need a
+shared, persistent OpenChrome instance.
 
 For the 30-second quick-start, jump to [Copy-pasteable curl recipe](#copy-pasteable-curl-recipe).
 
@@ -76,9 +77,10 @@ All flags live in `src/index.ts`. Every env var listed here is read in the same 
 
 ## 3. Multi-client scenario
 
-Two MCP clients share one OpenChrome daemon. Each client issues independent
-`tools/list` and `tools/call` requests; the daemon multiplexes them over separate
-HTTP sessions.
+Two MCP clients share one OpenChrome daemon. Each modern client issues
+self-contained `tools/list` and `tools/call` POST requests. OpenChrome browser
+state is carried by explicit application `sessionId` and `tabId` values, not by
+an MCP transport session.
 
 ```
 ┌─────────────────────┐        HTTP + JSON-RPC       ┌──────────────────────────┐
@@ -105,8 +107,8 @@ HTTP sessions.
 Key properties of this setup:
 - **Single Chrome process**: all sessions share one browser; tabs are isolated per session.
 - **Concurrent requests**: the HTTP server handles multiple in-flight MCP requests.
-- **Independent lifecycles**: clients can connect and disconnect without restarting the daemon.
-- **Idle-timeout**: when all clients disconnect and no new sessions arrive within the idle window, the daemon exits cleanly (code 0).
+- **Independent lifecycles**: clients can make and cancel requests without restarting the daemon.
+- **Idle-timeout**: when OpenChrome has no browser sessions and no activity occurs within the idle window, the daemon exits cleanly (code 0).
 
 ---
 
@@ -127,7 +129,8 @@ Key properties of this setup:
   external health probes.
 - **`/api/tool-calls` and other dashboard endpoints**: these require the same
   bearer token as `/mcp`.
-- **Rate limiting**: the HTTP transport applies a per-session rate limiter (see
+- **Rate limiting**: the HTTP transport applies an authenticated-tenant or
+  application-session rate limiter (see
   `src/transports/http.ts`). Excessive requests are throttled with `429 Too Many Requests`.
 
 ---
@@ -185,8 +188,11 @@ daemon is up and accepting connections.
 curl -s \
   -X POST http://127.0.0.1:3100/mcp \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer mysecrettoken" \
-  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: tools/list" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"1.0.0"}}}}'
 ```
 
 ```powershell
@@ -194,8 +200,14 @@ curl -s \
 Invoke-RestMethod `
   -Method POST `
   -Uri http://127.0.0.1:3100/mcp `
-  -Headers @{ "Content-Type" = "application/json"; "Authorization" = "Bearer mysecrettoken" } `
-  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+  -ContentType "application/json" `
+  -Headers @{
+    "Accept" = "application/json, text/event-stream"
+    "Authorization" = "Bearer mysecrettoken"
+    "MCP-Protocol-Version" = "2026-07-28"
+    "Mcp-Method" = "tools/list"
+  } `
+  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"powershell","version":"1.0.0"}}}}'
 ```
 
 Expected response shape (abbreviated):
@@ -205,16 +217,21 @@ Expected response shape (abbreviated):
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
+    "resultType": "complete",
     "tools": [
       { "name": "navigate", "description": "..." },
       { "name": "read_page", "description": "..." }
-    ]
+    ],
+    "ttlMs": 30000,
+    "cacheScope": "private"
   }
 }
 ```
 
 The `tools` array will contain at least one entry. Substitute `mysecrettoken`
 with the token you passed to `--auth-token`, and `3100` with your chosen port.
+Legacy clients may continue to use `initialize`, `Mcp-Session-Id`, and the
+legacy SSE endpoints; protocol-era selection is automatic.
 
 ---
 
@@ -231,9 +248,9 @@ npx openchrome serve \
   --idle-timeout 90s
 ```
 
-After the last session closes (or if no session was ever opened), the daemon
-monitors for inactivity. Once 90 seconds pass with zero sessions, it logs a
-shutdown message to stderr and exits with code 0.
+After the last OpenChrome browser session closes (or if none was opened), the
+daemon monitors for inactivity. Once 90 seconds pass with zero sessions, it
+logs a shutdown message to stderr and exits with code 0.
 
 To observe this:
 
@@ -347,5 +364,7 @@ Either add `--auth-token` or keep `--http-host 127.0.0.1` (the default).
   table of `OPENCHROME_PPID_WATCH`, `OPENCHROME_HEALTH_ENDPOINT`, and related
   vars.
 - [Architecture overview](../architecture.md): transport layer in context.
+- [MCP 2026-07-28 migration](../mcp-2026-07-28.md): protocol behavior,
+  compatibility, and design rationale.
 - `src/transports/http.ts`: HTTP transport implementation, rate limiter, auth middleware.
 - `src/index.ts`: all CLI flag definitions (lines 92–97).

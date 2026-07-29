@@ -18,6 +18,7 @@ import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { humanMouseMove, humanType } from '../stealth/human-behavior';
 import { withTimeout } from '../utils/with-timeout';
+import { isMcpInputRequiredError } from '../errors/mcp-input-required';
 import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
@@ -168,6 +169,7 @@ async function maybeRefineActionsWithSampling(
     if (!sampled) return { actions, decision: { used: false, supported: true, fallbackReason: 'invalid_sampling_response' } };
     return { actions: sampled, decision: { used: true, supported: true } };
   } catch (err) {
+    if (isMcpInputRequiredError(err)) throw err;
     // Map known transport/cancel signatures to closed-set reasons so we don't
     // leak raw transport text to clients in `_meta.sampling.fallbackReason`.
     const message = err instanceof Error ? err.message : String(err);

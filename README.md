@@ -283,6 +283,7 @@ root so both hosts auto-discover it.
 | Topic | Link |
 |---|---|
 | Architecture & reliability layers | [`docs/architecture.md`](docs/architecture.md) |
+| MCP 2026-07-28 migration | [`docs/mcp-2026-07-28.md`](docs/mcp-2026-07-28.md) |
 | Getting started walkthrough | [`docs/getting-started.md`](docs/getting-started.md) |
 | Full tool catalogue | [`docs/agent/capability-map.md`](docs/agent/capability-map.md) |
 | CLI & playbook | [`docs/cli.md`](docs/cli.md) · [`docs/cli/playbook.md`](docs/cli/playbook.md) |

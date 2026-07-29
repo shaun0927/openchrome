@@ -83,14 +83,21 @@ export function clearAllSessionMcpRoots(): void {
 }
 
 export function assertUrlAllowedBySessionRoots(sessionId: string, url: string): void {
-  const roots = getSessionMcpRoots(sessionId);
+  assertUrlAllowedByMcpRoots(getSessionMcpRoots(sessionId), url, sessionId);
+}
+
+export function assertUrlAllowedByMcpRoots(
+  roots: ParsedMcpRoots | undefined,
+  url: string,
+  scopeId: string,
+): void {
   if (!roots || roots.network.length === 0) return;
   const host = extractHttpsHost(url);
   if (!host) return;
   const allowed = roots.network.some((root) => hostMatchesNetworkRoot(host, root));
   if (!allowed) {
     throw new Error(
-      `Access to URL host "${host}" is blocked by MCP roots narrowing for session "${sessionId}". ` +
+      `Access to URL host "${host}" is blocked by MCP roots narrowing for session "${scopeId}". ` +
       `Allowed network roots: ${roots.network.map((root) => root.uri).join(', ')}`,
     );
   }
@@ -106,13 +113,20 @@ export function isUrlAllowedBySessionRoots(sessionId: string, url: string): bool
 }
 
 export function assertFilePathAllowedBySessionRoots(sessionId: string, filePath: string): void {
-  const roots = getSessionMcpRoots(sessionId);
+  assertFilePathAllowedByMcpRoots(getSessionMcpRoots(sessionId), filePath, sessionId);
+}
+
+export function assertFilePathAllowedByMcpRoots(
+  roots: ParsedMcpRoots | undefined,
+  filePath: string,
+  scopeId: string,
+): void {
   if (!roots || roots.file.length === 0) return;
   const resolvedPath = path.resolve(expandHomePath(filePath));
   const allowed = roots.file.some((root) => isPathWithinRoot(resolvedPath, root.path));
   if (!allowed) {
     throw new Error(
-      `Access to file output path "${resolvedPath}" is blocked by MCP roots narrowing for session "${sessionId}". ` +
+      `Access to file output path "${resolvedPath}" is blocked by MCP roots narrowing for session "${scopeId}". ` +
       `Allowed file roots: ${roots.file.map((root) => root.uri).join(', ')}`,
     );
   }

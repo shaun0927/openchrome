@@ -224,11 +224,26 @@ describe('HTTP Bearer Token Auth', () => {
       expect(res.status).toBe(401);
     });
 
-    it('allows CORS preflight without Origin and includes Authorization header', async () => {
+    it('allows CORS preflight without Origin and includes auth and modern MCP headers', async () => {
       const res = await request('/mcp', 'OPTIONS');
       expect(res.status).toBe(204);
       const allowHeaders = res.headers['access-control-allow-headers'] as string;
-      expect(allowHeaders).toContain('Authorization');
+      for (const header of [
+        'Authorization',
+        'MCP-Protocol-Version',
+        'Mcp-Method',
+        'Mcp-Name',
+      ]) {
+        expect(allowHeaders).toContain(header);
+      }
+      const exposeHeaders = res.headers['access-control-expose-headers'] as string;
+      for (const header of [
+        'MCP-Protocol-Version',
+        'Mcp-Method',
+        'Mcp-Name',
+      ]) {
+        expect(exposeHeaders).toContain(header);
+      }
     });
   });
 

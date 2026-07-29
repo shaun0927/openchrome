@@ -17,6 +17,7 @@ import { getSessionManager } from '../src/session-manager';
 import { MCPServer } from '../src/mcp-server';
 import { runWithRequestContext } from '../src/observability/request-id';
 import { registerAllTools } from '../src/tools';
+import type { Principal } from '../src/auth/api-key-types';
 import type { MCPResponse } from '../src/types/mcp';
 import type { MCPTransport } from '../src/transports';
 
@@ -127,6 +128,77 @@ describe('MCP progressive disclosure client detection', () => {
     expect(tools.length).toBeGreaterThanOrEqual(118);
   });
 
+  test('modern requests expose a stateless full tool surface', async () => {
+    const server = makeServer();
+    const listed = await runWithRequestContext(
+      {
+        requestId: 'req-modern',
+        protocolEra: 'modern',
+        clientInfo: { name: 'opencode', version: '1.0.0' },
+        clientCapabilities: { tools: { listChanged: true } },
+      },
+      () => server.handleRequest({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      }),
+    ) as TestResponse;
+    const tools = (listed.result?.tools ?? []).map((tool) => tool.name);
+
+    expect(tools).not.toContain('expand_tools');
+    expect(tools.length).toBeGreaterThanOrEqual(118);
+    expect(tools).toEqual(expect.arrayContaining([
+      'navigate',
+      'drag_drop',
+      'workflow_init',
+    ]));
+  });
+
+  test('modern tool discovery is filtered by the authenticated principal scopes', async () => {
+    const server = makeServer();
+    const readPrincipal: Principal = {
+      tenantId: 'tenant-read',
+      keyId: 'key-read',
+      scopes: ['read'],
+      mode: 'api-key',
+    };
+    const listed = await runWithRequestContext(
+      {
+        requestId: 'req-modern-read-scope',
+        protocolEra: 'modern',
+        tenantId: readPrincipal.tenantId,
+        keyId: readPrincipal.keyId,
+        clientInfo: { name: 'scoped-client', version: '1.0.0' },
+        clientCapabilities: { tools: { listChanged: true } },
+      },
+      () => server.handleRequest(
+        {
+          jsonrpc: '2.0',
+          id: 21,
+          method: 'tools/list',
+          params: {},
+        },
+        readPrincipal,
+      ),
+    ) as TestResponse;
+    const tools = (listed.result?.tools ?? []).map((tool) => tool.name);
+
+    expect(tools).toEqual(expect.arrayContaining([
+      'read_page',
+      'tabs_search',
+      'oc_connection_health',
+    ]));
+    for (const toolName of [
+      'navigate',
+      'workflow_init',
+      'oc_stop',
+      'expand_tools',
+    ]) {
+      expect(tools).not.toContain(toolName);
+    }
+  });
+
   test('client detection is isolated between HTTP MCP sessions', async () => {
     const server = makeServer();
 
@@ -197,5 +269,30 @@ describe('MCP progressive disclosure client detection', () => {
     closeHandler?.('session-a');
     const reset = await initializeAndList(server, 'opencode', {}, 'session-a');
     expect(reset.tools).not.toContain('drag_drop');
+  });
+
+  test('global list changes reach legacy and modern clients on every transport', () => {
+    const transports = Array.from({ length: 2 }, () => ({
+      onMessage: jest.fn(),
+      send: jest.fn(),
+      publishToolsChanged: jest.fn(),
+      start: jest.fn(),
+      close: jest.fn().mockResolvedValue(undefined),
+    } satisfies MCPTransport));
+    const server = makeServer();
+    for (const transport of transports) {
+      server.wireRateLimiterCleanup(transport);
+    }
+
+    server.emitListChanged();
+
+    for (const transport of transports) {
+      expect(transport.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'notifications/tools/list_changed',
+        }),
+      );
+      expect(transport.publishToolsChanged).toHaveBeenCalledTimes(1);
+    }
   });
 });

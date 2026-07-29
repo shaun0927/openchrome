@@ -4,6 +4,7 @@ import {
   parseResourceSubscriptionLimit,
   ResourceRpcError,
   assertLiveResourceAccess,
+  liveResourceDefinitions,
   readLiveResource,
   RESOURCE_FORBIDDEN_CODE,
 } from '../../src/resources/live-state';
@@ -49,6 +50,27 @@ describe('live MCP resources (#872)', () => {
     } catch (err) {
       expect((err as ResourceRpcError).code).toBe(RESOURCE_FORBIDDEN_CODE);
     }
+  });
+
+  test('lists concrete session resources only for the current tenant', () => {
+    const sessionManager = {
+      getAllSessionInfos: () => [
+        { id: 'owned', tenantId: 'default' },
+        { id: 'other', tenantId: 'tenant-b' },
+      ],
+    } as any;
+
+    const uris = liveResourceDefinitions(sessionManager, 'default').map(
+      (resource) => resource.uri,
+    );
+    expect(uris).toEqual(expect.arrayContaining([
+      'oc://session/owned/tabs',
+      'oc://session/owned/state',
+    ]));
+    expect(uris).not.toEqual(expect.arrayContaining([
+      'oc://session/other/tabs',
+      'oc://session/other/state',
+    ]));
   });
 
   test('does not expose journal entries after the owner session is gone', async () => {

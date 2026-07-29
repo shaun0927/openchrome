@@ -88,7 +88,7 @@ The contract that governs every PR landing on `develop`:
 
 ## Transport surfaces
 
-OpenChrome supports `stdio`, `http`, and `both` transport modes over the same deterministic MCP tool server. Use [`docs/getting-started/http-daemon.md`](getting-started/http-daemon.md) for the operator-focused HTTP daemon walkthrough, including multi-client topology, auth, `/health`, `/metrics`, and idle-timeout behavior. Use [`docs/transport-lifecycle.md`](transport-lifecycle.md) for stability commitments and deprecation policy.
+OpenChrome supports `stdio`, `http`, and `both` transport modes over the same deterministic MCP tool server. The official MCP SDK owns protocol negotiation and serves both the stateless `2026-07-28` revision and legacy clients; the OpenChrome dispatcher remains the shared browser-control core. Use [`docs/mcp-2026-07-28.md`](mcp-2026-07-28.md) for the protocol architecture and migration rationale, [`docs/getting-started/http-daemon.md`](getting-started/http-daemon.md) for the operator-focused HTTP daemon walkthrough, and [`docs/transport-lifecycle.md`](transport-lifecycle.md) for stability commitments and deprecation policy.
 
 ## Data flow for a typical agent loop
 
