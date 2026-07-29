@@ -170,8 +170,17 @@ export function buildPerformanceContractFacts(input: {
     });
   };
 
-  for (const [name, value] of Object.entries(input.metrics.navigation ?? {})) {
-    add(`navigation.${name}`, 'ms', value);
+  const navigation = input.metrics.navigation;
+  if (
+    navigation
+    && Number.isFinite(navigation.duration)
+    && navigation.duration > 0
+    && Number.isFinite(navigation.loadEventEnd)
+    && navigation.loadEventEnd > 0
+  ) {
+    for (const [name, value] of Object.entries(navigation)) {
+      if (value >= 0) add(`navigation.${name}`, 'ms', value);
+    }
   }
   for (const [name, value] of Object.entries(input.metrics.paint ?? {})) {
     add(`paint.${name}`, 'ms', value);

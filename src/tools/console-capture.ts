@@ -103,6 +103,7 @@ interface CaptureState {
   filter?: string[];
   maxLogs: number;
   maxBytes: number;
+  factEvictedTotalBaseline?: number;
 }
 
 // Module-level state storage
@@ -417,6 +418,7 @@ const handler: ToolHandler = async (
           filter,
           maxLogs,
           maxBytes,
+          factEvictedTotalBaseline: 0,
         };
 
         // Map CDP console types to Puppeteer-style types
@@ -605,6 +607,9 @@ const handler: ToolHandler = async (
         }));
 
         const bufStats = state.logs.stats();
+        const evictedSinceFactReset = (
+          bufStats.evictedTotal > (state.factEvictedTotalBaseline ?? 0)
+        );
 
         // Calculate stats
         const stats = {
@@ -651,7 +656,7 @@ const handler: ToolHandler = async (
                 : null,
               messageEncoding: boundaryMarkers ? 'oc_boundary_v1' : 'plain',
               truncated:
-                bufStats.evictedTotal > 0
+                evictedSinceFactReset
                 || allLogs.some((entry) => entry.truncatedFrom !== undefined)
                 || factRedactionLossy
                 || capturedTypeRedactions.some((result) => result.lossy),
@@ -705,8 +710,10 @@ const handler: ToolHandler = async (
           };
         }
 
-        const clearedCount = state.logs.stats().retained;
+        const beforeClear = state.logs.stats();
+        const clearedCount = beforeClear.retained;
         state.logs.clear();
+        state.factEvictedTotalBaseline = beforeClear.evictedTotal;
 
         return {
           content: [

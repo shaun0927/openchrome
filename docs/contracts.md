@@ -257,6 +257,9 @@ you can re-derive the threshold later.
     used to derive contract aggregates.
 - `unit` must match the emitted fact exactly. OpenChrome does not perform
   implicit unit conversion.
+- Navigation Timing facts are emitted only after both `duration` and
+  `loadEventEnd` are positive, indicating the current navigation has completed;
+  negative derived timings are never emitted as contract evidence.
 - `value` must be finite. `max_age_ms` is a non-negative integer capped at
   five minutes.
 - Evidence includes the exact selected fact plus expected/observed values.
@@ -307,7 +310,9 @@ you can re-derive the threshold later.
   characters, and unbounded raw console retention is never introduced.
 - A fact marked `truncated: true` is always inconclusive, even when the
   observed partial count appears to satisfy the assertion. Truncation covers
-  ring-buffer eviction, oversized entries, and the 200-entry fact cap.
+  ring-buffer eviction since the latest `clear`, oversized entries, and the
+  200-entry fact cap. The public buffer statistics retain lifecycle-wide
+  eviction counters for auditability even when `clear` resets the fact watermark.
 - `value` must be a non-negative integer. `max_age_ms` follows the same
   five-minute bound as `performance`.
 - Evidence includes the exact selected fact and the bounded matching entries.
