@@ -325,6 +325,8 @@ describe('MCP 2026-07-28 HTTP boundary', () => {
       expect.objectContaining({ name: 'echo' }),
     ]));
     expect(response.headers['mcp-session-id']).toBeUndefined();
+    expect(response.headers['x-request-id']).toEqual(expect.any(String));
+    expect(contexts.at(-1)?.requestId).toBe(response.headers['x-request-id']);
   });
 
   test('preserves tenant and broker identity without a protocol session', async () => {

@@ -368,6 +368,9 @@ export class HTTPTransport implements MCPTransport {
     const requestId = resolveRequestId(req.headers[REQUEST_ID_HEADER_LOWER]);
     res.setHeader(REQUEST_ID_HEADER, requestId);
     (req as http.IncomingMessage & { requestId?: string }).requestId = requestId;
+    // The modern SDK converts this IncomingMessage into a Fetch Request.
+    // Forward the canonical value so its request context reuses the same ID.
+    req.headers[REQUEST_ID_HEADER_LOWER] = requestId;
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
