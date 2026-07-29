@@ -143,6 +143,9 @@ const PUPPETEER_METRIC_UNITS: Readonly<Record<string, PerformanceUnit>> = {
 };
 
 const METRIC_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const PORTABLE_TIMESTAMP_RE = (
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/
+);
 
 export function buildPerformanceContractFacts(input: {
   sessionId: string;
@@ -570,10 +573,8 @@ function parseBase(
   if (!isBoundedString(value.session_id, 256) || !isBoundedString(value.target_id, 256)) {
     return malformedFailure('contract fact session_id/target_id is malformed');
   }
-  if (
-    typeof value.captured_at !== 'string'
-    || !Number.isFinite(Date.parse(value.captured_at))
-  ) {
+  const capturedAtMs = parsePortableTimestamp(value.captured_at);
+  if (capturedAtMs === undefined) {
     return malformedFailure('contract fact captured_at is malformed');
   }
   return {
@@ -584,7 +585,7 @@ function parseBase(
       source_tool: sourceTool,
       session_id: value.session_id,
       target_id: value.target_id,
-      captured_at: new Date(value.captured_at).toISOString(),
+      captured_at: new Date(capturedAtMs).toISOString(),
     },
   };
 }
@@ -616,8 +617,7 @@ function selectFreshestCandidateWindow(
   }
 
   const invalidTimestamps = scoped.filter((candidate) => (
-    typeof candidate.captured_at !== 'string'
-    || !Number.isFinite(Date.parse(candidate.captured_at))
+    parsePortableTimestamp(candidate.captured_at) === undefined
   ));
   if (invalidTimestamps.length > 0) {
     if (invalidTimestamps.length > 1) {
@@ -636,7 +636,7 @@ function selectFreshestCandidateWindow(
 
   const timestamped = scoped.map((candidate) => ({
     candidate,
-    capturedAtMs: Date.parse(candidate.captured_at as string),
+    capturedAtMs: parsePortableTimestamp(candidate.captured_at) as number,
   }));
   const current = timestamped.filter(({ capturedAtMs }) => capturedAtMs <= scope.nowMs);
   if (current.length === 0) {
@@ -712,6 +712,53 @@ function candidateWindow(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parsePortableTimestamp(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = PORTABLE_TIMESTAMP_RE.exec(value);
+  if (!match) return undefined;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const fraction = match[7] ?? '';
+  const timezone = match[8];
+  const offsetSign = match[9];
+  const offsetHour = Number(match[10] ?? 0);
+  const offsetMinute = Number(match[11] ?? 0);
+  if (
+    month < 1
+    || month > 12
+    || day < 1
+    || day > daysInMonth(year, month)
+    || hour > 23
+    || minute > 59
+    || second > 59
+    || offsetHour > 23
+    || offsetMinute > 59
+  ) {
+    return undefined;
+  }
+  const millisecond = Number(`${fraction}000`.slice(0, 3));
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, millisecond);
+  const offsetMinutes = timezone === 'Z'
+    ? 0
+    : (offsetHour * 60 + offsetMinute) * (offsetSign === '+' ? 1 : -1);
+  const timestamp = date.getTime() - offsetMinutes * 60_000;
+  if (!Number.isFinite(timestamp)) return undefined;
+  return /^\d{4}-/.test(new Date(timestamp).toISOString()) ? timestamp : undefined;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
 function isBoundedString(value: unknown, maxLength: number): value is string {

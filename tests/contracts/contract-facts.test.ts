@@ -294,6 +294,65 @@ describe('portable contract fact producers', () => {
     });
   });
 
+  test('fact selection requires a timezone-qualified captured_at', () => {
+    const base = {
+      schema_version: 1,
+      kind: 'performance',
+      source_tool: 'performance_metrics',
+      session_id: 'session-a',
+      target_id: 'tab-a',
+      metric: 'navigation.duration',
+      unit: 'ms',
+      value: 500,
+    };
+    const scope = {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse('2026-07-28T12:00:00.000Z'),
+      maxAgeMs: 30000,
+      metric: 'navigation.duration',
+      unit: 'ms' as const,
+    };
+
+    expect(selectPerformanceContractFact([{
+      ...base,
+      captured_at: '2026-07-28T11:59:59.000',
+    }], scope)).toMatchObject({
+      ok: false,
+      code: 'CONTRACT_FACT_MALFORMED',
+    });
+    expect(selectPerformanceContractFact([{
+      ...base,
+      captured_at: '2026-07-28T13:59:59.123456+02:00',
+    }], scope)).toMatchObject({
+      ok: true,
+      fact: { captured_at: '2026-07-28T11:59:59.123Z' },
+    });
+    expect(selectPerformanceContractFact([{
+      ...base,
+      captured_at: '2026-07-28T11:59:59.123456789Z',
+    }], scope)).toMatchObject({
+      ok: true,
+      fact: { captured_at: '2026-07-28T11:59:59.123Z' },
+    });
+    for (const capturedAt of [
+      '2026-02-29T00:00:00Z',
+      '2026-04-31T00:00:00Z',
+      '0000-01-01T00:00:00+23:59',
+      '9999-12-31T23:59:59-23:59',
+      '2026-07-28T11:59:59.1234567890Z',
+      '2026-07-28T11:59:59.1234567890+00:00',
+    ]) {
+      expect(selectPerformanceContractFact([{
+        ...base,
+        captured_at: capturedAt,
+      }], scope)).toMatchObject({
+        ok: false,
+        code: 'CONTRACT_FACT_MALFORMED',
+      });
+    }
+  });
+
   test('fact selection does not fall back past the freshest invalid observation', () => {
     const performanceBase = {
       schema_version: 1,
@@ -359,25 +418,28 @@ describe('portable contract fact producers', () => {
   });
 
   test('fact selection rejects ambiguous freshest timestamp groups', () => {
-    const timestamp = '2026-07-28T11:59:59.000Z';
-    const performanceFacts = [500, 900].map((value) => ({
+    const equivalentTimestamps = [
+      '2026-07-28T11:59:59.000Z',
+      '2026-07-28T13:59:59.000+02:00',
+    ];
+    const performanceFacts = [500, 900].map((value, index) => ({
       schema_version: 1,
       kind: 'performance',
       source_tool: 'performance_metrics',
       session_id: 'session-a',
       target_id: 'tab-a',
-      captured_at: timestamp,
+      captured_at: equivalentTimestamps[index],
       metric: 'navigation.duration',
       unit: value === 500 ? 'ms' : 'seconds',
       value,
     }));
-    const consoleFacts = [false, true].map((truncated) => ({
+    const consoleFacts = [false, true].map((truncated, index) => ({
       schema_version: 1,
       kind: 'console',
       source_tool: 'console_capture',
       session_id: 'session-a',
       target_id: 'tab-a',
-      captured_at: timestamp,
+      captured_at: equivalentTimestamps[index],
       entries: [{ type: 'error', message: 'same-time', count: 1, uncaught: false }],
       captured_types: null,
       message_encoding: 'plain',
