@@ -23,7 +23,13 @@ export {
 } from './loader';
 export type { SecretStore } from './loader';
 
-export { redactSecrets, redactSecretString, findLiteralSecret } from './redactor';
+export {
+  redactSecrets,
+  redactSecretString,
+  redactSecretStringWithMetadata,
+  findLiteralSecret,
+} from './redactor';
+export type { SecretStringRedactionResult } from './redactor';
 
 export {
   substituteSecrets,

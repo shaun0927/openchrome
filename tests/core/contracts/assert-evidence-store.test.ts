@@ -44,6 +44,20 @@ function persist(store: AssertEvidenceStore, overrides: Record<string, unknown> 
   });
 }
 
+function selectedFactTargetId(artifact: unknown): unknown {
+  return (artifact as {
+    result?: {
+      evidence?: {
+        details?: {
+          fact?: {
+            target_id?: unknown;
+          };
+        };
+      };
+    };
+  }).result?.evidence?.details?.fact?.target_id;
+}
+
 describe('AssertEvidenceStore', () => {
   let rootDir: string;
 
@@ -125,6 +139,84 @@ describe('AssertEvidenceStore', () => {
     });
     expect(artifact.provenance.target_id).toBe(targetId);
     expect(artifact.provenance.worker_id).toBe('${SECRET:WORKER_ID}');
+  });
+
+  test('preserves opaque target IDs in nested selected contract facts', () => {
+    const factTargetId = '1234567890abcdef1234567890abcdef';
+    const store = new AssertEvidenceStore({ rootDir });
+    const stored = persist(store, {
+      result: {
+        verdict: 'pass',
+        evidence: {
+          passed: true,
+          assertion_kind: 'performance',
+          details: {
+            fact: {
+              schema_version: 1,
+              kind: 'performance',
+              source_tool: 'performance_metrics',
+              session_id: 'session-a',
+              target_id: factTargetId,
+              captured_at: '2026-07-28T12:00:00.000Z',
+              metric: 'navigation.duration',
+              unit: 'ms',
+              value: 750,
+            },
+          },
+        },
+      },
+    });
+    const record = JSON.parse(
+      fs.readFileSync(path.join(rootDir, `${stored.evidence_handle}.json`), 'utf8'),
+    ) as { artifact: unknown };
+
+    expect(selectedFactTargetId(record.artifact)).toBe(factTargetId);
+    const artifact = store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    });
+    expect(selectedFactTargetId(artifact)).toBe(factTargetId);
+  });
+
+  test('keeps configured secrets redacted in nested selected contract facts', () => {
+    const factTargetId = 'fedcba0987654321fedcba0987654321';
+    setSecretStore(makeSecretStore(new Map([
+      ['FACT_TARGET_ID', factTargetId],
+    ])));
+    const store = new AssertEvidenceStore({ rootDir });
+    const stored = persist(store, {
+      result: {
+        verdict: 'pass',
+        evidence: {
+          passed: true,
+          assertion_kind: 'console',
+          details: {
+            fact: {
+              schema_version: 1,
+              kind: 'console',
+              source_tool: 'console_capture',
+              session_id: 'session-a',
+              target_id: factTargetId,
+              captured_at: '2026-07-28T12:00:00.000Z',
+              entries: [],
+              captured_types: null,
+              message_encoding: 'plain',
+              truncated: false,
+            },
+          },
+        },
+      },
+    });
+    const record = JSON.parse(
+      fs.readFileSync(path.join(rootDir, `${stored.evidence_handle}.json`), 'utf8'),
+    ) as { artifact: unknown };
+
+    expect(selectedFactTargetId(record.artifact)).toBe('${SECRET:FACT_TARGET_ID}');
+    const artifact = store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    });
+    expect(selectedFactTargetId(artifact)).toBe('${SECRET:FACT_TARGET_ID}');
   });
 
   test('redacts OAuth access tokens from persisted and retrieved URLs', () => {

@@ -22,6 +22,15 @@ import * as path from 'path';
 import type { MCPToolDefinition, MCPResult, ToolHandler } from '../../../src/types/mcp';
 import type { Evidence } from '../../../src/contracts/types';
 import { PAGE_META_TEMPLATE, TemplateRegistry } from '../../../src/contracts/templates';
+import {
+  EMPTY_SECRET_STORE,
+  makeSecretStore,
+  setSecretStore,
+} from '../../../src/core/secrets/loader';
+
+afterEach(() => {
+  setSecretStore(EMPTY_SECRET_STORE);
+});
 
 interface RegisteredTool {
   name: string;
@@ -118,6 +127,20 @@ describe('oc_assert — verdicts', () => {
     });
     expect(out.trace_status).toBe('unavailable');
     expect(typeof out.trace_unavailable_reason).toBe('string');
+  });
+
+  test('omits a secret-bearing session ID from evidence retrieval guidance', async () => {
+    setSecretStore(makeSecretStore(new Map([['QUOTED_SESSION', 'a"b']])));
+    const { handler } = setup();
+    const result = await handler('session-a"b', {
+      contract: { kind: 'url', pattern: '^https://example\\.com/?$' },
+      evidence: { snapshot: { url: 'https://example.com' } },
+    });
+
+    expect(result.content?.[0]?.text).not.toContain('a\\"b');
+    const out = parseResult(result);
+    expect((out.evidence_get as { arguments: Record<string, unknown> }).arguments)
+      .not.toHaveProperty('sessionId');
   });
 
   test('fail: url assertion returns failed_assertions array', async () => {
@@ -267,6 +290,149 @@ describe('oc_assert — verdicts', () => {
 });
 
 describe('oc_assert — per-evaluator coverage', () => {
+  test('performance: passes against a fresh in-scope collector fact', async () => {
+    const { handler } = setup();
+    const fact = {
+      schema_version: 1,
+      kind: 'performance',
+      source_tool: 'performance_metrics',
+      session_id: 'test-session',
+      target_id: 'tab-a',
+      captured_at: new Date().toISOString(),
+      metric: 'navigation.duration',
+      unit: 'ms',
+      value: 750,
+    };
+    const out = await invoke(handler, {
+      contract: {
+        kind: 'performance',
+        schema_version: 1,
+        metric: 'navigation.duration',
+        unit: 'ms',
+        op: 'lte',
+        value: 1000,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: 'tab-a' },
+        snapshot: { contract_facts: [fact] },
+      },
+    });
+    expect(out.verdict).toBe('pass');
+    expect((out.evidence as Evidence).details.fact).toEqual(fact);
+  });
+
+  test('console: counts explicit errors separately from uncaught exceptions', async () => {
+    const { handler } = setup();
+    const out = await invoke(handler, {
+      contract: {
+        kind: 'console',
+        schema_version: 1,
+        type: 'error',
+        message_pattern: 'checkout',
+        uncaught: false,
+        op: 'eq',
+        value: 2,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: 'tab-a' },
+        snapshot: {
+          contract_facts: [{
+            schema_version: 1,
+            kind: 'console',
+            source_tool: 'console_capture',
+            session_id: 'test-session',
+            target_id: 'tab-a',
+            captured_at: new Date().toISOString(),
+            entries: [
+              { type: 'error', message: 'checkout failed', count: 2, uncaught: false },
+              { type: 'error', message: 'checkout exception', count: 1, uncaught: true },
+            ],
+            captured_types: null,
+            message_encoding: 'plain',
+            truncated: false,
+          }],
+        },
+      },
+    });
+    expect(out.verdict).toBe('pass');
+  });
+
+  test('contract fact scope failures surface stable top-level inconclusive codes', async () => {
+    const { handler } = setup();
+    const out = await invoke(handler, {
+      contract: {
+        kind: 'performance',
+        schema_version: 1,
+        metric: 'navigation.duration',
+        unit: 'ms',
+        op: 'lte',
+        value: 1000,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: 'tab-a' },
+        snapshot: {
+          contract_facts: [{
+            schema_version: 1,
+            kind: 'performance',
+            source_tool: 'performance_metrics',
+            session_id: 'test-session',
+            target_id: 'tab-b',
+            captured_at: new Date().toISOString(),
+            metric: 'navigation.duration',
+            unit: 'ms',
+            value: 750,
+          }],
+        },
+      },
+    });
+    expect(out.verdict).toBe('inconclusive');
+    expect(out.error_code).toBe('CONTRACT_FACT_SCOPE_MISMATCH');
+    expect(out.failure_category).toBeUndefined();
+  });
+
+  test('redacts JSON-escaped scope mismatch details before both response surfaces', async () => {
+    setSecretStore(makeSecretStore(new Map([['QUOTED_SESSION', 'a"b']])));
+    const { handler } = setup();
+    const result = await handler('session-a"b', {
+      contract: {
+        kind: 'performance',
+        schema_version: 1,
+        metric: 'navigation.duration',
+        unit: 'ms',
+        op: 'lte',
+        value: 1000,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: 'tab-a' },
+        snapshot: {
+          contract_facts: [{
+            schema_version: 1,
+            kind: 'performance',
+            source_tool: 'performance_metrics',
+            session_id: 'another-session',
+            target_id: 'tab-a',
+            captured_at: new Date().toISOString(),
+            metric: 'navigation.duration',
+            unit: 'ms',
+            value: 750,
+          }],
+        },
+      },
+    });
+
+    expect(result.content?.[0]?.text).not.toContain('a\\"b');
+    expect(JSON.stringify(result)).not.toContain('a\\"b');
+    expect(JSON.stringify(result)).toContain('session-${SECRET:QUOTED_SESSION}');
+    expect(parseResult(result)).toMatchObject({
+      verdict: 'inconclusive',
+      error_code: 'CONTRACT_FACT_SCOPE_MISMATCH',
+    });
+  });
+
   test('dom_text: explicit selector hit', async () => {
     const { handler } = setup();
     const out = await invoke(handler, {

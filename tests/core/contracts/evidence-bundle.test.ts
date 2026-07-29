@@ -144,6 +144,74 @@ describe('writeEvidenceBundle — individual include flags', () => {
     expect(payload.entries[49].text).toBe('line-249');
   });
 
+  test("include=['contract_facts']: preserves bounded facts with redaction", () => {
+    const rootDir = mkRoot();
+    const targetId = '0123456789abcdef0123456789abcdef';
+    const result = writeEvidenceBundle(
+      {
+        contract_facts: [{
+          schema_version: 1,
+          kind: 'console',
+          source_tool: 'console_capture',
+          session_id: 'session-a',
+          target_id: targetId,
+          captured_at: '2026-07-28T12:00:00.000Z',
+          entries: [{
+            type: 'error',
+            message: 'password=hunter2 Authorization: Bearer abc123def456',
+            count: 1,
+            uncaught: false,
+          }],
+          captured_types: null,
+          message_encoding: 'plain',
+          truncated: false,
+        }],
+      },
+      { rootDir, include: ['contract_facts'] },
+    );
+
+    expect(result.parts).toEqual(['contract_facts.json']);
+    const raw = fs.readFileSync(path.join(result.path, 'contract_facts.json'), 'utf8');
+    expect(raw).not.toContain('hunter2');
+    expect(raw).not.toContain('abc123def456');
+    const payload = JSON.parse(raw) as {
+      schema_version: number;
+      max_facts: number;
+      truncated: boolean;
+      facts: Array<{ target_id: string }>;
+    };
+    expect(payload.schema_version).toBe(1);
+    expect(payload.max_facts).toBe(256);
+    expect(payload.truncated).toBe(false);
+    expect(payload.facts).toHaveLength(1);
+    expect(payload.facts[0].target_id).toBe(targetId);
+  });
+
+  test("include=['contract_facts']: keeps malformed fact target IDs redacted", () => {
+    const rootDir = mkRoot();
+    const targetId = 'abcdef0123456789abcdef0123456789';
+    const result = writeEvidenceBundle(
+      {
+        contract_facts: [{
+          schema_version: 1,
+          kind: 'performance',
+          source_tool: 'performance_metrics',
+          session_id: 'session-a',
+          target_id: targetId,
+          captured_at: '2026-07-28T12:00:00.000Z',
+          metric: 'navigation.duration',
+          unit: 'ms',
+        }],
+      },
+      { rootDir, include: ['contract_facts'] },
+    );
+
+    const payload = readJson(path.join(result.path, 'contract_facts.json')) as {
+      facts: Array<{ target_id: string }>;
+    };
+    expect(payload.facts[0].target_id).toBe('[REDACTED]');
+  });
+
   test("include=['gate']: writes caller-supplied gate fact to gate.json", () => {
     const rootDir = mkRoot();
     const gate = {

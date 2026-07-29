@@ -7,6 +7,7 @@ import * as path from 'node:path';
 
 import { redactSecretString } from '../secrets/redactor';
 import { redactValue } from '../trace/redactor';
+import { redactContractFactValue } from './contract-fact-redaction';
 
 export const ASSERT_EVIDENCE_SCHEMA_VERSION = 1;
 export const DEFAULT_ASSERT_EVIDENCE_TTL_MS = 30 * 60 * 1000;
@@ -598,7 +599,7 @@ function redactArtifact(
   artifact: AssertEvidenceArtifact,
   owner?: AssertEvidenceOwner,
 ): AssertEvidenceArtifact {
-  const redacted = redactValue(artifact) as AssertEvidenceArtifact;
+  const redacted = redactContractFactValue(artifact);
   const targetId = artifact.provenance.target_id === undefined
     ? undefined
     : redactProvenanceIdentifier(artifact.provenance.target_id);

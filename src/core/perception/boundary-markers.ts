@@ -11,8 +11,15 @@ function escapeAttr(value: string): string {
 
 export function escapeBoundaryContent(text: string, _markerName: string): string {
   return text
+    .replace(/\u200B/g, '\u200B\u200B')
     .replace(/<(\/oc:[A-Za-z0-9_-]+)/g, '<\u200B$1')
     .replace(/<(oc:[A-Za-z0-9_-]+)(?=[\s>])/g, '<\u200B$1');
+}
+
+export function unescapeBoundaryContent(text: string): string {
+  return text
+    .replace(/<\u200B(\/?oc:[A-Za-z0-9_-]+)/g, '<$1')
+    .replace(/\u200B\u200B/g, '\u200B');
 }
 
 
