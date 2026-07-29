@@ -89,10 +89,37 @@ liveDescribe('performance and console contract facts - real headed Chrome', () =
         'document.title = "Contract facts fixture";',
         'document.body.innerHTML = "<main id=\\"ready\\">ready</main>";',
         'console.error("contract-console-marker");',
+        'const lateHandled = Promise.reject(new Error("late-handled-contract-rejection"));',
+        'setTimeout(() => lateHandled.catch(() => {}), 1200);',
         '"emitted";',
       ].join(' '),
     });
     await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const unhandledPayload = parseJson((await client.callTool('console_capture', {
+      tabId,
+      action: 'get',
+    })).text);
+    const unhandledFacts = unhandledPayload.contract_facts as unknown[];
+    const unhandledExceptionAssertion = parseJson((await client.callTool('oc_assert', {
+      contract: {
+        kind: 'console',
+        schema_version: 1,
+        type: 'error',
+        message_pattern: 'late-handled-contract-rejection',
+        uncaught: true,
+        op: 'eq',
+        value: 1,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: tabId },
+        snapshot: { contract_facts: unhandledFacts },
+      },
+    })).text);
+    expect(unhandledExceptionAssertion.verdict).toBe('pass');
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
 
     const consolePayload = parseJson((await client.callTool('console_capture', {
       tabId,
@@ -118,6 +145,42 @@ liveDescribe('performance and console contract facts - real headed Chrome', () =
       },
     })).text);
     expect(consoleAssertion.verdict).toBe('pass');
+
+    const revokedExceptionAssertion = parseJson((await client.callTool('oc_assert', {
+      contract: {
+        kind: 'console',
+        schema_version: 1,
+        type: 'error',
+        message_pattern: 'late-handled-contract-rejection',
+        uncaught: true,
+        op: 'eq',
+        value: 0,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: tabId },
+        snapshot: { contract_facts: consoleFacts },
+      },
+    })).text);
+    expect(revokedExceptionAssertion.verdict).toBe('pass');
+
+    const immutableSnapshotAssertion = parseJson((await client.callTool('oc_assert', {
+      contract: {
+        kind: 'console',
+        schema_version: 1,
+        type: 'error',
+        message_pattern: 'late-handled-contract-rejection',
+        uncaught: true,
+        op: 'eq',
+        value: 1,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: tabId },
+        snapshot: { contract_facts: unhandledFacts },
+      },
+    })).text);
+    expect(immutableSnapshotAssertion.verdict).toBe('pass');
 
     const performancePayload = parseJson((await client.callTool('performance_metrics', {
       tabId,

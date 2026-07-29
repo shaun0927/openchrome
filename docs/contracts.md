@@ -283,6 +283,10 @@ you can re-derive the threshold later.
   distinguishes runtime exceptions from explicit `console.error` calls.
 - Deduplicated entries carry a positive `count`; comparisons use the sum of
   matching counts rather than the number of rows.
+- Promise rejections initially reported through `Runtime.exceptionThrown` are
+  removed from subsequent responses and facts when CDP later emits
+  `Runtime.exceptionRevoked`. Facts are immutable point-in-time snapshots, so a
+  fact fetched before revocation retains the then-current unhandled state.
 - Facts declare `captured_types: null` for an unfiltered capture or the exact
   bounded capture filter. A filtered fact can decide only assertions with an
   explicit `type` included in that filter; other queries are inconclusive with

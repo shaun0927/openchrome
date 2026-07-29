@@ -22,6 +22,8 @@ export interface ConsoleRingBufferStats {
 
 export interface ConsoleRingBuffer<T> {
   push(entry: T, sizeBytes: number): void;
+  /** Removes retained entries matching `predicate` without counting them as evictions. */
+  removeWhere(predicate: (entry: T) => boolean): number;
   /** Returns the last `n` entries newest-last (mirroring slice(-n)). */
   tail(n: number): T[];
   /** Returns all retained entries in insertion order. */

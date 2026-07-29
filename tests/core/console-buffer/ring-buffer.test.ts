@@ -257,6 +257,52 @@ describe('ConsoleRingBuffer', () => {
     });
   });
 
+  describe('removeWhere()', () => {
+    test('removes matching entries while preserving order, bytes, timestamps, and eviction totals', () => {
+      const buf = createConsoleRingBuffer<TestEntry>(
+        { maxLines: 5, maxBytes: 100 },
+        makePlaceholder,
+      );
+      buf.push(makeEntry('keep-a', 100), 10);
+      buf.push(makeEntry('remove', 200), 20);
+      buf.push(makeEntry('keep-b', 300), 30);
+
+      expect(buf.removeWhere((entry) => entry.text === 'remove')).toBe(1);
+      expect(buf.drain().map((entry) => entry.text)).toEqual(['keep-a', 'keep-b']);
+      expect(buf.stats()).toMatchObject({
+        retained: 2,
+        retainedBytes: 40,
+        evictedTotal: 0,
+        firstEntryAt: 100,
+        lastEntryAt: 300,
+      });
+    });
+
+    test('compacts wrapped storage and remains reusable after no-match and remove-all calls', () => {
+      const buf = createConsoleRingBuffer<TestEntry>(
+        { maxLines: 3, maxBytes: 100 },
+        makePlaceholder,
+      );
+      buf.push(makeEntry('a', 100), 10);
+      buf.push(makeEntry('b', 200), 10);
+      buf.push(makeEntry('c', 300), 10);
+      buf.push(makeEntry('d', 400), 10);
+
+      expect(buf.drain().map((entry) => entry.text)).toEqual(['b', 'c', 'd']);
+      expect(buf.removeWhere((entry) => entry.text === 'c')).toBe(1);
+      expect(buf.drain().map((entry) => entry.text)).toEqual(['b', 'd']);
+      expect(buf.removeWhere((entry) => entry.text === 'missing')).toBe(0);
+      buf.push(makeEntry('e', 500), 10);
+      expect(buf.drain().map((entry) => entry.text)).toEqual(['b', 'd', 'e']);
+      expect(buf.removeWhere(() => true)).toBe(3);
+      expect(buf.stats()).toMatchObject({ retained: 0, retainedBytes: 0, evictedTotal: 1 });
+
+      buf.push(makeEntry('f', 600), 10);
+      expect(buf.drain().map((entry) => entry.text)).toEqual(['f']);
+      expect(buf.stats()).toMatchObject({ firstEntryAt: 600, lastEntryAt: 600 });
+    });
+  });
+
   describe('stats() firstEntryAt / lastEntryAt', () => {
     test('firstEntryAt and lastEntryAt track correctly', () => {
       const buf = createConsoleRingBuffer<TestEntry>(

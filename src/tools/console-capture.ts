@@ -1,7 +1,7 @@
 /**
  * Console Capture Tool - Capture and manage browser console logs
  *
- * Uses CDP Runtime.consoleAPICalled + Runtime.exceptionThrown directly
+ * Uses CDP Runtime.consoleAPICalled + Runtime.exceptionThrown/exceptionRevoked directly
  * instead of Puppeteer's page.on('console'), because rebrowser-puppeteer-core
  * skips Runtime.enable to avoid bot detection. We enable it on a dedicated
  * CDPSession so console events are reliably captured.
@@ -46,6 +46,7 @@ interface ConsoleLogEntry {
   args?: string[];
   uncaught?: boolean;
   truncatedFrom?: number;
+  exceptionId?: number;
 }
 
 // CDP event payload types
@@ -66,6 +67,7 @@ interface CDPConsoleAPICalledEvent {
 interface CDPExceptionThrownEvent {
   timestamp: number;
   exceptionDetails: {
+    exceptionId: number;
     text: string;
     exception?: { description?: string; value?: unknown };
     lineNumber?: number;
@@ -81,12 +83,18 @@ interface CDPExceptionThrownEvent {
   };
 }
 
+interface CDPExceptionRevokedEvent {
+  reason: string;
+  exceptionId: number;
+}
+
 // Capture state for each tab
 interface CaptureState {
   logs: ConsoleRingBuffer<ConsoleLogEntry>;
   cdpSession: CDPSession;
   consoleHandler: (event: CDPConsoleAPICalledEvent) => void;
   exceptionHandler: (event: CDPExceptionThrownEvent) => void;
+  exceptionRevokedHandler: (event: CDPExceptionRevokedEvent) => void;
   startedAt: number;
   filter?: string[];
   maxLogs: number;
@@ -260,12 +268,18 @@ const setupCleanupListener = (() => {
 })();
 
 /** Build a placeholder entry for an oversized log entry. */
-function makeOversizedPlaceholder(originalSizeBytes: number): ConsoleLogEntry {
+function makeOversizedPlaceholder(
+  originalSizeBytes: number,
+  originalEntry: ConsoleLogEntry,
+): ConsoleLogEntry {
   return {
     type: 'log',
     text: '[entry exceeded maxBytes — truncated]',
     timestamp: Date.now(),
     truncatedFrom: originalSizeBytes,
+    ...(originalEntry.exceptionId !== undefined
+      ? { exceptionId: originalEntry.exceptionId }
+      : {}),
   };
 }
 
@@ -365,6 +379,7 @@ const handler: ToolHandler = async (
           cdpSession,
           consoleHandler: () => {},
           exceptionHandler: () => {},
+          exceptionRevokedHandler: () => {},
           startedAt: Date.now(),
           filter,
           maxLogs,
@@ -438,6 +453,7 @@ const handler: ToolHandler = async (
             text,
             timestamp: Date.now(),
             uncaught: true,
+            exceptionId: details.exceptionId,
             location: callFrame
               ? {
                   url: callFrame.url,
@@ -453,8 +469,13 @@ const handler: ToolHandler = async (
           state.logs.push(entry, sizeBytes);
         };
 
+        state.exceptionRevokedHandler = (event: CDPExceptionRevokedEvent) => {
+          state.logs.removeWhere((entry) => entry.exceptionId === event.exceptionId);
+        };
+
         cdpSession.on('Runtime.consoleAPICalled', state.consoleHandler as any);
         cdpSession.on('Runtime.exceptionThrown', state.exceptionHandler as any);
+        cdpSession.on('Runtime.exceptionRevoked', state.exceptionRevokedHandler as any);
         captureStates.set(tabId, state);
 
         return {
@@ -493,6 +514,7 @@ const handler: ToolHandler = async (
         // Remove CDP listeners and detach session
         state.cdpSession.off('Runtime.consoleAPICalled', state.consoleHandler as any);
         state.cdpSession.off('Runtime.exceptionThrown', state.exceptionHandler as any);
+        state.cdpSession.off('Runtime.exceptionRevoked', state.exceptionRevokedHandler as any);
         await state.cdpSession.send('Runtime.disable').catch(() => {});
         await state.cdpSession.detach().catch(() => {});
         const logCount = state.logs.stats().retained;
