@@ -146,6 +146,7 @@ describe('writeEvidenceBundle — individual include flags', () => {
 
   test("include=['contract_facts']: preserves bounded facts with redaction", () => {
     const rootDir = mkRoot();
+    const targetId = '0123456789abcdef0123456789abcdef';
     const result = writeEvidenceBundle(
       {
         contract_facts: [{
@@ -153,7 +154,7 @@ describe('writeEvidenceBundle — individual include flags', () => {
           kind: 'console',
           source_tool: 'console_capture',
           session_id: 'session-a',
-          target_id: 'tab-a',
+          target_id: targetId,
           captured_at: '2026-07-28T12:00:00.000Z',
           entries: [{
             type: 'error',
@@ -177,12 +178,38 @@ describe('writeEvidenceBundle — individual include flags', () => {
       schema_version: number;
       max_facts: number;
       truncated: boolean;
-      facts: unknown[];
+      facts: Array<{ target_id: string }>;
     };
     expect(payload.schema_version).toBe(1);
     expect(payload.max_facts).toBe(256);
     expect(payload.truncated).toBe(false);
     expect(payload.facts).toHaveLength(1);
+    expect(payload.facts[0].target_id).toBe(targetId);
+  });
+
+  test("include=['contract_facts']: keeps malformed fact target IDs redacted", () => {
+    const rootDir = mkRoot();
+    const targetId = 'abcdef0123456789abcdef0123456789';
+    const result = writeEvidenceBundle(
+      {
+        contract_facts: [{
+          schema_version: 1,
+          kind: 'performance',
+          source_tool: 'performance_metrics',
+          session_id: 'session-a',
+          target_id: targetId,
+          captured_at: '2026-07-28T12:00:00.000Z',
+          metric: 'navigation.duration',
+          unit: 'ms',
+        }],
+      },
+      { rootDir, include: ['contract_facts'] },
+    );
+
+    const payload = readJson(path.join(result.path, 'contract_facts.json')) as {
+      facts: Array<{ target_id: string }>;
+    };
+    expect(payload.facts[0].target_id).toBe('[REDACTED]');
   });
 
   test("include=['gate']: writes caller-supplied gate fact to gate.json", () => {

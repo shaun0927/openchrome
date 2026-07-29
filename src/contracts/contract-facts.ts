@@ -239,6 +239,13 @@ export function buildConsoleContractFact(input: {
   };
 }
 
+export function isContractFact(value: unknown): value is ContractFact {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'performance') return parsePerformanceFact(value).ok;
+  if (value.kind === 'console') return parseConsoleFact(value).ok;
+  return false;
+}
+
 export function decodeConsoleContractFactMessage(
   message: string,
   encoding: ConsoleFactMessageEncoding,
