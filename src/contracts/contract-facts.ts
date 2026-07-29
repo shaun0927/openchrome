@@ -114,6 +114,8 @@ const CONSOLE_FACT_MESSAGE_ENCODINGS = new Set<ConsoleFactMessageEncoding>([
   'plain',
   'oc_boundary_v1',
 ]);
+const CONSOLE_FACT_BOUNDARY_PREFIX = '<oc:console>';
+const CONSOLE_FACT_BOUNDARY_SUFFIX = '</oc:console>';
 
 const PUPPETEER_METRIC_UNITS: Readonly<Record<string, PerformanceUnit>> = {
   Timestamp: 'seconds',
@@ -209,6 +211,8 @@ export function buildConsoleContractFact(input: {
     const rawMessage = typeof entry.text === 'string' ? entry.text : String(entry.text ?? '');
     if (rawMessage.length > MAX_CONSOLE_FACT_MESSAGE_CHARS) truncated = true;
     const boundedMessage = rawMessage.slice(0, MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    const encodedMessage = encodeConsoleContractFactMessage(boundedMessage, messageEncoding);
+    if (encodedMessage.truncated) truncated = true;
     if (entry.truncatedFrom !== undefined) truncated = true;
     const count = typeof entry.count === 'number'
       && Number.isInteger(entry.count)
@@ -219,7 +223,7 @@ export function buildConsoleContractFact(input: {
       type: typeof entry.type === 'string' && entry.type.length > 0
         ? entry.type.slice(0, 64)
         : 'log',
-      message: encodeConsoleContractFactMessage(boundedMessage, messageEncoding),
+      message: encodedMessage.message,
       count,
       uncaught: entry.uncaught === true,
     };
@@ -251,19 +255,33 @@ export function decodeConsoleContractFactMessage(
   encoding: ConsoleFactMessageEncoding,
 ): string | undefined {
   if (encoding === 'plain') return message;
-  const prefix = '<oc:console>';
-  const suffix = '</oc:console>';
-  if (!message.startsWith(prefix) || !message.endsWith(suffix)) return undefined;
-  return message.slice(prefix.length, -suffix.length);
+  if (
+    !message.startsWith(CONSOLE_FACT_BOUNDARY_PREFIX)
+    || !message.endsWith(CONSOLE_FACT_BOUNDARY_SUFFIX)
+  ) return undefined;
+  return message.slice(
+    CONSOLE_FACT_BOUNDARY_PREFIX.length,
+    -CONSOLE_FACT_BOUNDARY_SUFFIX.length,
+  );
 }
 
 function encodeConsoleContractFactMessage(
   message: string,
   encoding: ConsoleFactMessageEncoding,
-): string {
-  return encoding === 'oc_boundary_v1'
-    ? wrapBoundaryMarker('console', {}, message)
-    : message;
+): { message: string; truncated: boolean } {
+  if (encoding === 'plain') return { message, truncated: false };
+  const wrapped = wrapBoundaryMarker('console', {}, message);
+  const body = wrapped.slice(
+    CONSOLE_FACT_BOUNDARY_PREFIX.length,
+    -CONSOLE_FACT_BOUNDARY_SUFFIX.length,
+  );
+  if (body.length <= MAX_CONSOLE_FACT_MESSAGE_CHARS) {
+    return { message: wrapped, truncated: false };
+  }
+  return {
+    message: `${CONSOLE_FACT_BOUNDARY_PREFIX}${body.slice(0, MAX_CONSOLE_FACT_MESSAGE_CHARS)}${CONSOLE_FACT_BOUNDARY_SUFFIX}`,
+    truncated: true,
+  };
 }
 
 export function selectPerformanceContractFact(
@@ -481,10 +499,11 @@ function normalizeCapturedTypes(
   const seen = new Set<string>();
   let truncated = false;
   for (const value of input) {
-    if (!isBoundedString(value, 64) || seen.has(value)) {
+    if (!isBoundedString(value, 64)) {
       truncated = true;
       continue;
     }
+    if (seen.has(value)) continue;
     seen.add(value);
     if (types.length >= MAX_CONSOLE_FACT_CAPTURE_TYPES) {
       truncated = true;
