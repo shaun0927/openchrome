@@ -48,7 +48,14 @@ import { getGlobalConfig } from './config/global';
 import { getToolTier, ToolTier } from './config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from './metrics/collector';
 import { logAuditEntry, redactToolArgsForPersistence } from './security/audit-logger';
-import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from './security/mcp-roots';
+import {
+  assertFilePathAllowedByMcpRoots,
+  assertUrlAllowedByMcpRoots,
+  getSessionMcpRoots,
+  parseMcpRoots,
+  setSessionMcpRoots,
+  type ParsedMcpRoots,
+} from './security/mcp-roots';
 import { isClientDisconnect } from './errors/abort';
 import { isMcpInputRequiredError } from './errors/mcp-input-required';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from './utils/log';
@@ -1588,32 +1595,38 @@ export class MCPServer {
   }
 
 
-  private async refreshSessionRoots(rootScopeId: string): Promise<void> {
+  private async listCurrentClientRoots(): Promise<unknown | undefined> {
     const caps = this.getCurrentClientCapabilities();
-    if (!caps.roots) return;
-    const roots = await this.getCurrentRequestClient()<unknown>(
+    if (!caps.roots) return undefined;
+    return await this.getCurrentRequestClient()<unknown>(
       'roots/list',
       undefined,
       { timeoutMs: 250 },
     );
+  }
+
+  private async refreshSessionRoots(rootScopeId: string): Promise<void> {
+    const roots = await this.listCurrentClientRoots();
+    if (roots === undefined) return;
     setSessionMcpRoots(rootScopeId, roots);
   }
 
-  private async refreshModernRootsForTool(
-    sessionId: string,
+  private async modernRootsForTool(
     toolName: string,
     args: Record<string, unknown>,
-  ): Promise<void> {
-    if (currentRequestContext()?.protocolEra !== 'modern') return;
+  ): Promise<ParsedMcpRoots | undefined> {
+    if (currentRequestContext()?.protocolEra !== 'modern') return undefined;
     const hasEgressCandidate =
       extractNetworkRootCandidateUrls(toolName, args).length > 0
       || extractFileRootCandidatePaths(toolName, args).length > 0;
-    if (!hasEgressCandidate) return;
-    await this.refreshSessionRoots(sessionId);
+    if (!hasEgressCandidate) return undefined;
+    const roots = await this.listCurrentClientRoots();
+    return roots === undefined ? undefined : parseMcpRoots(roots);
   }
 
   private enforceNetworkRootsForTool(
-    mcpSessionId: string,
+    rootScopeId: string,
+    roots: ParsedMcpRoots | undefined,
     toolName: string,
     args: Record<string, unknown>,
   ): MCPResult | null {
@@ -1621,7 +1634,7 @@ export class MCPServer {
     if (urls.length === 0) return null;
     try {
       for (const url of urls) {
-        assertUrlAllowedBySessionRoots(mcpSessionId, url);
+        assertUrlAllowedByMcpRoots(roots, url, rootScopeId);
       }
       return null;
     } catch (error) {
@@ -1633,7 +1646,8 @@ export class MCPServer {
   }
 
   private enforceFileRootsForTool(
-    mcpSessionId: string,
+    rootScopeId: string,
+    roots: ParsedMcpRoots | undefined,
     toolName: string,
     args: Record<string, unknown>,
   ): MCPResult | null {
@@ -1641,7 +1655,7 @@ export class MCPServer {
     if (paths.length === 0) return null;
     try {
       for (const filePath of paths) {
-        assertFilePathAllowedBySessionRoots(mcpSessionId, filePath);
+        assertFilePathAllowedByMcpRoots(roots, filePath, rootScopeId);
       }
       return null;
     } catch (error) {
@@ -2276,10 +2290,13 @@ export class MCPServer {
     }
 
     const rootScopeId = currentRequestContext()?.mcpSessionId ?? sessionId;
-    await this.refreshModernRootsForTool(rootScopeId, toolName, substitutedArgs);
+    const roots = currentRequestContext()?.protocolEra === 'modern'
+      ? await this.modernRootsForTool(toolName, substitutedArgs)
+      : getSessionMcpRoots(rootScopeId);
 
     const rootsDenial = this.enforceNetworkRootsForTool(
       rootScopeId,
+      roots,
       toolName,
       substitutedArgs,
     );
@@ -2290,6 +2307,7 @@ export class MCPServer {
 
     const fileRootsDenial = this.enforceFileRootsForTool(
       rootScopeId,
+      roots,
       toolName,
       substitutedArgs,
     );
