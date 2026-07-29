@@ -15,6 +15,10 @@ export function escapeBoundaryContent(text: string, _markerName: string): string
     .replace(/<(oc:[A-Za-z0-9_-]+)(?=[\s>])/g, '<\u200B$1');
 }
 
+export function unescapeBoundaryContent(text: string): string {
+  return text.replace(/<\u200B(\/?oc:[A-Za-z0-9_-]+)/g, '<$1');
+}
+
 
 export function wrapBoundaryMarker(markerName: string, attrs: Record<string, string | undefined>, body: string): string {
   const attrText = Object.entries(attrs)

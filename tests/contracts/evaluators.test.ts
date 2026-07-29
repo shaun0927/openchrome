@@ -325,23 +325,23 @@ describe('evaluate(console)', () => {
   });
 
   test('matches boundary-marked console messages against their page text', async () => {
+    const fact = consoleFact({
+      message_encoding: 'oc_boundary_v1',
+      entries: [
+        {
+          type: 'error',
+          message: '<oc:console>checkout <\u200Boc:x> failed</oc:console>',
+          count: 2,
+          uncaught: false,
+        },
+      ],
+    } as Partial<ContractFact>);
     const r = await evaluate(
-      assertion,
-      mkCtx({
-        contractFacts: [consoleFact({
-          message_encoding: 'oc_boundary_v1',
-          entries: [
-            {
-              type: 'error',
-              message: '<oc:console>checkout failed</oc:console>',
-              count: 2,
-              uncaught: false,
-            },
-          ],
-        } as Partial<ContractFact>)],
-      }),
+      { ...assertion, message_pattern: 'checkout <oc:x> failed' },
+      mkCtx({ contractFacts: [fact] }),
     );
     expect(r.passed).toBe(true);
+    expect(r.evidence.details.fact).toEqual(fact);
   });
 });
 

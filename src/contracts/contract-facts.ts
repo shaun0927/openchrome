@@ -1,4 +1,7 @@
-import { wrapBoundaryMarker } from '../core/perception/boundary-markers';
+import {
+  unescapeBoundaryContent,
+  wrapBoundaryMarker,
+} from '../core/perception/boundary-markers';
 
 export const CONTRACT_FACT_SCHEMA_VERSION = 1 as const;
 export const MAX_CONTRACT_FACTS = 256;
@@ -259,10 +262,10 @@ export function decodeConsoleContractFactMessage(
     !message.startsWith(CONSOLE_FACT_BOUNDARY_PREFIX)
     || !message.endsWith(CONSOLE_FACT_BOUNDARY_SUFFIX)
   ) return undefined;
-  return message.slice(
+  return unescapeBoundaryContent(message.slice(
     CONSOLE_FACT_BOUNDARY_PREFIX.length,
     -CONSOLE_FACT_BOUNDARY_SUFFIX.length,
-  );
+  ));
 }
 
 function encodeConsoleContractFactMessage(
@@ -301,8 +304,17 @@ export function selectPerformanceContractFact(
     );
   }
 
-  const parsed = parseCandidates(candidates, parsePerformanceFact);
-  if (parsed.facts.length === 0) return parsed.failure ?? malformedFailure();
+  const parsedAll = parseCandidates(candidates, parsePerformanceFact);
+  const window = selectFreshestCandidateWindow(
+    candidates,
+    scope,
+    parsedAll.facts.length > 0,
+    parsedAll.failure,
+  );
+  if (!window.ok) return window;
+  const parsed = parseCandidates(window.candidates, parsePerformanceFact);
+  if (parsed.failure) return parsed.failure;
+  if (parsed.facts.length === 0) return malformedFailure();
   const unitMatches = parsed.facts.filter((fact) => fact.unit === scope.unit);
   if (unitMatches.length === 0) {
     return failure(
@@ -311,7 +323,8 @@ export function selectPerformanceContractFact(
       { metric: scope.metric, expected_unit: scope.unit },
     );
   }
-  return selectFreshest(unitMatches, scope);
+  if (window.temporalFailure) return window.temporalFailure;
+  return { ok: true, fact: unitMatches[0] };
 }
 
 export function selectConsoleContractFact(
@@ -327,18 +340,27 @@ export function selectConsoleContractFact(
     return failure('CONTRACT_FACT_NOT_FOUND', 'no console contract fact found');
   }
 
-  const parsed = parseCandidates(candidates, parseConsoleFact);
-  if (parsed.facts.length === 0) return parsed.failure ?? malformedFailure();
-  const selected = selectFreshest(parsed.facts, scope);
-  if (!selected.ok) return selected;
-  if (selected.fact.truncated) {
+  const parsedAll = parseCandidates(candidates, parseConsoleFact);
+  const window = selectFreshestCandidateWindow(
+    candidates,
+    scope,
+    parsedAll.facts.length > 0,
+    parsedAll.failure,
+  );
+  if (!window.ok) return window;
+  const parsed = parseCandidates(window.candidates, parseConsoleFact);
+  if (parsed.failure) return parsed.failure;
+  if (parsed.facts.length === 0) return malformedFailure();
+  if (window.temporalFailure) return window.temporalFailure;
+  const fact = parsed.facts[0];
+  if (fact.truncated) {
     return failure(
       'CONTRACT_FACT_TRUNCATED',
       'console contract fact is truncated and cannot prove the assertion',
-      { captured_at: selected.fact.captured_at },
+      { captured_at: fact.captured_at },
     );
   }
-  return selected;
+  return { ok: true, fact };
 }
 
 function readFactArray(input: unknown): { ok: true; facts: unknown[] } | ContractFactFailure {
@@ -453,7 +475,17 @@ function parseConsoleFact(
       return malformedFailure('console fact entry message is malformed');
     }
     const decodedMessage = decodeConsoleContractFactMessage(entry.message, messageEncoding);
-    if (decodedMessage === undefined || decodedMessage.length > MAX_CONSOLE_FACT_MESSAGE_CHARS) {
+    const encodedBodyTooLong = messageEncoding === 'oc_boundary_v1'
+      && entry.message.length > (
+        CONSOLE_FACT_BOUNDARY_PREFIX.length
+        + MAX_CONSOLE_FACT_MESSAGE_CHARS
+        + CONSOLE_FACT_BOUNDARY_SUFFIX.length
+      );
+    if (
+      decodedMessage === undefined
+      || encodedBodyTooLong
+      || decodedMessage.length > MAX_CONSOLE_FACT_MESSAGE_CHARS
+    ) {
       return malformedFailure('console fact entry message encoding is malformed');
     }
     if (
@@ -551,63 +583,98 @@ function parseBase(
   };
 }
 
-function selectFreshest<T extends ContractFact>(
-  facts: T[],
+function selectFreshestCandidateWindow(
+  candidates: unknown[],
   scope: FactSelectionScope,
-): ContractFactSelection<T> {
+  hasParsedFacts: boolean,
+  parseFailure?: ContractFactFailure,
+): {
+  ok: true;
+  candidates: unknown[];
+  temporalFailure?: ContractFactFailure;
+} | ContractFactFailure {
   if (!scope.targetId) {
     return failure(
       'CONTRACT_FACT_SCOPE_MISSING',
       'evidence.provenance.target_id is required for contract facts',
     );
   }
-  const scoped = facts.filter((fact) => (
-    fact.session_id === scope.sessionId && fact.target_id === scope.targetId
+  const scoped = candidates.filter((candidate): candidate is Record<string, unknown> => (
+    isRecord(candidate)
+    && candidate.session_id === scope.sessionId
+    && candidate.target_id === scope.targetId
   ));
   if (scoped.length === 0) {
+    if (!hasParsedFacts) return parseFailure ?? malformedFailure();
     return failure(
       'CONTRACT_FACT_SCOPE_MISMATCH',
       'contract facts do not belong to the current MCP session and target',
       { expected_session_id: scope.sessionId, expected_target_id: scope.targetId },
     );
   }
-  const current = scoped.filter((fact) => Date.parse(fact.captured_at) <= scope.nowMs);
-  if (current.length === 0) {
-    const earliest = scoped.reduce((first, fact) => (
-      Date.parse(fact.captured_at) < Date.parse(first.captured_at) ? fact : first
-    ));
-    return failure(
-      'CONTRACT_FACT_MALFORMED',
-      'matching contract facts are captured in the future',
-      {
-        captured_at: earliest.captured_at,
-        future_by_ms: Date.parse(earliest.captured_at) - scope.nowMs,
-      },
-    );
+
+  const invalidTimestamps = scoped.filter((candidate) => (
+    typeof candidate.captured_at !== 'string'
+    || !Number.isFinite(Date.parse(candidate.captured_at))
+  ));
+  if (invalidTimestamps.length > 0) {
+    return {
+      ok: true,
+      candidates: invalidTimestamps,
+      temporalFailure: malformedFailure('contract fact captured_at is malformed'),
+    };
   }
-  const fresh = current.filter((fact) => (
-    scope.nowMs - Date.parse(fact.captured_at) <= scope.maxAgeMs
+
+  const timestamped = scoped.map((candidate) => ({
+    candidate,
+    capturedAtMs: Date.parse(candidate.captured_at as string),
+  }));
+  const current = timestamped.filter(({ capturedAtMs }) => capturedAtMs <= scope.nowMs);
+  if (current.length === 0) {
+    const earliestMs = Math.min(...timestamped.map(({ capturedAtMs }) => capturedAtMs));
+    return {
+      ok: true,
+      candidates: timestamped
+        .filter(({ capturedAtMs }) => capturedAtMs === earliestMs)
+        .map(({ candidate }) => candidate),
+      temporalFailure: failure(
+        'CONTRACT_FACT_MALFORMED',
+        'matching contract facts are captured in the future',
+        {
+          captured_at: new Date(earliestMs).toISOString(),
+          future_by_ms: earliestMs - scope.nowMs,
+        },
+      ),
+    };
+  }
+  const fresh = current.filter(({ capturedAtMs }) => (
+    scope.nowMs - capturedAtMs <= scope.maxAgeMs
   ));
   if (fresh.length === 0) {
-    const newest = current.reduce((latest, fact) => (
-      Date.parse(fact.captured_at) > Date.parse(latest.captured_at) ? fact : latest
-    ));
-    return failure(
-      'CONTRACT_FACT_STALE',
-      'matching contract facts are older than max_age_ms',
-      {
-        captured_at: newest.captured_at,
-        age_ms: Math.max(0, scope.nowMs - Date.parse(newest.captured_at)),
-        max_age_ms: scope.maxAgeMs,
-      },
-    );
+    const newestMs = Math.max(...current.map(({ capturedAtMs }) => capturedAtMs));
+    return {
+      ok: true,
+      candidates: current
+        .filter(({ capturedAtMs }) => capturedAtMs === newestMs)
+        .map(({ candidate }) => candidate),
+      temporalFailure: failure(
+        'CONTRACT_FACT_STALE',
+        'matching contract facts are older than max_age_ms',
+        {
+          captured_at: new Date(newestMs).toISOString(),
+          age_ms: Math.max(0, scope.nowMs - newestMs),
+          max_age_ms: scope.maxAgeMs,
+        },
+      ),
+    };
   }
-  const fact = fresh.reduce((latest, candidate) => (
-    Date.parse(candidate.captured_at) > Date.parse(latest.captured_at)
-      ? candidate
-      : latest
-  ));
-  return { ok: true, fact };
+  const newestMs = Math.max(...fresh.map(({ capturedAtMs }) => capturedAtMs));
+  return {
+    ok: true,
+    candidates: fresh
+      .filter(({ capturedAtMs }) => capturedAtMs === newestMs)
+      .map(({ candidate }) => candidate),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
