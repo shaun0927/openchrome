@@ -165,35 +165,8 @@ function redactRawUrlUserinfo(value: string): string {
   return out;
 }
 
-function redactEncodedUrlUserinfo(value: string): string {
-  return value.replace(ENCODED_URL_CANDIDATE_PATTERN, (candidate) => {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(candidate);
-    } catch {
-      return candidate;
-    }
-    const redacted = redactRawUrlUserinfo(decoded);
-    return redacted === decoded ? candidate : encodeURIComponent(redacted);
-  });
-}
-
-function redactUrlUserinfo(value: string): string {
-  return redactEncodedUrlUserinfo(redactRawUrlUserinfo(value));
-}
-
-function isSensitiveKey(key: string): boolean {
-  const lower = key.toLowerCase();
-  return SENSITIVE_KEY_NAMES.some((s) => lower.includes(s));
-}
-
-/**
- * Scrub a single string. Replaces matched credential substrings with
- * `[REDACTED]`. URL-credential params keep the param name and replace only
- * the value: `password=hunter2` → `password=[REDACTED]`.
- */
-export function scrubString(value: string): string {
-  let out = redactUrlUserinfo(value);
+function redactCredentialPatterns(value: string): string {
+  let out = value;
   for (const [plaintext, token] of VAULT_LITERAL_REDACTIONS) {
     out = out.split(plaintext).join(token);
   }
@@ -207,6 +180,37 @@ export function scrubString(value: string): string {
     }
   }
   return out;
+}
+
+function redactEncodedUrlComponents(value: string): string {
+  return value.replace(ENCODED_URL_CANDIDATE_PATTERN, (candidate) => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(candidate);
+    } catch {
+      return candidate;
+    }
+    const redacted = redactCredentialPatterns(redactRawUrlUserinfo(decoded));
+    return redacted === decoded ? candidate : encodeURIComponent(redacted);
+  });
+}
+
+function redactUrlCredentials(value: string): string {
+  return redactEncodedUrlComponents(redactRawUrlUserinfo(value));
+}
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return SENSITIVE_KEY_NAMES.some((s) => lower.includes(s));
+}
+
+/**
+ * Scrub a single string. Replaces matched credential substrings with
+ * `[REDACTED]`. URL-credential params keep the param name and replace only
+ * the value: `password=hunter2` → `password=[REDACTED]`.
+ */
+export function scrubString(value: string): string {
+  return redactCredentialPatterns(redactUrlCredentials(value));
 }
 
 

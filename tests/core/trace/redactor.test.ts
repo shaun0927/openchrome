@@ -90,11 +90,14 @@ describe('trace redactor — scrubString patterns', () => {
 
   test('redacts percent-encoded credentialed URL components', () => {
     const out = scrubString(
-      'https://example.com/?next=https%3A%2F%2Falice%3Asecret%40evil.example%2Fprivate',
+      'https://example.com/?next=https%3A%2F%2Falice%3Asecret%40evil.example%2Fprivate%3Faccess_token%3Dya29.example',
     );
-    expect(out).toContain('next=https%3A%2F%2F%5BREDACTED%5D%40evil.example%2Fprivate');
+    expect(out).toContain(
+      'next=https%3A%2F%2F%5BREDACTED%5D%40evil.example%2Fprivate%3Faccess_token%3D%5BREDACTED%5D',
+    );
     expect(out).not.toContain('alice');
     expect(out).not.toContain('secret');
+    expect(out).not.toContain('ya29.example');
   });
 
   test('leaves benign strings untouched', () => {
