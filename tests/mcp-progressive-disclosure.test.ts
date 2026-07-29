@@ -17,6 +17,7 @@ import { getSessionManager } from '../src/session-manager';
 import { MCPServer } from '../src/mcp-server';
 import { runWithRequestContext } from '../src/observability/request-id';
 import { registerAllTools } from '../src/tools';
+import type { Principal } from '../src/auth/api-key-types';
 import type { MCPResponse } from '../src/types/mcp';
 import type { MCPTransport } from '../src/transports';
 
@@ -152,6 +153,50 @@ describe('MCP progressive disclosure client detection', () => {
       'drag_drop',
       'workflow_init',
     ]));
+  });
+
+  test('modern tool discovery is filtered by the authenticated principal scopes', async () => {
+    const server = makeServer();
+    const readPrincipal: Principal = {
+      tenantId: 'tenant-read',
+      keyId: 'key-read',
+      scopes: ['read'],
+      mode: 'api-key',
+    };
+    const listed = await runWithRequestContext(
+      {
+        requestId: 'req-modern-read-scope',
+        protocolEra: 'modern',
+        tenantId: readPrincipal.tenantId,
+        keyId: readPrincipal.keyId,
+        clientInfo: { name: 'scoped-client', version: '1.0.0' },
+        clientCapabilities: { tools: { listChanged: true } },
+      },
+      () => server.handleRequest(
+        {
+          jsonrpc: '2.0',
+          id: 21,
+          method: 'tools/list',
+          params: {},
+        },
+        readPrincipal,
+      ),
+    ) as TestResponse;
+    const tools = (listed.result?.tools ?? []).map((tool) => tool.name);
+
+    expect(tools).toEqual(expect.arrayContaining([
+      'read_page',
+      'tabs_search',
+      'oc_connection_health',
+    ]));
+    for (const toolName of [
+      'navigate',
+      'workflow_init',
+      'oc_stop',
+      'expand_tools',
+    ]) {
+      expect(tools).not.toContain(toolName);
+    }
   });
 
   test('client detection is isolated between HTTP MCP sessions', async () => {

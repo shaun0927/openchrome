@@ -1522,7 +1522,7 @@ export class MCPServer {
           break;
 
         case 'tools/list':
-          result = await this.handleToolsList(params);
+          result = await this.handleToolsList(params, principal);
           break;
 
         case 'tools/call':
@@ -1724,10 +1724,17 @@ export class MCPServer {
     return this.capabilityFilter.has(capability ?? 'core');
   }
 
+  private isToolAllowedForPrincipal(toolName: string, principal?: Principal): boolean {
+    return !principal || isAllowed(toolName, principal.scopes);
+  }
+
   /**
    * Handle tools/list request
    */
-  private async handleToolsList(params?: Record<string, unknown>): Promise<MCPResult> {
+  private async handleToolsList(
+    params?: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<MCPResult> {
     const exposureState = this.getToolExposureState();
     const requestContext = currentRequestContext();
     if (
@@ -1756,6 +1763,7 @@ export class MCPServer {
       if (
         (tier <= exposureState.exposedTier || exposureState.selectedToolNames.has(registry.definition.name))
         && this.isCapabilityAllowed(registry.definition.capability)
+        && this.isToolAllowedForPrincipal(registry.definition.name, principal)
       ) {
         tools.push(registry.definition);
       }
@@ -1764,11 +1772,17 @@ export class MCPServer {
     // Add hint about additional tools when not fully expanded.
     // Only inject expand_tools if the client supports notifications/tools/list_changed —
     // otherwise there's no point since the client can't react to the notification.
-    if (exposureState.exposedTier < 3 && exposureState.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
+    if (
+      exposureState.exposedTier < 3
+      && exposureState.clientSupportsListChanged
+      && this.isCapabilityAllowed('core')
+      && this.isToolAllowedForPrincipal('expand_tools', principal)
+    ) {
       const hiddenCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) > exposureState.exposedTier &&
           !exposureState.selectedToolNames.has(r.definition.name) &&
-          this.isCapabilityAllowed(r.definition.capability)
+          this.isCapabilityAllowed(r.definition.capability) &&
+          this.isToolAllowedForPrincipal(r.definition.name, principal)
       ).length;
       if (hiddenCount > 0) {
         tools.push({
