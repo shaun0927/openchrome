@@ -10,6 +10,7 @@ import {
 import {
   redactSecrets,
   redactSecretString,
+  redactSecretStringWithMetadata,
   findLiteralSecret,
 } from '../../../src/core/secrets/redactor';
 
@@ -38,6 +39,103 @@ describe('redactSecretString', () => {
   test('no-op on empty store', () => {
     expect(redactSecretString('hunter2_xyz_unique_string_a8f3', EMPTY_SECRET_STORE))
       .toBe('hunter2_xyz_unique_string_a8f3');
+  });
+
+  test('preserves existing placeholders across repeated redaction passes', () => {
+    const store = makeSecretStore(new Map([['WORD', 'SECRET']]));
+    const once = redactSecretString('SECRET', store);
+    expect(once).toBe('${SECRET:WORD}');
+    expect(redactSecretString(once, store)).toBe(once);
+    expect(redactSecretString(`before ${once} after SECRET`, store))
+      .toBe(`before ${once} after ${once}`);
+  });
+
+  test('preserves secret identity when placeholder syntax overlaps another secret', () => {
+    const store = makeSecretStore(new Map([
+      ['LONG', 'abcdef'],
+      ['WORD', 'SECRET'],
+    ]));
+    const once = redactSecretString('abcdef', store);
+    expect(once).toBe('${SECRET:LONG}');
+    expect(redactSecretString(once, store)).toBe(once);
+  });
+
+  test('redacts an exact placeholder-shaped secret value before preserving placeholders', () => {
+    const store = makeSecretStore(new Map([
+      ['FULL', '${SECRET:TOPSECRET}'],
+      ['TOP', 'TOPSECRET'],
+    ]));
+    const once = redactSecretString('${SECRET:TOPSECRET}', store);
+    expect(once).toBe('${SECRET:FULL}');
+    expect(redactSecretString(once, store)).toBe(once);
+  });
+
+  test('redacts a whole secret that contains a canonical placeholder substring', () => {
+    const store = makeSecretStore(new Map([
+      ['A', 'ordinary'],
+      ['WHOLE', 'x${SECRET:A}y'],
+      ['PREFIX', 'pre${SECRET:A}'],
+    ]));
+    expect(redactSecretString('x${SECRET:A}y', store)).toBe('${SECRET:WHOLE}');
+    expect(redactSecretString('pre${SECRET:A}', store)).toBe('${SECRET:PREFIX}');
+    expect(redactSecretStringWithMetadata('x${SECRET:A}y', store)).toEqual({
+      value: '${SECRET:WHOLE}',
+      lossy: false,
+    });
+  });
+
+  test('removes secrets created across a replacement boundary without malformed nesting', () => {
+    const store = makeSecretStore(new Map([
+      ['A', 'q'],
+      ['B', '}x'],
+    ]));
+    const once = redactSecretString('qx', store);
+    expect(once).toBe('${SECRET:B}');
+    expect(redactSecretString(once, store)).toBe(once);
+  });
+
+  test('does not let an earlier internal match hide a later boundary-crossing secret', () => {
+    const store = makeSecretStore(new Map([
+      ['X', 'ordinary'],
+      ['INTERNAL', 'T:X'],
+      ['CROSS', 'X}suffix'],
+    ]));
+    const once = redactSecretStringWithMetadata('${SECRET:X}suffix', store);
+    expect(once).toEqual({ value: '${SECRET:CROSS}', lossy: true });
+    expect(redactSecretString(once.value, store)).toBe(once.value);
+  });
+
+  test('reports both left- and right-crossing placeholder expansion as lossy', () => {
+    const store = makeSecretStore(new Map([
+      ['X', 'ordinary'],
+      ['LEFT', 'pre${S'],
+      ['RIGHT', 'X}suffix'],
+    ]));
+    expect(redactSecretStringWithMetadata('pre${SECRET:X}', store)).toEqual({
+      value: '${SECRET:LEFT}',
+      lossy: true,
+    });
+    expect(redactSecretStringWithMetadata('${SECRET:X}suffix', store)).toEqual({
+      value: '${SECRET:RIGHT}',
+      lossy: true,
+    });
+  });
+
+  test('reports whole-string stabilization and cycle fallback as lossy', () => {
+    const boundaryStore = makeSecretStore(new Map([
+      ['A', 'q'],
+      ['B', '}x'],
+    ]));
+    expect(redactSecretStringWithMetadata('qx', boundaryStore)).toEqual({
+      value: '${SECRET:B}',
+      lossy: true,
+    });
+
+    const cycleStore = makeSecretStore(new Map([['A', '${SECRET:A}']]));
+    expect(redactSecretStringWithMetadata('${SECRET:A}', cycleStore)).toEqual({
+      value: '',
+      lossy: true,
+    });
   });
 });
 

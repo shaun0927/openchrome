@@ -8,6 +8,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { buildPerformanceContractFacts } from '../contracts/contract-facts';
+import { redactSecretStringWithMetadata } from '../core/secrets/redactor';
 
 const definition: MCPToolDefinition = {
   name: 'performance_metrics',
@@ -194,17 +195,30 @@ const handler: ToolHandler = async (
       };
     }
 
-    const contractFacts = buildPerformanceContractFacts({
-      sessionId,
-      targetId: tabId,
-      capturedAt: new Date().toISOString(),
-      metrics: {
-        ...metrics,
-        ...(resourceContractSummary
-          ? { resource_summary: resourceContractSummary }
-          : {}),
-      },
-    });
+    const factSessionId = redactSecretStringWithMetadata(sessionId);
+    const factTargetId = redactSecretStringWithMetadata(tabId);
+    const scopeIdsAreSafe = [
+      { raw: sessionId, redacted: factSessionId },
+      { raw: tabId, redacted: factTargetId },
+    ].every(({ raw, redacted }) => (
+      raw.length > 0
+      && raw.length <= 256
+      && !redacted.lossy
+      && redacted.value === raw
+    ));
+    const contractFacts = scopeIdsAreSafe
+      ? buildPerformanceContractFacts({
+          sessionId,
+          targetId: tabId,
+          capturedAt: new Date().toISOString(),
+          metrics: {
+            ...metrics,
+            ...(resourceContractSummary
+              ? { resource_summary: resourceContractSummary }
+              : {}),
+          },
+        })
+      : [];
     const payload = {
       action: 'performance_metrics',
       type,

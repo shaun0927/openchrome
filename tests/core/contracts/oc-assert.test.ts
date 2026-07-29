@@ -22,6 +22,15 @@ import * as path from 'path';
 import type { MCPToolDefinition, MCPResult, ToolHandler } from '../../../src/types/mcp';
 import type { Evidence } from '../../../src/contracts/types';
 import { PAGE_META_TEMPLATE, TemplateRegistry } from '../../../src/contracts/templates';
+import {
+  EMPTY_SECRET_STORE,
+  makeSecretStore,
+  setSecretStore,
+} from '../../../src/core/secrets/loader';
+
+afterEach(() => {
+  setSecretStore(EMPTY_SECRET_STORE);
+});
 
 interface RegisteredTool {
   name: string;
@@ -118,6 +127,20 @@ describe('oc_assert — verdicts', () => {
     });
     expect(out.trace_status).toBe('unavailable');
     expect(typeof out.trace_unavailable_reason).toBe('string');
+  });
+
+  test('omits a secret-bearing session ID from evidence retrieval guidance', async () => {
+    setSecretStore(makeSecretStore(new Map([['QUOTED_SESSION', 'a"b']])));
+    const { handler } = setup();
+    const result = await handler('session-a"b', {
+      contract: { kind: 'url', pattern: '^https://example\\.com/?$' },
+      evidence: { snapshot: { url: 'https://example.com' } },
+    });
+
+    expect(result.content?.[0]?.text).not.toContain('a\\"b');
+    const out = parseResult(result);
+    expect((out.evidence_get as { arguments: Record<string, unknown> }).arguments)
+      .not.toHaveProperty('sessionId');
   });
 
   test('fail: url assertion returns failed_assertions array', async () => {
@@ -368,6 +391,46 @@ describe('oc_assert — per-evaluator coverage', () => {
     expect(out.verdict).toBe('inconclusive');
     expect(out.error_code).toBe('CONTRACT_FACT_SCOPE_MISMATCH');
     expect(out.failure_category).toBeUndefined();
+  });
+
+  test('redacts JSON-escaped scope mismatch details before both response surfaces', async () => {
+    setSecretStore(makeSecretStore(new Map([['QUOTED_SESSION', 'a"b']])));
+    const { handler } = setup();
+    const result = await handler('session-a"b', {
+      contract: {
+        kind: 'performance',
+        schema_version: 1,
+        metric: 'navigation.duration',
+        unit: 'ms',
+        op: 'lte',
+        value: 1000,
+        max_age_ms: 30000,
+      },
+      evidence: {
+        provenance: { target_id: 'tab-a' },
+        snapshot: {
+          contract_facts: [{
+            schema_version: 1,
+            kind: 'performance',
+            source_tool: 'performance_metrics',
+            session_id: 'another-session',
+            target_id: 'tab-a',
+            captured_at: new Date().toISOString(),
+            metric: 'navigation.duration',
+            unit: 'ms',
+            value: 750,
+          }],
+        },
+      },
+    });
+
+    expect(result.content?.[0]?.text).not.toContain('a\\"b');
+    expect(JSON.stringify(result)).not.toContain('a\\"b');
+    expect(JSON.stringify(result)).toContain('session-${SECRET:QUOTED_SESSION}');
+    expect(parseResult(result)).toMatchObject({
+      verdict: 'inconclusive',
+      error_code: 'CONTRACT_FACT_SCOPE_MISMATCH',
+    });
   });
 
   test('dom_text: explicit selector hit', async () => {

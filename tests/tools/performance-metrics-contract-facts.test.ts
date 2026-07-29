@@ -11,6 +11,11 @@ import { getSessionManager } from '../../src/session-manager';
 import { registerPerformanceMetricsTool } from '../../src/tools/performance-metrics';
 import type { MCPToolDefinition, ToolContext, ToolHandler } from '../../src/types/mcp';
 import { withTimeout } from '../../src/utils/with-timeout';
+import {
+  EMPTY_SECRET_STORE,
+  makeSecretStore,
+  setSecretStore,
+} from '../../src/core/secrets/loader';
 
 class MockServer {
   tools = new Map<string, { handler: ToolHandler; definition: MCPToolDefinition }>();
@@ -21,6 +26,10 @@ class MockServer {
 }
 
 describe('performance_metrics contract facts', () => {
+  afterEach(() => {
+    setSecretStore(EMPTY_SECRET_STORE);
+  });
+
   test('emits bounded versioned facts and forwards ToolContext to every page evaluation', async () => {
     const page = {
       metrics: jest.fn().mockResolvedValue({
@@ -90,6 +99,33 @@ describe('performance_metrics contract facts', () => {
     for (const call of (withTimeout as jest.Mock).mock.calls) {
       expect(call[3]).toBe(context);
     }
+    expect(result.structuredContent).toEqual(payload);
+  });
+
+  test('suppresses facts when JSON-escaped scope IDs require redaction', async () => {
+    setSecretStore(makeSecretStore(new Map([
+      ['QUOTED_SESSION', 'a"b'],
+      ['QUOTED_TARGET', 'c"d'],
+    ])));
+    (getSessionManager as jest.Mock).mockReturnValue({
+      getPage: jest.fn().mockResolvedValue({
+        metrics: jest.fn().mockResolvedValue({ Documents: 2 }),
+      }),
+    });
+    const server = new MockServer();
+    registerPerformanceMetricsTool(server as never);
+
+    const result = await server.tools.get('performance_metrics')!.handler('session-a"b', {
+      tabId: 'tab-c"d',
+      type: 'puppeteer',
+    });
+    expect(result.content?.[0]?.text).not.toContain('a\\"b');
+    expect(result.content?.[0]?.text).not.toContain('c\\"d');
+    const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as {
+      contract_facts: unknown[];
+    };
+
+    expect(payload.contract_facts).toEqual([]);
     expect(result.structuredContent).toEqual(payload);
   });
 });

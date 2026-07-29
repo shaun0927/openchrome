@@ -221,7 +221,11 @@ export function buildConsoleContractFact(input: {
     : input.entries;
   const entries = selected.map((entry): ConsoleContractFactEntry => {
     const rawMessage = typeof entry.text === 'string' ? entry.text : String(entry.text ?? '');
+    const rawType = typeof entry.type === 'string' && entry.type.length > 0
+      ? entry.type
+      : 'log';
     if (rawMessage.length > MAX_CONSOLE_FACT_MESSAGE_CHARS) truncated = true;
+    if (rawType.length > 64) truncated = true;
     const boundedMessage = rawMessage.slice(0, MAX_CONSOLE_FACT_MESSAGE_CHARS);
     const encodedMessage = encodeConsoleContractFactMessage(boundedMessage, messageEncoding);
     if (encodedMessage.truncated) truncated = true;
@@ -232,9 +236,7 @@ export function buildConsoleContractFact(input: {
       ? Math.min(entry.count, Number.MAX_SAFE_INTEGER)
       : 1;
     return {
-      type: typeof entry.type === 'string' && entry.type.length > 0
-        ? entry.type.slice(0, 64)
-        : 'log',
+      type: rawType.slice(0, 64),
       message: encodedMessage.message,
       count,
       uncaught: entry.uncaught === true,

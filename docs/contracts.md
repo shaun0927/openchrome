@@ -287,6 +287,11 @@ you can re-derive the threshold later.
   removed from subsequent responses and facts when CDP later emits
   `Runtime.exceptionRevoked`. Facts are immutable point-in-time snapshots, so a
   fact fetched before revocation retains the then-current unhandled state.
+- Configured secret literals in console text, arguments, URLs, types, capture
+  filters, and fact scope identifiers are checked before serialization and fact
+  bounds are applied. Scope identifiers that require redaction suppress contract
+  fact emission because display placeholders are not identity-safe; lossy message
+  or filter stabilization marks a console fact truncated rather than malformed.
 - Facts declare `captured_types: null` for an unfiltered capture or the exact
   bounded capture filter. A filtered fact can decide only assertions with an
   explicit `type` included in that filter; other queries are inconclusive with

@@ -7,10 +7,20 @@ jest.mock('../../src/session-manager', () => ({
 import { createConsoleRingBuffer } from '../../src/core/console-buffer/ring-buffer';
 import { getSessionManager } from '../../src/session-manager';
 import {
+  EMPTY_SECRET_STORE,
+  makeSecretStore,
+  setSecretStore,
+} from '../../src/core/secrets/loader';
+import { redactSecrets } from '../../src/core/secrets/redactor';
+import {
   captureStates,
   registerConsoleCaptureTool,
   type CaptureState,
 } from '../../src/tools/console-capture';
+import {
+  isContractFact,
+  selectConsoleContractFact,
+} from '../../src/contracts/contract-facts';
 import type { MCPToolDefinition, ToolHandler } from '../../src/types/mcp';
 
 class MockServer {
@@ -25,6 +35,8 @@ interface TestConsoleLogEntry {
   type: string;
   text: string;
   timestamp: number;
+  location?: { url?: string; lineNumber?: number; columnNumber?: number };
+  args?: string[];
   uncaught?: boolean;
   truncatedFrom?: number;
 }
@@ -32,6 +44,7 @@ interface TestConsoleLogEntry {
 describe('console_capture contract facts', () => {
   afterEach(() => {
     captureStates.clear();
+    setSecretStore(EMPTY_SECRET_STORE);
   });
 
   test('get emits a boundary-marked full-buffer fact with capture scope and truncation state', async () => {
@@ -320,5 +333,322 @@ describe('console_capture contract facts', () => {
     expect(payload.logs).toEqual([]);
     expect(payload.bufferStats.retained).toBe(0);
     expect(payload.contract_facts[0].entries).toEqual([]);
+  });
+
+  test('bounds console facts after configured-secret redaction expands a message', async () => {
+    setSecretStore(makeSecretStore(new Map([['EXPANDING_NAME', 'Q']])));
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 10, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({ type: 'error', text: `Q${'a'.repeat(1023)}`, timestamp: 1 }, 1100);
+    captureStates.set('tab-a', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      maxLogs: 10,
+      maxBytes: 4096,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+
+    const result = await server.tools.get('console_capture')!.handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    });
+    const finalResult = redactSecrets(redactSecrets(result));
+    const payload = JSON.parse(finalResult.content?.[0]?.text ?? '{}') as {
+      contract_facts: Array<{
+        captured_at: string;
+        truncated: boolean;
+        entries: Array<{ message: string }>;
+      }>;
+    };
+    const fact = payload.contract_facts[0];
+
+    expect(fact.truncated).toBe(true);
+    expect(fact.entries[0].message).toHaveLength(1024);
+    expect(fact.entries[0].message).toContain('${SECRET:EXPANDING_NAME}');
+    expect(fact.entries[0].message).not.toContain('Q');
+    expect(isContractFact(fact)).toBe(true);
+    expect(selectConsoleContractFact([fact], {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse(fact.captured_at) + 1,
+      maxAgeMs: 30000,
+    })).toMatchObject({ ok: false, code: 'CONTRACT_FACT_TRUNCATED' });
+    expect(finalResult.structuredContent?.contract_facts).toEqual(payload.contract_facts);
+  });
+
+  test('redacts JSON-escaped console strings before serializing both response surfaces', async () => {
+    setSecretStore(makeSecretStore(new Map([['QUOTED', 'a"b']])));
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 10, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({
+      type: 'log',
+      text: 'before a"b after',
+      timestamp: 1,
+      args: ['a"b'],
+      location: { url: 'https://example.test/?value=a"b' },
+    }, 200);
+    captureStates.set('tab-a', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      maxLogs: 10,
+      maxBytes: 4096,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+
+    const result = await server.tools.get('console_capture')!.handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    });
+    expect(result.content?.[0]?.text).not.toContain('a\\"b');
+    const finalResult = redactSecrets(redactSecrets(result));
+    const payload = JSON.parse(finalResult.content?.[0]?.text ?? '{}') as {
+      logs: Array<{
+        text: string;
+        args: string[];
+        location: { url: string };
+      }>;
+    };
+    expect(payload.logs[0]).toMatchObject({
+      text: 'before ${SECRET:QUOTED} after',
+      args: ['${SECRET:QUOTED}'],
+      location: { url: 'https://example.test/?value=${SECRET:QUOTED}' },
+    });
+    expect(finalResult.structuredContent?.entries).toEqual(payload.logs);
+  });
+
+  test('suppresses facts when JSON-escaped scope IDs require redaction', async () => {
+    setSecretStore(makeSecretStore(new Map([
+      ['QUOTED_SESSION', 'a"b'],
+      ['QUOTED_TARGET', 'c"d'],
+    ])));
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 10, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({ type: 'log', text: 'safe message', timestamp: 1 }, 100);
+    captureStates.set('tab-c"d', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      maxLogs: 10,
+      maxBytes: 4096,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+
+    const result = await server.tools.get('console_capture')!.handler('session-a"b', {
+      tabId: 'tab-c"d',
+      action: 'get',
+      boundaryMarkers: false,
+    });
+    expect(result.content?.[0]?.text).not.toContain('a\\"b');
+    expect(result.content?.[0]?.text).not.toContain('c\\"d');
+    const finalResult = redactSecrets(redactSecrets(result));
+    const payload = JSON.parse(finalResult.content?.[0]?.text ?? '{}') as {
+      contract_facts: unknown[];
+    };
+
+    expect(payload.contract_facts).toEqual([]);
+    expect(finalResult.structuredContent?.contract_facts).toEqual(payload.contract_facts);
+  });
+
+  test('bounds secret-expanded fact types and capture filters before final redaction', async () => {
+    setSecretStore(makeSecretStore(new Map([['EXPANDING_TYPE', 'Q']])));
+    const expandedType = `Q${'t'.repeat(63)}`;
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 10, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({ type: expandedType, text: 'safe message', timestamp: 1 }, 100);
+    captureStates.set('tab-a', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      filter: [expandedType],
+      maxLogs: 10,
+      maxBytes: 4096,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+
+    const result = redactSecrets(redactSecrets(
+      await server.tools.get('console_capture')!.handler('session-a', {
+        tabId: 'tab-a',
+        action: 'get',
+        boundaryMarkers: false,
+      }),
+    ));
+    const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as {
+      contract_facts: Array<{
+        captured_at: string;
+        captured_types: string[];
+        entries: Array<{ type: string }>;
+        truncated: boolean;
+      }>;
+    };
+    const fact = payload.contract_facts[0];
+
+    expect(fact.truncated).toBe(true);
+    expect(fact.captured_types).toEqual([]);
+    expect(fact.entries[0].type).toHaveLength(64);
+    expect(isContractFact(fact)).toBe(true);
+    expect(selectConsoleContractFact([fact], {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse(fact.captured_at) + 1,
+      maxAgeMs: 30000,
+    })).toMatchObject({ ok: false, code: 'CONTRACT_FACT_TRUNCATED' });
+  });
+
+  test('marks facts truncated when safe secret stabilization discards message context', async () => {
+    setSecretStore(makeSecretStore(new Map([
+      ['A', 'q'],
+      ['B', '}x'],
+      ['CYCLE', '${SECRET:CYCLE}'],
+    ])));
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 10, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({ type: 'error', text: 'qx', timestamp: 1 }, 50);
+    logs.push({ type: 'error', text: '${SECRET:CYCLE}', timestamp: 2 }, 50);
+    captureStates.set('tab-a', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      maxLogs: 10,
+      maxBytes: 4096,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+
+    const result = await server.tools.get('console_capture')!.handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    });
+    const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as {
+      contract_facts: Array<{
+        captured_at: string;
+        entries: Array<{ message: string }>;
+        truncated: boolean;
+      }>;
+    };
+    const fact = payload.contract_facts[0];
+
+    expect(fact.entries.map((entry) => entry.message)).toEqual([
+      '${SECRET:B}',
+      '',
+    ]);
+    expect(fact.truncated).toBe(true);
+    expect(isContractFact(fact)).toBe(true);
+    expect(selectConsoleContractFact([fact], {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse(fact.captured_at) + 1,
+      maxAgeMs: 30000,
+    })).toMatchObject({ ok: false, code: 'CONTRACT_FACT_TRUNCATED' });
+  });
+
+  test('marks facts truncated when secret redaction expands across placeholder boundaries', async () => {
+    setSecretStore(makeSecretStore(new Map([
+      ['X', 'ordinary'],
+      ['LEFT', 'pre${S'],
+      ['RIGHT', 'X}suffix'],
+    ])));
+    const logs = createConsoleRingBuffer<TestConsoleLogEntry>(
+      { maxLines: 10, maxBytes: 4096 },
+      (size) => ({ type: 'log', text: '[truncated]', timestamp: Date.now(), truncatedFrom: size }),
+    );
+    logs.push({ type: 'error', text: 'pre${SECRET:X}', timestamp: 1 }, 50);
+    logs.push({ type: 'error', text: '${SECRET:X}suffix', timestamp: 2 }, 50);
+    captureStates.set('tab-a', {
+      logs,
+      cdpSession: {} as CaptureState['cdpSession'],
+      consoleHandler: jest.fn(),
+      exceptionHandler: jest.fn(),
+      exceptionRevokedHandler: jest.fn(),
+      startedAt: Date.now() - 100,
+      maxLogs: 10,
+      maxBytes: 4096,
+    });
+    (getSessionManager as jest.Mock).mockReturnValue({
+      addEventListener: jest.fn(),
+      getPage: jest.fn().mockResolvedValue({ url: () => 'https://example.test/' }),
+    });
+    const server = new MockServer();
+    registerConsoleCaptureTool(server as never);
+
+    const result = await server.tools.get('console_capture')!.handler('session-a', {
+      tabId: 'tab-a',
+      action: 'get',
+      boundaryMarkers: false,
+    });
+    const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as {
+      contract_facts: Array<{
+        captured_at: string;
+        entries: Array<{ message: string }>;
+        truncated: boolean;
+      }>;
+    };
+    const fact = payload.contract_facts[0];
+
+    expect(fact.entries.map((entry) => entry.message)).toEqual([
+      '${SECRET:LEFT}',
+      '${SECRET:RIGHT}',
+    ]);
+    expect(fact.truncated).toBe(true);
+    expect(isContractFact(fact)).toBe(true);
+    expect(selectConsoleContractFact([fact], {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse(fact.captured_at) + 1,
+      maxAgeMs: 30000,
+    })).toMatchObject({ ok: false, code: 'CONTRACT_FACT_TRUNCATED' });
   });
 });
