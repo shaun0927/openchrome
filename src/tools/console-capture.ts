@@ -18,6 +18,10 @@ import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-
 import { paginate } from '../utils/paginate';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 import { buildConsoleContractFact } from '../contracts/contract-facts';
+import {
+  redactSecretString,
+  redactSecretStringWithMetadata,
+} from '../core/secrets/redactor';
 
 /**
  * Validate caller-supplied cap values. Used to reject `maxLogs`/`maxBytes`
@@ -119,6 +123,35 @@ interface DedupedLogEntry {
   args?: string[];
   uncaught?: boolean;
   truncatedFrom?: number;
+}
+
+function redactConsoleLogEntry(entry: ConsoleLogEntry): {
+  entry: ConsoleLogEntry;
+  factLossy: boolean;
+} {
+  const type = redactSecretStringWithMetadata(entry.type);
+  const text = redactSecretStringWithMetadata(entry.text);
+  return {
+    factLossy: type.lossy || text.lossy,
+    entry: {
+      ...entry,
+      type: type.value,
+      text: text.value,
+      ...(entry.location
+        ? {
+            location: {
+              ...entry.location,
+              ...(entry.location.url
+                ? { url: redactSecretString(entry.location.url) }
+                : {}),
+            },
+          }
+        : {}),
+      ...(entry.args
+        ? { args: entry.args.map((arg) => redactSecretString(arg)) }
+        : {}),
+    },
+  };
 }
 
 /**
@@ -485,9 +518,9 @@ const handler: ToolHandler = async (
               text: JSON.stringify({
                 action: 'start',
                 status: 'started',
-                filter: filter || 'all',
+                filter: filter?.map((value) => redactSecretString(value)) || 'all',
                 maxLogs,
-                message: `Console capture started for tab ${tabId}`,
+                message: `Console capture started for tab ${redactSecretString(tabId)}`,
               }),
             },
           ],
@@ -555,17 +588,20 @@ const handler: ToolHandler = async (
           };
         }
 
-        const allLogs = state.logs.drain();
+        const allLogRedactions = state.logs.drain().map(redactConsoleLogEntry);
+        const allLogs = allLogRedactions.map((result) => result.entry);
+        const factRedactionLossy = allLogRedactions.some((result) => result.factLossy);
         const logs: ConsoleLogEntry[] = (limit && limit > 0)
-          ? state.logs.tail(limit)
+          ? state.logs.tail(limit).map(redactConsoleLogEntry).map((result) => result.entry)
           : allLogs;
 
         // Deduplicate consecutive identical log messages
         const deduplicatedFactEntries = deduplicateLogs(allLogs);
+        const pageOrigin = redactSecretString(page.url());
         const deduplicatedLogs = deduplicateLogs(logs).map((log) => ({
           ...log,
-          text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, log.text) : log.text,
-          args: boundaryMarkers && log.args ? log.args.map((arg) => wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, arg)) : log.args,
+          text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || pageOrigin }, log.text) : log.text,
+          args: boundaryMarkers && log.args ? log.args.map((arg) => wrapBoundaryMarker('console', { origin: log.location?.url || pageOrigin }, arg)) : log.args,
         }));
 
         const bufStats = state.logs.stats();
@@ -590,17 +626,37 @@ const handler: ToolHandler = async (
         if (pagination.invalidCursor) return invalidCursorResult(pagination.invalidCursor);
         if (cursor) stats.returned = pagination.logs.length;
 
-        const contractFact = buildConsoleContractFact({
-          sessionId,
-          targetId: tabId,
-          capturedAt: new Date().toISOString(),
-          entries: deduplicatedFactEntries,
-          capturedTypes: state.filter && state.filter.length > 0 ? state.filter : null,
-          messageEncoding: boundaryMarkers ? 'oc_boundary_v1' : 'plain',
-          truncated:
-            bufStats.evictedTotal > 0
-            || allLogs.some((entry) => entry.truncatedFrom !== undefined),
-        });
+        const capturedTypeRedactions = state.filter && state.filter.length > 0
+          ? state.filter.map((value) => redactSecretStringWithMetadata(value))
+          : [];
+        const factSessionId = redactSecretStringWithMetadata(sessionId);
+        const factTargetId = redactSecretStringWithMetadata(tabId);
+        const scopeIdsAreSafe = [
+          { raw: sessionId, redacted: factSessionId },
+          { raw: tabId, redacted: factTargetId },
+        ].every(({ raw, redacted }) => (
+          raw.length > 0
+          && raw.length <= 256
+          && !redacted.lossy
+          && redacted.value === raw
+        ));
+        const contractFacts = scopeIdsAreSafe
+          ? [buildConsoleContractFact({
+              sessionId,
+              targetId: tabId,
+              capturedAt: new Date().toISOString(),
+              entries: deduplicatedFactEntries,
+              capturedTypes: capturedTypeRedactions.length > 0
+                ? capturedTypeRedactions.map((result) => result.value)
+                : null,
+              messageEncoding: boundaryMarkers ? 'oc_boundary_v1' : 'plain',
+              truncated:
+                bufStats.evictedTotal > 0
+                || allLogs.some((entry) => entry.truncatedFrom !== undefined)
+                || factRedactionLossy
+                || capturedTypeRedactions.some((result) => result.lossy),
+            })]
+          : [];
         const payload = {
           action: 'get',
           status: 'running',
@@ -608,7 +664,7 @@ const handler: ToolHandler = async (
           stats,
           durationMs: Date.now() - state.startedAt,
           bufferStats,
-          contract_facts: [contractFact],
+          contract_facts: contractFacts,
           ...(cursor ? { hasMore: pagination.hasMore } : {}),
           ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
         };
@@ -627,7 +683,7 @@ const handler: ToolHandler = async (
             hasMore: cursor ? pagination.hasMore : false,
             ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
             total: pagination.total,
-            contract_facts: [contractFact],
+            contract_facts: contractFacts,
           },
         };
       }

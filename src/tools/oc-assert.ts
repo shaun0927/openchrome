@@ -48,6 +48,10 @@ import {
 import { currentRequestContext } from '../observability/request-id';
 import { DEFAULT_TENANT_ID } from '../tenant/types';
 import { resolveEffectiveTenantId } from '../auth/tenant-principal';
+import {
+  redactSecrets,
+  redactSecretStringWithMetadata,
+} from '../core/secrets/redactor';
 
 type Verdict = 'pass' | 'fail' | 'inconclusive';
 type OcAssertErrorCode =
@@ -79,7 +83,7 @@ interface OcAssertOutput {
   evidence_expires_at?: string;
   evidence_get?: {
     tool: 'oc_evidence_get';
-    arguments: { evidence_handle: string; sessionId: string };
+    arguments: { evidence_handle: string; sessionId?: string };
   };
   evidence_persistence_reason?: string;
   trace_status?: 'unavailable';
@@ -593,11 +597,14 @@ function createHandler(
     output.evidence_handle = stored.evidence_handle;
     output.evidence_status = 'persisted';
     output.evidence_expires_at = stored.expires_at;
+    const responseSessionId = redactSecretStringWithMetadata(sessionId);
     output.evidence_get = {
       tool: 'oc_evidence_get',
       arguments: {
         evidence_handle: stored.evidence_handle,
-        sessionId,
+        ...(!responseSessionId.lossy && responseSessionId.value === sessionId
+          ? { sessionId }
+          : {}),
       },
     };
   } catch (error) {
@@ -673,14 +680,15 @@ function normalizeCapturedAt(value: unknown): string | undefined {
 }
 
 function jsonResult(payload: OcAssertOutput): MCPResult {
+  const redactedPayload = redactSecrets(payload);
   return {
     content: [
       {
         type: 'text',
-        text: JSON.stringify(payload),
+        text: JSON.stringify(redactedPayload),
       },
     ],
-    ...payload,
+    ...redactedPayload,
   };
 }
 

@@ -36,6 +36,12 @@ interface CompiledSecrets {
   pairs: Array<{ name: string; value: string }>;
   /** Quick reject: any string shorter than this cannot match any secret. */
   minLen: number;
+  /** One-pass literal matcher; alternatives are longest-first. */
+  matcher?: RegExp;
+  /** Canonical replacement name for each distinct secret value. */
+  valueToName: Map<string, string>;
+  /** Loaded names that make an existing placeholder canonical. */
+  names: Set<string>;
 }
 
 /**
@@ -50,6 +56,24 @@ interface CompiledSecrets {
  * scan only.
  */
 const compileCache = new WeakMap<SecretStore, CompiledSecrets>();
+const SECRET_PLACEHOLDER_RE = /\$\{SECRET:([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+interface SecretMatch {
+  start: number;
+  end: number;
+  name: string;
+}
+
+interface ProtectedPlaceholder {
+  start: number;
+  end: number;
+  token: string;
+}
+
+export interface SecretStringRedactionResult {
+  value: string;
+  lossy: boolean;
+}
 
 function compile(store: SecretStore): CompiledSecrets {
   const cached = compileCache.get(store);
@@ -63,9 +87,18 @@ function compile(store: SecretStore): CompiledSecrets {
     if (value.length < minLen) minLen = value.length;
   }
   pairs.sort((a, b) => b.value.length - a.value.length);
+  const valueToName = new Map<string, string>();
+  for (const { name, value } of pairs) {
+    if (!valueToName.has(value)) valueToName.set(value, name);
+  }
   const compiled: CompiledSecrets = {
     pairs,
     minLen: pairs.length === 0 ? 0 : minLen,
+    ...(pairs.length > 0
+      ? { matcher: new RegExp(pairs.map(({ value }) => escapeRegExp(value)).join('|'), 'g') }
+      : {}),
+    valueToName,
+    names: new Set(Array.from(store.names())),
   };
   compileCache.set(store, compiled);
   return compiled;
@@ -77,17 +110,210 @@ function compile(store: SecretStore): CompiledSecrets {
  * unchanged if no secret is loaded or no value is found (avoids any
  * allocation in the hot path).
  */
-function redactString(input: string, compiled: CompiledSecrets): string {
-  if (compiled.pairs.length === 0) return input;
+function redactUnprotectedString(input: string, compiled: CompiledSecrets): string {
+  if (!compiled.matcher) return input;
   if (input.length < compiled.minLen) return input;
-  let out = input;
-  for (const { name, value } of compiled.pairs) {
-    if (out.length < value.length) continue;
-    if (!out.includes(value)) continue;
-    // Use a global replace so all occurrences are caught in one pass.
-    out = out.replace(new RegExp(escapeRegExp(value), 'g'), `\${SECRET:${name}}`);
+  compiled.matcher.lastIndex = 0;
+  return input.replace(compiled.matcher, (value) => (
+    `\${SECRET:${compiled.valueToName.get(value) as string}}`
+  ));
+}
+
+function redactString(input: string, compiled: CompiledSecrets): string {
+  return redactStringWithMetadata(input, compiled).value;
+}
+
+function redactStringWithMetadata(
+  input: string,
+  compiled: CompiledSecrets,
+): SecretStringRedactionResult {
+  if (!input.includes('${SECRET:')) {
+    const redacted = redactUnprotectedString(input, compiled);
+    return redacted === input
+      ? { value: input, lossy: false }
+      : stabilizeRedactedString(redacted, compiled);
   }
-  return out;
+  const secretMatches = collectOverlappingSecretMatches(input, compiled);
+  const ignoredSecretIndexes = new Set<number>();
+  const expandedBoundaryMatches = new Map<number, SecretMatch>();
+  const protectedPlaceholders: ProtectedPlaceholder[] = [];
+  const placeholders: Array<ProtectedPlaceholder & { canonical: boolean }> = [];
+  let boundaryExpansionLossy = false;
+  SECRET_PLACEHOLDER_RE.lastIndex = 0;
+  for (const match of input.matchAll(SECRET_PLACEHOLDER_RE)) {
+    const start = match.index ?? 0;
+    const token = match[0];
+    const name = match[1];
+    placeholders.push({
+      start,
+      end: start + token.length,
+      token,
+      canonical: compiled.names.has(name),
+    });
+  }
+
+  let nextSecret = 0;
+  let activeSecretIndexes: number[] = [];
+  for (const placeholder of placeholders) {
+    const { start, end, token, canonical } = placeholder;
+    activeSecretIndexes = activeSecretIndexes.filter((index) => (
+      secretMatches[index].end > start
+    ));
+    while (
+      nextSecret < secretMatches.length
+      && secretMatches[nextSecret].start < end
+    ) {
+      if (secretMatches[nextSecret].end > start) activeSecretIndexes.push(nextSecret);
+      nextSecret++;
+    }
+    const internalIndexes: number[] = [];
+    const boundaryIndexes: number[] = [];
+    for (const index of activeSecretIndexes) {
+      const secret = secretMatches[index];
+      if (secret.start > start && secret.end < end) internalIndexes.push(index);
+      else boundaryIndexes.push(index);
+    }
+    if (boundaryIndexes.length > 0) {
+      for (const index of internalIndexes) ignoredSecretIndexes.add(index);
+      for (const index of boundaryIndexes) {
+        ignoredSecretIndexes.add(index);
+        const secret = secretMatches[index];
+        const expanded = expandedBoundaryMatches.get(index) ?? { ...secret };
+        expanded.start = Math.min(expanded.start, start);
+        expanded.end = Math.max(expanded.end, end);
+        if (expanded.start !== secret.start || expanded.end !== secret.end) {
+          boundaryExpansionLossy = true;
+        }
+        expandedBoundaryMatches.set(index, expanded);
+      }
+    } else if (canonical) {
+      protectedPlaceholders.push({ start, end, token });
+      for (const index of internalIndexes) ignoredSecretIndexes.add(index);
+    }
+  }
+
+  const effectiveSecrets = selectNonOverlappingSecretMatches(
+    secretMatches
+      .filter((_, index) => !ignoredSecretIndexes.has(index))
+      .concat(Array.from(expandedBoundaryMatches.values()))
+      .sort((a, b) => (
+        a.start - b.start || (b.end - b.start) - (a.end - a.start)
+      )),
+  );
+  const controls = [
+    ...effectiveSecrets.map((secret) => ({
+      start: secret.start,
+      end: secret.end,
+      replacement: `\${SECRET:${secret.name}}`,
+    })),
+    ...protectedPlaceholders.map((placeholder) => ({
+      start: placeholder.start,
+      end: placeholder.end,
+      replacement: placeholder.token,
+    })),
+  ].sort((a, b) => a.start - b.start || b.end - a.end);
+
+  let cursor = 0;
+  let out = '';
+  for (const control of controls) {
+    if (control.start < cursor) continue;
+    out += input.slice(cursor, control.start);
+    out += control.replacement;
+    cursor = control.end;
+  }
+  out += input.slice(cursor);
+  const stabilized = stabilizeRedactedString(out, compiled);
+  return {
+    value: stabilized.value,
+    lossy: boundaryExpansionLossy || stabilized.lossy,
+  };
+}
+
+function collectOverlappingSecretMatches(
+  input: string,
+  compiled: CompiledSecrets,
+): SecretMatch[] {
+  if (input.length < compiled.minLen) return [];
+  const matches: SecretMatch[] = [];
+  for (const [value, name] of compiled.valueToName.entries()) {
+    let start = input.indexOf(value);
+    while (start >= 0) {
+      matches.push({ start, end: start + value.length, name });
+      start = input.indexOf(value, start + 1);
+    }
+  }
+  return matches.sort((a, b) => (
+    a.start - b.start || (b.end - b.start) - (a.end - a.start)
+  ));
+}
+
+function selectNonOverlappingSecretMatches(matches: SecretMatch[]): SecretMatch[] {
+  const selected: SecretMatch[] = [];
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.start < cursor) continue;
+    selected.push(match);
+    cursor = match.end;
+  }
+  return selected;
+}
+
+function stabilizeRedactedString(
+  input: string,
+  compiled: CompiledSecrets,
+): SecretStringRedactionResult {
+  let current = input;
+  let lossy = false;
+  const seen = new Set<string>();
+  for (let attempt = 0; attempt <= compiled.pairs.length; attempt++) {
+    const remaining = findActionableSecretMatch(current, compiled);
+    if (!remaining) return { value: current, lossy };
+    const next = `\${SECRET:${remaining.name}}`;
+    if (next === current || seen.has(next)) return { value: '', lossy: true };
+    seen.add(current);
+    current = next;
+    lossy = true;
+  }
+  return { value: '', lossy: true };
+}
+
+function findActionableSecretMatch(
+  input: string,
+  compiled: CompiledSecrets,
+): SecretMatch | undefined {
+  const secrets = collectOverlappingSecretMatches(input, compiled);
+  if (secrets.length === 0) return undefined;
+  const placeholders: ProtectedPlaceholder[] = [];
+  SECRET_PLACEHOLDER_RE.lastIndex = 0;
+  for (const match of input.matchAll(SECRET_PLACEHOLDER_RE)) {
+    if (!compiled.names.has(match[1])) continue;
+    const start = match.index ?? 0;
+    placeholders.push({ start, end: start + match[0].length, token: match[0] });
+  }
+
+  let placeholderCursor = 0;
+  for (const secret of secrets) {
+    while (
+      placeholderCursor < placeholders.length
+      && placeholders[placeholderCursor].end <= secret.start
+    ) {
+      placeholderCursor++;
+    }
+    let internal = false;
+    for (
+      let index = placeholderCursor;
+      index < placeholders.length && placeholders[index].start < secret.end;
+      index++
+    ) {
+      const placeholder = placeholders[index];
+      if (secret.start > placeholder.start && secret.end < placeholder.end) {
+        internal = true;
+        break;
+      }
+    }
+    if (!internal) return secret;
+  }
+  return undefined;
 }
 
 function walk(value: unknown, compiled: CompiledSecrets): unknown {
@@ -128,10 +354,17 @@ export function redactSecrets<T>(value: T, store?: SecretStore): T {
 
 /** Convenience: redact a single string (avoids the walker overhead). */
 export function redactSecretString(input: string, store?: SecretStore): string {
+  return redactSecretStringWithMetadata(input, store).value;
+}
+
+export function redactSecretStringWithMetadata(
+  input: string,
+  store?: SecretStore,
+): SecretStringRedactionResult {
   const s = store ?? getSecretStore();
-  if (s.size === 0) return input;
+  if (s.size === 0) return { value: input, lossy: false };
   const compiled = compile(s);
-  return redactString(input, compiled);
+  return redactStringWithMetadata(input, compiled);
 }
 
 /**
