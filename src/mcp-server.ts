@@ -1588,7 +1588,7 @@ export class MCPServer {
   }
 
 
-  private async refreshSessionRoots(mcpSessionId: string): Promise<void> {
+  private async refreshSessionRoots(rootScopeId: string): Promise<void> {
     const caps = this.getCurrentClientCapabilities();
     if (!caps.roots) return;
     const roots = await this.getCurrentRequestClient()<unknown>(
@@ -1596,7 +1596,20 @@ export class MCPServer {
       undefined,
       { timeoutMs: 250 },
     );
-    setSessionMcpRoots(mcpSessionId, roots);
+    setSessionMcpRoots(rootScopeId, roots);
+  }
+
+  private async refreshModernRootsForTool(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<void> {
+    if (currentRequestContext()?.protocolEra !== 'modern') return;
+    const hasEgressCandidate =
+      extractNetworkRootCandidateUrls(toolName, args).length > 0
+      || extractFileRootCandidatePaths(toolName, args).length > 0;
+    if (!hasEgressCandidate) return;
+    await this.refreshSessionRoots(sessionId);
   }
 
   private enforceNetworkRootsForTool(
@@ -2262,8 +2275,11 @@ export class MCPServer {
       throw err;
     }
 
+    const rootScopeId = currentRequestContext()?.mcpSessionId ?? sessionId;
+    await this.refreshModernRootsForTool(rootScopeId, toolName, substitutedArgs);
+
     const rootsDenial = this.enforceNetworkRootsForTool(
-      currentRequestContext()?.mcpSessionId ?? sessionId,
+      rootScopeId,
       toolName,
       substitutedArgs,
     );
@@ -2273,7 +2289,7 @@ export class MCPServer {
     }
 
     const fileRootsDenial = this.enforceFileRootsForTool(
-      currentRequestContext()?.mcpSessionId ?? sessionId,
+      rootScopeId,
       toolName,
       substitutedArgs,
     );
