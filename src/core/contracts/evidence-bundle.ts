@@ -29,7 +29,7 @@ import {
   CONTRACT_FACT_SCHEMA_VERSION,
   MAX_CONTRACT_FACTS,
 } from '../../contracts/contract-facts';
-import { redactValue } from '../trace/redactor';
+import { redactContractFactValue } from './contract-fact-redaction';
 import {
   diffAgainstSchema,
   SchemaDefinition,
@@ -246,7 +246,7 @@ export function writeEvidenceBundle(
     const facts = snapshot.contract_facts.slice(0, MAX_CONTRACT_FACTS);
     const filename = 'contract_facts.json';
     const payload = JSON.stringify(
-      redactValue({
+      redactContractFactValue({
         schema_version: CONTRACT_FACT_SCHEMA_VERSION,
         max_facts: MAX_CONTRACT_FACTS,
         truncated,

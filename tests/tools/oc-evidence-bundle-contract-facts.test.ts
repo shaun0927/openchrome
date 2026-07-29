@@ -18,6 +18,7 @@ describe('oc_evidence_bundle contract facts', () => {
     const server = new MockServer();
     registerOcEvidenceBundleTool(server as never);
     const handler = server.tools.get('oc_evidence_bundle')!.handler;
+    const targetId = '1234567890abcdef1234567890abcdef';
 
     const result = await handler('session-a', {
       include: ['contract_facts'],
@@ -28,7 +29,7 @@ describe('oc_evidence_bundle contract facts', () => {
             kind: 'console',
             source_tool: 'console_capture',
             session_id: 'session-a',
-            target_id: 'tab-a',
+            target_id: targetId,
             captured_at: '2026-07-28T12:00:00.000Z',
             entries: [{
               type: 'error',
@@ -53,6 +54,10 @@ describe('oc_evidence_bundle contract facts', () => {
       const raw = fs.readFileSync(`${payload.path}/contract_facts.json`, 'utf8');
       expect(raw).not.toContain('hunter2');
       expect(raw).toContain('password=[REDACTED]');
+      const contractFacts = JSON.parse(raw) as {
+        facts: Array<{ target_id: string }>;
+      };
+      expect(contractFacts.facts[0].target_id).toBe(targetId);
     } finally {
       fs.rmSync(payload.path, { recursive: true, force: true });
     }
