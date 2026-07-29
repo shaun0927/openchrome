@@ -25,6 +25,7 @@ import {
 } from '../observability/request-id';
 import type { ApiKeyStore } from '../auth/api-key-store';
 import { createJwtVerifier, type JwtConfig, type JwtVerifier } from '../auth/jwt-verifier';
+import { resolveEffectiveTenantId } from '../auth/tenant-principal';
 import {
   authenticate,
   requestPrincipals,
@@ -96,7 +97,7 @@ export class HTTPTransport implements MCPTransport {
   private readonly serverOriginHost: string;
   private sessions: Set<string> = new Set();
   private sseConnections: SSEConnection[] = [];
-  private sessionDeleteHandler: ((sessionId: string) => void) | null = null;
+  private sessionDeleteHandler: ((sessionId: string, tenantId?: string) => void) | null = null;
   private sessionCloseHandler: ((sessionId: string) => void) | null = null;
   private sessionManager: SessionManager | null = null;
   private readonly serverStartTime: number = Date.now();
@@ -160,7 +161,7 @@ export class HTTPTransport implements MCPTransport {
    * Register a callback to be invoked whenever a session is deleted.
    * Used by MCPServer to clean up per-session state (e.g. rate-limiter buckets).
    */
-  onSessionDelete(handler: (sessionId: string) => void): void {
+  onSessionDelete(handler: (sessionId: string, tenantId?: string) => void): void {
     this.sessionDeleteHandler = handler;
   }
 
@@ -420,9 +421,12 @@ export class HTTPTransport implements MCPTransport {
           this.handleSSE(req, res, tenantId);
           return;
         }
-        case 'DELETE':
-          this.handleDelete(req, res);
+        case 'DELETE': {
+          const tenantId = this.resolveRequestTenant(req, res, false);
+          if (tenantId === null) return;
+          this.handleDelete(req, res, tenantId);
           return;
+        }
         default:
           res.writeHead(405, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Method not allowed' }));
@@ -448,6 +452,7 @@ export class HTTPTransport implements MCPTransport {
   private resolveRequestTenant(
     req: http.IncomingMessage,
     res: http.ServerResponse,
+    validateSessionBinding = true,
   ): TenantId | null {
     const strict = isStrictTenantIsolationEnabled();
     let tenantId: TenantId;
@@ -472,10 +477,12 @@ export class HTTPTransport implements MCPTransport {
       throw err;
     }
 
+    const principal = requestPrincipals.get(req);
+    const effectiveTenantId = resolveEffectiveTenantId(principal, tenantId) ?? tenantId;
     const mcpSessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (mcpSessionId) {
+    if (validateSessionBinding && mcpSessionId) {
       const bound = this.sessionTenants.get(mcpSessionId);
-      if (bound !== undefined && bound !== tenantId) {
+      if (bound !== undefined && bound !== effectiveTenantId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -491,7 +498,7 @@ export class HTTPTransport implements MCPTransport {
         return null;
       }
     }
-    return tenantId;
+    return effectiveTenantId;
   }
 
   /**
@@ -880,16 +887,27 @@ export class HTTPTransport implements MCPTransport {
   /**
    * DELETE /mcp - Session termination
    */
-  private handleDelete(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleDelete(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    requestTenantId: TenantId,
+  ): void {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (sessionId && this.sessions.has(sessionId)) {
+      const boundTenantId = this.sessionTenants.get(sessionId);
+      if (boundTenantId !== undefined && boundTenantId !== requestTenantId) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden', reason: 'tenant_mismatch' }));
+        return;
+      }
+      const tenantId = boundTenantId ?? requestTenantId;
       this.sessions.delete(sessionId);
       this.sessionTenants.delete(sessionId);
 
       // Notify session-delete listeners (e.g. rate-limiter cleanup)
       if (this.sessionDeleteHandler) {
-        this.sessionDeleteHandler(sessionId);
+        this.sessionDeleteHandler(sessionId, tenantId);
       }
       if (this.sessionCloseHandler) {
         this.sessionCloseHandler(sessionId);

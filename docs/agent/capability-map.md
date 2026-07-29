@@ -2,7 +2,7 @@
 
 > Generated from `src/tools/index.ts`. Do not edit by hand; run `npm run docs:capability-map`.
 
-Total tools: 119
+Total tools: 120
 
 ## core
 
@@ -29,7 +29,7 @@ Total tools: 119
 - `network` — Simulate network conditions.
 - `network_capture_full` — Capture network requests with response bodies (capped).
 - `network_capture_lite` — Capture network request metadata + headers (no bodies).
-- `oc_assert` — Evaluate a single Outcome Contract assertion against caller-supplied evidence (snapshot).
+- `oc_assert` — Evaluate a single Outcome Contract assertion against caller-supplied evidence (snapshot), persist the redacted result for bounded retrieval, and return verdict pass/fail/inconclusive plus failed leaf assertions.
 - `oc_checkpoint` — Save, load, list, or delete automation checkpoints for long-running session continuity.
 - `oc_connection_health` — Get CDP connection health metrics including heartbeat mode, reconnect count, ping latency, connection state, and live reconnection progress.
 - `oc_context_export` — Export the active tab's auth-relevant state (cookies + local/sessionStorage + optional UA/viewport/HTTP-auth) as a portable plaintext envelope.
@@ -39,6 +39,7 @@ Total tools: 119
 - `oc_diff` — Compare two evidence-bundle IDs or paths and return deterministic DOM, screenshot phash, URL, console, and network diff facts.
 - `oc_doctor_report` — Read the most recent openchrome doctor diagnostic report from cache.
 - `oc_evidence_bundle` — Capture a snapshot of the current page state (DOM, screenshot, network slice, console, perceptual hash) and write it to a bundle directory.
+- `oc_evidence_get` — Retrieve a durable oc_assert evidence artifact by handle.
 - `oc_gate_inspect` — Detect whether the current tab is gated (CAPTCHA, bot-check, SSO redirect, paywall, 2FA prompt).
 - `oc_get_connection_info` — Get connection configuration for a web AI host (Claude Web, ChatGPT, Gemini, or custom).
 - `oc_journal` — Query the tool call journal.

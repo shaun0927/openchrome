@@ -4,6 +4,7 @@
  */
 
 import * as http from 'node:http';
+import type { ApiKeyStore } from '../../src/auth/api-key-store';
 import { currentRequestContext } from '../../src/observability/request-id';
 
 const { HTTPTransport } = require('../../src/transports/http');
@@ -50,6 +51,24 @@ function mcpPost(headers: Record<string, string>, body: unknown) {
     { 'Content-Type': 'application/json', ...headers },
     JSON.stringify(body),
   );
+}
+
+function fakeApiKeyStore(tokens: Record<string, string>): ApiKeyStore {
+  return {
+    verify: jest.fn(async (token: string) => {
+      const tenantId = tokens[token];
+      if (!tenantId) return null;
+      return {
+        keyId: `key-${tenantId}`,
+        keyHash: 'unused-test-hash',
+        tenantId,
+        scopes: ['admin'],
+        createdAt: 0,
+        description: 'test',
+      };
+    }),
+    touchLastUsed: jest.fn(async () => undefined),
+  } as unknown as ApiKeyStore;
 }
 
 describe('HTTP transport — tenant extraction (#7)', () => {
@@ -179,6 +198,55 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     expect(second.status).toBe(200);
   });
 
+  it('rejects cross-tenant authenticated DELETE before clearing the session', async () => {
+    const tokenA = `oc_live_tenant-a_${'A'.repeat(32)}`;
+    const tokenB = `oc_live_tenant-b_${'B'.repeat(32)}`;
+    const store = fakeApiKeyStore({
+      [tokenA]: 'tenant-a',
+      [tokenB]: 'tenant-b',
+    });
+    const deleted: Array<{ sessionId: string; tenantId?: string }> = [];
+    transport = new HTTPTransport(TEST_PORT, '127.0.0.1', undefined, {
+      apiKeyStore: store,
+      corsAllowedOrigins: ['http://example.com'],
+    });
+    transport.onMessage(async (msg: Record<string, unknown>) => ({
+      jsonrpc: '2.0',
+      id: msg.id,
+      result: { ok: true },
+    }));
+    transport.onSessionDelete((sessionId: string, tenantId?: string) => {
+      deleted.push({ sessionId, tenantId });
+    });
+    transport.start();
+    await new Promise((r) => setTimeout(r, 100));
+
+    const initialized = await mcpPost(
+      { Authorization: `Bearer ${tokenA}` },
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    );
+    const mcpSession = initialized.headers['mcp-session-id'] as string;
+    expect(initialized.status).toBe(200);
+    expect(transport.getTenantForMcpSession(mcpSession)).toBe('tenant-a');
+
+    const denied = await request('/mcp', 'DELETE', {
+      Authorization: `Bearer ${tokenB}`,
+      'Mcp-Session-Id': mcpSession,
+    });
+    expect(denied.status).toBe(403);
+    expect(JSON.parse(denied.body)).toMatchObject({ reason: 'tenant_mismatch' });
+    expect(transport.getTenantForMcpSession(mcpSession)).toBe('tenant-a');
+    expect(deleted).toEqual([]);
+
+    const allowed = await request('/mcp', 'DELETE', {
+      Authorization: `Bearer ${tokenA}`,
+      'Mcp-Session-Id': mcpSession,
+    });
+    expect(allowed.status).toBe(200);
+    expect(transport.getTenantForMcpSession(mcpSession)).toBeUndefined();
+    expect(deleted).toEqual([{ sessionId: mcpSession, tenantId: 'tenant-a' }]);
+  });
+
 
   it('propagates tenant and key context into the async request context for handlers', async () => {
     await boot(async () => ({
@@ -200,7 +268,11 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
   });
 
   it('DELETE /mcp clears the tenant binding', async () => {
+    const deleted: Array<{ sessionId: string; tenantId?: string }> = [];
     await boot();
+    transport.onSessionDelete((sessionId: string, tenantId?: string) => {
+      deleted.push({ sessionId, tenantId });
+    });
     const first = await mcpPost(
       { 'X-Tenant-Id': 'acme' },
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
@@ -208,9 +280,21 @@ it('STRICT mode rejects missing X-Tenant-Id with 400 (code=missing)', async () =
     const mcpSession = first.headers['mcp-session-id'] as string;
     expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
 
-    const del = await request('/mcp', 'DELETE', { 'Mcp-Session-Id': mcpSession });
+    const denied = await request('/mcp', 'DELETE', {
+      'Mcp-Session-Id': mcpSession,
+      'X-Tenant-Id': 'evil',
+    });
+    expect(denied.status).toBe(403);
+    expect(transport.getTenantForMcpSession(mcpSession)).toBe('acme');
+    expect(deleted).toEqual([]);
+
+    const del = await request('/mcp', 'DELETE', {
+      'Mcp-Session-Id': mcpSession,
+      'X-Tenant-Id': 'acme',
+    });
     expect(del.status).toBe(200);
     expect(transport.getTenantForMcpSession(mcpSession)).toBeUndefined();
+    expect(deleted).toEqual([{ sessionId: mcpSession, tenantId: 'acme' }]);
   });
 
   it('advertises X-Tenant-Id in CORS Allow-Headers', async () => {

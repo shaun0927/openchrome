@@ -742,7 +742,12 @@ export class SessionManager {
     this.sessions.delete(sessionId);
     this.targetLeases.releaseSession(sessionId);
     this.deletingSessions.delete(sessionId);
-    this.emitEvent({ type: 'session:deleted', sessionId, timestamp: Date.now() });
+    this.emitEvent({
+      type: 'session:deleted',
+      sessionId,
+      tenantId: session.tenantId ?? DEFAULT_TENANT_ID,
+      timestamp: Date.now(),
+    });
     this.emitLifecycle({ kind: 'session:destroy', sessionId, reason, ts: Date.now() });
 
     console.error(`[SessionManager] Deleted session ${sessionId}`);

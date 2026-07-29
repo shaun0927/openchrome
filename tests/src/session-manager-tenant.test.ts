@@ -116,6 +116,27 @@ describe('SessionManager tenant isolation (#7)', () => {
     expect(n).toBe(1);
   });
 
+  it('includes the owning tenant in session deletion events', async () => {
+    const tenantCtx = stubContext('tenant-delete');
+    const tm = new TenantManager({ createContext: async () => tenantCtx });
+    const sm = new SessionManager(undefined, {
+      autoCleanup: false,
+      useConnectionPool: false,
+      tenantManager: tm,
+    });
+    const listener = jest.fn();
+    sm.addEventListener(listener);
+    await sm.createSession({ id: 'tenant-delete-session', tenantId: 'acme' });
+
+    await sm.deleteSession('tenant-delete-session');
+
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session:deleted',
+      sessionId: 'tenant-delete-session',
+      tenantId: 'acme',
+    }));
+  });
+
 
   it('uses the active request-context tenant when createSession omits tenantId', async () => {
     const tenantCtx = stubContext('tenant-from-ctx');

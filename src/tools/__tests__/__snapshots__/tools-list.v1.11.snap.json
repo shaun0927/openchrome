@@ -127,6 +127,9 @@
       "name": "oc_evidence_bundle"
     },
     {
+      "name": "oc_evidence_get"
+    },
+    {
       "name": "oc_gate_inspect"
     },
     {

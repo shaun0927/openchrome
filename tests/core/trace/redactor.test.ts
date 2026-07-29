@@ -45,6 +45,72 @@ describe('trace redactor — scrubString patterns', () => {
     expect(out).not.toContain('hunter2');
   });
 
+  test.each(['access_token', 'oauth_token', 'client_secret', 'csrf-token'])(
+    'redacts URL credential param %s without over-redacting token metadata',
+    (param) => {
+      const out = scrubString(`https://x.com/callback?${param}=ya29.example&token_type=Bearer`);
+      expect(out).toContain(`${param}=${REDACTED}`);
+      expect(out).not.toContain('ya29.example');
+      expect(out).toContain('token_type=Bearer');
+    },
+  );
+
+  test('redacts URL userinfo credentials while preserving the destination', () => {
+    const out = scrubString('open https://alice:hunter2@example.com/private?view=1');
+    expect(out).toBe(`open https://${REDACTED}@example.com/private?view=1`);
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('hunter2');
+  });
+
+  test('redacts complete URL userinfo when the password contains a raw at-sign', () => {
+    const out = scrubString('open https://alice:p@ss@example.com/private?view=1');
+    expect(out).toBe(`open https://${REDACTED}@example.com/private?view=1`);
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('p@ss');
+    expect(out).not.toContain('ss@example.com');
+  });
+
+  test.each(['ws', 'wss', 'ftp'])(
+    'redacts URL userinfo for %s collector evidence',
+    (scheme) => {
+      const out = scrubString(`connect ${scheme}://alice:p@ss@example.com/private?view=1`);
+      expect(out).toBe(`connect ${scheme}://${REDACTED}@example.com/private?view=1`);
+      expect(out).not.toContain('alice');
+      expect(out).not.toContain('p@ss');
+      expect(out).not.toContain('ss@example.com');
+    },
+  );
+
+  test('redacts credentialed URLs nested inside another URL value', () => {
+    const out = scrubString('https://example.com/?next=https://alice:secret@evil.example/private');
+    expect(out).toBe(`https://example.com/?next=https://${REDACTED}@evil.example/private`);
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('secret');
+  });
+
+  test('redacts percent-encoded credentialed URL components', () => {
+    const out = scrubString(
+      'https://example.com/?next=https%3A%2F%2Falice%3Asecret%40evil.example%2Fprivate%3Faccess_token%3Dya29.example',
+    );
+    expect(out).toContain(
+      'next=https%3A%2F%2F%5BREDACTED%5D%40evil.example%2Fprivate%3Faccess_token%3D%5BREDACTED%5D',
+    );
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('secret');
+    expect(out).not.toContain('ya29.example');
+  });
+
+  test('redacts many URL candidates without repeated suffix scans', () => {
+    const dirty = Array.from(
+      { length: 4_000 },
+      (_, index) => `https://user${index}:secret@host${index}.example/path`,
+    ).join('|');
+
+    const out = scrubString(dirty);
+    expect(out.split(`${REDACTED}@`)).toHaveLength(4_001);
+    expect(out).not.toContain(':secret@');
+  });
+
   test('leaves benign strings untouched', () => {
     expect(scrubString('hello world')).toBe('hello world');
     expect(scrubString('https://example.com/page')).toBe('https://example.com/page');

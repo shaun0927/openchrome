@@ -46,6 +46,9 @@ export interface MCPTransport {
   /** Register cleanup for logical MCP session close/disconnect when supported. */
   onSessionClose?(handler: (sessionId: string) => void): void;
 
+  /** Register cleanup for an authenticated logical MCP session deletion. */
+  onSessionDelete?(handler: (sessionId: string, tenantId?: string) => void): void;
+
   /** Start listening for messages (bind port or attach readline). */
   start(): void;
 
