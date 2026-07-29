@@ -343,6 +343,33 @@ describe('evaluate(console)', () => {
     expect(r.passed).toBe(true);
     expect(r.evidence.details.fact).toEqual(fact);
   });
+
+  test('does not collapse a literal boundary escape sentinel during matching', async () => {
+    const fact = consoleFact({
+      message_encoding: 'oc_boundary_v1',
+      entries: [
+        {
+          type: 'error',
+          message: '<oc:console>literal <\u200B\u200Boc:x></oc:console>',
+          count: 1,
+          uncaught: false,
+        },
+      ],
+    } as Partial<ContractFact>);
+    const withoutSentinel = await evaluate(
+      { ...assertion, message_pattern: 'literal <oc:x>', value: 1 },
+      mkCtx({ contractFacts: [fact] }),
+    );
+    const withSentinel = await evaluate(
+      { ...assertion, message_pattern: 'literal <\u200Boc:x>', value: 1 },
+      mkCtx({ contractFacts: [fact] }),
+    );
+
+    expect(withoutSentinel.passed).toBe(false);
+    expect(withoutSentinel.evidence.details.observed).toBe(0);
+    expect(withSentinel.passed).toBe(true);
+    expect(withSentinel.evidence.details.fact).toEqual(fact);
+  });
 });
 
 describe('evaluate(screenshot_class)', () => {
