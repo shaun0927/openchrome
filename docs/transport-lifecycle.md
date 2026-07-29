@@ -14,9 +14,9 @@ OpenChrome exposes three transport modes. The package CLI uses stdio by default,
 | Streamable HTTP daemon | `--http [port]` or `OPENCHROME_TRANSPORT=http` | **stable** | v1.0.0 | — | Long-running daemon serving multiple MCP clients over Streamable HTTP. Binds a local port; auth via bearer token or per-tenant API key. |
 | Dual (stdio + HTTP) | `OPENCHROME_TRANSPORT=both` | **stable** | v1.0.0 | — | Run stdio and HTTP simultaneously. Intended for dashboard integrations that need both a direct MCP pipe and an HTTP fan-out endpoint. |
 
-> **Note on SSE:** The `/mcp/sse` endpoint is the _notification delivery channel_ inside the HTTP transport — it is not a separate transport mode. When a client connects via `GET /mcp/sse`, it receives server-initiated notifications over a persistent SSE stream while issuing requests via `POST /mcp`. Operators should not conflate `/mcp/sse` with a distinct transport; the lifecycle of that endpoint is tied to the `http` transport above.
+> **Legacy SSE compatibility:** `GET /mcp` and `/mcp/sse` remain available for legacy MCP clients. MCP `2026-07-28` clients use a long-lived `subscriptions/listen` POST response instead.
 
-> **Streamable HTTP:** `--http` is OpenChrome's current Streamable HTTP transport surface. Use `POST /mcp` for JSON-RPC requests and `GET /mcp` or `GET /mcp/sse` for server-sent event streams.
+> **Streamable HTTP:** `--http` is OpenChrome's current Streamable HTTP transport surface. Modern clients use stateless `POST /mcp` requests only. See [MCP 2026-07-28 migration](mcp-2026-07-28.md).
 
 ---
 
@@ -126,12 +126,18 @@ OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP=1 openchrome serve --auto-launch --http
 
 ### Streamable HTTP endpoint behavior
 
-`--http` starts OpenChrome's current Streamable HTTP transport. Clients issue JSON-RPC requests with `POST /mcp`. Clients that need server-initiated notifications can open `GET /mcp` or `GET /mcp/sse` as an SSE stream. No additional migration flag is required; the `http` transport selector remains stable and has no sunset date.
+`--http` starts OpenChrome's dual-era Streamable HTTP transport. MCP
+`2026-07-28` clients issue stateless JSON-RPC requests with `POST /mcp` and use
+`subscriptions/listen` for selected change notifications. Legacy clients can
+continue to initialize a protocol session and use `GET /mcp` or
+`GET /mcp/sse`. No additional migration flag is required; the `http`
+transport selector remains stable and has no sunset date.
 
 ---
 
 ## See also
 
 - [docs/auth.md](auth.md) — API key store, bearer tokens, OAuth
+- [docs/mcp-2026-07-28.md](mcp-2026-07-28.md) - modern MCP architecture and compatibility
 - [docs/roadmap/portability-harness-contract.md](roadmap/portability-harness-contract.md) — core/pilot tier split and portability principles
 - Issue [#839](https://github.com/shaun0927/openchrome/issues/839) — Streamable HTTP transport implementation history

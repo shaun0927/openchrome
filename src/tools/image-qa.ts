@@ -22,6 +22,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { coerceSupportedImageMimeType, makeImageContent } from '../utils/image-mime';
+import { isMcpInputRequiredError } from '../errors/mcp-input-required';
 
 interface ImageQaScreenshot {
   /** Opaque in-memory reference produced by a sibling tool. */
@@ -213,6 +214,7 @@ const handler: ToolHandler = async (
       ...(response?.usage ? { usage: response.usage } : {}),
     });
   } catch (err) {
+    if (isMcpInputRequiredError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return jsonResult({ status: 'error', reason: `sampling request failed: ${message}` });
   }
@@ -293,6 +295,7 @@ export async function runImageQaSampling(
       ...(response?.usage ? { usage: response.usage } : {}),
     };
   } catch (err) {
+    if (isMcpInputRequiredError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return { status: 'error', reason: `sampling request failed: ${message}` };
   }

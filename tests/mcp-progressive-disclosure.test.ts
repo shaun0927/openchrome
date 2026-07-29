@@ -127,6 +127,33 @@ describe('MCP progressive disclosure client detection', () => {
     expect(tools.length).toBeGreaterThanOrEqual(118);
   });
 
+  test('modern requests expose a stateless full tool surface', async () => {
+    const server = makeServer();
+    const listed = await runWithRequestContext(
+      {
+        requestId: 'req-modern',
+        protocolEra: 'modern',
+        clientInfo: { name: 'opencode', version: '1.0.0' },
+        clientCapabilities: { tools: { listChanged: true } },
+      },
+      () => server.handleRequest({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      }),
+    ) as TestResponse;
+    const tools = (listed.result?.tools ?? []).map((tool) => tool.name);
+
+    expect(tools).not.toContain('expand_tools');
+    expect(tools.length).toBeGreaterThanOrEqual(118);
+    expect(tools).toEqual(expect.arrayContaining([
+      'navigate',
+      'drag_drop',
+      'workflow_init',
+    ]));
+  });
+
   test('client detection is isolated between HTTP MCP sessions', async () => {
     const server = makeServer();
 

@@ -25,6 +25,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getTaskJournal, type JournalEntry } from '../journal/task-journal';
+import { isMcpInputRequiredError } from '../errors/mcp-input-required';
 
 type CompactStrategy = 'recent_k' | 'checkpoint_only' | 'sampling';
 
@@ -275,6 +276,7 @@ const handler: ToolHandler = async (
       strategy_used: 'sampling',
     });
   } catch (err) {
+    if (isMcpInputRequiredError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return jsonResult({ status: 'error', reason: `sampling request failed: ${message}` });
   }

@@ -5,7 +5,11 @@ import { MCPServer } from '../../src/mcp-server';
 import { TOOL_ANNOTATIONS } from '../../src/types/tool-annotations';
 import type { MCPToolDefinition } from '../../src/types/mcp';
 import { runWithRequestContext } from '../../src/observability/request-id';
-import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
+import {
+  clearAllSessionMcpRoots,
+  getSessionMcpRoots,
+  setSessionMcpRoots,
+} from '../../src/security/mcp-roots';
 
 const navigateDefinition: MCPToolDefinition = {
   name: 'navigate',
@@ -20,6 +24,49 @@ const navigateDefinition: MCPToolDefinition = {
 
 describe('MCPServer roots narrowing integration (#880)', () => {
   afterEach(() => clearAllSessionMcpRoots());
+
+  test('refreshes roots from the SDK request-scoped legacy bridge', async () => {
+    const server = new MCPServer(undefined, { initialToolTier: 3 });
+    const requestClientMock = jest.fn();
+    const requestClient = async <T>(
+      method: string,
+      params?: Record<string, unknown>,
+      options?: { timeoutMs?: number; signal?: AbortSignal },
+    ): Promise<T> => {
+      requestClientMock(method, params, options);
+      return {
+        roots: [{ uri: 'https://allowed.example.com' }],
+      } as unknown as T;
+    };
+
+    await runWithRequestContext(
+      {
+        requestId: 'req-roots-refresh',
+        mcpSessionId: 'mcp-session-a',
+        protocolEra: 'legacy',
+        clientCapabilities: { roots: {} },
+        requestClient,
+      },
+      () => server.handleMessage(
+        {
+          jsonrpc: '2.0',
+          method: 'notifications/initialized',
+        },
+        undefined,
+        { mcpSessionId: 'mcp-session-a' },
+      ),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(requestClientMock).toHaveBeenCalledWith(
+      'roots/list',
+      undefined,
+      { timeoutMs: 250 },
+    );
+    expect(getSessionMcpRoots('mcp-session-a')?.network).toEqual([
+      expect.objectContaining({ host: 'allowed.example.com' }),
+    ]);
+  });
 
   test('rejects URL-egress tools before handler execution when MCP network roots exclude the host', async () => {
     const server = new MCPServer(undefined, { initialToolTier: 3 });

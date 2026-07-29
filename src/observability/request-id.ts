@@ -85,6 +85,29 @@ export interface RequestContext {
   mcpSessionId?: string;
   /** Broker stdio-proxy identity when this request arrived via --connect-broker. */
   brokerClientId?: string;
+  /** MCP protocol era selected by the SDK boundary for this request. */
+  protocolEra?: 'legacy' | 'modern';
+  /** Client identity carried by initialize (legacy) or the per-request envelope (modern). */
+  clientInfo?: { name?: string; version?: string };
+  /** Capabilities carried by initialize (legacy) or the per-request envelope (modern). */
+  clientCapabilities?: {
+    roots?: object;
+    sampling?: object;
+    elicitation?: object;
+    tools?: { listChanged?: boolean };
+    notifications?: { tools?: { listChanged?: boolean } };
+    [key: string]: unknown;
+  };
+  /** Request-related client call bridge supplied by the official MCP SDK. */
+  requestClient?: <T = unknown>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ) => Promise<T>;
+  /** Request-related notification bridge supplied by the official MCP SDK. */
+  notifyClient?: (method: string, params?: Record<string, unknown>) => Promise<void>;
+  /** Per-request structured logging bridge; the SDK enforces the requested level. */
+  logClient?: (level: string, logger: string, data: Record<string, unknown>) => Promise<void>;
 }
 
 const requestStore = new AsyncLocalStorage<RequestContext>();

@@ -7,6 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
+import { isMcpInputRequiredError } from '../errors/mcp-input-required';
 
 type CookieTier = 'auth' | 'functional' | 'tracking';
 
@@ -114,6 +115,7 @@ async function requireElicitationForDestructiveCookieAction(
       { timeoutMs: 30_000, signal: context.signal },
     );
   } catch (error) {
+    if (isMcpInputRequiredError(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     const code = /timeout/i.test(message)
       ? 'elicitation_timeout'
