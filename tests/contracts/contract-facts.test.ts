@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 
 import {
+  MAX_CONSOLE_FACT_CAPTURE_TYPES,
   MAX_CONSOLE_FACT_ENTRIES,
   MAX_CONSOLE_FACT_MESSAGE_CHARS,
   buildConsoleContractFact,
@@ -95,6 +96,36 @@ describe('portable contract fact producers', () => {
     expect(isContractFact(fact)).toBe(true);
   });
 
+  test('console capture filters distinguish duplicate-at-cap from unique overflow', () => {
+    const capturedTypes = Array.from(
+      { length: MAX_CONSOLE_FACT_CAPTURE_TYPES },
+      (_, index) => `type-${index}`,
+    );
+    const duplicateAtCap = buildConsoleContractFact({
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      capturedAt: '2026-07-28T12:00:00.000Z',
+      entries: [],
+      capturedTypes: [...capturedTypes, capturedTypes[0]],
+      messageEncoding: 'plain',
+    });
+    const uniqueOverflow = buildConsoleContractFact({
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      capturedAt: '2026-07-28T12:00:00.000Z',
+      entries: [],
+      capturedTypes: [...capturedTypes, 'type-overflow'],
+      messageEncoding: 'plain',
+    });
+
+    expect(duplicateAtCap.captured_types).toEqual(capturedTypes);
+    expect(duplicateAtCap.truncated).toBe(false);
+    expect(isContractFact(duplicateAtCap)).toBe(true);
+    expect(uniqueOverflow.captured_types).toEqual(capturedTypes);
+    expect(uniqueOverflow.truncated).toBe(true);
+    expect(isContractFact(uniqueOverflow)).toBe(true);
+  });
+
   test('console facts cap boundary-expanded messages as valid truncated evidence', () => {
     const fact = buildConsoleContractFact({
       sessionId: 'session-a',
@@ -112,6 +143,49 @@ describe('portable contract fact producers', () => {
     expect(decoded).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
     expect(fact.truncated).toBe(true);
     expect(isContractFact(fact)).toBe(true);
+  });
+
+  test('console facts enforce the encoded boundary at exactly 1024 characters', () => {
+    const marker = '<oc:x>';
+    const atLimit = buildConsoleContractFact({
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      capturedAt: '2026-07-28T12:00:00.000Z',
+      entries: [{
+        type: 'log',
+        text: marker + 'a'.repeat(MAX_CONSOLE_FACT_MESSAGE_CHARS - marker.length - 1),
+        count: 1,
+      }],
+      capturedTypes: null,
+      messageEncoding: 'oc_boundary_v1',
+    });
+    const overLimit = buildConsoleContractFact({
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      capturedAt: '2026-07-28T12:00:00.000Z',
+      entries: [{
+        type: 'log',
+        text: marker + 'a'.repeat(MAX_CONSOLE_FACT_MESSAGE_CHARS - marker.length),
+        count: 1,
+      }],
+      capturedTypes: null,
+      messageEncoding: 'oc_boundary_v1',
+    });
+    const atLimitBody = decodeConsoleContractFactMessage(
+      atLimit.entries[0].message,
+      atLimit.message_encoding,
+    );
+    const overLimitBody = decodeConsoleContractFactMessage(
+      overLimit.entries[0].message,
+      overLimit.message_encoding,
+    );
+
+    expect(atLimitBody).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(atLimit.truncated).toBe(false);
+    expect(isContractFact(atLimit)).toBe(true);
+    expect(overLimitBody).toHaveLength(MAX_CONSOLE_FACT_MESSAGE_CHARS);
+    expect(overLimit.truncated).toBe(true);
+    expect(isContractFact(overLimit)).toBe(true);
   });
 
   test('performance selection chooses the freshest in-scope fact', () => {
