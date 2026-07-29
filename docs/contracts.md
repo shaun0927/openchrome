@@ -375,7 +375,7 @@ interface ContractFactBase {
   source_tool: "performance_metrics" | "console_capture";
   session_id: string;
   target_id: string;
-  captured_at: string; // ISO-8601
+  captured_at: string; // YYYY-MM-DDTHH:mm:ss[.1-9 digits](Z|+/-HH:MM)
 }
 ```
 
@@ -394,10 +394,15 @@ Producer behavior is additive and bounded:
 
 Evaluation is closed-world and scope-safe. The current MCP session ID must
 match `session_id`, and `evidence.provenance.target_id` must match `target_id`.
-The freshest matching fact is selected deterministically. Missing provenance,
+The freshest matching fact is selected deterministically. `captured_at` must use
+the timezone-qualified ISO-8601 profile
+`YYYY-MM-DDTHH:mm:ss[.1-9 digits](Z|+/-HH:MM)` so freshness is
+host-independent. Calendar components are validated without rollover, the
+canonical instant must remain within four-digit years, and precision beyond
+milliseconds is truncated during canonicalization. Missing provenance,
 cross-session/cross-target facts, unsupported versions, malformed or future-dated
-envelopes, stale captures, missing metrics, unit mismatches, and truncated console facts
-return `verdict: "inconclusive"` with one of these machine-stable codes:
+envelopes, stale captures, missing metrics, unit mismatches, and truncated console
+facts return `verdict: "inconclusive"` with one of these machine-stable codes:
 
 ```text
 CONTRACT_FACTS_MISSING
