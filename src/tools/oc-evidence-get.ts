@@ -25,6 +25,12 @@ const definition: MCPToolDefinition = {
         type: 'string',
         description: 'REQUIRED Handle returned by oc_assert.',
       },
+      sessionId: {
+        type: 'string',
+        description:
+          'Optional owner session ID. Use the sessionId returned in oc_assert.evidence_get; ' +
+          'defaults to the current MCP/browser session.',
+      },
     },
   },
   outputSchema: {
@@ -81,6 +87,10 @@ const handlerFor = (store: AssertEvidenceStore): ToolHandler => async (
     return errorResult('', 'EVIDENCE_HANDLE_MALFORMED', 'evidence_handle is malformed');
   }
   const handle = rawHandle;
+  const ownerSessionId =
+    typeof args.sessionId === 'string' && args.sessionId.length > 0
+      ? args.sessionId
+      : sessionId;
 
   const tenantId = resolveEffectiveTenantId(
     context?.principal,
@@ -88,7 +98,7 @@ const handlerFor = (store: AssertEvidenceStore): ToolHandler => async (
   )
     ?? DEFAULT_TENANT_ID;
   try {
-    const artifact = store.loadAuthorized(handle, { sessionId, tenantId });
+    const artifact = store.loadAuthorized(handle, { sessionId: ownerSessionId, tenantId });
     return jsonResult({
       status: 'available',
       evidence_handle: handle,

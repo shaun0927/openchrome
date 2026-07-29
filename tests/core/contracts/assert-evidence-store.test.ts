@@ -105,6 +105,28 @@ describe('AssertEvidenceStore', () => {
     expect(JSON.stringify(artifact)).not.toContain('ss@example.com');
   });
 
+  test('preserves opaque 32-character provenance IDs without bypassing configured secrets', () => {
+    const targetId = '0123456789abcdef0123456789abcdef';
+    const workerId = 'abcdef0123456789abcdef0123456789';
+    setSecretStore(makeSecretStore(new Map([
+      ['WORKER_ID', workerId],
+    ])));
+    const store = new AssertEvidenceStore({ rootDir });
+    const stored = persist(store, { targetId, workerId });
+    const raw = fs.readFileSync(path.join(rootDir, `${stored.evidence_handle}.json`), 'utf8');
+
+    expect(raw).toContain(targetId);
+    expect(raw).not.toContain(workerId);
+    expect(raw).toContain('${SECRET:WORKER_ID}');
+
+    const artifact = store.loadAuthorized(stored.evidence_handle, {
+      sessionId: 'session-a',
+      tenantId: 'tenant-a',
+    });
+    expect(artifact.provenance.target_id).toBe(targetId);
+    expect(artifact.provenance.worker_id).toBe('${SECRET:WORKER_ID}');
+  });
+
   test('redacts OAuth access tokens from persisted and retrieved URLs', () => {
     const store = new AssertEvidenceStore({ rootDir });
     const callbackUrl = 'https://example.com/callback?access_token=ya29.example&token_type=Bearer';

@@ -268,7 +268,10 @@ artifact and returns additive lifecycle metadata:
   "evidence_expires_at": "2026-07-28T12:30:00.000Z",
   "evidence_get": {
     "tool": "oc_evidence_get",
-    "arguments": { "evidence_handle": "ev_<uuid>" }
+    "arguments": {
+      "evidence_handle": "ev_<uuid>",
+      "sessionId": "<resolved-session-id>"
+    }
   },
   "trace_status": "unavailable",
   "trace_unavailable_reason": "..."
@@ -290,7 +293,9 @@ The retention contract is:
 - `oc_evidence_get` authorizes the owning OpenChrome process instance, MCP
   session, and tenant before returning artifact contents; a handle disclosed to
   an independent stdio/daemon process is rejected even when both processes use
-  the default logical session and tenant IDs;
+  the default logical session and tenant IDs; callers should execute the
+  returned `evidence_get` call unchanged because it carries the resolved owner
+  `sessionId`, including explicit logical sessions;
 - API-key/JWT requests derive evidence ownership from the authenticated tenant;
   disabled/legacy HTTP requests use the effective `X-Tenant-Id` request tenant
   instead of the synthetic `anonymous`/`legacy` principal;
@@ -306,7 +311,9 @@ The retention contract is:
 - expired, deleted, malformed, corrupt, and unauthorized handles return stable
   error codes rather than filesystem paths or partial contents;
 - credential-pattern and configured-secret redaction runs before the artifact
-  is written and again before it is returned.
+  is written and again before it is returned; 32-character hexadecimal
+  `target_id`/`worker_id` provenance values are retained as opaque Chrome
+  identifiers unless they match an explicitly configured secret literal.
 
 The artifact records the verification verdict, assertion, evaluator evidence,
 session, tenant, contract source/ID, timestamp, and optional caller-supplied

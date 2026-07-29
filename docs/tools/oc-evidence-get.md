@@ -4,7 +4,8 @@ Retrieve the redacted artifact referenced by an `oc_assert` `evidence_handle`.
 
 ```jsonc
 {
-  "evidence_handle": "ev_01234567-89ab-cdef-0123-456789abcdef"
+  "evidence_handle": "ev_01234567-89ab-cdef-0123-456789abcdef",
+  "sessionId": "logical-session-a"
 }
 ```
 
@@ -15,6 +16,11 @@ reading or deleting each other's artifacts even when they both use the default
 logical session and tenant IDs. Successful responses include the assertion,
 verdict/evaluator evidence, provenance, creation time, expiry time, and trace
 availability status.
+
+`sessionId` is optional for direct calls and defaults to the current MCP/browser
+session. The `evidence_get` object returned by `oc_assert` includes the resolved
+owner session and should be executed unchanged, especially when `oc_assert`
+used an explicit logical session.
 
 Artifacts expire after 30 minutes and are also deleted when their matching
 session/tenant owner is removed through HTTP `DELETE /mcp`, `sessions/delete`,
@@ -35,5 +41,7 @@ codes:
 - `EVIDENCE_CORRUPT`
 
 OpenChrome redacts credential-shaped values and configured secret literals
-before persistence and again before retrieval. The tool never returns the
-artifact's local filesystem path.
+before persistence and again before retrieval. Opaque 32-character hexadecimal
+`target_id` and `worker_id` provenance values remain available unless they
+match an explicitly configured secret. The tool never returns the artifact's
+local filesystem path.
