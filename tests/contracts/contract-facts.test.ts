@@ -358,6 +358,102 @@ describe('portable contract fact producers', () => {
     });
   });
 
+  test('fact selection rejects ambiguous freshest timestamp groups', () => {
+    const timestamp = '2026-07-28T11:59:59.000Z';
+    const performanceFacts = [500, 900].map((value) => ({
+      schema_version: 1,
+      kind: 'performance',
+      source_tool: 'performance_metrics',
+      session_id: 'session-a',
+      target_id: 'tab-a',
+      captured_at: timestamp,
+      metric: 'navigation.duration',
+      unit: value === 500 ? 'ms' : 'seconds',
+      value,
+    }));
+    const consoleFacts = [false, true].map((truncated) => ({
+      schema_version: 1,
+      kind: 'console',
+      source_tool: 'console_capture',
+      session_id: 'session-a',
+      target_id: 'tab-a',
+      captured_at: timestamp,
+      entries: [{ type: 'error', message: 'same-time', count: 1, uncaught: false }],
+      captured_types: null,
+      message_encoding: 'plain',
+      truncated,
+    }));
+
+    for (const facts of [performanceFacts, [...performanceFacts].reverse()]) {
+      expect(selectPerformanceContractFact(facts, {
+        sessionId: 'session-a',
+        targetId: 'tab-a',
+        nowMs: Date.parse('2026-07-28T12:00:00.000Z'),
+        maxAgeMs: 30000,
+        metric: 'navigation.duration',
+        unit: 'ms',
+      })).toMatchObject({ ok: false, code: 'CONTRACT_FACT_MALFORMED' });
+    }
+    for (const facts of [consoleFacts, [...consoleFacts].reverse()]) {
+      expect(selectConsoleContractFact(facts, {
+        sessionId: 'session-a',
+        targetId: 'tab-a',
+        nowMs: Date.parse('2026-07-28T12:00:00.000Z'),
+        maxAgeMs: 30000,
+      })).toMatchObject({ ok: false, code: 'CONTRACT_FACT_MALFORMED' });
+    }
+  });
+
+  test('fact selection keeps malformed scope and temporal candidates fail-closed', () => {
+    const valid = {
+      schema_version: 1,
+      kind: 'performance',
+      source_tool: 'performance_metrics',
+      session_id: 'session-a',
+      target_id: 'tab-a',
+      captured_at: '2026-07-28T11:59:59.000Z',
+      metric: 'navigation.duration',
+      unit: 'ms',
+      value: 500,
+    };
+    const scope = {
+      sessionId: 'session-a',
+      targetId: 'tab-a',
+      nowMs: Date.parse('2026-07-28T12:00:00.000Z'),
+      maxAgeMs: 30000,
+      metric: 'navigation.duration',
+      unit: 'ms' as const,
+    };
+    const crossScopeMalformed = selectPerformanceContractFact([
+      valid,
+      { ...valid, session_id: 'session-b', captured_at: 'not-a-date', value: Number.NaN },
+    ], scope);
+    const futureUnsupported = selectPerformanceContractFact([
+      valid,
+      { ...valid, schema_version: 2, captured_at: '2026-07-28T12:00:01.000Z' },
+    ], scope);
+    const malformedTimestamp = selectPerformanceContractFact([
+      valid,
+      { ...valid, captured_at: 'not-a-date', value: 1 },
+    ], scope);
+    const staleUnsupported = selectPerformanceContractFact([{
+      ...valid,
+      schema_version: 2,
+      captured_at: '2026-07-28T11:00:00.000Z',
+    }], scope);
+
+    expect(crossScopeMalformed).toMatchObject({ ok: true, fact: { value: 500 } });
+    expect(futureUnsupported).toMatchObject({ ok: true, fact: { value: 500 } });
+    expect(malformedTimestamp).toMatchObject({
+      ok: false,
+      code: 'CONTRACT_FACT_MALFORMED',
+    });
+    expect(staleUnsupported).toMatchObject({
+      ok: false,
+      code: 'CONTRACT_FACT_SCHEMA_UNSUPPORTED',
+    });
+  });
+
   test('console selection rejects a count total above the safe integer range', () => {
     const selected = selectConsoleContractFact([{
       schema_version: 1,

@@ -107,6 +107,12 @@ interface PerformanceSelectionScope extends FactSelectionScope {
   unit: PerformanceUnit;
 }
 
+interface ContractFactCandidateWindow {
+  ok: true;
+  candidates: unknown[];
+  temporalFailure?: ContractFactFailure;
+}
+
 const PERFORMANCE_UNITS = new Set<PerformanceUnit>([
   'ms',
   'seconds',
@@ -588,11 +594,7 @@ function selectFreshestCandidateWindow(
   scope: FactSelectionScope,
   hasParsedFacts: boolean,
   parseFailure?: ContractFactFailure,
-): {
-  ok: true;
-  candidates: unknown[];
-  temporalFailure?: ContractFactFailure;
-} | ContractFactFailure {
+): ContractFactCandidateWindow | ContractFactFailure {
   if (!scope.targetId) {
     return failure(
       'CONTRACT_FACT_SCOPE_MISSING',
@@ -618,11 +620,18 @@ function selectFreshestCandidateWindow(
     || !Number.isFinite(Date.parse(candidate.captured_at))
   ));
   if (invalidTimestamps.length > 0) {
-    return {
-      ok: true,
-      candidates: invalidTimestamps,
-      temporalFailure: malformedFailure('contract fact captured_at is malformed'),
-    };
+    if (invalidTimestamps.length > 1) {
+      return failure(
+        'CONTRACT_FACT_MALFORMED',
+        'multiple matching contract facts have malformed captured_at values',
+        { candidate_count: invalidTimestamps.length },
+      );
+    }
+    return candidateWindow(
+      invalidTimestamps,
+      undefined,
+      malformedFailure('contract fact captured_at is malformed'),
+    );
   }
 
   const timestamped = scoped.map((candidate) => ({
@@ -632,12 +641,12 @@ function selectFreshestCandidateWindow(
   const current = timestamped.filter(({ capturedAtMs }) => capturedAtMs <= scope.nowMs);
   if (current.length === 0) {
     const earliestMs = Math.min(...timestamped.map(({ capturedAtMs }) => capturedAtMs));
-    return {
-      ok: true,
-      candidates: timestamped
+    return candidateWindow(
+      timestamped
         .filter(({ capturedAtMs }) => capturedAtMs === earliestMs)
         .map(({ candidate }) => candidate),
-      temporalFailure: failure(
+      earliestMs,
+      failure(
         'CONTRACT_FACT_MALFORMED',
         'matching contract facts are captured in the future',
         {
@@ -645,19 +654,19 @@ function selectFreshestCandidateWindow(
           future_by_ms: earliestMs - scope.nowMs,
         },
       ),
-    };
+    );
   }
   const fresh = current.filter(({ capturedAtMs }) => (
     scope.nowMs - capturedAtMs <= scope.maxAgeMs
   ));
   if (fresh.length === 0) {
     const newestMs = Math.max(...current.map(({ capturedAtMs }) => capturedAtMs));
-    return {
-      ok: true,
-      candidates: current
+    return candidateWindow(
+      current
         .filter(({ capturedAtMs }) => capturedAtMs === newestMs)
         .map(({ candidate }) => candidate),
-      temporalFailure: failure(
+      newestMs,
+      failure(
         'CONTRACT_FACT_STALE',
         'matching contract facts are older than max_age_ms',
         {
@@ -666,14 +675,38 @@ function selectFreshestCandidateWindow(
           max_age_ms: scope.maxAgeMs,
         },
       ),
-    };
+    );
   }
   const newestMs = Math.max(...fresh.map(({ capturedAtMs }) => capturedAtMs));
-  return {
-    ok: true,
-    candidates: fresh
+  return candidateWindow(
+    fresh
       .filter(({ capturedAtMs }) => capturedAtMs === newestMs)
       .map(({ candidate }) => candidate),
+    newestMs,
+  );
+}
+
+function candidateWindow(
+  candidates: unknown[],
+  capturedAtMs?: number,
+  temporalFailure?: ContractFactFailure,
+): ContractFactCandidateWindow | ContractFactFailure {
+  if (candidates.length > 1) {
+    return failure(
+      'CONTRACT_FACT_MALFORMED',
+      'multiple matching contract facts share the selected captured_at',
+      {
+        ...(capturedAtMs === undefined
+          ? {}
+          : { captured_at: new Date(capturedAtMs).toISOString() }),
+        candidate_count: candidates.length,
+      },
+    );
+  }
+  return {
+    ok: true,
+    candidates,
+    ...(temporalFailure ? { temporalFailure } : {}),
   };
 }
 
