@@ -3,6 +3,7 @@
 import { evaluate } from '../../src/contracts/evaluate';
 import type { EvalContext, NetworkLogEntry } from '../../src/contracts/eval-context';
 import { phashFromPng } from '../../src/contracts/phash';
+import type { ContractFact } from '../../src/contracts/contract-facts';
 import { encodeRgbaPng, gradientRgba, solidRgba } from './png-fixtures';
 
 interface CtxState {
@@ -14,6 +15,10 @@ interface CtxState {
   screenshotPng?: Buffer | null;
   hasOpenDialog?: boolean;
   loadScreenshotClass?: EvalContext['loadScreenshotClass'];
+  contractFacts?: unknown;
+  sessionId?: string;
+  targetId?: string;
+  nowMs?: number;
 }
 
 function mkCtx(state: CtxState): EvalContext {
@@ -40,7 +45,51 @@ function mkCtx(state: CtxState): EvalContext {
       return state.hasOpenDialog ?? false;
     },
     loadScreenshotClass: state.loadScreenshotClass,
+    async contractFacts() {
+      return state.contractFacts;
+    },
+    contractFactScope() {
+      return {
+        sessionId: state.sessionId ?? 'session-a',
+        ...(state.targetId === undefined ? { targetId: 'tab-a' } : { targetId: state.targetId }),
+        nowMs: state.nowMs ?? 1_700_000_010_000,
+      };
+    },
   };
+}
+
+function performanceFact(overrides: Partial<ContractFact> = {}): ContractFact {
+  return {
+    schema_version: 1,
+    kind: 'performance',
+    source_tool: 'performance_metrics',
+    session_id: 'session-a',
+    target_id: 'tab-a',
+    captured_at: '2023-11-14T22:13:20.000Z',
+    metric: 'navigation.duration',
+    unit: 'ms',
+    value: 812.4,
+    ...overrides,
+  } as ContractFact;
+}
+
+function consoleFact(overrides: Partial<ContractFact> = {}): ContractFact {
+  return {
+    schema_version: 1,
+    kind: 'console',
+    source_tool: 'console_capture',
+    session_id: 'session-a',
+    target_id: 'tab-a',
+    captured_at: '2023-11-14T22:13:20.000Z',
+    entries: [
+      { type: 'error', message: 'checkout failed', count: 2, uncaught: false },
+      { type: 'error', message: 'uncaught checkout exception', count: 1, uncaught: true },
+    ],
+    captured_types: null,
+    message_encoding: 'plain',
+    truncated: false,
+    ...overrides,
+  } as ContractFact;
 }
 
 describe('evaluate(url)', () => {
@@ -185,6 +234,144 @@ describe('evaluate(no_dialog)', () => {
   });
 });
 
+describe('evaluate(performance)', () => {
+  const assertion = {
+    kind: 'performance' as const,
+    schema_version: 1 as const,
+    metric: 'navigation.duration',
+    unit: 'ms' as const,
+    op: 'lte' as const,
+    value: 1000,
+    max_age_ms: 30000,
+  };
+
+  test('passes and preserves the exact selected fact', async () => {
+    const fact = performanceFact();
+    const r = await evaluate(assertion, mkCtx({ contractFacts: [fact] }));
+    expect(r.passed).toBe(true);
+    expect(r.evidence.details.observed).toBe(812.4);
+    expect(r.evidence.details.fact).toEqual(fact);
+  });
+
+  test('fails on a decided comparison mismatch', async () => {
+    const r = await evaluate(
+      { ...assertion, value: 500 },
+      mkCtx({ contractFacts: [performanceFact()] }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.evidence.details.error).toBeUndefined();
+  });
+
+  test.each([
+    [[], 'CONTRACT_FACTS_MISSING'],
+    [[performanceFact({ target_id: 'tab-b' })], 'CONTRACT_FACT_SCOPE_MISMATCH'],
+    [[performanceFact({ captured_at: '2023-11-14T22:00:00.000Z' })], 'CONTRACT_FACT_STALE'],
+    [[performanceFact({ unit: 'seconds' })], 'CONTRACT_FACT_UNIT_MISMATCH'],
+    [[performanceFact({ schema_version: 2 as 1 })], 'CONTRACT_FACT_SCHEMA_UNSUPPORTED'],
+  ])('returns stable inconclusive evidence for %s', async (facts, code) => {
+    const r = await evaluate(assertion, mkCtx({ contractFacts: facts }));
+    expect(r.passed).toBe(false);
+    expect(r.evidence.details.error_code).toBe(code);
+  });
+});
+
+describe('evaluate(console)', () => {
+  const assertion = {
+    kind: 'console' as const,
+    schema_version: 1 as const,
+    type: 'error',
+    message_pattern: 'checkout',
+    uncaught: false,
+    op: 'eq' as const,
+    value: 2,
+    max_age_ms: 30000,
+  };
+
+  test('counts matching deduplicated entries and preserves the fact', async () => {
+    const fact = consoleFact();
+    const r = await evaluate(assertion, mkCtx({ contractFacts: [fact] }));
+    expect(r.passed).toBe(true);
+    expect(r.evidence.details.observed).toBe(2);
+    expect(r.evidence.details.fact).toEqual(fact);
+  });
+
+  test('distinguishes uncaught exceptions from explicit console errors', async () => {
+    const r = await evaluate(
+      { ...assertion, uncaught: true, value: 1 },
+      mkCtx({ contractFacts: [consoleFact()] }),
+    );
+    expect(r.passed).toBe(true);
+    expect(r.evidence.details.observed).toBe(1);
+  });
+
+  test('never treats truncated console facts as a decided success', async () => {
+    const r = await evaluate(
+      assertion,
+      mkCtx({ contractFacts: [consoleFact({ truncated: true })] }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.evidence.details.error_code).toBe('CONTRACT_FACT_TRUNCATED');
+  });
+
+  test('does not infer zero matches outside a filtered capture', async () => {
+    const r = await evaluate(
+      { ...assertion, type: 'warning', value: 0 },
+      mkCtx({
+        contractFacts: [consoleFact({ captured_types: ['error'] } as Partial<ContractFact>)],
+      }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.evidence.details.error_code).toBe('CONTRACT_FACT_CAPTURE_FILTERED');
+  });
+
+  test('matches boundary-marked console messages against their page text', async () => {
+    const fact = consoleFact({
+      message_encoding: 'oc_boundary_v1',
+      entries: [
+        {
+          type: 'error',
+          message: '<oc:console>checkout <\u200Boc:x> failed</oc:console>',
+          count: 2,
+          uncaught: false,
+        },
+      ],
+    } as Partial<ContractFact>);
+    const r = await evaluate(
+      { ...assertion, message_pattern: 'checkout <oc:x> failed' },
+      mkCtx({ contractFacts: [fact] }),
+    );
+    expect(r.passed).toBe(true);
+    expect(r.evidence.details.fact).toEqual(fact);
+  });
+
+  test('does not collapse a literal boundary escape sentinel during matching', async () => {
+    const fact = consoleFact({
+      message_encoding: 'oc_boundary_v1',
+      entries: [
+        {
+          type: 'error',
+          message: '<oc:console>literal <\u200B\u200Boc:x></oc:console>',
+          count: 1,
+          uncaught: false,
+        },
+      ],
+    } as Partial<ContractFact>);
+    const withoutSentinel = await evaluate(
+      { ...assertion, message_pattern: 'literal <oc:x>', value: 1 },
+      mkCtx({ contractFacts: [fact] }),
+    );
+    const withSentinel = await evaluate(
+      { ...assertion, message_pattern: 'literal <\u200Boc:x>', value: 1 },
+      mkCtx({ contractFacts: [fact] }),
+    );
+
+    expect(withoutSentinel.passed).toBe(false);
+    expect(withoutSentinel.evidence.details.observed).toBe(0);
+    expect(withSentinel.passed).toBe(true);
+    expect(withSentinel.evidence.details.fact).toEqual(fact);
+  });
+});
+
 describe('evaluate(screenshot_class)', () => {
   test('uses ctx.loadScreenshotClass when provided', async () => {
     const png = encodeRgbaPng(32, 32, gradientRgba(32, 32));
@@ -300,6 +487,71 @@ describe('evaluate(and / or / not)', () => {
     );
     expect(r.passed).toBe(true);
     expect(r.evidence.details.child).toBeDefined();
+  });
+
+  test('not propagates an inconclusive child instead of flipping it to pass', async () => {
+    const r = await evaluate(
+      {
+        kind: 'not',
+        child: {
+          kind: 'performance',
+          schema_version: 1,
+          metric: 'navigation.duration',
+          unit: 'ms',
+          op: 'lte',
+          value: 1000,
+          max_age_ms: 30000,
+        },
+      },
+      mkCtx({ contractFacts: [] }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.evidence.details.error_code).toBe('CONTRACT_FACTS_MISSING');
+  });
+
+  test('or propagates inconclusive when no other branch passes', async () => {
+    const r = await evaluate(
+      {
+        kind: 'or',
+        children: [
+          {
+            kind: 'performance',
+            schema_version: 1,
+            metric: 'navigation.duration',
+            unit: 'ms',
+            op: 'lte',
+            value: 1000,
+            max_age_ms: 30000,
+          },
+          { kind: 'url', pattern: '^https://other\\.example' },
+        ],
+      },
+      mkCtx({ contractFacts: [], url: 'https://example.com' }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.evidence.details.error_code).toBe('CONTRACT_FACTS_MISSING');
+  });
+
+  test('or may pass when another branch is decided true', async () => {
+    const r = await evaluate(
+      {
+        kind: 'or',
+        children: [
+          {
+            kind: 'performance',
+            schema_version: 1,
+            metric: 'navigation.duration',
+            unit: 'ms',
+            op: 'lte',
+            value: 1000,
+            max_age_ms: 30000,
+          },
+          { kind: 'no_dialog' },
+        ],
+      },
+      mkCtx({ contractFacts: [], hasOpenDialog: false }),
+    );
+    expect(r.passed).toBe(true);
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * Console Capture Tool - Capture and manage browser console logs
  *
- * Uses CDP Runtime.consoleAPICalled + Runtime.exceptionThrown directly
+ * Uses CDP Runtime.consoleAPICalled + Runtime.exceptionThrown/exceptionRevoked directly
  * instead of Puppeteer's page.on('console'), because rebrowser-puppeteer-core
  * skips Runtime.enable to avoid bot detection. We enable it on a dedicated
  * CDPSession so console events are reliably captured.
@@ -17,6 +17,11 @@ import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '.
 import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
 import { paginate } from '../utils/paginate';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
+import { buildConsoleContractFact } from '../contracts/contract-facts';
+import {
+  redactSecretString,
+  redactSecretStringWithMetadata,
+} from '../core/secrets/redactor';
 
 /**
  * Validate caller-supplied cap values. Used to reject `maxLogs`/`maxBytes`
@@ -43,7 +48,9 @@ interface ConsoleLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  uncaught?: boolean;
   truncatedFrom?: number;
+  exceptionId?: number;
 }
 
 // CDP event payload types
@@ -64,6 +71,7 @@ interface CDPConsoleAPICalledEvent {
 interface CDPExceptionThrownEvent {
   timestamp: number;
   exceptionDetails: {
+    exceptionId: number;
     text: string;
     exception?: { description?: string; value?: unknown };
     lineNumber?: number;
@@ -79,16 +87,23 @@ interface CDPExceptionThrownEvent {
   };
 }
 
+interface CDPExceptionRevokedEvent {
+  reason: string;
+  exceptionId: number;
+}
+
 // Capture state for each tab
 interface CaptureState {
   logs: ConsoleRingBuffer<ConsoleLogEntry>;
   cdpSession: CDPSession;
   consoleHandler: (event: CDPConsoleAPICalledEvent) => void;
   exceptionHandler: (event: CDPExceptionThrownEvent) => void;
+  exceptionRevokedHandler: (event: CDPExceptionRevokedEvent) => void;
   startedAt: number;
   filter?: string[];
   maxLogs: number;
   maxBytes: number;
+  factEvictedTotalBaseline?: number;
 }
 
 // Module-level state storage
@@ -107,7 +122,37 @@ interface DedupedLogEntry {
     columnNumber?: number;
   };
   args?: string[];
+  uncaught?: boolean;
   truncatedFrom?: number;
+}
+
+function redactConsoleLogEntry(entry: ConsoleLogEntry): {
+  entry: ConsoleLogEntry;
+  factLossy: boolean;
+} {
+  const type = redactSecretStringWithMetadata(entry.type);
+  const text = redactSecretStringWithMetadata(entry.text);
+  return {
+    factLossy: type.lossy || text.lossy,
+    entry: {
+      ...entry,
+      type: type.value,
+      text: text.value,
+      ...(entry.location
+        ? {
+            location: {
+              ...entry.location,
+              ...(entry.location.url
+                ? { url: redactSecretString(entry.location.url) }
+                : {}),
+            },
+          }
+        : {}),
+      ...(entry.args
+        ? { args: entry.args.map((arg) => redactSecretString(arg)) }
+        : {}),
+    },
+  };
 }
 
 /**
@@ -131,6 +176,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
         lastTimestamp: current.timestamp,
         location: current.location,
         args: current.args,
+        ...(current.uncaught === true ? { uncaught: true } : {}),
         ...(current.truncatedFrom !== undefined && { truncatedFrom: current.truncatedFrom }),
       });
       i++;
@@ -142,7 +188,8 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
     while (
       i + count < logs.length &&
       logs[i + count].text === current.text &&
-      logs[i + count].type === current.type
+      logs[i + count].type === current.type &&
+      logs[i + count].uncaught === current.uncaught
     ) {
       count++;
     }
@@ -157,6 +204,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
         lastTimestamp: logs[i + count - 1].timestamp,
         location: current.location,
         args: current.args,
+        ...(current.uncaught === true ? { uncaught: true } : {}),
       });
     } else {
       // Show individually
@@ -170,6 +218,7 @@ function deduplicateLogs(logs: ConsoleLogEntry[]): DedupedLogEntry[] {
           lastTimestamp: entry.timestamp,
           location: entry.location,
           args: entry.args,
+          ...(entry.uncaught === true ? { uncaught: true } : {}),
           ...(entry.truncatedFrom !== undefined && { truncatedFrom: entry.truncatedFrom }),
         });
       }
@@ -253,12 +302,18 @@ const setupCleanupListener = (() => {
 })();
 
 /** Build a placeholder entry for an oversized log entry. */
-function makeOversizedPlaceholder(originalSizeBytes: number): ConsoleLogEntry {
+function makeOversizedPlaceholder(
+  originalSizeBytes: number,
+  originalEntry: ConsoleLogEntry,
+): ConsoleLogEntry {
   return {
     type: 'log',
     text: '[entry exceeded maxBytes — truncated]',
     timestamp: Date.now(),
     truncatedFrom: originalSizeBytes,
+    ...(originalEntry.exceptionId !== undefined
+      ? { exceptionId: originalEntry.exceptionId }
+      : {}),
   };
 }
 
@@ -358,10 +413,12 @@ const handler: ToolHandler = async (
           cdpSession,
           consoleHandler: () => {},
           exceptionHandler: () => {},
+          exceptionRevokedHandler: () => {},
           startedAt: Date.now(),
           filter,
           maxLogs,
           maxBytes,
+          factEvictedTotalBaseline: 0,
         };
 
         // Map CDP console types to Puppeteer-style types
@@ -430,6 +487,8 @@ const handler: ToolHandler = async (
             type: 'error',
             text,
             timestamp: Date.now(),
+            uncaught: true,
+            exceptionId: details.exceptionId,
             location: callFrame
               ? {
                   url: callFrame.url,
@@ -445,8 +504,13 @@ const handler: ToolHandler = async (
           state.logs.push(entry, sizeBytes);
         };
 
+        state.exceptionRevokedHandler = (event: CDPExceptionRevokedEvent) => {
+          state.logs.removeWhere((entry) => entry.exceptionId === event.exceptionId);
+        };
+
         cdpSession.on('Runtime.consoleAPICalled', state.consoleHandler as any);
         cdpSession.on('Runtime.exceptionThrown', state.exceptionHandler as any);
+        cdpSession.on('Runtime.exceptionRevoked', state.exceptionRevokedHandler as any);
         captureStates.set(tabId, state);
 
         return {
@@ -456,9 +520,9 @@ const handler: ToolHandler = async (
               text: JSON.stringify({
                 action: 'start',
                 status: 'started',
-                filter: filter || 'all',
+                filter: filter?.map((value) => redactSecretString(value)) || 'all',
                 maxLogs,
-                message: `Console capture started for tab ${tabId}`,
+                message: `Console capture started for tab ${redactSecretString(tabId)}`,
               }),
             },
           ],
@@ -485,6 +549,7 @@ const handler: ToolHandler = async (
         // Remove CDP listeners and detach session
         state.cdpSession.off('Runtime.consoleAPICalled', state.consoleHandler as any);
         state.cdpSession.off('Runtime.exceptionThrown', state.exceptionHandler as any);
+        state.cdpSession.off('Runtime.exceptionRevoked', state.exceptionRevokedHandler as any);
         await state.cdpSession.send('Runtime.disable').catch(() => {});
         await state.cdpSession.detach().catch(() => {});
         const logCount = state.logs.stats().retained;
@@ -525,18 +590,26 @@ const handler: ToolHandler = async (
           };
         }
 
+        const allLogRedactions = state.logs.drain().map(redactConsoleLogEntry);
+        const allLogs = allLogRedactions.map((result) => result.entry);
+        const factRedactionLossy = allLogRedactions.some((result) => result.factLossy);
         const logs: ConsoleLogEntry[] = (limit && limit > 0)
-          ? state.logs.tail(limit)
-          : state.logs.drain();
+          ? state.logs.tail(limit).map(redactConsoleLogEntry).map((result) => result.entry)
+          : allLogs;
 
         // Deduplicate consecutive identical log messages
+        const deduplicatedFactEntries = deduplicateLogs(allLogs);
+        const pageOrigin = redactSecretString(page.url());
         const deduplicatedLogs = deduplicateLogs(logs).map((log) => ({
           ...log,
-          text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, log.text) : log.text,
-          args: boundaryMarkers && log.args ? log.args.map((arg) => wrapBoundaryMarker('console', { origin: log.location?.url || page.url() }, arg)) : log.args,
+          text: boundaryMarkers ? wrapBoundaryMarker('console', { origin: log.location?.url || pageOrigin }, log.text) : log.text,
+          args: boundaryMarkers && log.args ? log.args.map((arg) => wrapBoundaryMarker('console', { origin: log.location?.url || pageOrigin }, arg)) : log.args,
         }));
 
         const bufStats = state.logs.stats();
+        const evictedSinceFactReset = (
+          bufStats.evictedTotal > (state.factEvictedTotalBaseline ?? 0)
+        );
 
         // Calculate stats
         const stats = {
@@ -545,7 +618,7 @@ const handler: ToolHandler = async (
           beforeDedup: logs.length,
           byType: {} as Record<string, number>,
         };
-        for (const log of state.logs.drain()) {
+        for (const log of allLogs) {
           stats.byType[log.type] = (stats.byType[log.type] || 0) + 1;
         }
 
@@ -558,20 +631,54 @@ const handler: ToolHandler = async (
         if (pagination.invalidCursor) return invalidCursorResult(pagination.invalidCursor);
         if (cursor) stats.returned = pagination.logs.length;
 
+        const capturedTypeRedactions = state.filter && state.filter.length > 0
+          ? state.filter.map((value) => redactSecretStringWithMetadata(value))
+          : [];
+        const factSessionId = redactSecretStringWithMetadata(sessionId);
+        const factTargetId = redactSecretStringWithMetadata(tabId);
+        const scopeIdsAreSafe = [
+          { raw: sessionId, redacted: factSessionId },
+          { raw: tabId, redacted: factTargetId },
+        ].every(({ raw, redacted }) => (
+          raw.length > 0
+          && raw.length <= 256
+          && !redacted.lossy
+          && redacted.value === raw
+        ));
+        const contractFacts = scopeIdsAreSafe
+          ? [buildConsoleContractFact({
+              sessionId,
+              targetId: tabId,
+              capturedAt: new Date().toISOString(),
+              entries: deduplicatedFactEntries,
+              capturedTypes: capturedTypeRedactions.length > 0
+                ? capturedTypeRedactions.map((result) => result.value)
+                : null,
+              messageEncoding: boundaryMarkers ? 'oc_boundary_v1' : 'plain',
+              truncated:
+                evictedSinceFactReset
+                || allLogs.some((entry) => entry.truncatedFrom !== undefined)
+                || factRedactionLossy
+                || capturedTypeRedactions.some((result) => result.lossy),
+            })]
+          : [];
+        const payload = {
+          action: 'get',
+          status: 'running',
+          logs: cursor ? pagination.logs : deduplicatedLogs,
+          stats,
+          durationMs: Date.now() - state.startedAt,
+          bufferStats,
+          contract_facts: contractFacts,
+          ...(cursor ? { hasMore: pagination.hasMore } : {}),
+          ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
+        };
+
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
-                action: 'get',
-                status: 'running',
-                logs: cursor ? pagination.logs : deduplicatedLogs,
-                stats,
-                durationMs: Date.now() - state.startedAt,
-                bufferStats,
-                ...(cursor ? { hasMore: pagination.hasMore } : {}),
-                ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
-              }),
+              text: JSON.stringify(payload),
             },
           ],
           structuredContent: {
@@ -581,6 +688,7 @@ const handler: ToolHandler = async (
             hasMore: cursor ? pagination.hasMore : false,
             ...(pagination.nextCursor ? { nextCursor: pagination.nextCursor } : {}),
             total: pagination.total,
+            contract_facts: contractFacts,
           },
         };
       }
@@ -602,8 +710,10 @@ const handler: ToolHandler = async (
           };
         }
 
-        const clearedCount = state.logs.stats().retained;
+        const beforeClear = state.logs.stats();
+        const clearedCount = beforeClear.retained;
         state.logs.clear();
+        state.factEvictedTotalBaseline = beforeClear.evictedTotal;
 
         return {
           content: [

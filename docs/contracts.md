@@ -48,6 +48,21 @@ type Assertion =
       distance_max: number /* Hamming distance over 64-bit pHash */ }
   | { kind: "no_dialog" }
   | { kind: "image_qa",   question: string, expected_pattern: string }
+  | { kind: "performance",
+      schema_version: 1,
+      metric: string,
+      unit: "ms" | "seconds" | "bytes" | "count",
+      op: "eq" | "gte" | "lte",
+      value: number,
+      max_age_ms: number }
+  | { kind: "console",
+      schema_version: 1,
+      type?: string,
+      message_pattern?: string,
+      uncaught?: boolean,
+      op: "eq" | "gte" | "lte",
+      value: number,
+      max_age_ms: number }
   | { kind: "and", children: Assertion[] }
   | { kind: "or",  children: Assertion[] }
   | { kind: "not", child:    Assertion   }
@@ -212,6 +227,96 @@ you can re-derive the threshold later.
 
 [#1359]: https://github.com/shaun0927/openchrome/issues/1359
 
+### `performance`
+
+```jsonc
+{
+  "kind": "performance",
+  "schema_version": 1,
+  "metric": "navigation.duration",
+  "unit": "ms",
+  "op": "lte",
+  "value": 5000,
+  "max_age_ms": 30000
+}
+```
+
+- Evaluates one named numeric fact emitted by `performance_metrics`.
+- `schema_version` is required and must be `1`; unsupported versions are
+  inconclusive rather than guessed.
+- `metric` is an exact, case-sensitive name. Version 1 producers use these
+  stable namespaces:
+  - `navigation.<key>` for Navigation Timing values, in `ms`;
+  - `paint.<entry-name>` for Paint Timing values, in `ms`;
+  - `puppeteer.<metric>` for Puppeteer metrics, with explicit `seconds`,
+    `bytes`, or `count` units;
+  - `resource.count`, `resource.totalTransferSize`,
+    `resource.largestTransferSize`, and `resource.maxDuration` for bounded
+    resource aggregates computed over the full current Resource Timing buffer.
+    The legacy response still returns at most 50 raw rows; those rows are not
+    used to derive contract aggregates.
+- `unit` must match the emitted fact exactly. OpenChrome does not perform
+  implicit unit conversion.
+- Navigation Timing facts are emitted only after both `duration` and
+  `loadEventEnd` are positive, indicating the current navigation has completed;
+  negative derived timings are never emitted as contract evidence.
+- `value` must be finite. `max_age_ms` is a non-negative integer capped at
+  five minutes.
+- Evidence includes the exact selected fact plus expected/observed values.
+
+### `console`
+
+```jsonc
+{
+  "kind": "console",
+  "schema_version": 1,
+  "type": "error",
+  "message_pattern": "checkout",
+  "uncaught": true,
+  "op": "eq",
+  "value": 0,
+  "max_age_ms": 30000
+}
+```
+
+- Counts entries in one structured fact emitted by `console_capture` with
+  `action: "get"`. Omitted predicates match all entries.
+- `type` is an exact CDP/Puppeteer-style console type. `message_pattern` is a
+  JS RegExp source protected by the shared safe-regex validator. `uncaught`
+  distinguishes runtime exceptions from explicit `console.error` calls.
+- Deduplicated entries carry a positive `count`; comparisons use the sum of
+  matching counts rather than the number of rows.
+- Promise rejections initially reported through `Runtime.exceptionThrown` are
+  removed from subsequent responses and facts when CDP later emits
+  `Runtime.exceptionRevoked`. Facts are immutable point-in-time snapshots, so a
+  fact fetched before revocation retains the then-current unhandled state.
+- Configured secret literals in console text, arguments, URLs, types, capture
+  filters, and fact scope identifiers are checked before serialization and fact
+  bounds are applied. Scope identifiers that require redaction suppress contract
+  fact emission because display placeholders are not identity-safe; lossy message
+  or filter stabilization marks a console fact truncated rather than malformed.
+- Facts declare `captured_types: null` for an unfiltered capture or the exact
+  bounded capture filter. A filtered fact can decide only assertions with an
+  explicit `type` included in that filter; other queries are inconclusive with
+  `CONTRACT_FACT_CAPTURE_FILTERED` rather than inferring zero matches.
+- Console messages remain inside the default `<oc:console>` page-origin
+  boundary in collector output. Facts declare `message_encoding`, and the
+  evaluator removes the outer boundary and reverses marker-token escapes before
+  matching `message_pattern` against the original bounded page text. Evidence
+  retains the exact encoded message. Literal zero-width escape sentinels are
+  doubled during encoding so the transform remains reversible. Callers that
+  explicitly disable boundary markers receive `message_encoding: "plain"` instead.
+- Each fact contains at most 200 entries, each message is capped at 1024
+  characters, and unbounded raw console retention is never introduced.
+- A fact marked `truncated: true` is always inconclusive, even when the
+  observed partial count appears to satisfy the assertion. Truncation covers
+  ring-buffer eviction since the latest `clear`, oversized entries, and the
+  200-entry fact cap. The public buffer statistics retain lifecycle-wide
+  eviction counters for auditability even when `clear` resets the fact watermark.
+- `value` must be a non-negative integer. `max_age_ms` follows the same
+  five-minute bound as `performance`.
+- Evidence includes the exact selected fact and the bounded matching entries.
+
 ### `and` / `or` / `not`
 
 ```jsonc
@@ -232,6 +337,103 @@ you can re-derive the threshold later.
 - `not` takes a single `child`.
 - Logical-node evidence carries the per-child evidence chain so you can
   see which branch failed without re-running the contract.
+- Inconclusive child evidence is never inverted into a pass by `not` or
+  downgraded to a normal mismatch by `and`/`or`. `or` may still pass when a
+  different branch passes; if no branch passes and any evaluated child is
+  inconclusive, the top-level result is inconclusive.
+
+## Portable contract facts
+
+`oc_assert` remains snapshot-driven and never captures live browser state.
+Live collectors return additive `contract_facts` that a host may pass back in
+`evidence.snapshot.contract_facts` together with target provenance:
+
+```jsonc
+{
+  "contract": {
+    "kind": "performance",
+    "schema_version": 1,
+    "metric": "navigation.duration",
+    "unit": "ms",
+    "op": "lte",
+    "value": 5000,
+    "max_age_ms": 30000
+  },
+  "evidence": {
+    "provenance": { "target_id": "<tab-id>" },
+    "snapshot": {
+      "contract_facts": [
+        {
+          "schema_version": 1,
+          "kind": "performance",
+          "source_tool": "performance_metrics",
+          "session_id": "<mcp-session-id>",
+          "target_id": "<tab-id>",
+          "captured_at": "2026-07-28T12:00:00.000Z",
+          "metric": "navigation.duration",
+          "unit": "ms",
+          "value": 812.4
+        }
+      ]
+    }
+  }
+}
+```
+
+Every version 1 fact has this common provenance envelope:
+
+```ts
+interface ContractFactBase {
+  schema_version: 1;
+  kind: "performance" | "console";
+  source_tool: "performance_metrics" | "console_capture";
+  session_id: string;
+  target_id: string;
+  captured_at: string; // YYYY-MM-DDTHH:mm:ss[.1-9 digits](Z|+/-HH:MM)
+}
+```
+
+Producer behavior is additive and bounded:
+
+- `performance_metrics` emits one fact per returned numeric measurement and
+  passes the tool deadline/abort context through every bounded page evaluation;
+- `console_capture get` emits one console fact built from the full retained
+  buffer independently of response pagination, records any capture type filter,
+  preserves page-origin boundary markers by default, then applies the 200-entry
+  fact cap and truncation marker;
+- existing `metrics`, `logs`, `stats`, text content, and tool names remain
+  backward compatible;
+- no producer widens capture, starts capture implicitly, or stores facts beyond
+  the existing tool/session lifecycle.
+
+Evaluation is closed-world and scope-safe. The current MCP session ID must
+match `session_id`, and `evidence.provenance.target_id` must match `target_id`.
+The freshest matching fact is selected deterministically. `captured_at` must use
+the timezone-qualified ISO-8601 profile
+`YYYY-MM-DDTHH:mm:ss[.1-9 digits](Z|+/-HH:MM)` so freshness is
+host-independent. Calendar components are validated without rollover, the
+canonical instant must remain within four-digit years, and precision beyond
+milliseconds is truncated during canonicalization. Missing provenance,
+cross-session/cross-target facts, unsupported versions, malformed or future-dated
+envelopes, stale captures, missing metrics, unit mismatches, and truncated console
+facts return `verdict: "inconclusive"` with one of these machine-stable codes:
+
+```text
+CONTRACT_FACTS_MISSING
+CONTRACT_FACT_SCHEMA_UNSUPPORTED
+CONTRACT_FACT_MALFORMED
+CONTRACT_FACT_SCOPE_MISSING
+CONTRACT_FACT_SCOPE_MISMATCH
+CONTRACT_FACT_STALE
+CONTRACT_FACT_NOT_FOUND
+CONTRACT_FACT_UNIT_MISMATCH
+CONTRACT_FACT_CAPTURE_FILTERED
+CONTRACT_FACT_TRUNCATED
+```
+
+These codes propagate through logical nodes to the top-level `oc_assert`
+response. They never become a false success or a `POSTCONDITION_FAILED`
+mismatch.
 
 ## Evidence shape
 
@@ -338,6 +540,13 @@ omits `trace_ref` and reports `trace_status: "unavailable"`; a future live
 runtime may attach a real trace reference only after the referenced artifact
 exists. Schema/contract errors that occur before evaluation, including a
 missing snapshot, do not return an `evidence_handle`.
+
+`oc_evidence_bundle` accepts `"contract_facts"` in `include` and writes a
+redacted `contract_facts.json` part from
+`evidence.snapshot.contract_facts`. The part preserves the exact bounded facts
+used by an evaluator together with their provenance; credential-pattern and
+configured-secret redaction runs before disk write. At most 256 facts are
+written, and the part records whether an over-limit caller input was truncated.
 
 ### `failure_category` on a `fail` verdict
 
