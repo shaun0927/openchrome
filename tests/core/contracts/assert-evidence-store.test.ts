@@ -138,7 +138,7 @@ describe('AssertEvidenceStore', () => {
   test('redacts nested raw and encoded URL credentials in durable artifacts', () => {
     const store = new AssertEvidenceStore({ rootDir });
     const nestedUrl = 'https://example.com/?next=https://alice:secret@evil.example/private';
-    const encodedUrl = 'https://example.com/?next=https%3A%2F%2Fbob%3Asecret%40evil.example%2Fprivate';
+    const encodedUrl = 'https://example.com/?next=https%3A%2F%2Fbob%3Asecret%40evil.example%2Fprivate%3Faccess_token%3Dya29.example';
     const stored = persist(store, {
       pageUrl: nestedUrl,
       result: {
@@ -155,8 +155,11 @@ describe('AssertEvidenceStore', () => {
     expect(raw).not.toContain('alice');
     expect(raw).not.toContain('bob');
     expect(raw).not.toContain('secret');
+    expect(raw).not.toContain('ya29.example');
     expect(raw).toContain('next=https://[REDACTED]@evil.example/private');
-    expect(raw).toContain('next=https%3A%2F%2F%5BREDACTED%5D%40evil.example%2Fprivate');
+    expect(raw).toContain(
+      'next=https%3A%2F%2F%5BREDACTED%5D%40evil.example%2Fprivate%3Faccess_token%3D%5BREDACTED%5D',
+    );
 
     const artifact = store.loadAuthorized(stored.evidence_handle, {
       sessionId: 'session-a',
@@ -166,6 +169,7 @@ describe('AssertEvidenceStore', () => {
     expect(retrieved).not.toContain('alice');
     expect(retrieved).not.toContain('bob');
     expect(retrieved).not.toContain('secret');
+    expect(retrieved).not.toContain('ya29.example');
   });
 
   test('keeps authorization stable when configured secrets match owner identifiers', () => {
