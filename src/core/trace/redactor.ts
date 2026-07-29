@@ -110,24 +110,70 @@ const CREDENTIAL_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'hex_token', re: /\b[a-fA-F0-9]{32,}\b/g },
   // SSN (US): 3-2-4 digits
   { name: 'ssn', re: /\b\d{3}-\d{2}-\d{4}\b/g },
-  // URL-encoded credential params: `password=...`, `token=...`, `secret=...`
+  // URL-encoded credential params. Match credential-bearing suffixes so
+  // OAuth-style names such as `access_token`, `oauth_token`, and
+  // `client_secret` are covered without treating benign names such as
+  // `token_type` as credentials.
   {
     name: 'url_credential_param',
-    re: /\b(password|passwd|pwd|secret|token|api_key|apikey|access_key|refresh_token|id_token|session_token|credit_card|ssn)=([^\s&;"'<>]+)/gi,
+    re: /\b((?:[a-z0-9]+[_-])*(?:password|passwd|pwd|secret|token)|api[_-]?key|apikey|access[_-]?key|credit[_-]?card|ssn)=([^\s&;"'<>]+)/gi,
   },
 ];
 
-function isSensitiveKey(key: string): boolean {
-  const lower = key.toLowerCase();
-  return SENSITIVE_KEY_NAMES.some((s) => lower.includes(s));
-}
+const URL_SCHEME_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//g;
+const URL_AUTHORITY_TERMINATOR_PATTERN = /[\s"'<>/?#]/;
+const ENCODED_URL_CANDIDATE_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*%3A%2F%2F[^\s&;"'<>]+/gi;
 
 /**
- * Scrub a single string. Replaces matched credential substrings with
- * `[REDACTED]`. URL-credential params keep the param name and replace only
- * the value: `password=hunter2` → `password=[REDACTED]`.
+ * Redact URL userinfo using WHATWG parsing so raw `@` characters inside a
+ * password cannot be mistaken for the authority delimiter. The parser
+ * validates that the candidate actually carries credentials. Only each URL's
+ * authority is scanned, and redaction ranges are assembled once at the end so
+ * repeated `scheme://` markers cannot trigger quadratic suffix copies.
  */
-export function scrubString(value: string): string {
+function redactRawUrlUserinfo(value: string): string {
+  const redactions: Array<{ start: number; end: number }> = [];
+
+  for (const match of value.matchAll(URL_SCHEME_PATTERN)) {
+    const schemeStart = match.index;
+    const authorityStart = schemeStart + match[0].length;
+    let authorityEnd = authorityStart;
+    while (
+      authorityEnd < value.length
+      && !URL_AUTHORITY_TERMINATOR_PATTERN.test(value[authorityEnd])
+    ) {
+      authorityEnd += 1;
+    }
+    if (authorityEnd === authorityStart) continue;
+
+    const candidate = value.slice(schemeStart, authorityEnd);
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate);
+    } catch {
+      continue;
+    }
+    if (!parsed.username && !parsed.password) continue;
+
+    const userinfoEnd = value.lastIndexOf('@', authorityEnd - 1);
+    if (userinfoEnd < authorityStart) continue;
+    redactions.push({ start: authorityStart, end: userinfoEnd });
+  }
+
+  if (redactions.length === 0) return value;
+
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const redaction of redactions) {
+    if (redaction.start < cursor) continue;
+    parts.push(value.slice(cursor, redaction.start), REDACTED);
+    cursor = redaction.end;
+  }
+  parts.push(value.slice(cursor));
+  return parts.join('');
+}
+
+function redactCredentialPatterns(value: string): string {
   let out = value;
   for (const [plaintext, token] of VAULT_LITERAL_REDACTIONS) {
     out = out.split(plaintext).join(token);
@@ -142,6 +188,37 @@ export function scrubString(value: string): string {
     }
   }
   return out;
+}
+
+function redactEncodedUrlComponents(value: string): string {
+  return value.replace(ENCODED_URL_CANDIDATE_PATTERN, (candidate) => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(candidate);
+    } catch {
+      return candidate;
+    }
+    const redacted = redactCredentialPatterns(redactRawUrlUserinfo(decoded));
+    return redacted === decoded ? candidate : encodeURIComponent(redacted);
+  });
+}
+
+function redactUrlCredentials(value: string): string {
+  return redactEncodedUrlComponents(redactRawUrlUserinfo(value));
+}
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return SENSITIVE_KEY_NAMES.some((s) => lower.includes(s));
+}
+
+/**
+ * Scrub a single string. Replaces matched credential substrings with
+ * `[REDACTED]`. URL-credential params keep the param name and replace only
+ * the value: `password=hunter2` → `password=[REDACTED]`.
+ */
+export function scrubString(value: string): string {
+  return redactCredentialPatterns(redactUrlCredentials(value));
 }
 
 

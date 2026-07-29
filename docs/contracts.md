@@ -255,6 +255,90 @@ followed by `JSON.parse` is lossless for every assertion kind in this
 document. If you need to wire trace events to a replay UI, attach
 `trace_ref` from the runtime — the DSL itself never invents trace IDs.
 
+## Durable `oc_assert` evidence
+
+After `oc_assert` evaluates a supplied snapshot, it persists a redacted
+artifact and returns additive lifecycle metadata:
+
+```jsonc
+{
+  "verdict": "pass",
+  "evidence_handle": "ev_<uuid>",
+  "evidence_status": "persisted",
+  "evidence_expires_at": "2026-07-28T12:30:00.000Z",
+  "evidence_get": {
+    "tool": "oc_evidence_get",
+    "arguments": {
+      "evidence_handle": "ev_<uuid>",
+      "sessionId": "<resolved-session-id>"
+    }
+  },
+  "trace_status": "unavailable",
+  "trace_unavailable_reason": "..."
+}
+```
+
+The retention contract is:
+
+- artifacts remain retrievable for 30 minutes;
+- persistence rejects artifacts larger than 1 MiB, retains at most 16 MiB or
+  256 artifacts per session/tenant owner, and caps one OpenChrome process at
+  64 MiB or 1,024 artifacts; the assertion verdict still returns with
+  `evidence_status: "unavailable"` when a retention quota is reached;
+- expired handles fail immediately by timestamp without mutating storage, while
+  an unref periodic sweep removes expired files and crash-left temporary writes
+  from disk; persistence
+  maintains a bounded in-memory index and does not synchronously rescan every
+  artifact on each `oc_assert` call;
+- `oc_evidence_get` authorizes the owning OpenChrome process instance, MCP
+  session, and tenant before returning artifact contents; a handle disclosed to
+  an independent stdio/daemon process is rejected even when both processes use
+  the default logical session and tenant IDs; callers should execute the
+  returned `evidence_get` call unchanged because it carries the resolved owner
+  `sessionId`, including explicit logical sessions;
+- API-key/JWT requests derive evidence ownership from the authenticated tenant;
+  disabled/legacy HTTP requests use the effective `X-Tenant-Id` request tenant
+  instead of the synthetic `anonymous`/`legacy` principal;
+- HTTP `DELETE /mcp`, `sessions/delete`, and SessionManager deletion events
+  delete artifacts only for the ended session/tenant owner; real browser
+  sessions emit the same tenant-scoped deletion event during TTL cleanup and
+  shutdown, and HTTP DELETE rejects a request whose authenticated/header tenant
+  does not match the tenant bound to the MCP session; MCP `sessions/delete`
+  applies the same effective request-tenant check before deleting a managed
+  browser session or evidence; disabled/legacy HTTP tool calls with an explicit
+  `X-Tenant-Id` retain that effective tenant binding so later lifecycle events
+  cannot fall back to the synthetic/default tenant and leave evidence behind;
+- expired, deleted, malformed, corrupt, and unauthorized handles return stable
+  error codes rather than filesystem paths or partial contents;
+- credential-pattern and configured-secret redaction runs before the artifact
+  is written and again before it is returned; 32-character hexadecimal
+  `target_id`/`worker_id` provenance values are retained as opaque Chrome
+  identifiers unless they match an explicitly configured secret literal.
+
+The artifact records the verification verdict, assertion, evaluator evidence,
+session, tenant, contract source/ID, timestamp, and optional caller-supplied
+capture provenance:
+
+```jsonc
+{
+  "contract": { "kind": "url", "pattern": "example\\.com" },
+  "evidence": {
+    "provenance": {
+      "target_id": "<tab-id>",
+      "worker_id": "<worker-id>",
+      "captured_at": "2026-07-28T12:00:00.000Z"
+    },
+    "snapshot": { "url": "https://example.com" }
+  }
+}
+```
+
+`oc_assert` is snapshot-driven and does not start a runtime trace. It therefore
+omits `trace_ref` and reports `trace_status: "unavailable"`; a future live
+runtime may attach a real trace reference only after the referenced artifact
+exists. Schema/contract errors that occur before evaluation, including a
+missing snapshot, do not return an `evidence_handle`.
+
 ### `failure_category` on a `fail` verdict
 
 When `oc_assert` returns `verdict: "fail"`, the output also carries a

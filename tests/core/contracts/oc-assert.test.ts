@@ -9,8 +9,8 @@
  *  - failed_assertions extraction for leaf + logical (`and`) failures
  *  - one case per evaluator that is practical to drive from a snapshot
  *
- * The `evidence_handle` is a forward-reference placeholder for #792
- * (oc_evidence_bundle). It is asserted only by shape — not consumed.
+ * Durable evidence retrieval is covered by the store and MCP integration
+ * suites; this file pins the additive oc_assert response contract.
  */
 
 import {
@@ -107,6 +107,17 @@ describe('oc_assert — verdicts', () => {
     expect(out.failed_assertions).toBeUndefined();
     expect(typeof out.evidence_handle).toBe('string');
     expect((out.evidence_handle as string).startsWith('ev_')).toBe(true);
+    expect(out.evidence_status).toBe('persisted');
+    expect(typeof out.evidence_expires_at).toBe('string');
+    expect(out.evidence_get).toEqual({
+      tool: 'oc_evidence_get',
+      arguments: {
+        evidence_handle: out.evidence_handle,
+        sessionId: 'test-session',
+      },
+    });
+    expect(out.trace_status).toBe('unavailable');
+    expect(typeof out.trace_unavailable_reason).toBe('string');
   });
 
   test('fail: url assertion returns failed_assertions array', async () => {

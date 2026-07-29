@@ -90,6 +90,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_vitals: 2,
   oc_output_fetch: 2,
   oc_evidence_bundle: 2,
+  oc_evidence_get: 2,
   oc_diff: 2,
   oc_skill_record: 2,
   oc_skill_recall: 2,
