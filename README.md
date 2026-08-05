@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fshaun0927%2Fopenchrome.svg)](https://mcptoplist.com/server/glama%2Fshaun0927%2Fopenchrome)
+
 <p align="center">
   <img src="assets/mascot.png?v=4" alt="OpenChrome Raptor" width="180">
 </p>
