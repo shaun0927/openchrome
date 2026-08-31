@@ -19,7 +19,7 @@ import { resolveCapabilityFilterOptions } from './config/capability-filter';
 import { resolveWindowBoundsConfig } from './config/window-bounds';
 import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './chrome/pid-manager';
-import { installParentWatcher, ParentWatcherHandle } from './utils/parent-watcher';
+import { installParentWatcher, ParentWatcherHandle } from './core/process/parent-watcher';
 import { installIdleTimeout, IdleTimeoutHandle, parseDuration } from './utils/idle-timeout';
 import { getIdleState } from './utils/idle-state';
 import { getVersion } from './version';

@@ -56,7 +56,7 @@ export interface IdleTimeoutHandle {
    * no further `exitFn` invocations are possible (the `stopped` flag is the
    * single source of truth, not just `clearTimeout`, because a callback
    * already on the macrotask queue when stop() runs would otherwise still
-   * fire — see parent-watcher.ts for the same race note).
+   * fire — see core/process/parent-watcher.ts for the same race note).
    */
   stop: () => void;
 }
