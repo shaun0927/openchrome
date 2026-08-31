@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getVersion } from '../version';
-import { fetchJsonVersion } from '../chrome/devtools-info';
+import { fetchJsonVersion } from './devtools-info';
 import { DEFAULT_CHROME_LAUNCH_TIMEOUT_MS } from '../config/defaults';
 
 export interface ControllerLockIdentity {

@@ -7,7 +7,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getCDPClient } from '../cdp/client';
-import { getCurrentControllerTopology } from '../utils/duplicate-controller-diagnostics';
+import { getCurrentControllerTopology } from '../chrome/duplicate-controller-diagnostics';
 import { getBrokerLifecycleSnapshot } from '../broker/lifecycle';
 
 const definition: MCPToolDefinition = {

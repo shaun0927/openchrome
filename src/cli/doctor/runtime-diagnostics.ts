@@ -1,7 +1,7 @@
 import * as os from 'os';
 import { readBrokerMetadata } from '../../broker/discovery';
-import { getCurrentControllerTopology } from '../../utils/duplicate-controller-diagnostics';
-import { isPidAlive } from '../../utils/controller-lock';
+import { getCurrentControllerTopology } from '../../chrome/duplicate-controller-diagnostics';
+import { isPidAlive } from '../../chrome/controller-lock';
 
 export type ActiveRuntimePath =
   | 'direct-owner'

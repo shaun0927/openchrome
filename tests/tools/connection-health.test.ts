@@ -19,7 +19,7 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/duplicate-controller-diagnostics', () => ({
+jest.mock('../../src/chrome/duplicate-controller-diagnostics', () => ({
   getCurrentControllerTopology: jest.fn(() => ({
     role: 'owner',
     port: 9222,

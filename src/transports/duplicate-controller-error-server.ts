@@ -23,7 +23,7 @@
 import * as readline from 'readline';
 import { getVersion } from '../version';
 import { MCPErrorCodes, type MCPResponse } from '../types/mcp';
-import type { DuplicateControllerError } from '../utils/controller-lock';
+import type { DuplicateControllerError } from '../chrome/controller-lock';
 
 /** Server-defined JSON-RPC error code surfaced for the conflict. */
 export const DUPLICATE_CONTROLLER_ERROR_CODE = -32000;

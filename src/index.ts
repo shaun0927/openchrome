@@ -53,9 +53,9 @@ import {
   startControllerHeartbeat,
   type ControllerHeartbeatHandle,
   type ControllerLockHandle,
-} from './utils/controller-lock';
+} from './chrome/controller-lock';
 import { fetchJsonVersion } from './chrome/devtools-info';
-import { getCurrentControllerTopology } from './utils/duplicate-controller-diagnostics';
+import { getCurrentControllerTopology } from './chrome/duplicate-controller-diagnostics';
 import { isAutoElectEnabled, shouldElectBrokerOwner, shouldClientAutoConnect, defaultBrokerHttpPort } from './broker/auto-elect';
 import { removeBrokerMetadata } from './broker/discovery';
 import {

@@ -1,18 +1,18 @@
 import * as os from 'os';
 
-jest.mock('../../../src/utils/duplicate-controller-diagnostics', () => ({
+jest.mock('../../../src/chrome/duplicate-controller-diagnostics', () => ({
   getCurrentControllerTopology: jest.fn(),
 }));
 jest.mock('../../../src/broker/discovery', () => ({
   readBrokerMetadata: jest.fn(),
 }));
-jest.mock('../../../src/utils/controller-lock', () => ({
+jest.mock('../../../src/chrome/controller-lock', () => ({
   isPidAlive: jest.fn(),
 }));
 
-const { getCurrentControllerTopology } = jest.requireMock('../../../src/utils/duplicate-controller-diagnostics') as { getCurrentControllerTopology: jest.Mock };
+const { getCurrentControllerTopology } = jest.requireMock('../../../src/chrome/duplicate-controller-diagnostics') as { getCurrentControllerTopology: jest.Mock };
 const { readBrokerMetadata } = jest.requireMock('../../../src/broker/discovery') as { readBrokerMetadata: jest.Mock };
-const { isPidAlive } = jest.requireMock('../../../src/utils/controller-lock') as { isPidAlive: jest.Mock };
+const { isPidAlive } = jest.requireMock('../../../src/chrome/controller-lock') as { isPidAlive: jest.Mock };
 import { classifyRuntimePath, collectDoctorDiagnostics, displayPath } from '../../../src/cli/doctor/runtime-diagnostics';
 
 describe('doctor runtime diagnostics', () => {
