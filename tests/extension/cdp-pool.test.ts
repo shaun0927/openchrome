@@ -4,7 +4,7 @@
  * Tests for CDPConnectionPool
  */
 
-import { CDPConnectionPool } from '../extension/src/cdp-pool';
+import { CDPConnectionPool } from '../../extension/src/cdp-pool';
 
 describe('CDPConnectionPool', () => {
   let pool: CDPConnectionPool;

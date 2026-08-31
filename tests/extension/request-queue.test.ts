@@ -3,7 +3,7 @@
  * Tests for RequestQueue
  */
 
-import { RequestQueue, RequestQueueManager } from '../extension/src/request-queue';
+import { RequestQueue, RequestQueueManager } from '../../extension/src/request-queue';
 
 describe('RequestQueue', () => {
   let queue: RequestQueue;
