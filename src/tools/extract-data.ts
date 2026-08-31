@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { waitForPageReady } from '../core/page/ready-state';
 import { formatStaleRefError, getRefIdManager } from '../core/perception/ref-id-manager';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';

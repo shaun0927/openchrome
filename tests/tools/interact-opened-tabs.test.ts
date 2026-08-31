@@ -33,7 +33,7 @@ jest.mock('../../src/dom/element-discovery', () => ({
 jest.mock('../../src/stealth/human-behavior', () => ({
   humanMouseMove: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock('../../src/utils/with-timeout', () => ({
+jest.mock('../../src/core/deadline/with-timeout', () => ({
   withTimeout: jest.fn().mockImplementation(async (promise: Promise<unknown>) => promise),
 }));
 jest.mock('../../src/core/perception/verify', () => ({

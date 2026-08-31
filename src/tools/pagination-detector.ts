@@ -6,7 +6,7 @@
  */
 
 import type { Page } from 'puppeteer-core';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 
 export interface PaginationInfo {
   type: 'numbered' | 'next_button' | 'load_more' | 'infinite_scroll' | 'cursor' | 'viewer' | 'none';

@@ -2,7 +2,7 @@ import type { Page } from 'puppeteer-core';
 import type { ToolContext } from '../../types/mcp';
 import { getRemainingBudget } from '../../types/mcp';
 import { isTimeoutError } from '../../errors/timeout';
-import { withTimeout } from '../../utils/with-timeout';
+import { withTimeout } from '../deadline/with-timeout';
 
 export interface PageReadyOptions {
   /** Maximum wall-clock wait in ms. Default: 5000. */

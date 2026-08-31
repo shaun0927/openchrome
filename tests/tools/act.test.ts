@@ -63,7 +63,7 @@ jest.mock('../../src/recovery/ralph/outcome-classifier', () => ({
 }));
 
 // Mock with-timeout — pass through
-jest.mock('../../src/utils/with-timeout', () => ({
+jest.mock('../../src/core/deadline/with-timeout', () => ({
   withTimeout: jest.fn().mockImplementation(async (promise: Promise<unknown>) => promise),
 }));
 
@@ -115,7 +115,7 @@ describe('ActTool', () => {
           `\u2713 ${verb} ${desc} ${ref} ${source}`
       ),
     }));
-    jest.doMock('../../src/utils/with-timeout', () => ({
+    jest.doMock('../../src/core/deadline/with-timeout', () => ({
       withTimeout: jest.fn().mockImplementation(async (promise: Promise<unknown>) => promise),
     }));
 

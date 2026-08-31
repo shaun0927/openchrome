@@ -2,7 +2,7 @@ import {
   MAX_CAPTURE_AREA_PIXELS,
   MAX_INLINE_IMAGE_PAYLOAD_BYTES,
 } from '../../config/defaults';
-import { withTimeout } from '../../utils/with-timeout';
+import { withTimeout } from '../deadline/with-timeout';
 
 export { MAX_CAPTURE_AREA_PIXELS, MAX_INLINE_IMAGE_PAYLOAD_BYTES };
 

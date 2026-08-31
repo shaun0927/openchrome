@@ -8,7 +8,7 @@
 
 import type { Page } from 'puppeteer-core';
 import { DEFAULT_SAFE_TITLE_TIMEOUT_MS } from '../../config/defaults';
-import { withTimeout } from '../../utils/with-timeout';
+import { withTimeout } from '../deadline/with-timeout';
 
 export async function safeTitle(
   page: Page,

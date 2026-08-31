@@ -17,7 +17,7 @@ import { isDynamicSkillsEnabled } from '../harness/flags';
 import { detectBlockingPage, BlockingInfo } from '../core/page/diagnostics';
 import { handleCaptcha } from '../captcha/handler';
 import { getSolverRegistry } from '../captcha/solver-registry';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { simulatePresence } from '../stealth/human-behavior';
 import { getHeadedFallback } from '../chrome/headed-fallback';
 import { getGlobalConfig } from '../config/global';

@@ -14,7 +14,7 @@ import {
   resolveViewportDimensions,
   validateCaptureArea,
 } from '../core/screenshot/guards';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { makeImageContent, type SupportedImageMimeType } from '../core/screenshot/image-mime';
 
 const FULL_PAGE_DIMENSION_TIMEOUT_MS = 5000;

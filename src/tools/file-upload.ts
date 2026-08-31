@@ -11,7 +11,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getGlobalConfig } from '../config/global';
 import { DEFAULT_FILE_UPLOAD_TEMP_DIR } from '../config/defaults';
 import { getSessionManager } from '../session-manager';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 
 const OPENCHROME_FILE_UPLOAD_ROOTS_ENV = 'OPENCHROME_FILE_UPLOAD_ROOTS';
 const OPENCHROME_FILE_UPLOAD_TEMP_DIR_ENV = 'OPENCHROME_FILE_UPLOAD_TEMP_DIR';

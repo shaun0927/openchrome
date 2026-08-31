@@ -11,7 +11,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
 import { humanScroll } from '../stealth/human-behavior';
 import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';

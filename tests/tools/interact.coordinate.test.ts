@@ -90,7 +90,7 @@ jest.mock('../../src/recovery/ralph/circuit-breaker', () => ({
 }));
 
 // With-timeout mock — pass through
-jest.mock('../../src/utils/with-timeout', () => ({
+jest.mock('../../src/core/deadline/with-timeout', () => ({
   withTimeout: jest.fn().mockImplementation(async (promise: Promise<unknown>) => promise),
 }));
 
@@ -151,7 +151,7 @@ describe('interact tool — coordinate mode', () => {
     jest.mock('../../src/cdp/target-id', () => ({ getTargetId: jest.fn().mockReturnValue('mock-target') }));
     jest.mock('../../src/recovery/ralph/outcome-classifier', () => ({ classifyOutcome: jest.fn().mockReturnValue('SUCCESS'), formatOutcomeLine: jest.fn().mockReturnValue('✓ Clicked') }));
     jest.mock('../../src/recovery/ralph/circuit-breaker', () => ({ getCircuitBreaker: jest.fn().mockReturnValue({ check: jest.fn().mockReturnValue({ allowed: true }), recordElementFailure: jest.fn(), recordElementSuccess: jest.fn() }) }));
-    jest.mock('../../src/utils/with-timeout', () => ({ withTimeout: jest.fn().mockImplementation(async (p: Promise<unknown>) => p) }));
+    jest.mock('../../src/core/deadline/with-timeout', () => ({ withTimeout: jest.fn().mockImplementation(async (p: Promise<unknown>) => p) }));
     jest.mock('../../src/cdp/input', () => ({ dispatchCoordinateClick: jest.fn().mockResolvedValue(undefined) }));
 
     let capturedHandler: ((sessionId: string, args: Record<string, unknown>) => Promise<unknown>) | null = null;

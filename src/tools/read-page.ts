@@ -13,7 +13,7 @@ import { serializeDOM } from '../dom';
 import { detectPagination, PaginationInfo } from './pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { isFastProfile } from '../config/runtime-profile';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { SnapshotStore } from '../compression/snapshot-store';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
