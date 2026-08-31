@@ -74,7 +74,7 @@ jest.mock('fs', () => ({
   mkdirSync: jest.fn(),
 }));
 
-jest.mock('../../src/utils/display-detect', () => ({
+jest.mock('../../src/chrome/display-detect', () => ({
   hasDisplay: () => mockHasDisplay(),
 }));
 
@@ -315,7 +315,7 @@ describe('HeadedFallbackManager', () => {
         existsSync: jest.fn().mockReturnValue(false),
         mkdirSync: jest.fn(),
       }));
-      jest.doMock('../../src/utils/display-detect', () => ({
+      jest.doMock('../../src/chrome/display-detect', () => ({
         hasDisplay: () => true,
       }));
       jest.doMock('../../src/core/page/diagnostics', () => ({
