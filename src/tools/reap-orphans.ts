@@ -2,7 +2,7 @@ import { getGlobalConfig } from '../config/global';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { cleanOrphanedChromeProcesses, previewOrphanedChromeProcesses } from '../utils/pid-manager';
+import { cleanOrphanedChromeProcesses, previewOrphanedChromeProcesses } from '../chrome/pid-manager';
 
 const definition: MCPToolDefinition = {
   name: 'oc_reap_orphans',
