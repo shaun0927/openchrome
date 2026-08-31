@@ -15,7 +15,7 @@ import {
   DEFAULT_CHROME_MEMORY_WARN_BYTES,
   DEFAULT_CHROME_MEMORY_CRITICAL_BYTES,
 } from '../config/defaults';
-import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../core/activity/idle-state';
 
 /** Idle cadence. 180 s is 6× slower than the default 30 s active rate. */
 const IDLE_INTERVAL_MS = 180_000;

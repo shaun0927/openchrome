@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { createIdleState } from '../../src/utils/idle-state';
+import { createIdleState } from '../../../src/core/activity/idle-state';
 
 describe('createIdleState', () => {
   test('fresh instance starts active, then becomes idle after the quiet window', () => {

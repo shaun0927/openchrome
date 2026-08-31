@@ -33,7 +33,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
-import { getIdleState } from '../utils/idle-state';
+import { getIdleState } from '../core/activity/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
 import { applyRegisteredPreloads } from './preload-injector';
 import { TargetPageIndex } from './target-page-index';

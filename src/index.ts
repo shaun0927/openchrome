@@ -21,7 +21,7 @@ import { ToolTier } from './config/tool-tiers';
 import { writePidFile, cleanOrphanedChromeProcesses } from './chrome/pid-manager';
 import { installParentWatcher, ParentWatcherHandle } from './core/process/parent-watcher';
 import { installIdleTimeout, IdleTimeoutHandle, parseDuration } from './core/process/idle-timeout';
-import { getIdleState } from './utils/idle-state';
+import { getIdleState } from './core/activity/idle-state';
 import { getVersion } from './version';
 import { bootstrapPilot, logActiveFlags } from './harness/flags';
 import { ChromeProcessWatchdog } from './chrome/process-watchdog';

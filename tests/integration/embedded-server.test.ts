@@ -178,7 +178,7 @@ jest.mock('../../src/session/state-persistence', () => ({
   createSnapshot: jest.fn(() => ({})),
 }));
 
-jest.mock('../../src/utils/idle-state', () => ({
+jest.mock('../../src/core/activity/idle-state', () => ({
   getIdleState: jest.fn(() => ({})),
 }));
 

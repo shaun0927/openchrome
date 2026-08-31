@@ -11,7 +11,7 @@
 
 import { EventEmitter } from 'events';
 import { DEFAULT_EVENT_LOOP_HEAVY_OP_FATAL_MS } from '../config/defaults';
-import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../core/activity/idle-state';
 
 /** Idle rate caps at 10× active rate per issue #649 §3.1 / acceptance criterion 4. */
 const IDLE_RATE_MS = 2_000;

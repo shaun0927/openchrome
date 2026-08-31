@@ -21,8 +21,8 @@ import { ChromeProcessMonitor } from '../../src/watchdog/chrome-monitor';
 import { DiskMonitor } from '../../src/watchdog/disk-monitor';
 import { BrowserStateManager } from '../../src/browser-state/snapshot';
 import { SessionStatePersistence } from '../../src/session/state-persistence';
-import { createIdleState, IDLE_WINDOW_MS } from '../../src/utils/idle-state';
-import type { IdleState } from '../../src/utils/idle-state';
+import { createIdleState, IDLE_WINDOW_MS } from '../../src/core/activity/idle-state';
+import type { IdleState } from '../../src/core/activity/idle-state';
 
 function activeState(): IdleState {
   const s = createIdleState({ now: () => 0 });

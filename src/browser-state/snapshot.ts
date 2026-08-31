@@ -21,7 +21,7 @@ import {
   DEFAULT_SNAPSHOT_INTERVAL_MS,
   DEFAULT_SNAPSHOT_MAX_COUNT,
 } from '../config/defaults';
-import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../core/activity/idle-state';
 
 /**
  * Idle cadence. 300 s is 5× slower than the default 60 s active rate

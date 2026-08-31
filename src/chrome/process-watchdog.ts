@@ -11,7 +11,7 @@
 
 import { EventEmitter } from 'events';
 import { ChromeLauncher } from './launcher';
-import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../core/activity/idle-state';
 import { shouldRateLimitRelaunch } from './exit-classifier';
 import { getLifecycleBus, isLifecycleBusEnabled } from '../core/lifecycle';
 
