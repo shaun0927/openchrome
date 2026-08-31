@@ -42,8 +42,9 @@ Do not add ad hoc root folders for experiments, generated reports, worktrees,
 agent-local state, or one-off validation outputs. Put durable contributor
 documentation under `docs/`, runnable maintenance code under `scripts/`, and
 ignored local outputs under paths covered by `.gitignore`.
-`npm run lint:repo-structure` enforces the current `src/` root entry allow-list
-and prevents reintroducing the deprecated `tests/src` bucket.
+`npm run lint:repo-structure` enforces the current `src/` root entry allow-list,
+the approved `src/utils` leaf allow-list, the approved `tests/utils` shared
+helper allow-list, and prevents reintroducing the deprecated `tests/src` bucket.
 
 ## Package Publish Surface
 
@@ -66,7 +67,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 
 | Path | Responsibility |
 | --- | --- |
-| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, contracts, output, metrics, tracing, crawl, task-run, and task-ledger. |
+| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, contracts, output, metrics, tracing, crawl, deadline handling, filesystem persistence, task-run, and task-ledger. |
 | `src/tools/` | MCP tool implementations and tool-local helpers. Tool code may call `src/core`, but core code should not import tools. |
 | `src/mcp/` | MCP server implementation, protocol ingress helpers, session-init policy, and MCP output accounting. `src/mcp-server.ts` is a compatibility re-export for existing imports. |
 | `src/transports/` | MCP/HTTP transport surfaces and protocol adapters. |
@@ -77,7 +78,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 | `src/pilot/` | higher-level agent runtime features: skills, handoff, voting, credentials, curator, and automation runtime. |
 | `src/hints/`, `src/recovery/`, `src/failure/` | guidance, recovery, and failure classification. |
 | `src/vision/`, `src/perception`-related core modules | visual and perception-oriented processing. |
-| `src/utils/` | cross-cutting leaf utilities only. If a utility gains domain ownership, move it into the owning module. |
+| `src/utils/` | approved cross-cutting leaf utilities only: formatting, logging, retry fallback, listener safety, and URL helpers. No subdirectories or stateful domain services. |
 
 ## Test Layout
 
