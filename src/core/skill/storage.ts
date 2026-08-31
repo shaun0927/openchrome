@@ -31,7 +31,7 @@
  *     writers (a Codex finding from the previous iteration).
  *
  * The lock file is `<rootDir>/<encodedDomain>.json.lock`. `acquireLock`
- * from `src/utils/atomic-file.ts` creates an empty `{}` placeholder at the
+ * from `src/core/fs/atomic-file.ts` creates an empty `{}` placeholder at the
  * lock path if one is missing so `proper-lockfile` has something to lock.
  * The graph data file itself is kept separate from the lock file so the
  * placeholder JSON is never confused with the graph payload.
@@ -41,7 +41,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { acquireLock, readFileSafe, writeFileAtomicSafe } from '../../utils/atomic-file';
+import { acquireLock, readFileSafe, writeFileAtomicSafe } from '../fs/atomic-file';
 import type {
   EdgeKey,
   PersistedEdge,

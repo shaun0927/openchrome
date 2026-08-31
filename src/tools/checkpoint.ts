@@ -10,7 +10,7 @@ import * as os from 'os';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
+import { writeFileAtomicSafe, readFileSafe } from '../core/fs/atomic-file';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../core/page/safe-title';
 import { getActiveActionRecorder } from '../recording/action-recorder';
