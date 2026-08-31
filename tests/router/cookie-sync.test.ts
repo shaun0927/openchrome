@@ -4,7 +4,7 @@
  * TDD: Tests written first, implementation follows.
  */
 
-import { CookieSync } from '../../../src/router/cookie-sync';
+import { CookieSync } from '../../src/router/cookie-sync';
 import type { Protocol } from 'puppeteer-core';
 
 // ---------------------------------------------------------------------------

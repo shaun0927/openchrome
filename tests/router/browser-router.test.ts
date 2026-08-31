@@ -1,15 +1,15 @@
 /// <reference types="jest" />
 
-import { BrowserRouter, RouteResult } from '../../../src/router/browser-router';
-import { BrowserBackend, HybridConfig, EscalationResult } from '../../../src/types/browser-backend';
-import { ToolRoutingRegistry } from '../../../src/router/tool-routing-registry';
-import { LightpandaLauncher } from '../../../src/lightpanda/launcher';
-import { CookieSync } from '../../../src/router/cookie-sync';
+import { BrowserRouter, RouteResult } from '../../src/router/browser-router';
+import { BrowserBackend, HybridConfig, EscalationResult } from '../../src/types/browser-backend';
+import { ToolRoutingRegistry } from '../../src/router/tool-routing-registry';
+import { LightpandaLauncher } from '../../src/lightpanda/launcher';
+import { CookieSync } from '../../src/router/cookie-sync';
 
 // Mock all dependencies
-jest.mock('../../../src/router/tool-routing-registry');
-jest.mock('../../../src/lightpanda/launcher');
-jest.mock('../../../src/router/cookie-sync');
+jest.mock('../../src/router/tool-routing-registry');
+jest.mock('../../src/lightpanda/launcher');
+jest.mock('../../src/router/cookie-sync');
 
 const MockedToolRoutingRegistry = ToolRoutingRegistry as jest.Mocked<typeof ToolRoutingRegistry>;
 const MockedLightpandaLauncher = LightpandaLauncher as jest.MockedClass<typeof LightpandaLauncher>;
