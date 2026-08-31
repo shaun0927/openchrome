@@ -1,7 +1,7 @@
 /// <reference types="jest" />
-import { MCPServer } from '../src/mcp-server';
-import { getMetricsCollector } from '../src/metrics/collector';
-import { runWithRequestContext } from '../src/observability/request-id';
+import { MCPServer } from '../../src/mcp-server';
+import { getMetricsCollector } from '../../src/metrics/collector';
+import { runWithRequestContext } from '../../src/observability/request-id';
 
 describe('MCPServer tenant-aware metric emission', () => {
   test('emits tool metrics with tenant label from request context', async () => {

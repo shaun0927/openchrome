@@ -6,14 +6,14 @@
 
 // Mock getChromePool to control pool instance count for timeout tests
 const mockGetInstances = jest.fn().mockReturnValue(new Map());
-jest.mock('../src/chrome/pool', () => ({
+jest.mock('../../src/chrome/pool', () => ({
   getChromePool: jest.fn(() => ({
     getInstances: mockGetInstances,
   })),
 }));
 
 // Mock CDP client
-jest.mock('../src/cdp/client', () => ({
+jest.mock('../../src/cdp/client', () => ({
   getCDPClient: jest.fn(() => ({
     isConnected: jest.fn().mockReturnValue(false),
     disconnect: jest.fn().mockResolvedValue(undefined),
@@ -22,14 +22,14 @@ jest.mock('../src/cdp/client', () => ({
 }));
 
 // Mock CDP connection pool
-jest.mock('../src/cdp/connection-pool', () => ({
+jest.mock('../../src/cdp/connection-pool', () => ({
   getCDPConnectionPool: jest.fn(() => ({
     shutdown: jest.fn().mockResolvedValue(undefined),
   })),
 }));
 
 // Mock Chrome launcher
-jest.mock('../src/chrome/launcher', () => ({
+jest.mock('../../src/chrome/launcher', () => ({
   ChromeLauncher: jest.fn(),
   getChromeLauncher: jest.fn(() => ({
     isConnected: jest.fn().mockReturnValue(false),
@@ -46,11 +46,11 @@ const mockSessionManager = {
 };
 
 // Mock session manager
-jest.mock('../src/session-manager', () => ({
+jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(() => mockSessionManager),
 }));
 
-import { MCPServer } from '../src/mcp-server';
+import { MCPServer } from '../../src/mcp-server';
 
 describe('MCPServer shutdown robustness', () => {
   beforeEach(() => {
@@ -115,7 +115,7 @@ describe('MCPServer shutdown robustness', () => {
     });
 
     it('handles getChromePool throwing (pool not initialized)', async () => {
-      const poolMock = require('../src/chrome/pool');
+      const poolMock = require('../../src/chrome/pool');
       poolMock.getChromePool.mockImplementationOnce(() => {
         throw new Error('Pool not initialized');
       });
