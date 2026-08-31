@@ -4,7 +4,7 @@
  * Tests for TabGroupManager
  */
 
-import { TabGroupManager } from '../extension/src/tab-group-manager';
+import { TabGroupManager } from '../../extension/src/tab-group-manager';
 
 describe('TabGroupManager', () => {
   let manager: TabGroupManager;

@@ -4,10 +4,10 @@
  * Tests for SessionManager
  */
 
-import { SessionManager } from '../extension/src/session-manager';
-import { TabGroupManager } from '../extension/src/tab-group-manager';
-import { CDPConnectionPool } from '../extension/src/cdp-pool';
-import { RequestQueueManager } from '../extension/src/request-queue';
+import { SessionManager } from '../../extension/src/session-manager';
+import { TabGroupManager } from '../../extension/src/tab-group-manager';
+import { CDPConnectionPool } from '../../extension/src/cdp-pool';
+import { RequestQueueManager } from '../../extension/src/request-queue';
 
 describe('SessionManager', () => {
   let sessionManager: SessionManager;

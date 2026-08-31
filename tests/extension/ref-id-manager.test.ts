@@ -3,7 +3,7 @@
  * Tests for RefIdManager
  */
 
-import { RefIdManager, getRefIdManager } from '../extension/src/ref-id-manager';
+import { RefIdManager, getRefIdManager } from '../../extension/src/ref-id-manager';
 
 describe('RefIdManager', () => {
   let manager: RefIdManager;
