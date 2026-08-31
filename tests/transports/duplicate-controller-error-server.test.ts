@@ -2,8 +2,8 @@ import { PassThrough } from 'stream';
 import {
   DUPLICATE_CONTROLLER_ERROR_CODE,
   DuplicateControllerErrorServer,
-} from '../src/transports/duplicate-controller-error-server';
-import { DuplicateControllerError, type ControllerLockMetadata } from '../src/utils/controller-lock';
+} from '../../src/transports/duplicate-controller-error-server';
+import { DuplicateControllerError, type ControllerLockMetadata } from '../../src/utils/controller-lock';
 
 function makeServer(): DuplicateControllerErrorServer {
   const owner: ControllerLockMetadata = {

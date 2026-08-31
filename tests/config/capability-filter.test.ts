@@ -10,25 +10,25 @@
  * 5. lint:tools-capabilities fails when a tool lacks a capability entry
  */
 
-import { createMockSessionManager } from './utils/mock-session';
+import { createMockSessionManager } from '../utils/mock-session';
 
 // Block CDP / real Chrome connections
-jest.mock('../src/cdp/client', () => ({
+jest.mock('../../src/cdp/client', () => ({
   getCDPClient: jest.fn(() => ({
     forceReconnect: jest.fn().mockResolvedValue(undefined),
     isConnected: jest.fn().mockReturnValue(false),
   })),
 }));
 
-jest.mock('../src/session-manager', () => ({
+jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-import { getSessionManager } from '../src/session-manager';
-import { MCPServer, MCPServerOptions } from '../src/mcp-server';
-import { TOOL_CAPABILITY_MAP, registerAllTools } from '../src/tools';
-import { resolveCapabilityFilterOptions } from '../src/config/capability-filter';
-import type { ToolCapability } from '../src/types/mcp';
+import { getSessionManager } from '../../src/session-manager';
+import { MCPServer, MCPServerOptions } from '../../src/mcp-server';
+import { TOOL_CAPABILITY_MAP, registerAllTools } from '../../src/tools';
+import { resolveCapabilityFilterOptions } from '../../src/config/capability-filter';
+import type { ToolCapability } from '../../src/types/mcp';
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFileSync } from 'child_process';
@@ -102,7 +102,7 @@ describe('capability-filter: default surface (P2 compliance)', () => {
   test('tools/list matches v1.11.0 baseline snapshot', async () => {
     const snapshotPath = path.join(
       __dirname,
-      '../src/tools/__tests__/__snapshots__/tools-list.v1.11.snap.json',
+      '../../src/tools/__tests__/__snapshots__/tools-list.v1.11.snap.json',
     );
     const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8')) as {
       tools: Array<{ name: string }>;
@@ -333,7 +333,7 @@ describe('capability-filter: expand_tools respects capability gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('lint:tools-capabilities', () => {
-  const lintScript = path.join(__dirname, '../scripts/lint-tools-capabilities.js');
+  const lintScript = path.join(__dirname, '../../scripts/lint-tools-capabilities.js');
 
   test('passes for the current codebase (all tools have capability tags)', () => {
     let exitCode = 0;
@@ -355,7 +355,7 @@ describe('lint:tools-capabilities', () => {
   test('TOOL_CAPABILITY_MAP covers all tool names listed in the v1.11 snapshot', () => {
     const snapshotPath = path.join(
       __dirname,
-      '../src/tools/__tests__/__snapshots__/tools-list.v1.11.snap.json',
+      '../../src/tools/__tests__/__snapshots__/tools-list.v1.11.snap.json',
     );
     const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8')) as {
       tools: Array<{ name: string }>;

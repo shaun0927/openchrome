@@ -35,7 +35,7 @@ const SHORTLIST: ShortlistEntry[] = [
   { toolName: 'validate_page',   sourceFile: 'src/tools/validate-page.ts' },
 ];
 
-const REPO_ROOT = path.resolve(__dirname, '..');
+const REPO_ROOT = path.resolve(__dirname, '../..');
 const MAX_DESCRIPTION_CHARS = 400;
 
 /**
