@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { installParentWatcher } from '../../src/utils/parent-watcher';
+import { installParentWatcher } from '../../../src/core/process/parent-watcher';
 
 async function tickIntervals(times: number, intervalMs: number): Promise<void> {
   for (let i = 0; i < times; i++) {

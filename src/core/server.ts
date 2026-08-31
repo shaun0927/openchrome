@@ -40,7 +40,7 @@ import { ChromeProcessMonitor } from '../watchdog/chrome-monitor';
 import { SessionStatePersistence } from '../session/state-persistence';
 import { getLifecycleBus, type LifecycleEventBus } from './lifecycle';
 import { writePidFile, cleanOrphanedChromeProcesses } from '../chrome/pid-manager';
-import { installParentWatcher } from '../utils/parent-watcher';
+import { installParentWatcher } from './process/parent-watcher';
 import { installIdleTimeout } from '../utils/idle-timeout';
 import { getIdleState } from '../utils/idle-state';
 import { getListenerErrorStats } from '../utils/safe-listener';

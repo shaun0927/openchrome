@@ -186,7 +186,7 @@ jest.mock('../../src/utils/idle-timeout', () => ({
   installIdleTimeout: jest.fn(() => ({ stop: jest.fn() })),
 }));
 
-jest.mock('../../src/utils/parent-watcher', () => ({
+jest.mock('../../src/core/process/parent-watcher', () => ({
   installParentWatcher: jest.fn(() => ({ stop: jest.fn() })),
 }));
 
