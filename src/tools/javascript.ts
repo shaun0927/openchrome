@@ -8,7 +8,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { withTimeout } from '../utils/with-timeout';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'javascript_tool',

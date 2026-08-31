@@ -14,7 +14,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../core/page/safe-title';
 import { assertDomainAllowed, DomainPolicyError } from '../security/domain-guard';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import {
   DEFAULT_CONTEXT_NAME,

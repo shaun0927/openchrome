@@ -20,8 +20,8 @@
  */
 
 import type { Page } from 'puppeteer-core';
-import type { ToolContext } from '../types/mcp';
-import { isCoreFeatureEnabled } from '../harness/flags';
+import type { ToolContext } from '../../types/mcp';
+import { isCoreFeatureEnabled } from '../../harness/flags';
 import {
   getSnapshotCacheForTarget,
   disposeSnapshotCacheForTarget,
@@ -30,8 +30,8 @@ import {
   type SnapshotCacheKey,
   type SnapshotKind,
   type SnapshotViewportRect,
-} from '../core/perception/snapshot-cache';
-import { getTargetId } from '../cdp/target-id';
+} from './snapshot-cache';
+import { getTargetId } from '../../cdp/target-id';
 
 const FLAG_ENV_VAR = 'OPENCHROME_SNAPSHOT_CACHE';
 

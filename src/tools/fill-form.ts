@@ -19,7 +19,7 @@ import { normalizeQuery } from '../dom/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { isPilotEnabled } from '../harness/flags';
 import { detectLoginOutcome, LoginDetectResult } from './login-detector';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 import { coerceVerifyMode, runVerify, VERIFY_FIELD_SCHEMA } from '../core/perception/verify';
 import { captureBackendNodeReplayStep, capturePageReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';
