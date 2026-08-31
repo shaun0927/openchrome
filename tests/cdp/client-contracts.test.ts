@@ -23,7 +23,7 @@ jest.mock('../../src/core/page/smart-goto', () => ({
   smartGoto: (...args: unknown[]) => smartGoto(...args),
 }));
 
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn(() => ({
     clearTargetRefsAllSessions: jest.fn(),
   })),

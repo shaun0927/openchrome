@@ -274,7 +274,7 @@ describe('FindTool schema', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: jest.fn(() => ({})),
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => ({
+    jest.doMock('../../src/core/perception/ref-id-manager', () => ({
       getRefIdManager: jest.fn(() => ({})),
     }));
     jest.doMock('../../src/dom/ax-element-resolver', () => ({

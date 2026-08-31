@@ -18,12 +18,12 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn(),
 }));
 
 import { getSessionManager } from '../../src/session-manager';
-import { getRefIdManager } from '../../src/utils/ref-id-manager';
+import { getRefIdManager } from '../../src/core/perception/ref-id-manager';
 import type { ObserveResponse } from '../../src/tools/oc-observe';
 
 /**
@@ -93,7 +93,7 @@ describe('oc_observe', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => ({
+    jest.doMock('../../src/core/perception/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
     }));
 

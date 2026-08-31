@@ -15,7 +15,7 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 // Mock ref id manager
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn(() => ({
     generateRef: jest.fn().mockReturnValue('ref_1'),
   })),
@@ -81,7 +81,7 @@ describe('ActTool', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => ({
+    jest.doMock('../../src/core/perception/ref-id-manager', () => ({
       getRefIdManager: jest.fn(() => ({
         generateRef: jest.fn().mockReturnValue('ref_1'),
       })),

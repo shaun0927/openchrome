@@ -8,7 +8,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { waitForPageReady } from '../core/page/ready-state';
-import { formatStaleRefError, getRefIdManager } from '../utils/ref-id-manager';
+import { formatStaleRefError, getRefIdManager } from '../core/perception/ref-id-manager';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { sanitizeContent } from '../security/content-sanitizer';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';

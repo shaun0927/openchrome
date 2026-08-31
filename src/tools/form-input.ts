@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../core/perception/ref-id-manager';
 import { withDomDelta } from '../dom/dom-delta';
 import { isPilotEnabled } from '../harness/flags';
 import { captureElementReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';

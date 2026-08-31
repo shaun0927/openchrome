@@ -8,7 +8,7 @@ import { MCPToolDefinition, MCPResult, MCPContent, ToolHandler, ToolContext, has
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
-import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
+import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../core/perception/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../dom/dom-delta';
 import { generateVisualSummary } from '../core/page/visual-summary';

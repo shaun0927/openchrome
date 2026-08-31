@@ -9,13 +9,13 @@ jest.mock('../../src/memory/domain-memory', () => ({
   getDomainMemory: jest.fn(() => ({ record: jest.fn() })),
 }));
 
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   formatStaleRefError: jest.fn((refId: string) => `STALE_REF: ref_id="${refId}" — call read_page (mode='ax') to get fresh refs`),
   getRefIdManager: jest.fn(),
 }));
 
 import { getSessionManager } from '../../src/session-manager';
-import { getRefIdManager } from '../../src/utils/ref-id-manager';
+import { getRefIdManager } from '../../src/core/perception/ref-id-manager';
 import { extractDataHandler } from '../../src/tools/extract-data';
 
 const schema = {

@@ -12,17 +12,17 @@
  */
 
 import { createMockSessionManager, createMockRefIdManager } from '../utils/mock-session';
-import { RefIdManager } from '../../src/utils/ref-id-manager';
+import { RefIdManager } from '../../src/core/perception/ref-id-manager';
 import { createMockPage } from '../utils/mock-cdp';
 
 jest.mock('../../src/session-manager', () => ({ getSessionManager: jest.fn() }));
-jest.mock('../../src/utils/ref-id-manager', () => {
-  const actual = jest.requireActual('../../src/utils/ref-id-manager');
+jest.mock('../../src/core/perception/ref-id-manager', () => {
+  const actual = jest.requireActual('../../src/core/perception/ref-id-manager');
   return { ...actual, getRefIdManager: jest.fn() };
 });
 
 import { getSessionManager } from '../../src/session-manager';
-import { getRefIdManager } from '../../src/utils/ref-id-manager';
+import { getRefIdManager } from '../../src/core/perception/ref-id-manager';
 
 // ---------------------------------------------------------------------------
 // Unit tests for RefIdManager.tryRelocateRef
@@ -154,8 +154,8 @@ describe('computer tool stale ref auto-recovery', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => {
-      const actual = jest.requireActual('../../src/utils/ref-id-manager');
+    jest.doMock('../../src/core/perception/ref-id-manager', () => {
+      const actual = jest.requireActual('../../src/core/perception/ref-id-manager');
       return { ...actual, getRefIdManager: () => mockRefIdManager };
     });
     const { registerComputerTool } = await import('../../src/tools/computer');
@@ -249,8 +249,8 @@ describe('form_input tool stale ref auto-recovery', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => {
-      const actual = jest.requireActual('../../src/utils/ref-id-manager');
+    jest.doMock('../../src/core/perception/ref-id-manager', () => {
+      const actual = jest.requireActual('../../src/core/perception/ref-id-manager');
       return { ...actual, getRefIdManager: () => mockRefIdManager };
     });
     const { registerFormInputTool } = await import('../../src/tools/form-input');

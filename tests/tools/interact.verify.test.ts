@@ -16,7 +16,7 @@ import { coerceVerifyMode, VERIFY_FIELD_SCHEMA } from '../../src/core/perception
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn().mockReturnValue({}),
 }));
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn().mockReturnValue({}),
 }));
 
