@@ -3,6 +3,13 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the full Jest CI suite
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
@@ -11,6 +18,146 @@ concurrency:
 jobs:
   build-and-test:
     name: build-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Classify changed paths
+        id: changes
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF:-main}"
+            BASE="origin/${GITHUB_BASE_REF:-main}"
+            CHANGED=$(git diff --name-only "${BASE}...HEAD")
+          else
+            CHANGED="src/"
+          fi
+
+          printf '%s\n' "$CHANGED"
+
+          needs_node=false
+          needs_build=false
+          needs_src_lint=false
+          needs_skill_lint=false
+          needs_capability_check=false
+          needs_pack=false
+          changed_tests=()
+
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            case "$file" in
+              src/*|cli/*|scripts/*|config/*|package.json|package-lock.json|tsconfig*.json|jest*.js|webpack.config.js|.dependency-cruiser.cjs|.eslintrc.json)
+                needs_node=true
+                needs_build=true
+                needs_src_lint=true
+                needs_capability_check=true
+                ;;
+              tests/*.test.ts|tests/**/*.test.ts)
+                needs_node=true
+                if [[ -f "$file" ]]; then
+                  changed_tests+=("$file")
+                fi
+                ;;
+              tests/*|tests/**/*)
+                needs_node=true
+                ;;
+              skills/*|commands/*|.claude-plugin/*|.codex-plugin/*)
+                needs_node=true
+                needs_skill_lint=true
+                needs_pack=true
+                ;;
+              README.md|README.ko.md|CONTRIBUTING.md|CHANGELOG.md|LICENSE|SECURITY.md|docs/agent/capability-map.md)
+                needs_node=true
+                needs_capability_check=true
+                needs_pack=true
+                ;;
+              .github/workflows/*)
+                needs_node=true
+                needs_build=true
+                needs_src_lint=true
+                needs_skill_lint=true
+                needs_capability_check=true
+                needs_pack=true
+                ;;
+            esac
+          done <<< "$CHANGED"
+
+          {
+            echo "needs_node=$needs_node"
+            echo "needs_build=$needs_build"
+            echo "needs_src_lint=$needs_src_lint"
+            echo "needs_skill_lint=$needs_skill_lint"
+            echo "needs_capability_check=$needs_capability_check"
+            echo "needs_pack=$needs_pack"
+            printf 'changed_tests<<EOF\n'
+            printf '%s\n' "${changed_tests[@]}"
+            printf 'EOF\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.changes.outputs.needs_node == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        if: steps.changes.outputs.needs_build == 'true'
+        run: npm run build
+
+      - name: Lint
+        if: steps.changes.outputs.needs_src_lint == 'true'
+        run: npm run lint
+
+      - name: Lint tier boundary (core must not import pilot)
+        if: steps.changes.outputs.needs_src_lint == 'true'
+        run: npm run lint:tier
+
+      - name: Lint tool schemas (description / enum / REQUIRED-prefix budgets)
+        if: steps.changes.outputs.needs_src_lint == 'true'
+        run: npm run lint:tool-schemas
+        # Baseline-aware: existing violations are allow-listed at
+        # scripts/lint-tool-schemas.baseline.json; only NEW violations fail CI.
+        # See docs/dev/tool-schema-conventions.md.
+
+      - name: Lint skill tool references
+        if: steps.changes.outputs.needs_skill_lint == 'true'
+        run: npm run lint:skill-tools
+
+      - name: Check capability map is in sync
+        if: steps.changes.outputs.needs_capability_check == 'true'
+        run: npm run docs:capability-map:check
+
+      - name: Run changed tests
+        if: steps.changes.outputs.changed_tests != ''
+        shell: bash
+        run: |
+          mapfile -t tests <<< "${{ steps.changes.outputs.changed_tests }}"
+          npx jest --config jest.ci.config.js --runInBand --silent --runTestsByPath "${tests[@]}"
+        env:
+          CI: true
+
+      - name: Run source smoke tests
+        if: steps.changes.outputs.needs_build == 'true'
+        run: npx jest --config jest.ci.config.js --runInBand --silent --runTestsByPath tests/cli/entrypoint-parity.test.ts tests/tools/manifest-only-registration.test.ts
+        env:
+          CI: true
+
+      - name: Verify package surface
+        if: steps.changes.outputs.needs_pack == 'true'
+        run: npm pack --dry-run --json > /tmp/openchrome-pack.json
+
+  full-test:
+    name: full-test
+    if: github.event_name == 'workflow_dispatch' && inputs.full
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -26,25 +173,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Lint tier boundary (core must not import pilot)
-        run: npm run lint:tier
-
-      - name: Lint tool schemas (description / enum / REQUIRED-prefix budgets)
-        run: npm run lint:tool-schemas
-        # Baseline-aware: existing violations are allow-listed at
-        # scripts/lint-tool-schemas.baseline.json; only NEW violations fail CI.
-        # See docs/dev/tool-schema-conventions.md.
-
-      - name: Check capability map is in sync
-        run: npm run docs:capability-map:check
-
-      - name: Run tests
+      - name: Run full Jest suite
         run: npx jest --config jest.ci.config.js
         env:
           CI: true
