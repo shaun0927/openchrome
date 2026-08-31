@@ -30,7 +30,7 @@ import {
 import { HintEngine } from '../hints';
 import { buildAutomationInsight, formatAutomationFallback, shouldInjectAutomationFallback } from '../hints/result-guidance';
 import { getTaskDriftLedger } from '../harness/task-ledger';
-import { validateToolSchema } from '../utils/schema-validator';
+import { validateToolSchema } from './schema-validator';
 import { formatAge } from '../utils/format-age';
 import { formatError } from '../utils/format-error';
 import { getCDPConnectionPool } from '../cdp/connection-pool';
