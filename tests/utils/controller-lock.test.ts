@@ -11,7 +11,7 @@ import {
   recordControllerHeartbeat,
   releaseControllerLock,
   startControllerHeartbeat,
-} from '../src/utils/controller-lock';
+} from '../../src/utils/controller-lock';
 
 describe('controller lock', () => {
   let tmpDir: string;
