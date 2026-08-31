@@ -58,6 +58,8 @@ describe('standalone CLI build contract', () => {
     expect(cliWorkflow).toContain('verify-standalone-browser-smoke.cjs');
     expect(cliWorkflow).toContain('browser-actions/setup-chrome@e574b4b3a21156ab45dd6b5f67e884fd26eed829');
     expect(cliWorkflow).toContain('chrome-version: 131.0.6778.87');
-    expect(cliWorkflow).toContain("'src/transports/stdio.ts'");
+    expect(cliWorkflow).toContain('workflow_dispatch:');
+    expect(cliWorkflow).toContain('tags:');
+    expect(cliWorkflow).not.toContain('pull_request:');
   });
 });

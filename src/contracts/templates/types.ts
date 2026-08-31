@@ -20,7 +20,7 @@
  *    template by `id` (and optional `version`).
  *  - **Immutable contract identity**: a template's `(id, version)` pair is
  *    its eternal name. Renaming requires bumping `version`. Old versions
- *    must remain usable for replay and benchmarking reproducibility.
+ *    must remain usable for replay and evaluation reproducibility.
  *  - **Portability**: every template must be expressible as plain JSON so
  *    it can travel through MCP tool input, evidence bundles, and traces
  *    without code-mobility tricks.
@@ -61,7 +61,7 @@ export interface OutcomeTemplate {
   description: string;
   /**
    * Optional schema this template targets. Consumed by extract_data,
-   * oc_evidence_bundle's schema-diff hook, and benchmark harnesses.
+   * oc_evidence_bundle's schema-diff hook, and evaluation harnesses.
    */
   targetSchema?: OutcomeTemplateSchema;
   /**

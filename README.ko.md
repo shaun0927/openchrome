@@ -48,9 +48,7 @@ AI:    [4개 병렬 레인, 모든 사이트 이미 인증됨]
 | 봇 탐지 | 차단됨 | **투명** (실제 Chrome) |
 
 <sub>\* 인증된 Chrome 1개 vs. 콜드 브라우저 N개라는 아키텍처 차이를 설명하기 위한
-예시이며, 측정된 경쟁 벤치마크 결과가 아닙니다. 정량적 속도/비용 수치는 live 또는
-recorded-real 벤치마크 행으로만 헤드라인 주장이 됩니다 —
-[`docs/benchmarks/benchmark-direction.md`](docs/benchmarks/benchmark-direction.md) 참고.</sub>
+예시이며, 측정된 경쟁 벤치마크 결과가 아닙니다.</sub>
 
 ---
 
@@ -192,10 +190,9 @@ query_dom → inspect → interact` 대신 **바로 실행 가능한 번호 목�
 | **결과 분류기** | 클릭 후 실제로 무슨 일이 일어났는지 보고 (SUCCESS / SILENT_CLICK / WRONG_ELEMENT). |
 | **49개 신뢰성 메커니즘** | 프로세스 수명부터 MCP 게이트웨이까지 8개 방어 계층 — 단일 실패로 서버가 멈추지 않음. [`docs/architecture.md`](docs/architecture.md) 참고. |
 
-이 하니스는 think-act 루프를 줄이도록 설계됐습니다: LLM 왕복 감소, 실제 소요 시간
-단축, 비용 절감. 구체적인 속도/비용 배수는 live 또는 recorded-real 벤치마크 행으로
-뒷받침될 때에만 헤드라인 주장으로 게시됩니다 —
-[`docs/benchmarks/benchmark-direction.md`](docs/benchmarks/benchmark-direction.md) 참고.
+이 하니스는 공개 벤치마크 스위트를 제품 저장소에 함께 싣지 않으면서도
+think-act 루프를 줄이도록 설계됐습니다: LLM 왕복 감소, 실제 소요 시간 단축,
+비용 절감.
 
 ---
 

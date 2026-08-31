@@ -10,7 +10,7 @@
  * promote/skip decision.
  *
  * Pure function. No I/O. No Chrome dependency. Callers (curator,
- * benchmark harness, host LLM) pass a {@link SchemaDiff} and an optional
+ * evaluation harness, host LLM) pass a {@link SchemaDiff} and an optional
  * threshold record; the gate returns the decision plus a structured
  * `reasons` array that downstream tracing/audit consumes.
  *

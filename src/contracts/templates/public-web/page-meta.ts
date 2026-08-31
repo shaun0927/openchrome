@@ -3,14 +3,14 @@
  *
  * Declares the canonical schema for *page-level meta extraction* — the
  * Tier-1 task family every web crawler needs and the smallest unit of
- * comparison for external benchmarks. Use this template when the host
+ * comparison for external evaluators. Use this template when the host
  * agent wants oc_assert / oc_evidence_bundle to verify that an
  * extraction produced `{title, url, description, statusCode}` plus
  * Open Graph fields where present.
  *
  * Wire format is `schema-diff.v1` so the same JSON travels through:
  *   - oc_evidence_bundle's target_schema input (B1-PR2)
- *   - external benchmark scorers (airena, etc.)
+ *   - external evaluators
  *
  * No detector / executor / heuristic is bundled — per #1359 §P4 the
  * template is data only. The host extracts the page (read_page,
