@@ -42,7 +42,7 @@ import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEF
 import { createBudget, isLegacyBudgetMode } from '../utils/budget';
 import { SessionInitBudgetExhausted } from '../cdp/errors';
 import { getGlobalEventLoopMonitor } from '../watchdog/event-loop-monitor';
-import { getIdleState } from '../utils/idle-state';
+import { getIdleState } from '../core/activity/idle-state';
 import { SessionRateLimiter } from './rate-limiter';
 import { getGlobalConfig } from '../config/global';
 import { getToolTier, ToolTier } from '../config/tool-tiers';

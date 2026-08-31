@@ -11,7 +11,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
-import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../core/activity/idle-state';
 
 /**
  * Idle debounce cadence. Issue #649 §3.1 specifies 60 s as the debounce

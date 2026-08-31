@@ -4,7 +4,7 @@ import {
   parseDuration,
   formatDuration,
 } from '../../../src/core/process/idle-timeout';
-import { createIdleState } from '../../../src/utils/idle-state';
+import { createIdleState } from '../../../src/core/activity/idle-state';
 
 describe('parseDuration', () => {
   test('accepts standard unit suffixes', () => {
