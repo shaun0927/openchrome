@@ -65,7 +65,9 @@ jobs:
                 ;;
               tests/*.test.ts|tests/**/*.test.ts)
                 needs_node=true
-                changed_tests+=("$file")
+                if [[ -f "$file" ]]; then
+                  changed_tests+=("$file")
+                fi
                 ;;
               tests/*|tests/**/*)
                 needs_node=true
@@ -105,7 +107,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.changes.outputs.needs_node == 'true'
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build
         if: steps.changes.outputs.needs_build == 'true'
