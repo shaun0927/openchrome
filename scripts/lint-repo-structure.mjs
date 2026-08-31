@@ -12,12 +12,35 @@ const allowedSrcRootFiles = new Set([
   'version.ts',
 ]);
 
+const allowedSrcUtilsFiles = new Set([
+  'format-age.ts',
+  'format-error.ts',
+  'log.ts',
+  'retry-with-fallback.ts',
+  'safe-listener.ts',
+  'url-utils.ts',
+]);
+
+const allowedTestsUtilsFiles = new Set([
+  'mock-cdp.ts',
+  'mock-session.ts',
+  'retry-with-fallback.test.ts',
+  'safe-listener.test.ts',
+  'test-helpers.ts',
+]);
+
 const errors = [];
 
 function listFiles(dir) {
   return readdirSync(join(root, dir))
     .filter((entry) => statSync(join(root, dir, entry)).isFile())
     .sort();
+}
+
+function listEntries(dir) {
+  return readdirSync(join(root, dir))
+    .map((entry) => ({ entry, stat: statSync(join(root, dir, entry)) }))
+    .sort((a, b) => a.entry.localeCompare(b.entry));
 }
 
 for (const file of listFiles('src')) {
@@ -37,6 +60,38 @@ try {
 } catch (error) {
   if (error?.code !== 'ENOENT') {
     throw error;
+  }
+}
+
+for (const { entry, stat } of listEntries('src/utils')) {
+  if (stat.isDirectory()) {
+    errors.push(
+      `src/utils/${entry} is a utility subdirectory. ` +
+      'Move domain code into an owning src/<domain>/ folder.',
+    );
+    continue;
+  }
+  if (stat.isFile() && !allowedSrcUtilsFiles.has(entry)) {
+    errors.push(
+      `src/utils/${entry} is not an approved leaf utility. ` +
+      'Put domain-owned helpers under src/core, src/cdp, src/chrome, src/session, or src/tools.',
+    );
+  }
+}
+
+for (const { entry, stat } of listEntries('tests/utils')) {
+  if (stat.isDirectory()) {
+    errors.push(
+      `tests/utils/${entry} is a test utility subdirectory. ` +
+      'Move domain tests under the matching tests/<domain>/ folder.',
+    );
+    continue;
+  }
+  if (stat.isFile() && !allowedTestsUtilsFiles.has(entry)) {
+    errors.push(
+      `tests/utils/${entry} is not an approved shared test helper or utility test. ` +
+      'Mirror the owning production folder under tests/<domain>/.',
+    );
   }
 }
 
