@@ -117,6 +117,10 @@ jobs:
         if: steps.changes.outputs.needs_src_lint == 'true'
         run: npm run lint
 
+      - name: Lint repository structure
+        if: steps.changes.outputs.needs_src_lint == 'true'
+        run: npm run lint:repo-structure
+
       - name: Lint tier boundary (core must not import pilot)
         if: steps.changes.outputs.needs_src_lint == 'true'
         run: npm run lint:tier
