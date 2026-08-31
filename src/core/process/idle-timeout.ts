@@ -21,7 +21,7 @@
  *    shutdown.
  */
 
-import { IdleState } from './idle-state';
+import { IdleState } from '../../utils/idle-state';
 
 /** Units accepted by `parseDuration` (see also issue #649 §3.2). */
 const DURATION_UNITS: Record<string, number> = {

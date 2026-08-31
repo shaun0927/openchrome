@@ -4,17 +4,17 @@ import {
   unregisterManagedChrome,
   listRegisteredManagedChromes,
   _resetForTesting,
-} from '../../src/utils/sync-shutdown';
+} from '../../../src/core/process/sync-shutdown';
 
-jest.mock('../../src/chrome/pid-manager', () => {
-  const actual = jest.requireActual('../../src/chrome/pid-manager');
+jest.mock('../../../src/chrome/pid-manager', () => {
+  const actual = jest.requireActual('../../../src/chrome/pid-manager');
   return {
     ...actual,
     killProcessTree: jest.fn(),
   };
 });
 
-import { killProcessTree } from '../../src/chrome/pid-manager';
+import { killProcessTree } from '../../../src/chrome/pid-manager';
 
 describe('sync-shutdown (#661 Phase 2)', () => {
   beforeEach(() => {

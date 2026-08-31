@@ -7,7 +7,7 @@
 import * as readline from 'readline';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { MCPTransport, TransportMessageContext } from './index';
-import { shutdownSyncBestEffort } from '../utils/sync-shutdown';
+import { shutdownSyncBestEffort } from '../core/process/sync-shutdown';
 
 const STANDALONE_STDOUT_CHUNK_CHARS = 16_384;
 
