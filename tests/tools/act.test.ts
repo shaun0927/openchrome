@@ -54,7 +54,7 @@ jest.mock('../../src/cdp/target-id', () => ({
 }));
 
 // Mock outcome classifier
-jest.mock('../../src/utils/ralph/outcome-classifier', () => ({
+jest.mock('../../src/recovery/ralph/outcome-classifier', () => ({
   classifyOutcome: jest.fn().mockReturnValue('SUCCESS'),
   formatOutcomeLine: jest.fn().mockImplementation(
     (_outcome: string, verb: string, desc: string, ref: string, source: string) =>
@@ -108,7 +108,7 @@ describe('ActTool', () => {
     jest.doMock('../../src/cdp/target-id', () => ({
       getTargetId: jest.fn().mockReturnValue('mock-target'),
     }));
-    jest.doMock('../../src/utils/ralph/outcome-classifier', () => ({
+    jest.doMock('../../src/recovery/ralph/outcome-classifier', () => ({
       classifyOutcome: jest.fn().mockReturnValue('SUCCESS'),
       formatOutcomeLine: jest.fn().mockImplementation(
         (_outcome: string, verb: string, desc: string, ref: string, source: string) =>

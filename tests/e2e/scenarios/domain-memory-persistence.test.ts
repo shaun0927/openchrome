@@ -15,7 +15,7 @@ import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { DomainMemory } from '../../../src/memory/domain-memory';
-import { learnStrategy, getLearnedStrategy, recordStrategyFailure } from '../../../src/utils/ralph/strategy-learner';
+import { learnStrategy, getLearnedStrategy, recordStrategyFailure } from '../../../src/recovery/ralph/strategy-learner';
 
 // Use isolated temp dir for all tests
 const TEST_DIR = path.join(os.tmpdir(), `openchrome-e2e-memory-${Date.now()}`);

@@ -126,10 +126,10 @@ async function getInteractHandler(
     humanMouseMove: jest.fn().mockResolvedValue(undefined),
     simulatePresence: jest.fn().mockResolvedValue(undefined),
   }));
-  jest.doMock('../../src/utils/ralph/circuit-breaker', () => ({
+  jest.doMock('../../src/recovery/ralph/circuit-breaker', () => ({
     getCircuitBreaker: () => ({ isOpen: jest.fn().mockReturnValue(false), record: jest.fn() }),
   }));
-  jest.doMock('../../src/utils/ralph/outcome-classifier', () => ({
+  jest.doMock('../../src/recovery/ralph/outcome-classifier', () => ({
     classifyOutcome: jest.fn().mockReturnValue({ type: 'success' }),
     formatOutcomeLine: jest.fn().mockReturnValue('success'),
   }));

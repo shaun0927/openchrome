@@ -9,7 +9,7 @@ import {
   isBudgetExhausted,
   clearBudgetCache,
   TimeoutBudget,
-} from '../../../src/utils/ralph/timeout-budget';
+} from '../../../src/recovery/ralph/timeout-budget';
 
 describe('Timeout Budget', () => {
   beforeEach(() => {
