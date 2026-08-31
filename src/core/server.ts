@@ -41,7 +41,7 @@ import { SessionStatePersistence } from '../session/state-persistence';
 import { getLifecycleBus, type LifecycleEventBus } from './lifecycle';
 import { writePidFile, cleanOrphanedChromeProcesses } from '../chrome/pid-manager';
 import { installParentWatcher } from './process/parent-watcher';
-import { installIdleTimeout } from '../utils/idle-timeout';
+import { installIdleTimeout } from './process/idle-timeout';
 import { getIdleState } from '../utils/idle-state';
 import { getListenerErrorStats } from '../utils/safe-listener';
 import type { MCPServer } from '../mcp-server';

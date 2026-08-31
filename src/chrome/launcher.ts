@@ -17,7 +17,7 @@ import { checkDebugPort, DebugPortTimeoutError, waitForDebugPort } from './launc
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
 import { writeMarker, removeMarker } from './ownership-marker';
-import { registerManagedChrome, unregisterManagedChrome } from '../utils/sync-shutdown';
+import { registerManagedChrome, unregisterManagedChrome } from '../core/process/sync-shutdown';
 import { classifyExit, ExitClassification, quiesceMs } from './exit-classifier';
 import { getLifecycleBus } from '../core/lifecycle';
 import type { ChromeExitReason } from '../core/lifecycle';

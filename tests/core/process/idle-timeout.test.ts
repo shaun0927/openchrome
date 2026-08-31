@@ -3,8 +3,8 @@ import {
   installIdleTimeout,
   parseDuration,
   formatDuration,
-} from '../../src/utils/idle-timeout';
-import { createIdleState } from '../../src/utils/idle-state';
+} from '../../../src/core/process/idle-timeout';
+import { createIdleState } from '../../../src/utils/idle-state';
 
 describe('parseDuration', () => {
   test('accepts standard unit suffixes', () => {
