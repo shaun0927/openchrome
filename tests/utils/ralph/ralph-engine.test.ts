@@ -31,7 +31,7 @@ jest.mock('../../../src/dom/dom-delta', () => ({
   }),
 }));
 
-jest.mock('../../../src/utils/puppeteer-helpers', () => ({
+jest.mock('../../../src/cdp/target-id', () => ({
   getTargetId: jest.fn().mockReturnValue('test-target-id'),
 }));
 

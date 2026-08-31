@@ -65,7 +65,7 @@ jest.mock('../../src/dom/element-finder', () => ({
 }));
 
 // Puppeteer helpers mock
-jest.mock('../../src/utils/puppeteer-helpers', () => ({
+jest.mock('../../src/cdp/target-id', () => ({
   getTargetId: jest.fn().mockReturnValue('mock-target'),
 }));
 
@@ -148,7 +148,7 @@ describe('interact tool — coordinate mode', () => {
     jest.mock('../../src/stealth/human-behavior', () => ({ humanMouseMove: jest.fn().mockResolvedValue(undefined) }));
     jest.mock('../../src/dom/element-discovery', () => ({ discoverElements: jest.fn().mockResolvedValue([]), cleanupTags: jest.fn().mockResolvedValue(undefined), getTaggedElementRect: jest.fn().mockResolvedValue(null), DISCOVERY_TAG: 'data-oc-discovery' }));
     jest.mock('../../src/dom/element-finder', () => ({ normalizeQuery: jest.fn().mockImplementation((q: string) => q), scoreElement: jest.fn().mockReturnValue(50), tokenizeQuery: jest.fn().mockReturnValue([]) }));
-    jest.mock('../../src/utils/puppeteer-helpers', () => ({ getTargetId: jest.fn().mockReturnValue('mock-target') }));
+    jest.mock('../../src/cdp/target-id', () => ({ getTargetId: jest.fn().mockReturnValue('mock-target') }));
     jest.mock('../../src/utils/ralph/outcome-classifier', () => ({ classifyOutcome: jest.fn().mockReturnValue('SUCCESS'), formatOutcomeLine: jest.fn().mockReturnValue('✓ Clicked') }));
     jest.mock('../../src/utils/ralph/circuit-breaker', () => ({ getCircuitBreaker: jest.fn().mockReturnValue({ check: jest.fn().mockReturnValue({ allowed: true }), recordElementFailure: jest.fn(), recordElementSuccess: jest.fn() }) }));
     jest.mock('../../src/utils/with-timeout', () => ({ withTimeout: jest.fn().mockImplementation(async (p: Promise<unknown>) => p) }));

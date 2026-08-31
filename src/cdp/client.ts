@@ -6,7 +6,7 @@ import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'pu
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../core/page/smart-goto';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from './target-id';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { safeAsyncListener } from '../utils/safe-listener';
 import {

@@ -1,5 +1,5 @@
 import { captureReplayStep, type ReplayArtifactStep, type ReplayStepKind } from '../../core/skill-memory';
-import { getTargetId } from '../../utils/puppeteer-helpers';
+import { getTargetId } from '../../cdp/target-id';
 
 interface ElementCaptureInput {
   cdpClient: { send: <T = unknown>(page: any, method: string, params?: Record<string, unknown>) => Promise<T> };

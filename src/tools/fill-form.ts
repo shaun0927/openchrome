@@ -14,7 +14,7 @@ import { withDomDelta } from '../dom/dom-delta';
 import { withTimeout } from '../utils/with-timeout';
 import { discoverFormFields, FormField, FORM_FIELD_TAG } from '../dom/element-discovery';
 import { resolveElementsByAXTree, invalidateAXCache } from '../dom/ax-element-resolver';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 import { normalizeQuery } from '../dom/element-finder';
 import { humanType, humanMouseMove } from '../stealth/human-behavior';
 import { isPilotEnabled } from '../harness/flags';

@@ -11,7 +11,7 @@
 
 import type { Page } from 'puppeteer-core';
 import type { CDPClient } from '../cdp/client';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 import { normalizeQuery } from './element-finder';
 
 // ─── Types ───
