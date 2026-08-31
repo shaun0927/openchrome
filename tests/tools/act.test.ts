@@ -48,8 +48,8 @@ jest.mock('../../src/dom/element-discovery', () => ({
   DISCOVERY_TAG: 'data-oc-discovery',
 }));
 
-// Mock puppeteer-helpers
-jest.mock('../../src/utils/puppeteer-helpers', () => ({
+// Mock target id extraction
+jest.mock('../../src/cdp/target-id', () => ({
   getTargetId: jest.fn().mockReturnValue('mock-target'),
 }));
 
@@ -105,7 +105,7 @@ describe('ActTool', () => {
       cleanupTags: jest.fn().mockResolvedValue(undefined),
       DISCOVERY_TAG: 'data-oc-discovery',
     }));
-    jest.doMock('../../src/utils/puppeteer-helpers', () => ({
+    jest.doMock('../../src/cdp/target-id', () => ({
       getTargetId: jest.fn().mockReturnValue('mock-target'),
     }));
     jest.doMock('../../src/utils/ralph/outcome-classifier', () => ({

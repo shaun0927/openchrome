@@ -11,7 +11,7 @@ import { ToolEntry } from '../types/tool-manifest';
 import { getDomainMemory, extractDomainFromUrl } from '../memory/domain-memory';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_COMPLETION_LOCK_TIMEOUT_MS } from '../config/defaults';
 import { getGlobalConfig } from '../config/global';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 
 export interface WorkflowStep {
   workerId: string;

@@ -14,7 +14,7 @@ import { withDomDelta } from '../dom/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { normalizeQuery } from '../dom/element-finder';
 import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement } from '../dom/ax-element-resolver';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { humanMouseMove, humanType } from '../stealth/human-behavior';
 import { withTimeout } from '../utils/with-timeout';

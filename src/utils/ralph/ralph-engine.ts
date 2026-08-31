@@ -22,7 +22,7 @@ import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS, AXResol
 import { discoverElements, cleanupTags, DISCOVERY_TAG, getTaggedElementRect } from '../../dom/element-discovery';
 import { FoundElement, scoreElement, tokenizeQuery } from '../../dom/element-finder';
 import { classifyOutcome, formatOutcomeLine, InteractionOutcome } from './outcome-classifier';
-import { getTargetId } from '../puppeteer-helpers';
+import { getTargetId } from '../../cdp/target-id';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../../config/defaults';
 import type { PerceptionElement, PerceptionSnapshot } from '../../vision/types';
 

@@ -34,7 +34,7 @@ import { BrowserBackend, HybridConfig, RouteReason } from '../types/browser-back
 import { StorageStateManager } from '../storage-state';
 import { StorageStateConfig } from '../config';
 import { assertDomainAllowed } from '../security/domain-guard';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 import { safeTitle } from '../core/page/safe-title';
 import { getMetricsCollector } from '../metrics/collector';
 import { getLifecycleBus } from '../core/lifecycle';

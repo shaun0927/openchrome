@@ -86,7 +86,7 @@ jest.mock('../../src/core/page/safe-title', () => ({
   safeTitle: (...args: any[]) => mockSafeTitle(...args),
 }));
 
-jest.mock('../../src/utils/puppeteer-helpers', () => ({
+jest.mock('../../src/cdp/target-id', () => ({
   getTargetId: (...args: any[]) => mockGetTargetId(...args),
 }));
 
@@ -324,7 +324,7 @@ describe('HeadedFallbackManager', () => {
       jest.doMock('../../src/core/page/safe-title', () => ({
         safeTitle: jest.fn().mockResolvedValue(''),
       }));
-      jest.doMock('../../src/utils/puppeteer-helpers', () => ({
+      jest.doMock('../../src/cdp/target-id', () => ({
         getTargetId: jest.fn().mockReturnValue('t1'),
       }));
 

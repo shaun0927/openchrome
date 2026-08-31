@@ -16,7 +16,7 @@ import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } fr
 import { withTimeout } from '../utils/with-timeout';
 import { makeImageContent } from '../core/screenshot/image-mime';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../dom/ax-element-resolver';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { humanMouseMove } from '../stealth/human-behavior';
