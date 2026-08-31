@@ -15,7 +15,7 @@ const mockCdpClientInstance = {
   send: jest.fn(),
 };
 
-jest.mock('../src/cdp/client', () => ({
+jest.mock('../../src/cdp/client', () => ({
   CDPClient: jest.fn().mockImplementation(() => mockCdpClientInstance),
   getCDPClient: jest.fn().mockReturnValue(mockCdpClientInstance),
   getCDPClientFactory: jest.fn().mockReturnValue({
@@ -26,26 +26,26 @@ jest.mock('../src/cdp/client', () => ({
   }),
 }));
 
-jest.mock('../src/cdp/connection-pool', () => ({
+jest.mock('../../src/cdp/connection-pool', () => ({
   CDPConnectionPool: jest.fn(),
   getCDPConnectionPool: jest.fn().mockReturnValue({}),
 }));
 
-jest.mock('../src/utils/request-queue', () => ({
+jest.mock('../../src/utils/request-queue', () => ({
   RequestQueueManager: jest.fn().mockImplementation(() => ({
     enqueue: jest.fn((_: string, fn: () => Promise<unknown>) => fn()),
     deleteQueue: jest.fn(),
   })),
 }));
 
-jest.mock('../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/utils/ref-id-manager', () => ({
   getRefIdManager: jest.fn(() => ({
     clearSessionRefs: jest.fn(),
     clearTargetRefs: jest.fn(),
   })),
 }));
 
-import { SessionManager } from '../src/session-manager';
+import { SessionManager } from '../../src/session-manager';
 
 function createManager(maxTargetsPerWorker = 5): SessionManager {
   return new SessionManager(undefined, {
