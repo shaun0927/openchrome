@@ -14,7 +14,7 @@ import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
 import { humanScroll } from '../stealth/human-behavior';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'lightweight_scroll',

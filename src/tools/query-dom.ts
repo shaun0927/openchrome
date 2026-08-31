@@ -11,7 +11,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../dom/shadow-dom';
-import { isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
+import { isSnapshotCacheEnabled } from '../core/perception/snapshot-cache-helper';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 import { decodeCursor, encodeCursor, paginate } from '../mcp/pagination';
 

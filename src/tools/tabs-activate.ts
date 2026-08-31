@@ -12,7 +12,7 @@ import {
   type ToolHandler,
 } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 
 const DEFAULT_ACTIVATION_DEADLINE_MS = 5000;
 const MAX_ACTIVATION_ATTEMPTS = 3;

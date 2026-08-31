@@ -8,7 +8,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { safeTitle } from '../core/page/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 
 const definition: MCPToolDefinition = {
   name: 'page_reload',
