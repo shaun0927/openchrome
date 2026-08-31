@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 /**
- * Unit and integration tests for src/utils/static-fetch.ts.
+ * Unit and integration tests for src/core/crawl/static-fetch.ts.
  *
  * - isStaticSufficient: pure-function tests covering each reason code.
  * - staticFetch: integration tests against a local http.createServer fixture.
@@ -16,7 +16,7 @@ import {
   extractBodyText,
   getStaticUserAgent,
   __resetExtractorCacheForTests,
-} from '../../../src/utils/static-fetch';
+} from '../../../src/core/crawl/static-fetch';
 import { startFixtureServer, FixtureServer } from '../../helpers/fixture-server';
 
 // ---------------------------------------------------------------------------
