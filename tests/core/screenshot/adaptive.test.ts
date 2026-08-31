@@ -3,7 +3,7 @@
  * Tests for AdaptiveScreenshot utility
  */
 
-import { AdaptiveScreenshot } from '../../src/utils/adaptive-screenshot';
+import { AdaptiveScreenshot } from '../../../src/core/screenshot/adaptive';
 
 function createMockPage(scrollX = 0, scrollY = 0): any {
   return {

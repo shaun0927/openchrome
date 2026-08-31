@@ -36,7 +36,7 @@ jest.mock('../../src/core/page/diagnostics', () => ({
 }));
 
 // Mock visual-summary
-jest.mock('../../src/utils/visual-summary', () => ({
+jest.mock('../../src/core/page/visual-summary', () => ({
   generateVisualSummary: jest.fn().mockResolvedValue(null),
 }));
 
@@ -79,7 +79,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       detectBlockingPage: (...args: any[]) => mockDetectBlockingPage(...args),
       BlockingInfo: {},
     }));
-    jest.doMock('../../src/utils/visual-summary', () => ({
+    jest.doMock('../../src/core/page/visual-summary', () => ({
       generateVisualSummary: jest.fn().mockResolvedValue(null),
     }));
     jest.doMock('../../src/stealth/human-behavior', () => ({
