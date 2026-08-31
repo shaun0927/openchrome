@@ -2,7 +2,7 @@ import {
   TargetCreationLedger,
   sanitizeTargetTitle,
   sanitizeTargetUrl,
-} from '../src/session/target-creation-ledger';
+} from '../../src/session/target-creation-ledger';
 
 describe('TargetCreationLedger', () => {
   test('reports only ready children created after the cursor in deterministic order', () => {

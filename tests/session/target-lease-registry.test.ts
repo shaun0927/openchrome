@@ -1,4 +1,4 @@
-import { TargetLeaseConflictError, TargetLeaseRegistry } from '../src/session/target-lease-registry';
+import { TargetLeaseConflictError, TargetLeaseRegistry } from '../../src/session/target-lease-registry';
 
 describe('TargetLeaseRegistry', () => {
   test('acquires and snapshots leases with ownership metadata', () => {

@@ -1,4 +1,4 @@
-import { TargetQueueCancelledError, TargetQueueManager } from '../src/session/target-command-queue';
+import { TargetQueueCancelledError, TargetQueueManager } from '../../src/session/target-command-queue';
 
 describe('TargetQueueManager', () => {
   test('serializes commands for the same target', async () => {
