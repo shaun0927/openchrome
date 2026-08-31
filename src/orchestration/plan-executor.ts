@@ -22,7 +22,7 @@ import { evaluate } from '../contracts/evaluate';
 import type { EvalContext, NetworkLogEntry } from '../contracts/eval-context';
 import { evaluateTaskSignature, preflightAllowedTools } from '../contracts/task-signature';
 import type { TaskSignatureToolCallSummary } from '../contracts/task-signature';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 
 const SAFE_CONTRACT_MAX_RECOVERY_STEPS = 10;
 

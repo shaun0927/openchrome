@@ -17,7 +17,7 @@ import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement } from '.
 import { getTargetId } from '../cdp/target-id';
 import { classifyOutcome, formatOutcomeLine } from '../recovery/ralph/outcome-classifier';
 import { humanMouseMove, humanType } from '../stealth/human-behavior';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { cleanupTags, DISCOVERY_TAG } from '../dom/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';

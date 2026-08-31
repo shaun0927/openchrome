@@ -216,7 +216,7 @@ only** and is **at-least-once**, not at-most-once:
 
 ## D5. Timeout / abort cancellation semantics
 
-Recorded 2026-06-02. Promotes the doc comment in `src/utils/with-timeout.ts` to a
+Recorded 2026-06-02. Promotes the doc comment in `src/core/deadline/with-timeout.ts` to a
 normative decision.
 
 **Decision.** On a tool-execution timeout or a client `AbortSignal`, OpenChrome

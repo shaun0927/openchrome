@@ -14,7 +14,7 @@ import { withDomDelta } from '../dom/dom-delta';
 import { generateVisualSummary } from '../core/page/visual-summary';
 import { AdaptiveScreenshot } from '../core/screenshot/adaptive';
 import { makeImageContent } from '../core/screenshot/image-mime';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
 import { detectPagination, type PaginationInfo } from './pagination-detector';
 import {

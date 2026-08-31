@@ -1,7 +1,7 @@
 /// <reference types="jest" />
-import { withTimeout } from '../../src/utils/with-timeout';
-import { OpenChromeTimeoutError } from '../../src/errors/timeout';
-import { ToolContext } from '../../src/types/mcp';
+import { withTimeout } from '../../../src/core/deadline/with-timeout';
+import { OpenChromeTimeoutError } from '../../../src/errors/timeout';
+import { ToolContext } from '../../../src/types/mcp';
 
 describe('withTimeout', () => {
   test('should resolve when promise completes before timeout', async () => {

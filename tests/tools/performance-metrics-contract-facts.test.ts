@@ -3,14 +3,14 @@
 jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
-jest.mock('../../src/utils/with-timeout', () => ({
+jest.mock('../../src/core/deadline/with-timeout', () => ({
   withTimeout: jest.fn(async (promise: Promise<unknown>) => promise),
 }));
 
 import { getSessionManager } from '../../src/session-manager';
 import { registerPerformanceMetricsTool } from '../../src/tools/performance-metrics';
 import type { MCPToolDefinition, ToolContext, ToolHandler } from '../../src/types/mcp';
-import { withTimeout } from '../../src/utils/with-timeout';
+import { withTimeout } from '../../src/core/deadline/with-timeout';
 import {
   EMPTY_SECRET_STORE,
   makeSecretStore,

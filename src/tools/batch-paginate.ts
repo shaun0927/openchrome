@@ -14,7 +14,7 @@ import { getSessionManager } from '../session-manager';
 import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { DEFAULT_SCREENSHOT_QUALITY, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS, MAX_OUTPUT_CHARS } from '../config/defaults';
 import { withDomDelta } from '../dom/dom-delta';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { normalizeImageMimeType, makeImageContent, type SupportedImageMimeType } from '../core/screenshot/image-mime';
 
 const definition: MCPToolDefinition = {

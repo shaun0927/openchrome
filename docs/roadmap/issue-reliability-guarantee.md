@@ -326,7 +326,7 @@ What survived rigorous re-verification:
   context: **D4** in `ssot-decisions.md`.
 
 - **L2 — Timeout/abort does not cancel the underlying CDP call.** On tool timeout or client
-  abort, `src/utils/with-timeout.ts` returns immediately and leaves the in-flight CDP command
+  abort, `src/core/deadline/with-timeout.ts` returns immediately and leaves the in-flight CDP command
   running (an "orphaned background call", acknowledged in that file's own doc comment). This is a
   *deliberate* trade-off in favour of never-hang, with an accepted residual "ghost effect" risk
   (the operation may complete after the error was returned). Promoted from a buried code comment

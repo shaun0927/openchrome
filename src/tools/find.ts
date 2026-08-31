@@ -7,7 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../core/perception/ref-id-manager';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../dom/element-discovery';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../dom/element-finder';
 import { resolveElementsByAXTree } from '../dom/ax-element-resolver';

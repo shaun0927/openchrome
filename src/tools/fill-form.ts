@@ -11,7 +11,7 @@ import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../core/perception/ref-id-manager';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_FORM_SUBMIT_SETTLE_MS } from '../config/defaults';
 import { withDomDelta } from '../dom/dom-delta';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { discoverFormFields, FormField, FORM_FIELD_TAG } from '../dom/element-discovery';
 import { resolveElementsByAXTree, invalidateAXCache } from '../dom/ax-element-resolver';
 import { getTargetId } from '../cdp/target-id';
