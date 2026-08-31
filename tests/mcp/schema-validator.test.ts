@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { validateToolSchema } from '../../src/utils/schema-validator';
+import { validateToolSchema } from '../../src/mcp/schema-validator';
 
 describe('validateToolSchema', () => {
   let errorSpy: jest.SpyInstance;
