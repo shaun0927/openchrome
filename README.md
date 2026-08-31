@@ -117,6 +117,7 @@ Ask your agent in plain language — these all map to OpenChrome tools:
 The default surface is 118 tools across navigation, interaction, reading,
 extraction, parallel workflows, contracts, skills, recovery, and diagnostics.
 Full catalogue: [`docs/agent/capability-map.md`](docs/agent/capability-map.md).
+Contributor structure map: [`docs/dev/project-structure.md`](docs/dev/project-structure.md).
 
 ---
 
