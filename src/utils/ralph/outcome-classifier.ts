@@ -6,8 +6,7 @@
  * restricting any existing behavior.
  *
  * The dominant failure mode in browser automation is not "click threw an error"
- * but "click succeeded but nothing happened" (silent failure). Skyvern proved
- * that adding outcome validation alone drove WebVoyager from 68.7% to 85.85%.
+ * but "click succeeded but nothing happened" (silent failure).
  */
 
 /**

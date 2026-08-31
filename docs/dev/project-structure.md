@@ -10,9 +10,8 @@ folder-boundary decisions here.
 | --- | --- | --- |
 | `src/` | shipped TypeScript runtime | Production code only. Tests, generated reports, and benchmark datasets stay out. |
 | `cli/` | CLI entrypoints and command adapters | Thin command surfaces that call runtime modules. Do not duplicate domain logic here. |
-| `tests/` | Jest, e2e, fixtures, integration checks | Mirror `src/` where practical. Test-only harnesses may live under `tests/benchmark` or `tests/e2e`. |
+| `tests/` | Jest, e2e, fixtures, integration checks | Mirror `src/` where practical. Browser-level scenario tests live under `tests/e2e`. |
 | `docs/` | user and contributor documentation | One canonical page per concept; README links to docs instead of copying details. |
-| `benchmark/` | retained benchmark definitions and reports | Local generated outputs must be ignored unless they are intentionally curated evidence. |
 | `scripts/` | maintenance and generation scripts | Scripts should either update tracked artifacts deterministically or write to ignored output paths. |
 | `deploy/` | deployment examples | Keep Docker, systemd, and process-manager examples here. |
 | `native-host/` | browser native-messaging host assets | Manifests and host implementation for native messaging. |
@@ -39,9 +38,8 @@ folder-boundary decisions here.
   `tests/core/task-run/*`.
 - Put browser-level scenario tests under `tests/e2e/`.
 - Put external integration adapters under `tests/external/`.
-- Keep benchmark harness tests under `tests/benchmark/`, but do not put
-  gated external datasets, third-party runner checkouts, or environment-specific
-  result snapshots in the repo.
+- Keep public benchmark harnesses, third-party runner checkouts, external
+  datasets, and generated result snapshots out of the product repository.
 - Shared test fixtures belong under `tests/fixtures/`; feature-local fixtures
   stay next to their owning test group.
 
@@ -49,8 +47,8 @@ folder-boundary decisions here.
 
 - `dist/`, `coverage/`, runtime state, local browser profiles, logs, `run_data/`,
   and tool caches are local outputs and must remain ignored.
-- `benchmark/results/` may contain curated reports. Generated preflight output
-  should be reproducible and ignored unless a reviewer intentionally promotes it.
+- Public benchmark reports and generated comparison outputs do not belong in
+  this repository.
 - Private evidence, screenshots, traces, decrypted task text, and API-key-derived
   outputs must not be committed.
 - Generated docs must have a check command when they are committed.

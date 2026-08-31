@@ -29,7 +29,7 @@ export interface SecretStore {
   get(name: string): string | undefined;
   /** Whether a name is loaded. */
   has(name: string): boolean;
-  /** Iterate over name/value pairs (for redactor / benchmark). */
+  /** Iterate over name/value pairs for redaction and evaluation. */
   entries(): IterableIterator<[string, string]>;
   /** Iterate over values only (for redactor). */
   values(): IterableIterator<string>;

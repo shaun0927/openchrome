@@ -1,26 +1,6 @@
 name: Standalone CLI
 
 on:
-  pull_request:
-    branches: [main, develop]
-    paths:
-      - '.github/workflows/cli-release.yml'
-      - '.github/workflows/desktop-release.yml'
-      - 'cli/**'
-      - 'src/index.ts'
-      - 'src/mcp-server.ts'
-      - 'src/transports/stdio.ts'
-      - 'src/version.ts'
-      - 'scripts/build-standalone-cli.cjs'
-      - 'scripts/verify-standalone-browser-smoke.cjs'
-      - 'scripts/verify-standalone-cli.cjs'
-      - 'scripts/standalone/**'
-      - 'desktop/scripts/build-sidecar.js'
-      - 'tests/cli/**'
-      - 'tests/scripts/standalone-build.test.ts'
-      - 'tests/transports/stdio-standalone.test.ts'
-      - 'package.json'
-      - 'package-lock.json'
   workflow_dispatch:
   push:
     tags:
