@@ -201,7 +201,7 @@ wrong guess costs 10–15s of inference. OpenChrome's harness cuts that loop:
 | **49 reliability mechanisms** | 8 defense layers from process lifecycle to MCP gateway — no single failure hangs the server. See [`docs/architecture.md`](docs/architecture.md). |
 
 The harness is designed to cut the think-act loop: fewer LLM round-trips, faster
-wall time, and lower cost without carrying a public benchmark suite in the
+wall time, and lower cost without carrying public scoring harnesses in the
 product repository.
 
 ---

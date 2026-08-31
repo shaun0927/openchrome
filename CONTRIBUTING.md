@@ -181,8 +181,8 @@ Codex CLI now has a dedicated setup/config preset, but runtime validation is sti
 | Client | Status | What's Needed |
 |--------|--------|---------------|
 | Claude Code | Verified | - |
-| Cursor | Untested | Test all 36 tools, verify `instructions` field |
-| Windsurf | Untested | Test all 36 tools, verify `instructions` field |
+| Cursor | Untested | Test the documented tool surface, verify `instructions` field |
+| Windsurf | Untested | Test the documented tool surface, verify `instructions` field |
 | Codex CLI | Preset added, runtime validation needed | Verify `initialize`, `tools/list`, and at least one browser-backed tool call using the documented Codex config |
 | VS Code + MCP | Untested | Test basic tool flow |
 
@@ -196,13 +196,13 @@ Currently developed and tested on macOS. Windows and Linux need attention.
 - **Linux**: Headless Chrome in CI environments, Wayland vs X11 screenshot handling
 - **CI/CD**: GitHub Actions workflow for automated testing across platforms
 
-### Performance Benchmarks
+### Performance Diagnostics
 
-The README claims 80x speedup, but we need reproducible benchmarks.
+Keep performance work local, reproducible, and release-gated. Public scoring
+harnesses and generated comparison reports do not belong in this repository.
 
-- **Benchmark suite**: Automated comparison vs Playwright MCP on standard tasks (navigate, screenshot, form fill)
-- **Memory profiling**: Measure actual memory usage with 5, 10, 20 Workers
-- **Latency analysis**: Tool-by-tool latency comparison with other MCP browser tools
+- **Memory profiling**: Measure actual memory usage with multiple concurrent lanes
+- **Latency analysis**: Inspect tool-by-tool latency using local traces
 
 ### Browser Support
 
@@ -219,7 +219,7 @@ The hint engine (`src/hints/`) currently has 21 static rules. Areas to improve:
 - **More error patterns**: Catalog common LLM mistakes and add recovery hints
 - **Client-specific hints**: Different LLMs make different mistakes — adapt hints per client
 - **Learned pattern sharing**: Export/import learned patterns across users
-- **Benchmark hint effectiveness**: Measure how hints reduce retry loops and wasted tokens
+- **Hint effectiveness**: Measure how hints reduce retry loops and wasted tokens with local traces
 
 ### Tool Enhancements
 
@@ -232,13 +232,12 @@ The hint engine (`src/hints/`) currently has 21 static rules. Areas to improve:
 ### Developer Experience
 
 - **`oc setup` for other clients**: Auto-configure for Cursor, Windsurf, etc.
-- **`oc benchmark`**: Built-in benchmark command
 - **`oc replay`**: Replay a recorded session for debugging
 - **Plugin system**: Allow users to register custom tools
 
 ### Documentation
 
-- **API reference**: Auto-generated docs for all 36 tools with examples
+- **API reference**: Keep [`docs/agent/capability-map.md`](docs/agent/capability-map.md) generated and example-backed
 - **Tutorials**: Step-by-step guides (e.g., "Automate your CI dashboard")
 - **Troubleshooting guide**: Common issues and solutions per platform
 

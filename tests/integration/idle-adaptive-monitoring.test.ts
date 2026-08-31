@@ -13,9 +13,9 @@
  *       monitor's next scheduled delay read), every monitor reports the
  *       active rate on its next tick.
  *
- * A full real-process harness that spawns `dist/index.js serve` with a
- * stubbed Chrome is deferred to the benchmark script (scripts/bench-idle.mjs)
- * where CPU sampling happens anyway.
+ * Real-process CPU sampling is intentionally out of scope for this integration
+ * test; it belongs in private or release-local diagnostics, not the product
+ * repository.
  */
 
 import { EventLoopMonitor } from '../../src/watchdog/event-loop-monitor';
