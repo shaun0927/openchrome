@@ -30,8 +30,8 @@ import type {
   VisionTile,
   VisionTilingInfo,
 } from './types';
-import { bufferToBase64WithPayloadGuard, resolveViewportDimensions, validateCaptureArea } from '../utils/screenshot-guards';
-import { detectImageMimeType } from '../utils/image-mime';
+import { bufferToBase64WithPayloadGuard, resolveViewportDimensions, validateCaptureArea } from '../core/screenshot/guards';
+import { detectImageMimeType } from '../core/screenshot/image-mime';
 import { cleanupTags, resolveBackendNodeIds } from '../dom/element-discovery';
 
 /** Raw element collected from the page */

@@ -6,7 +6,7 @@ import {
   coerceSupportedImageMimeType,
   makeImageContent,
   normalizeImageMimeType,
-} from '../../src/utils/image-mime';
+} from '../../../src/core/screenshot/image-mime';
 
 const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00]);

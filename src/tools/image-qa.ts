@@ -21,7 +21,7 @@ import * as fs from 'node:fs';
 import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolContext, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
-import { coerceSupportedImageMimeType, makeImageContent } from '../utils/image-mime';
+import { coerceSupportedImageMimeType, makeImageContent } from '../core/screenshot/image-mime';
 
 interface ImageQaScreenshot {
   /** Opaque in-memory reference produced by a sibling tool. */

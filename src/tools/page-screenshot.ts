@@ -13,9 +13,9 @@ import {
   bufferToBase64WithPayloadGuard,
   resolveViewportDimensions,
   validateCaptureArea,
-} from '../utils/screenshot-guards';
+} from '../core/screenshot/guards';
 import { withTimeout } from '../utils/with-timeout';
-import { makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
+import { makeImageContent, type SupportedImageMimeType } from '../core/screenshot/image-mime';
 
 const FULL_PAGE_DIMENSION_TIMEOUT_MS = 5000;
 
