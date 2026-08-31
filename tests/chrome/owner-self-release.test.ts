@@ -5,8 +5,8 @@ import {
   releaseOwnerAfterStartupFailure,
   releaseOwnerIfChromeUnreachable,
   wireOwnerSelfRelease,
-} from '../src/chrome/owner-self-release';
-import { DebugPortTimeoutError } from '../src/chrome/launcher-debug-port';
+} from '../../src/chrome/owner-self-release';
+import { DebugPortTimeoutError } from '../../src/chrome/launcher-debug-port';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
