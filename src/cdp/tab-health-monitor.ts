@@ -13,7 +13,7 @@
 
 import { EventEmitter } from 'events';
 import { Page } from 'puppeteer-core';
-import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../utils/idle-state';
+import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../core/activity/idle-state';
 import { captureStates } from '../tools/console-capture';
 
 /** Fraction of maxBytes that triggers the pressure event. */
