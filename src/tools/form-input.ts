@@ -7,7 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
-import { withDomDelta } from '../utils/dom-delta';
+import { withDomDelta } from '../dom/dom-delta';
 import { isPilotEnabled } from '../harness/flags';
 import { captureElementReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { appendReturnAfterState, parseReturnAfterState, RETURN_AFTER_STATE_SCHEMA } from './_shared/return-after-state';

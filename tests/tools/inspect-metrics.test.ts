@@ -6,7 +6,7 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/shadow-dom', () => ({
+jest.mock('../../src/dom/shadow-dom', () => ({
   getAllShadowRoots: jest.fn().mockResolvedValue({ shadowRoots: [], domTree: {} }),
   querySelectorInShadowRoots: jest.fn().mockResolvedValue([]),
 }));

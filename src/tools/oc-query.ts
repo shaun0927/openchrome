@@ -10,9 +10,9 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
-import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { resolveElementsByAXTree } from '../utils/ax-element-resolver';
+import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../dom/element-discovery';
+import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../dom/element-finder';
+import { resolveElementsByAXTree } from '../dom/ax-element-resolver';
 
 export interface OcQueryResult {
   path: string;

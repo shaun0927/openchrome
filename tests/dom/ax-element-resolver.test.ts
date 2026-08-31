@@ -8,7 +8,7 @@ import {
   cascadeFilter,
   AXNodeFlat,
   MATCH_LEVEL_LABELS,
-} from '../../src/utils/ax-element-resolver';
+} from '../../src/dom/ax-element-resolver';
 
 describe('AX Element Resolver', () => {
   describe('parseQueryForAX', () => {

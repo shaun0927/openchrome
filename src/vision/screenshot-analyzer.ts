@@ -32,7 +32,7 @@ import type {
 } from './types';
 import { bufferToBase64WithPayloadGuard, resolveViewportDimensions, validateCaptureArea } from '../utils/screenshot-guards';
 import { detectImageMimeType } from '../utils/image-mime';
-import { cleanupTags, resolveBackendNodeIds } from '../utils/element-discovery';
+import { cleanupTags, resolveBackendNodeIds } from '../dom/element-discovery';
 
 /** Raw element collected from the page */
 export interface RawElement {

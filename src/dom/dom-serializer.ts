@@ -5,7 +5,7 @@
 import type { Page } from 'puppeteer-core';
 import { MAX_OUTPUT_CHARS, DEFAULT_MAX_SERIALIZER_NODES } from '../config/defaults';
 import { withTimeout } from '../utils/with-timeout';
-import { formatAffordancePrefix } from '../utils/element-affordance';
+import { formatAffordancePrefix } from './element-affordance';
 
 export interface DOMSerializerOptions {
   maxDepth?: number;                    // default: -1 (unlimited)
