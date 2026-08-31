@@ -148,7 +148,7 @@ jest.mock('../../src/watchdog/health-endpoint', () => ({
   })),
 }));
 
-jest.mock('../../src/utils/health-endpoint-gating', () => ({
+jest.mock('../../src/core/health-endpoint-gating', () => ({
   resolveHealthEndpointEnabled: jest.fn(() => false),
 }));
 

@@ -34,7 +34,7 @@ import { ChromeProcessWatchdog } from '../chrome/process-watchdog';
 import { TabHealthMonitor } from '../cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from '../watchdog/event-loop-monitor';
 import { HealthEndpoint } from '../watchdog/health-endpoint';
-import { resolveHealthEndpointEnabled } from '../utils/health-endpoint-gating';
+import { resolveHealthEndpointEnabled } from './health-endpoint-gating';
 import { DiskMonitor } from '../watchdog/disk-monitor';
 import { ChromeProcessMonitor } from '../watchdog/chrome-monitor';
 import { SessionStatePersistence } from '../session/state-persistence';
