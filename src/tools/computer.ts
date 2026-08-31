@@ -11,9 +11,9 @@ import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
 import { withDomDelta } from '../dom/dom-delta';
-import { generateVisualSummary } from '../utils/visual-summary';
-import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
-import { makeImageContent } from '../utils/image-mime';
+import { generateVisualSummary } from '../core/page/visual-summary';
+import { AdaptiveScreenshot } from '../core/screenshot/adaptive';
+import { makeImageContent } from '../core/screenshot/image-mime';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
 import { detectPagination, type PaginationInfo } from './pagination-detector';
@@ -22,7 +22,7 @@ import {
   resolveViewportDimensions,
   validateCaptureArea,
   validateInlineImagePayload,
-} from '../utils/screenshot-guards';
+} from '../core/screenshot/guards';
 import {
   appendReturnAfterState,
   parseReturnAfterState,

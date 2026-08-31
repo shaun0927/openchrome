@@ -16,7 +16,7 @@ import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-
 import { getVisionMode, trackVisionUsage } from '../vision/config';
 import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';
 import { formatAffordancePrefix } from '../dom/element-affordance';
-import { makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
+import { makeImageContent, type SupportedImageMimeType } from '../core/screenshot/image-mime';
 
 const definition: MCPToolDefinition = {
   name: 'find',

@@ -17,7 +17,7 @@ import { formatPerceptionSnapshotAsText } from '../vision/perception-provider';
 import { DomAnnotatorPerceptionProvider } from '../vision/providers/dom-annotator-provider';
 import { trackVisionUsage } from '../vision/config';
 import { recordVisualTrajectory } from '../observability/visual-trajectory';
-import { makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
+import { makeImageContent, type SupportedImageMimeType } from '../core/screenshot/image-mime';
 
 const definition: MCPToolDefinition = {
   name: 'vision_find',

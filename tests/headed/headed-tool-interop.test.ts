@@ -119,7 +119,7 @@ async function getInteractHandler(
   jest.doMock('../../src/dom/dom-delta', () => ({
     withDomDelta: jest.fn().mockResolvedValue({ domDelta: '' }),
   }));
-  jest.doMock('../../src/utils/visual-summary', () => ({
+  jest.doMock('../../src/core/page/visual-summary', () => ({
     generateVisualSummary: jest.fn().mockResolvedValue(null),
   }));
   jest.doMock('../../src/stealth/human-behavior', () => ({

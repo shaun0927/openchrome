@@ -1,25 +1,25 @@
 /// <reference types="jest" />
 
-import { createMockSessionManager } from '../utils/mock-session';
-import { MAX_INLINE_IMAGE_PAYLOAD_BYTES } from '../../src/config/defaults';
+import { createMockSessionManager } from '../../utils/mock-session';
+import { MAX_INLINE_IMAGE_PAYLOAD_BYTES } from '../../../src/config/defaults';
 import {
   bufferToBase64WithPayloadGuard,
   getBase64EncodedByteLengthForRawBytes,
-} from '../../src/utils/screenshot-guards';
+} from '../../../src/core/screenshot/guards';
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 
-jest.mock('../../src/session-manager', () => ({
+jest.mock('../../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
 async function getPageScreenshotHandler(mockSessionManager: ReturnType<typeof createMockSessionManager>) {
   jest.resetModules();
-  jest.doMock('../../src/session-manager', () => ({
+  jest.doMock('../../../src/session-manager', () => ({
     getSessionManager: () => mockSessionManager,
   }));
 
-  const { registerPageScreenshotTool } = await import('../../src/tools/page-screenshot');
+  const { registerPageScreenshotTool } = await import('../../../src/tools/page-screenshot');
   const tools = new Map<string, (sessionId: string, args: Record<string, unknown>) => Promise<unknown>>();
   const server = {
     registerTool: (name: string, handler: unknown) => {

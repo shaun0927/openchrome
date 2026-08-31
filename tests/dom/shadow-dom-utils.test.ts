@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { withDomDelta } from '../../src/dom/dom-delta';
-import { generateVisualSummary } from '../../src/utils/visual-summary';
+import { generateVisualSummary } from '../../src/core/page/visual-summary';
 import { getPageDiagnostics, detectBlockingPage } from '../../src/core/page/diagnostics';
 import { createMockPage } from '../utils/mock-cdp';
 
