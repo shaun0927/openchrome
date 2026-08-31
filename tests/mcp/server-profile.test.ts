@@ -3,18 +3,18 @@
  * Tests for MCPServer _profile injection in tool responses
  */
 
-import { createMockSessionManager } from './utils/mock-session';
+import { createMockSessionManager } from '../utils/mock-session';
 
 const mockGetProfileState = jest.fn();
 const mockForceReconnect = jest.fn().mockResolvedValue(undefined);
 
-jest.mock('../src/cdp/client', () => ({
+jest.mock('../../src/cdp/client', () => ({
   getCDPClient: jest.fn(() => ({
     forceReconnect: mockForceReconnect,
   })),
 }));
 
-jest.mock('../src/chrome/launcher', () => ({
+jest.mock('../../src/chrome/launcher', () => ({
   getChromeLauncher: jest.fn(() => ({
     ensureChrome: jest.fn().mockResolvedValue({
       wsEndpoint: 'ws://127.0.0.1:9222/devtools/browser/test',
@@ -27,15 +27,15 @@ jest.mock('../src/chrome/launcher', () => ({
   })),
 }));
 
-jest.mock('../src/session-manager', () => ({
+jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-import { getSessionManager } from '../src/session-manager';
-import { getChromeLauncher } from '../src/chrome/launcher';
-import { setGlobalConfig } from '../src/config/global';
-import { MCPServer } from '../src/mcp-server';
-import { MCPRequest, MCPToolDefinition } from '../src/types/mcp';
+import { getSessionManager } from '../../src/session-manager';
+import { getChromeLauncher } from '../../src/chrome/launcher';
+import { setGlobalConfig } from '../../src/config/global';
+import { MCPServer } from '../../src/mcp-server';
+import { MCPRequest, MCPToolDefinition } from '../../src/types/mcp';
 
 interface MCPResultResponse {
   jsonrpc: string;
