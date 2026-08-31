@@ -60,7 +60,7 @@ jest.mock('../../src/harness/flags', () => ({
   stopPilotBootstrap: jest.fn(),
 }));
 
-jest.mock('../../src/utils/pid-manager', () => ({
+jest.mock('../../src/chrome/pid-manager', () => ({
   writePidFile: jest.fn(),
   cleanOrphanedChromeProcesses: jest.fn(),
 }));

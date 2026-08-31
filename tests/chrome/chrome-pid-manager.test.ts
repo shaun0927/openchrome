@@ -13,7 +13,7 @@ import {
   removeChromePid,
   cleanOrphanedChromeProcesses,
   listActivePids,
-} from '../../src/utils/pid-manager';
+} from '../../src/chrome/pid-manager';
 
 describe('Chrome PID file tracking', () => {
   const TEST_PORT = 19222;

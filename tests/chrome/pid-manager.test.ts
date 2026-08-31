@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   cleanOrphanedChromeProcesses,
-} from '../../src/utils/pid-manager';
+} from '../../src/chrome/pid-manager';
 import {
   ensureSessionDir,
   getSessionBodyDir,

@@ -90,7 +90,7 @@ jest.mock('../../src/utils/puppeteer-helpers', () => ({
   getTargetId: (...args: any[]) => mockGetTargetId(...args),
 }));
 
-jest.mock('../../src/utils/process-guardian', () => ({
+jest.mock('../../src/chrome/process-guardian', () => ({
   spawnProcessGuardian: jest.fn(),
 }));
 

@@ -20,7 +20,7 @@ import { hasDisplay } from '../utils/display-detect';
 import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
 import { safeTitle } from '../utils/safe-title';
 import { getTargetId } from '../utils/puppeteer-helpers';
-import { spawnProcessGuardian } from '../utils/process-guardian';
+import { spawnProcessGuardian } from './process-guardian';
 import { writeMarker, removeMarker } from './ownership-marker';
 
 /** Default port offset from main Chrome port for the headed fallback */

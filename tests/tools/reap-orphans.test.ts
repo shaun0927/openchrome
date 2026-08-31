@@ -8,7 +8,7 @@ import { createMockSessionManager } from '../utils/mock-session';
 const mockCleanOrphanedChromeProcesses = jest.fn();
 const mockPreviewOrphanedChromeProcesses = jest.fn();
 
-jest.mock('../../src/utils/pid-manager', () => ({
+jest.mock('../../src/chrome/pid-manager', () => ({
   cleanOrphanedChromeProcesses: mockCleanOrphanedChromeProcesses,
   previewOrphanedChromeProcesses: mockPreviewOrphanedChromeProcesses,
 }));

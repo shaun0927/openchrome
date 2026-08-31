@@ -1,7 +1,7 @@
 /**
  * Parent process liveness watcher.
  *
- * Symmetric counterpart to spawnProcessGuardian (src/utils/process-guardian.ts):
+ * Symmetric counterpart to spawnProcessGuardian (src/chrome/process-guardian.ts):
  * spawnProcessGuardian kills Chrome when openchrome dies; installParentWatcher
  * kills openchrome when its launching MCP-client parent dies.
  *

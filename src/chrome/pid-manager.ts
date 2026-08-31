@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "../chrome/ownership-marker";
-import { listAllTokens } from "./session-resume-token";
+import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "./ownership-marker";
+import { listAllTokens } from "../utils/session-resume-token";
 import { getLifecycleBus } from "../core/lifecycle";
 import { cleanupAllStaleSessionsSync as cleanupNetworkBodiesSync } from "../core/network-capture/body-store";
 

@@ -39,7 +39,7 @@ import { DiskMonitor } from '../watchdog/disk-monitor';
 import { ChromeProcessMonitor } from '../watchdog/chrome-monitor';
 import { SessionStatePersistence } from '../session/state-persistence';
 import { getLifecycleBus, type LifecycleEventBus } from './lifecycle';
-import { writePidFile, cleanOrphanedChromeProcesses } from '../utils/pid-manager';
+import { writePidFile, cleanOrphanedChromeProcesses } from '../chrome/pid-manager';
 import { installParentWatcher } from '../utils/parent-watcher';
 import { installIdleTimeout } from '../utils/idle-timeout';
 import { getIdleState } from '../utils/idle-state';

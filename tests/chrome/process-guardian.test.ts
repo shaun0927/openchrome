@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnProcessGuardian } from '../../src/utils/process-guardian';
+import { spawnProcessGuardian } from '../../src/chrome/process-guardian';
 
 function isAlive(pid: number): boolean {
   try {
