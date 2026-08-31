@@ -35,10 +35,8 @@ reports — this is the same evidence discipline enforced for live headlines by
   GPT-5.4 coordinate prediction at 33.5%).
 - **OpenChrome action:** none until the corpus is released. We do not cite
   Webwright's Odysseys numbers in any benchmark headline produced by this
-  repo. When the dataset becomes available, we add an adapter in the same
-  shape as the
-  [Online-Mind2Web adapter](https://github.com/shaun0927/openchrome/issues/1427)
-  and re-classify [#1429](https://github.com/shaun0927/openchrome/issues/1429)
+  repo. When the dataset becomes available, we add a reproducible local
+  adapter and re-classify [#1429](https://github.com/shaun0927/openchrome/issues/1429)
   from `task` to `enhancement, verification`.
 
 ## Removal policy

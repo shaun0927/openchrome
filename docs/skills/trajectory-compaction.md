@@ -26,12 +26,11 @@ Webwright rather than presented as OpenChrome benchmark claims):
 | 100+ tool calls        | Every 50 steps      | `recent_k` + `checkpoint_only` snapshot |
 | Multi-session resume   | At resume           | `checkpoint_only`  |
 
-The lower bound (20) matches Webwright. The upper bound (50) is also
-theirs — the reported observation that "the next 50 steps deliver only
-3–4 additional accuracy points" on Online-Mind2Web — suggesting that
-beyond that point the marginal cost of carrying the raw trajectory
-tends to exceed the marginal benefit, so compaction pays off more
-often. These remain Webwright's figures, not OpenChrome measurements.
+The lower bound (20) matches Webwright. The upper bound (50) follows
+their reported diminishing-return observation for longer trajectories,
+suggesting that beyond that point the marginal cost of carrying the raw
+trajectory tends to exceed the marginal benefit, so compaction pays off
+more often. These remain Webwright's figures, not OpenChrome measurements.
 
 ## Picking a strategy
 
