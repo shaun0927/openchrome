@@ -182,7 +182,7 @@ jest.mock('../../src/utils/idle-state', () => ({
   getIdleState: jest.fn(() => ({})),
 }));
 
-jest.mock('../../src/utils/idle-timeout', () => ({
+jest.mock('../../src/core/process/idle-timeout', () => ({
   installIdleTimeout: jest.fn(() => ({ stop: jest.fn() })),
 }));
 

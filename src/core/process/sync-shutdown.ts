@@ -17,9 +17,9 @@
  * Best-effort: we never throw; failures are logged to stderr.
  */
 
-import { killProcessTree } from '../chrome/pid-manager';
-import { removeMarker } from '../chrome/ownership-marker';
-import { shouldKillChromeOnExit } from './session-resume-token';
+import { killProcessTree } from '../../chrome/pid-manager';
+import { removeMarker } from '../../chrome/ownership-marker';
+import { shouldKillChromeOnExit } from '../../utils/session-resume-token';
 
 const LOG_PREFIX = '[openchrome:sync-shutdown]';
 
