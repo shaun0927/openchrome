@@ -5,7 +5,7 @@
  * This is a pure function. It has no I/O, no Chrome dependency, and no opinion
  * on what the caller does with the diff. It produces facts — not a score, not
  * a verdict. The host agent decides whether the coverage is "good enough" for
- * its workflow (CI gating, recovery, memory promotion, external benchmarking).
+ * its workflow (CI gating, recovery, memory promotion, external evaluation).
  *
  * Design rules:
  *

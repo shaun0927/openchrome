@@ -2,7 +2,7 @@
 
 `oc_progress_status` reports read-only anti-wandering diagnostics for a session. It summarizes recent completed tool calls as `progressing`, `stalling`, or `stuck`, and returns bounded advisory next-call suggestions.
 
-The tool never stops an episode, retries a failed action, restores a checkpoint, clicks, types, navigates, or calls an LLM. Host agents and benchmark harnesses decide whether to follow the advisory policy.
+The tool never stops an episode, retries a failed action, restores a checkpoint, clicks, types, navigates, or calls an LLM. Host agents and test harnesses decide whether to follow the advisory policy.
 
 ## Thresholds
 

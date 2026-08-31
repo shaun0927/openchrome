@@ -16,8 +16,8 @@ The cadence reported in Webwright's blog post is **every 20 steps**.
 The table below is a *suggested* cadence derived from that report —
 `oc_journal_compact` enforces nothing, so these are host-side
 guidelines, not tool behaviour. OpenChrome has not independently
-re-measured these numbers (per #1359 P5 they stay attributed to
-Webwright rather than presented as OpenChrome benchmark claims):
+re-measured these numbers, so they stay attributed to Webwright rather than
+presented as OpenChrome product claims:
 
 | Trajectory length      | Recommended cadence | Strategy           |
 |------------------------|---------------------|--------------------|
