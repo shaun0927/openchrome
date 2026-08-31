@@ -42,6 +42,8 @@ Do not add ad hoc root folders for experiments, generated reports, worktrees,
 agent-local state, or one-off validation outputs. Put durable contributor
 documentation under `docs/`, runnable maintenance code under `scripts/`, and
 ignored local outputs under paths covered by `.gitignore`.
+`npm run lint:repo-structure` enforces the current `src/` root entry allow-list
+and prevents reintroducing the deprecated `tests/src` bucket.
 
 ## Package Publish Surface
 
