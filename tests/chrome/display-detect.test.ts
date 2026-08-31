@@ -23,13 +23,13 @@ describe('hasDisplay()', () => {
 
   test('returns true on macOS', async () => {
     jest.doMock('os', () => ({ ...jest.requireActual('os'), platform: () => 'darwin' }));
-    const { hasDisplay } = await import('../../src/utils/display-detect');
+    const { hasDisplay } = await import('../../src/chrome/display-detect');
     expect(hasDisplay()).toBe(true);
   });
 
   test('returns true on Windows', async () => {
     jest.doMock('os', () => ({ ...jest.requireActual('os'), platform: () => 'win32' }));
-    const { hasDisplay } = await import('../../src/utils/display-detect');
+    const { hasDisplay } = await import('../../src/chrome/display-detect');
     expect(hasDisplay()).toBe(true);
   });
 
@@ -37,7 +37,7 @@ describe('hasDisplay()', () => {
     jest.doMock('os', () => ({ ...jest.requireActual('os'), platform: () => 'linux' }));
     process.env.DISPLAY = ':0';
     delete process.env.WAYLAND_DISPLAY;
-    const { hasDisplay } = await import('../../src/utils/display-detect');
+    const { hasDisplay } = await import('../../src/chrome/display-detect');
     expect(hasDisplay()).toBe(true);
   });
 
@@ -45,7 +45,7 @@ describe('hasDisplay()', () => {
     jest.doMock('os', () => ({ ...jest.requireActual('os'), platform: () => 'linux' }));
     delete process.env.DISPLAY;
     process.env.WAYLAND_DISPLAY = 'wayland-0';
-    const { hasDisplay } = await import('../../src/utils/display-detect');
+    const { hasDisplay } = await import('../../src/chrome/display-detect');
     expect(hasDisplay()).toBe(true);
   });
 
@@ -53,7 +53,7 @@ describe('hasDisplay()', () => {
     jest.doMock('os', () => ({ ...jest.requireActual('os'), platform: () => 'linux' }));
     delete process.env.DISPLAY;
     delete process.env.WAYLAND_DISPLAY;
-    const { hasDisplay } = await import('../../src/utils/display-detect');
+    const { hasDisplay } = await import('../../src/chrome/display-detect');
     expect(hasDisplay()).toBe(false);
   });
 });
