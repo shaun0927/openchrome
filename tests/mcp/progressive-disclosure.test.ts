@@ -1,21 +1,21 @@
 /// <reference types="jest" />
 
-import { createMockSessionManager } from './utils/mock-session';
+import { createMockSessionManager } from '../utils/mock-session';
 
-jest.mock('../src/cdp/client', () => ({
+jest.mock('../../src/cdp/client', () => ({
   getCDPClient: jest.fn(() => ({
     forceReconnect: jest.fn().mockResolvedValue(undefined),
     isConnected: jest.fn().mockReturnValue(false),
   })),
 }));
 
-jest.mock('../src/session-manager', () => ({
+jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-import { getSessionManager } from '../src/session-manager';
-import { MCPServer } from '../src/mcp-server';
-import { registerAllTools } from '../src/tools';
+import { getSessionManager } from '../../src/session-manager';
+import { MCPServer } from '../../src/mcp-server';
+import { registerAllTools } from '../../src/tools';
 
 interface TestResponse {
   result?: {

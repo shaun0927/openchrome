@@ -3,25 +3,25 @@
  * Tests for MCP Server
  */
 
-import { createMockSessionManager } from './utils/mock-session';
+import { createMockSessionManager } from '../utils/mock-session';
 
 // Mock CDP client for reconnection tests
 const mockForceReconnect = jest.fn().mockResolvedValue(undefined);
-jest.mock('../src/cdp/client', () => ({
+jest.mock('../../src/cdp/client', () => ({
   getCDPClient: jest.fn(() => ({
     forceReconnect: mockForceReconnect,
   })),
 }));
 
 // Mock the session manager
-jest.mock('../src/session-manager', () => ({
+jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-import { getSessionManager } from '../src/session-manager';
-import { MCPServer } from '../src/mcp-server';
-import { MCPRequest, MCPErrorCodes, MCPToolDefinition } from '../src/types/mcp';
-import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS } from '../src/config/defaults';
+import { getSessionManager } from '../../src/session-manager';
+import { MCPServer } from '../../src/mcp-server';
+import { MCPRequest, MCPErrorCodes, MCPToolDefinition } from '../../src/types/mcp';
+import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_RECONNECT_TIMEOUT_MS } from '../../src/config/defaults';
 
 // Helper type for response with result
 interface MCPResultResponse {

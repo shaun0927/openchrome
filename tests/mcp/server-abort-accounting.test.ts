@@ -1,8 +1,8 @@
 /// <reference types="jest" />
-import { MCPServer } from '../src/mcp-server';
-import { getMetricsCollector } from '../src/metrics/collector';
-import { runWithRequestContext } from '../src/observability/request-id';
-import { ClientDisconnectError } from '../src/errors/abort';
+import { MCPServer } from '../../src/mcp-server';
+import { getMetricsCollector } from '../../src/metrics/collector';
+import { runWithRequestContext } from '../../src/observability/request-id';
+import { ClientDisconnectError } from '../../src/errors/abort';
 
 describe('MCPServer aborted tool accounting', () => {
   test('records client disconnects as aborted metrics instead of generic errors', async () => {
