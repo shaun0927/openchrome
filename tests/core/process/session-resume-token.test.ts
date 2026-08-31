@@ -10,7 +10,7 @@ import {
   killOnExitMode,
   reapExpiredTokens,
   tokenPathFor,
-} from '../../src/utils/session-resume-token';
+} from '../../../src/core/process/session-resume-token';
 
 describe('session-resume-token (#661 Phase 7)', () => {
   const stateDir = path.join(os.homedir(), '.openchrome', 'state');
