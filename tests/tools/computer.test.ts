@@ -41,7 +41,7 @@ describe('ComputerTool', () => {
       makeStaleRefError: (refId: string) => ({ code: 'STALE_REF', ref_id: refId, hint: "call read_page (mode='ax') to get fresh refs" }),
       formatStaleRefError: (refId: string) => `STALE_REF: ref_id="${refId}" — call read_page (mode='ax') to get fresh refs`,
     }));
-    jest.doMock('../../src/utils/pagination-detector', () => ({
+    jest.doMock('../../src/tools/pagination-detector', () => ({
       detectPagination: mockDetectPagination,
     }));
 
