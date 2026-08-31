@@ -26,7 +26,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { acquireLock } from '../../utils/atomic-file';
-import { normalizeUrl } from '../../utils/crawl-utils';
+import { normalizeUrl } from './utils';
 import { redactValue } from '../trace/redactor';
 import type { CrawlCacheMetadata, CrawlCacheMode, CrawlCacheScope } from './content-cache';
 

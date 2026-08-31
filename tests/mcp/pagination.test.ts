@@ -1,7 +1,7 @@
 /**
  * Tests for the standard pagination helper (#881).
  *
- * Validates the contract documented in src/utils/paginate.ts:
+ * Validates the contract documented in src/mcp/pagination.ts:
  *   - Cursor round-trip (encode → decode preserves offset/hash).
  *   - Page slicing is correct and yields concat-reconstruction.
  *   - hasMore correctly mirrors nextCursor presence.
@@ -15,7 +15,7 @@ import {
   decodeCursor,
   paginate,
   summarizeCursor,
-} from '../../src/utils/paginate';
+} from '../../src/mcp/pagination';
 
 describe('cursor encode/decode', () => {
   test('round-trip preserves offset', () => {

@@ -9,7 +9,7 @@
  *  3. Returns graceful fallback when page.evaluate throws synchronously
  */
 
-import { detectPagination, PaginationInfo } from '../../src/utils/pagination-detector';
+import { detectPagination, PaginationInfo } from '../../src/tools/pagination-detector';
 
 // ─── Mock helpers ─────────────────────────────────────────────────────────────
 

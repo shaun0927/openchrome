@@ -10,7 +10,7 @@ import { getSessionManager } from '../session-manager';
 import { pathMetaFor } from './_shared/path-meta';
 import { getRefIdManager, REF_TTL_MS, type SnapshotRefMetadata } from '../utils/ref-id-manager';
 import { serializeDOM } from '../dom';
-import { detectPagination, PaginationInfo } from '../utils/pagination-detector';
+import { detectPagination, PaginationInfo } from './pagination-detector';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
 import { isFastProfile } from '../config/runtime-profile';
 import { withTimeout } from '../utils/with-timeout';
@@ -23,7 +23,7 @@ import { applyContentFilter, parseContentFilterType } from '../core/extract/cont
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
 import { isStateHeaderEnabled, mergeHeaderJson, prependHeaderText } from './_shared/state-header';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
-import { decodeCursor, encodeCursor } from '../utils/paginate';
+import { decodeCursor, encodeCursor } from '../mcp/pagination';
 import { applyLaneTarget, recordLaneToolCall } from '../core/browser-lanes';
 
 const READ_PAGE_CURSOR_CHARS = 5000;

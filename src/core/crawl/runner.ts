@@ -21,7 +21,7 @@ import {
   isAllowedByRobots,
   CrawlTracker,
   type RobotsRules,
-} from '../../utils/crawl-utils';
+} from './utils';
 import { staticFetch } from '../../utils/static-fetch';
 import {
   fetchOnePage as defaultFetchOnePage,

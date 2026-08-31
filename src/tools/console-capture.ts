@@ -15,7 +15,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { createConsoleRingBuffer, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES } from '../core/console-buffer/ring-buffer';
 import type { ConsoleRingBuffer, ConsoleRingBufferStats } from '../core/console-buffer/types';
-import { paginate } from '../utils/paginate';
+import { paginate } from '../mcp/pagination';
 import { areBoundaryMarkersEnabled, wrapBoundaryMarker } from '../core/perception/boundary-markers';
 import { buildConsoleContractFact } from '../contracts/contract-facts';
 import {

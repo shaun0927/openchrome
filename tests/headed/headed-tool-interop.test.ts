@@ -26,7 +26,7 @@ jest.mock('../../src/security/domain-guard', () => ({
   assertDomainAllowed: jest.fn(),
 }));
 
-jest.mock('../../src/utils/pagination-detector', () => ({
+jest.mock('../../src/tools/pagination-detector', () => ({
   detectPagination: jest.fn().mockResolvedValue({ type: 'none' }),
 }));
 
@@ -66,7 +66,7 @@ async function getReadPageHandler(
   jest.doMock('../../src/security/domain-guard', () => ({
     assertDomainAllowed: jest.fn(),
   }));
-  jest.doMock('../../src/utils/pagination-detector', () => ({
+  jest.doMock('../../src/tools/pagination-detector', () => ({
     detectPagination: jest.fn().mockResolvedValue({ type: 'none' }),
   }));
   jest.doMock('../../src/config/global', () => ({

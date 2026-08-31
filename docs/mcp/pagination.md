@@ -1,6 +1,6 @@
 # Pagination convention
 
-This document is the human-readable companion to `src/utils/paginate.ts`. It
+This document is the human-readable companion to `src/mcp/pagination.ts`. It
 defines the opaque-cursor convention every paginated tool result in
 OpenChrome will follow. The convention mirrors the MCP-spec opaque-cursor
 pagination already used by `tools/list`, `resources/list`, etc., so clients
@@ -72,10 +72,10 @@ LLM-visible response free of recoverable failures.
 ## Helper API
 
 Use `paginate` / `encodeCursor` / `decodeCursor` from
-`src/utils/paginate.ts`. Example:
+`src/mcp/pagination.ts`. Example:
 
 ```ts
-import { paginate } from '../utils/paginate';
+import { paginate } from '../mcp/pagination';
 
 const allMatches = /* stable, deterministic ordering required */;
 const { items, hasMore, nextCursor, total, staleCursor } = paginate(allMatches, {
