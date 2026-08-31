@@ -11,7 +11,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../dom/element-discovery';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../dom/element-finder';
 import { resolveElementsByAXTree } from '../dom/ax-element-resolver';
-import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
+import { getCircuitBreaker } from '../recovery/ralph/circuit-breaker';
 import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
 import { getVisionMode, trackVisionUsage } from '../vision/config';
 import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';

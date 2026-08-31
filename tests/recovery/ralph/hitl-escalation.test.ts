@@ -7,7 +7,7 @@ import {
   buildHitlContext,
   formatHitlResponse,
   StrategyAttempt,
-} from '../../../src/utils/ralph/hitl-escalation';
+} from '../../../src/recovery/ralph/hitl-escalation';
 
 describe('HITL Escalation', () => {
   const baseAttempts: StrategyAttempt[] = [

@@ -283,7 +283,7 @@ describe('FindTool schema', () => {
       clearAXCache: jest.fn(),
       MATCH_LEVEL_LABELS: ['exact', 'partial', 'fuzzy'],
     }));
-    jest.doMock('../../src/utils/ralph/circuit-breaker', () => ({
+    jest.doMock('../../src/recovery/ralph/circuit-breaker', () => ({
       getCircuitBreaker: jest.fn(() => ({
         check: jest.fn().mockReturnValue({ allowed: true }),
         recordElementFailure: jest.fn(),

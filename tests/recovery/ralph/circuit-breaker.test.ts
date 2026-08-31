@@ -3,7 +3,7 @@
  * Unit tests for 3-Level Circuit Breaker
  */
 
-import { CircuitBreaker, hashQuery } from '../../../src/utils/ralph/circuit-breaker';
+import { CircuitBreaker, hashQuery } from '../../../src/recovery/ralph/circuit-breaker';
 
 describe('Circuit Breaker', () => {
   let breaker: CircuitBreaker;

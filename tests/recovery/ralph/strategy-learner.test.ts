@@ -23,7 +23,7 @@ import {
   learnStrategy,
   getLearnedStrategy,
   recordStrategyFailure,
-} from '../../../src/utils/ralph/strategy-learner';
+} from '../../../src/recovery/ralph/strategy-learner';
 
 describe('Strategy Learner', () => {
   beforeEach(() => {
