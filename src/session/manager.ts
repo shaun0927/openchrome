@@ -44,7 +44,7 @@ import { getTenantManager, isStrictTenantIsolationEnabled } from '../tenant/regi
 import type { TenantManager } from '../tenant/manager';
 import { DEFAULT_TENANT_ID, type TenantId } from '../tenant/types';
 import { currentRequestContext } from '../observability/request-id';
-import { Budget, isLegacyBudgetMode } from '../utils/budget';
+import { Budget, isLegacyBudgetMode } from '../core/deadline/budget';
 import {
   DEFAULT_SESSION_INIT_BUDGET_LAUNCH_FRACTION,
   DEFAULT_SESSION_INIT_BUDGET_CONNECT_FRACTION,

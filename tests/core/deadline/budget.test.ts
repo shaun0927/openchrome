@@ -1,5 +1,5 @@
-import { createBudget, isLegacyBudgetMode } from '../../src/utils/budget';
-import { SessionInitBudgetExhausted } from '../../src/cdp/errors';
+import { createBudget, isLegacyBudgetMode } from '../../../src/core/deadline/budget';
+import { SessionInitBudgetExhausted } from '../../../src/cdp/errors';
 
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

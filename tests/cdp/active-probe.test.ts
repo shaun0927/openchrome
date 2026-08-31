@@ -32,7 +32,7 @@ jest.mock('../../src/config/global', () => ({
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
 import { CDPClient } from '../../src/cdp/client';
-import { createBudget } from '../../src/utils/budget';
+import { createBudget } from '../../src/core/deadline/budget';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

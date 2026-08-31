@@ -98,7 +98,7 @@ class BudgetImpl implements Budget {
 
   private throwExhausted(context: string): never {
     // Lazy import avoids circular deps with other cdp modules if they evolve.
-    const { SessionInitBudgetExhausted } = require('../cdp/errors') as typeof import('../cdp/errors');
+    const { SessionInitBudgetExhausted } = require('../../cdp/errors') as typeof import('../../cdp/errors');
     throw new SessionInitBudgetExhausted(context, this.label, this.elapsedMs(), this.totalMs);
   }
 }

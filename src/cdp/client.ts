@@ -28,7 +28,7 @@ import {
   DEFAULT_RECONNECT_DELAY_MS,
   DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS,
 } from '../config/defaults';
-import { Budget, isLegacyBudgetMode } from '../utils/budget';
+import { Budget, isLegacyBudgetMode } from '../core/deadline/budget';
 import { withTimeout } from '../utils/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';

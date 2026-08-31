@@ -3,7 +3,7 @@
  *
  * Callers use `instanceof` to distinguish structural failure modes from
  * generic Error instances. Kept in its own file to avoid circular imports
- * from `client.ts` and `../utils/budget.ts`.
+ * from `client.ts` and `../core/deadline/budget.ts`.
  */
 
 /**

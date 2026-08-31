@@ -41,7 +41,7 @@ jest.mock('../../src/config/defaults', () => {
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
 import { CDPClient } from '../../src/cdp/client';
-import { createBudget } from '../../src/utils/budget';
+import { createBudget } from '../../src/core/deadline/budget';
 import { SessionInitBudgetExhausted } from '../../src/cdp/errors';
 
 const puppeteerMock = jest.requireMock('puppeteer-core') as { default: { connect: jest.Mock } };
