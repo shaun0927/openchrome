@@ -66,6 +66,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 | --- | --- |
 | `src/core/` | domain primitives shared by runtime features: lifecycle, contracts, output, metrics, tracing, crawl, task-run, and task-ledger. |
 | `src/tools/` | MCP tool implementations and tool-local helpers. Tool code may call `src/core`, but core code should not import tools. |
+| `src/mcp/` | MCP server implementation, protocol ingress helpers, session-init policy, and MCP output accounting. `src/mcp-server.ts` is a compatibility re-export for existing imports. |
 | `src/transports/` | MCP/HTTP transport surfaces and protocol adapters. |
 | `src/chrome/`, `src/cdp/`, `src/browser-state/` | Chrome process, CDP, and browser state integration. |
 | `src/session/` | session ownership, lease, snapshot, and lifecycle coordination. `src/session-manager.ts` is a compatibility re-export for existing imports; new code should import from `src/session/manager` or the nearest package entrypoint. |
