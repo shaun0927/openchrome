@@ -11,7 +11,7 @@
  *
  * This test verifies the metrics are *registered* and can accept values for
  * every documented status. Full behavior tests of _doFindAuthenticatedPageTargetId
- * would require heavy puppeteer mocks and live in tests/src/cdp-client-*.
+ * would require heavy puppeteer mocks and live in tests/cdp/client-*.
  */
 
 import { MetricsCollector, getMetricsCollector } from '../../src/metrics/collector';

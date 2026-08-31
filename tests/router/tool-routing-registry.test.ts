@@ -3,8 +3,8 @@
  * Tests for ToolRoutingRegistry (src/router/tool-routing-registry.ts)
  */
 
-import { ToolRoutingRegistry } from '../../../src/router/tool-routing-registry';
-import type { ToolRouting } from '../../../src/types/browser-backend';
+import { ToolRoutingRegistry } from '../../src/router/tool-routing-registry';
+import type { ToolRouting } from '../../src/types/browser-backend';
 
 describe('ToolRoutingRegistry', () => {
   it('should classify "computer" as chrome-only', () => {
