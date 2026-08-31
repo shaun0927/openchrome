@@ -39,7 +39,7 @@ import { getChromeLauncher } from '../chrome/launcher';
 import { getChromePool } from '../chrome/pool';
 import { ToolManifest, ToolEntry, ToolCategory } from '../types/tool-manifest';
 import { DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_MS, DEFAULT_SESSION_INIT_TIMEOUT_AUTO_LAUNCH_MS, DEFAULT_RECONNECT_TIMEOUT_MS, DEFAULT_OPERATION_GATE_TIMEOUT_MS, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS, DEFAULT_RATE_LIMIT_RPM } from '../config/defaults';
-import { createBudget, isLegacyBudgetMode } from '../utils/budget';
+import { createBudget, isLegacyBudgetMode } from '../core/deadline/budget';
 import { SessionInitBudgetExhausted } from '../cdp/errors';
 import { getGlobalEventLoopMonitor } from '../watchdog/event-loop-monitor';
 import { getIdleState } from '../core/activity/idle-state';
