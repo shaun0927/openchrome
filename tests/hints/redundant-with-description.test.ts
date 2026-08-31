@@ -8,8 +8,8 @@
  * that yields a synthetic call history.
  */
 
-import { HintEngine } from '../src/hints/hint-engine';
-import type { ActivityTracker } from '../src/dashboard/activity-tracker';
+import { HintEngine } from '../../src/hints/hint-engine';
+import type { ActivityTracker } from '../../src/dashboard/activity-tracker';
 
 interface ToolCallEvent {
   callId: string;
