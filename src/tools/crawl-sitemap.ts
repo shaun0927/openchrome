@@ -26,7 +26,7 @@ import {
   extractBodyText,
   StaticFetchError,
   StaticReason,
-} from '../utils/static-fetch';
+} from '../core/crawl/static-fetch';
 import { buildTextMetrics } from '../core/metrics/token-estimate';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { applyContentFilter, ContentFilterMetrics, parseContentFilterType, ContentFilterType } from '../core/extract/content-filter';

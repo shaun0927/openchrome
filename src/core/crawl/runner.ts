@@ -22,7 +22,7 @@ import {
   CrawlTracker,
   type RobotsRules,
 } from './utils';
-import { staticFetch } from '../../utils/static-fetch';
+import { staticFetch } from './static-fetch';
 import {
   fetchOnePage as defaultFetchOnePage,
   type FetchOnePageOptions,
