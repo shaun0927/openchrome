@@ -6,7 +6,7 @@ import {
   resetBrokerLifecycleForTest,
   setBrokerOwnerMode,
   shouldOcStopKeepChromeByDefault,
-} from '../src/broker/lifecycle';
+} from '../../src/broker/lifecycle';
 
 describe('broker lifecycle state', () => {
   beforeEach(() => resetBrokerLifecycleForTest());

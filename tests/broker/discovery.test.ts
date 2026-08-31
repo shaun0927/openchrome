@@ -8,7 +8,7 @@ import {
   readBrokerMetadata,
   removeBrokerMetadata,
   resolveLiveBrokerMetadata,
-} from '../src/broker/discovery';
+} from '../../src/broker/discovery';
 
 describe('broker discovery metadata', () => {
   let tmpDir: string;
