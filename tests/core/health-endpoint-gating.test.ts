@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { resolveHealthEndpointEnabled } from '../../src/utils/health-endpoint-gating';
+import { resolveHealthEndpointEnabled } from '../../src/core/health-endpoint-gating';
 
 /**
  * Pure-function tests for the health-endpoint gating resolver (issue #648 §5.2).
