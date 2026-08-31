@@ -726,7 +726,7 @@ program
       let shouldKill = true;
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { shouldKillChromeOnExit } = require('./utils/session-resume-token');
+        const { shouldKillChromeOnExit } = require('./core/process/session-resume-token');
         shouldKill = shouldKillChromeOnExit();
       } catch {
         // session-resume-token module may not be available — fall through
