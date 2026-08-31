@@ -1,10 +1,10 @@
 /// <reference types="jest" />
 
 import { StorageStateManager, StorageState, CDPClientLike } from '../../src/storage-state/storage-state-manager';
-import { writeFileAtomicSafe, readFileSafe } from '../../src/utils/atomic-file';
+import { writeFileAtomicSafe, readFileSafe } from '../../src/core/fs/atomic-file';
 import { Page } from 'puppeteer-core';
 
-jest.mock('../../src/utils/atomic-file', () => ({
+jest.mock('../../src/core/fs/atomic-file', () => ({
   writeFileAtomicSafe: jest.fn().mockResolvedValue(undefined),
   readFileSafe: jest.fn(),
 }));

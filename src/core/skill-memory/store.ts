@@ -35,7 +35,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 
-import { acquireLock, writeFileAtomicSafe } from '../../utils/atomic-file';
+import { acquireLock, writeFileAtomicSafe } from '../fs/atomic-file';
 
 import {
   SKILL_MEMORY_SCHEMA_VERSION,

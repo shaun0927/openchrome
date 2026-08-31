@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
+import { writeFileAtomicSafe, readFileSafe } from '../core/fs/atomic-file';
 
 export type ReflectionTrigger =
   | 'stuck'

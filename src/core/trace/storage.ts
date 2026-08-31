@@ -19,7 +19,7 @@
  * enough; the original PR's iteration log captured the same expectation.
  *
  * Write coordination uses `proper-lockfile` via `acquireLock` from
- * `src/utils/atomic-file.ts` so two `TraceStorage` instances against the
+ * `src/core/fs/atomic-file.ts` so two `TraceStorage` instances against the
  * same `rootDir` can interleave `recordSessionStart` / `appendEvents`
  * safely. JSONL appends are O_APPEND atomic for sub-PIPE_BUF writes and
  * meta.json writes go through `writeFileAtomicSafe` (temp+rename).
@@ -33,7 +33,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { acquireLock, writeFileAtomicSafe } from '../../utils/atomic-file';
+import { acquireLock, writeFileAtomicSafe } from '../fs/atomic-file';
 import type {
   TraceEvent,
   TraceListFilter,

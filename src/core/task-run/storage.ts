@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { acquireLock, writeFileAtomicSafe, readFileSafe } from '../../utils/atomic-file';
+import { acquireLock, writeFileAtomicSafe, readFileSafe } from '../fs/atomic-file';
 import { redactValue } from '../trace/redactor';
 import {
   EvidencePointer,

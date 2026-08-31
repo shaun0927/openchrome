@@ -10,7 +10,7 @@
 
 import * as path from 'path';
 import * as os from 'os';
-import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
+import { writeFileAtomicSafe, readFileSafe } from '../core/fs/atomic-file';
 import { getIdleState, IDLE_WINDOW_MS, IdleState } from '../core/activity/idle-state';
 
 /**

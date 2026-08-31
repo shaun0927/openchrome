@@ -1,5 +1,5 @@
 import { Page } from 'puppeteer-core';
-import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
+import { writeFileAtomicSafe, readFileSafe } from '../core/fs/atomic-file';
 import { DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS, DEFAULT_WATCHDOG_INTERVAL_MS } from '../config/defaults';
 
 export interface StorageState {

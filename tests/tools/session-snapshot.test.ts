@@ -14,13 +14,13 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/atomic-file', () => ({
+jest.mock('../../src/core/fs/atomic-file', () => ({
   writeFileAtomicSafe: jest.fn().mockResolvedValue(undefined),
 }));
 
 // fs.promises is mocked selectively per test via jest.spyOn
 import { getSessionManager } from '../../src/session-manager';
-import { writeFileAtomicSafe } from '../../src/utils/atomic-file';
+import { writeFileAtomicSafe } from '../../src/core/fs/atomic-file';
 import { runWithRequestContext } from '../../src/observability/request-id';
 import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
 
