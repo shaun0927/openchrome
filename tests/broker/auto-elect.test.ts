@@ -12,7 +12,7 @@ import {
   shouldClientAutoConnect,
   defaultBrokerHttpPort,
   BROKER_HTTP_PORT_OFFSET,
-} from '../src/broker/auto-elect';
+} from '../../src/broker/auto-elect';
 
 describe('isAutoElectEnabled', () => {
   test('true by default for direct serve --auto-launch path', () => {

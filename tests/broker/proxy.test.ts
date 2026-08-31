@@ -1,5 +1,5 @@
-import { BrokerProxyStdioBridge } from '../src/transports/broker-proxy';
-import type { BrokerMetadata } from '../src/broker/discovery';
+import { BrokerProxyStdioBridge } from '../../src/transports/broker-proxy';
+import type { BrokerMetadata } from '../../src/broker/discovery';
 
 const broker: BrokerMetadata = {
   schemaVersion: 1,
