@@ -31,7 +31,7 @@ import {
   type SnapshotKind,
   type SnapshotViewportRect,
 } from '../core/perception/snapshot-cache';
-import { getTargetId } from './puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 
 const FLAG_ENV_VAR = 'OPENCHROME_SNAPSHOT_CACHE';
 

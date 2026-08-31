@@ -19,7 +19,7 @@ import * as path from 'path';
 import { hasDisplay } from './display-detect';
 import { detectBlockingPage, BlockingInfo } from '../core/page/diagnostics';
 import { safeTitle } from '../core/page/safe-title';
-import { getTargetId } from '../utils/puppeteer-helpers';
+import { getTargetId } from '../cdp/target-id';
 import { spawnProcessGuardian } from './process-guardian';
 import { writeMarker, removeMarker } from './ownership-marker';
 
