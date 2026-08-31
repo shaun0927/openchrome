@@ -4,7 +4,7 @@
 // shared across sessions), so the limiter must expose a sweep() that reclaims
 // buckets idle beyond a cutoff. The MCP server schedules this on start().
 
-import { SessionRateLimiter } from '../../src/utils/rate-limiter';
+import { SessionRateLimiter } from '../../src/mcp/rate-limiter';
 
 describe('SessionRateLimiter.sweep', () => {
   it('reclaims tenant-keyed buckets once they pass the idle cutoff', () => {

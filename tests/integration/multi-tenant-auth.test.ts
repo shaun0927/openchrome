@@ -14,7 +14,7 @@ import { Socket } from 'net';
 import { ApiKeyStore } from '../../src/auth/api-key-store';
 import { authenticate, type AuthMode } from '../../src/middleware/auth';
 import { isAllowed, requiredScope } from '../../src/auth/scope-policy';
-import { SessionRateLimiter } from '../../src/utils/rate-limiter';
+import { SessionRateLimiter } from '../../src/mcp/rate-limiter';
 
 function tmpStore(): string {
   return path.join(os.tmpdir(), `oc-integ-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
