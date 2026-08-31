@@ -7,7 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { assertDomainAllowed } from '../security/domain-guard';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 
 const definition: MCPToolDefinition = {
   name: 'storage',

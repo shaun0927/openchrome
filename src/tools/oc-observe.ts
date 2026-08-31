@@ -25,7 +25,7 @@ import {
 } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../core/perception/ref-id-manager';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import type { CDPClient } from '../cdp/client';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 

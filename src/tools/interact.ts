@@ -13,7 +13,7 @@ import { withDomDelta } from '../dom/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS, DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS, DEFAULT_SCREENSHOT_TIMEOUT_MS } from '../config/defaults';
 import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../dom/element-finder';
 import { discoverElements, getTaggedElementRect, cleanupTags, DISCOVERY_TAG } from '../dom/element-discovery';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { makeImageContent } from '../core/screenshot/image-mime';
 import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS } from '../dom/ax-element-resolver';
 import { getTargetId } from '../cdp/target-id';

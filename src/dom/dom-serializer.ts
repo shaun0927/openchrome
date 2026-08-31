@@ -4,7 +4,7 @@
 
 import type { Page } from 'puppeteer-core';
 import { MAX_OUTPUT_CHARS, DEFAULT_MAX_SERIALIZER_NODES } from '../config/defaults';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { formatAffordancePrefix } from './element-affordance';
 
 export interface DOMSerializerOptions {

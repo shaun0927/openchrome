@@ -1,5 +1,5 @@
-import { OpenChromeTimeoutError } from '../errors/timeout';
-import { ToolContext, getRemainingBudget } from '../types/mcp';
+import { OpenChromeTimeoutError } from '../../errors/timeout';
+import { ToolContext, getRemainingBudget } from '../../types/mcp';
 
 /**
  * Race a promise against a timeout. Rejects with an OpenChromeTimeoutError if the timeout fires first.

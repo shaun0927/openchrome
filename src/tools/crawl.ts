@@ -13,7 +13,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget } fro
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { MAX_OUTPUT_CHARS } from '../config/defaults';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import {
   normalizeUrl,
   matchesScope,

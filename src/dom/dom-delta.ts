@@ -8,7 +8,7 @@
 
 import type { Page } from 'puppeteer-core';
 import { safeTitle } from '../core/page/safe-title';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 
 export interface DomDeltaOptions {
   /**

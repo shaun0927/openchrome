@@ -29,7 +29,7 @@ import {
   DEFAULT_SESSION_INIT_MIN_ATTEMPT_MS,
 } from '../config/defaults';
 import { Budget, isLegacyBudgetMode } from '../core/deadline/budget';
-import { withTimeout } from '../utils/with-timeout';
+import { withTimeout } from '../core/deadline/with-timeout';
 import { getMetricsCollector } from '../metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
