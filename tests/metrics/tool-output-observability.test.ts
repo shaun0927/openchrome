@@ -6,7 +6,7 @@ import { estimateOutputTokensFromChars, extractCacheStatus } from '../../src/mcp
 describe('tool output observability metrics', () => {
   afterEach(() => {
     jest.dontMock('../../src/session-manager');
-    jest.dontMock('../../src/utils/ref-id-manager');
+    jest.dontMock('../../src/core/perception/ref-id-manager');
     jest.dontMock('../../src/dom');
   });
 
@@ -84,7 +84,7 @@ describe('tool output observability metrics', () => {
         getCDPClient: jest.fn().mockReturnValue({ send: jest.fn() }),
       }),
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => ({
+    jest.doMock('../../src/core/perception/ref-id-manager', () => ({
       getRefIdManager: () => ({}),
     }));
     jest.doMock('../../src/dom', () => ({

@@ -22,7 +22,7 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 // Ref id manager mock
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn(() => ({
     generateRef: jest.fn().mockReturnValue('ref_1'),
   })),
@@ -142,7 +142,7 @@ describe('interact tool — coordinate mode', () => {
 
     // Re-apply all mocks after resetModules
     jest.mock('../../src/session-manager', () => ({ getSessionManager: jest.fn().mockReturnValue(mockSessionManager) }));
-    jest.mock('../../src/utils/ref-id-manager', () => ({ getRefIdManager: jest.fn(() => ({ generateRef: jest.fn().mockReturnValue('ref_1') })) }));
+    jest.mock('../../src/core/perception/ref-id-manager', () => ({ getRefIdManager: jest.fn(() => ({ generateRef: jest.fn().mockReturnValue('ref_1') })) }));
     jest.mock('../../src/dom/ax-element-resolver', () => ({ resolveElementsByAXTree: jest.fn().mockResolvedValue([]), invalidateAXCache: jest.fn(), MATCH_LEVEL_LABELS: {} }));
     jest.mock('../../src/dom/dom-delta', () => ({ withDomDelta: jest.fn().mockImplementation(async (_p: unknown, fn: () => Promise<void>) => { await fn(); return { delta: '' }; }) }));
     jest.mock('../../src/stealth/human-behavior', () => ({ humanMouseMove: jest.fn().mockResolvedValue(undefined) }));

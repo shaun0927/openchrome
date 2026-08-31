@@ -10,7 +10,7 @@
  *
  * Boundary: this file is the entire implementation. It reuses the existing
  * AX traversal (`Accessibility.getFullAXTree` — same as `read_page` mode='ax'),
- * the ref-id manager (`src/utils/ref-id-manager.ts`), and `DOM.getBoxModel`.
+ * the ref-id manager (`src/core/perception/ref-id-manager.ts`), and `DOM.getBoxModel`.
  * It deliberately does NOT introduce a parallel AX serializer.
  */
 
@@ -24,7 +24,7 @@ import {
   throwIfAborted,
 } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager } from '../core/perception/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
 import type { CDPClient } from '../cdp/client';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
