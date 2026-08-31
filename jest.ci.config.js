@@ -8,11 +8,11 @@ module.exports = {
     // Integration tests requiring Chrome/CDP connection
     'tests/chrome/launcher-port-race\\.test\\.ts',
     'tests/chrome/launcher-restart\\.test\\.ts',
-    'tests/src/cdp-active-probe\\.test\\.ts',
-    'tests/src/cdp-connect-coalescing\\.test\\.ts',
-    'tests/src/connection-pool\\.test\\.ts',
-    'tests/src/hybrid-integration\\.test\\.ts',
-    'tests/src/session-manager-ttl\\.test\\.ts',
+    'tests/cdp/active-probe\\.test\\.ts',
+    'tests/cdp/connect-coalescing\\.test\\.ts',
+    'tests/cdp/connection-pool-src\\.test\\.ts',
+    'tests/integration/hybrid-lightpanda\\.test\\.ts',
+    'tests/session/manager-ttl\\.test\\.ts',
     'tests/tools/computer\\.test\\.ts',
     // Tests with environment-specific dependencies
     'tests/hints/hint-engine\\.test\\.ts',

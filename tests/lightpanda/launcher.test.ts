@@ -20,7 +20,7 @@ global.fetch = jest.fn();
 
 import { spawn } from 'child_process';
 import * as puppeteer from 'puppeteer-core';
-import { LightpandaLauncher, LightpandaLauncherConfig } from '../../../src/lightpanda/launcher';
+import { LightpandaLauncher, LightpandaLauncherConfig } from '../../src/lightpanda/launcher';
 
 const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
 const mockConnect = puppeteer.connect as jest.MockedFunction<typeof puppeteer.connect>;
