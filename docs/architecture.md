@@ -157,7 +157,7 @@ SQLite. Concrete paths:
                                              unless OPENCHROME_HANDOFF_KEY_FILE)
 ```
 
-`src/utils/atomic-file.ts` provides `writeFileAtomicSafe`,
+`src/core/fs/atomic-file.ts` provides `writeFileAtomicSafe`,
 `readFileSafe`, and `acquireLock` helpers that every new storage layer
 uses.
 

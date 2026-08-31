@@ -11,7 +11,7 @@
  *
  * P2 compliance: all callers pass output_mode='inline' by default — the
  * store is only touched when a handle is explicitly requested.
- * P3 compliance: no new native deps; plain fs + existing atomic-file util.
+ * P3 compliance: no new native deps; plain fs + core fs atomic-file helper.
  * P5 compliance: no new package.json dependencies.
  */
 
@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import { writeFileAtomicSafe } from '../../utils/atomic-file';
+import { writeFileAtomicSafe } from '../fs/atomic-file';
 import type { OutputHandle, OutputHandleResponse } from './handle-store.types';
 
 export type { OutputHandle, OutputHandleResponse };

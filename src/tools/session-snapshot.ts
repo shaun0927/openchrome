@@ -12,7 +12,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getExistingChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
-import { writeFileAtomicSafe } from '../utils/atomic-file';
+import { writeFileAtomicSafe } from '../core/fs/atomic-file';
 import { safeTitle } from '../core/page/safe-title';
 import { currentRequestContext } from '../observability/request-id';
 import { assertFilePathAllowedBySessionRoots } from '../security/mcp-roots';
