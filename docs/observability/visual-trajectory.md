@@ -1,7 +1,7 @@
 # Visual trajectory evidence bundles
 
-Visual trajectory capture is disabled by default. Enable it only for debugging,
-benchmarking, or PR verification where visual/perception artifacts are needed.
+Visual trajectory capture is disabled by default. Enable it only for debugging
+or PR verification where visual/perception artifacts are needed.
 
 ## Enablement
 
