@@ -52,11 +52,8 @@ extension-unpacked/
 # Local MCP configuration
 .mcp.json
 
-# Claude Code ephemeral worktrees
-.claude/worktrees/
-
-# Claude Code local settings (not project-shared)
-.claude/settings.local.json
+# Claude Code local workspace state
+.claude/
 
 # Ad-hoc analysis/planning outputs
 x-crawl-*.json
