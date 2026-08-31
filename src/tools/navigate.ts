@@ -23,7 +23,7 @@ import { getHeadedFallback } from '../chrome/headed-fallback';
 import { getGlobalConfig } from '../config/global';
 import { autoRecallForUrl } from '../core/skill-memory/auto-recall';
 import type { Page } from 'puppeteer-core';
-import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
+import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 import { captureNavigationReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { getBrowserLane, recordLaneToolCall, resolveLaneForTool } from '../core/browser-lanes';
 

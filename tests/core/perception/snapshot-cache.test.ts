@@ -12,7 +12,7 @@
  *   5. Any uncertainty (stale epoch, ttl expiry) returns a forced miss.
  *
  * The test suite does NOT pull in the host-side CDP wiring; that lives in
- * `src/utils/snapshot-cache-helper.ts` and is verified by integration tests.
+ * `src/core/perception/snapshot-cache-helper.ts` and is verified by integration tests.
  */
 
 import {
@@ -20,7 +20,7 @@ import {
   type SnapshotCacheKey,
   type SnapshotKind,
 } from '../../../src/core/perception/snapshot-cache';
-import { getCacheForPage } from '../../../src/utils/snapshot-cache-helper';
+import { getCacheForPage } from '../../../src/core/perception/snapshot-cache-helper';
 
 function makeKey(
   cache: SnapshotCache,
