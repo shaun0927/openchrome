@@ -68,7 +68,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 | `src/tools/` | MCP tool implementations and tool-local helpers. Tool code may call `src/core`, but core code should not import tools. |
 | `src/transports/` | MCP/HTTP transport surfaces and protocol adapters. |
 | `src/chrome/`, `src/cdp/`, `src/browser-state/` | Chrome process, CDP, and browser state integration. |
-| `src/session/`, `src/session-manager.ts` | session ownership, lease, snapshot, and lifecycle coordination. New session code should prefer the `src/session/` folder; `src/session-manager.ts` remains the last root session module to move. |
+| `src/session/` | session ownership, lease, snapshot, and lifecycle coordination. `src/session-manager.ts` is a compatibility re-export for existing imports; new code should import from `src/session/manager` or the nearest package entrypoint. |
 | `src/router/` | routing browser/tool commands to the correct target or tab. |
 | `src/pilot/` | higher-level agent runtime features: skills, handoff, voting, credentials, curator, and automation runtime. |
 | `src/hints/`, `src/recovery/`, `src/failure/` | guidance, recovery, and failure classification. |
