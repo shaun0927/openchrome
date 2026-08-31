@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { getVersion } from '../version';
-import { controllerLockKey, isPidAlive, normalizeControllerUserDataDir } from '../utils/controller-lock';
+import { controllerLockKey, isPidAlive, normalizeControllerUserDataDir } from '../chrome/controller-lock';
 
 export interface BrokerIdentity {
   port: number;

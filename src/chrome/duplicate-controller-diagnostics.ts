@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { ProfileManager } from '../chrome/profile-manager';
+import { ProfileManager } from './profile-manager';
 import { getControllerLockPath, isPidAlive, normalizeControllerUserDataDir } from './controller-lock';
 
 export interface OpenChromeProcessInfo {

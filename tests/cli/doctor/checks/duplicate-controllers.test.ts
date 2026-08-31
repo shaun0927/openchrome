@@ -3,9 +3,9 @@ import { withPrescriptiveFields } from '../../../../src/cli/doctor';
 import {
   getCurrentControllerTopology,
   summarizeDuplicateControllerDiagnostics,
-} from '../../../../src/utils/duplicate-controller-diagnostics';
+} from '../../../../src/chrome/duplicate-controller-diagnostics';
 
-jest.mock('../../../../src/utils/duplicate-controller-diagnostics', () => ({
+jest.mock('../../../../src/chrome/duplicate-controller-diagnostics', () => ({
   getCurrentControllerTopology: jest.fn(),
   summarizeDuplicateControllerDiagnostics: jest.fn(),
 }));

@@ -6,7 +6,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import type { CheckFn } from '../../doctor';
-import { getCurrentControllerTopology, summarizeDuplicateControllerDiagnostics } from '../../../utils/duplicate-controller-diagnostics';
+import { getCurrentControllerTopology, summarizeDuplicateControllerDiagnostics } from '../../../chrome/duplicate-controller-diagnostics';
 
 function displayPath(filePath: string): string {
   const homes = [os.homedir()];
