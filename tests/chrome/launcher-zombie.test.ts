@@ -9,7 +9,7 @@
 jest.unmock('../../src/chrome/launcher');
 
 import { ChromeLauncher } from '../../src/chrome/launcher';
-import * as pidManager from '../../src/utils/pid-manager';
+import * as pidManager from '../../src/chrome/pid-manager';
 
 // Mock child_process to prevent real Chrome spawning
 jest.mock('child_process', () => {
@@ -58,8 +58,8 @@ jest.mock('fs', () => {
 });
 
 // Mock pid-manager to track calls
-jest.mock('../../src/utils/pid-manager', () => {
-  const actual = jest.requireActual('../../src/utils/pid-manager');
+jest.mock('../../src/chrome/pid-manager', () => {
+  const actual = jest.requireActual('../../src/chrome/pid-manager');
   return {
     ...actual,
     writeChromePid: jest.fn(),
