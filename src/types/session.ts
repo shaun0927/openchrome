@@ -80,7 +80,7 @@ export interface SessionCreateOptions {
   tenantId?: TenantId;
   /** Optional time budget for the underlying CDP connect path (A-3).
    *  Typed as `unknown` here to keep the shared types file free of a
-   *  dependency on the utils/budget module; consumers cast to `Budget`. */
+   *  dependency on the core/deadline/budget module; consumers cast to `Budget`. */
   budget?: unknown;
 }
 
