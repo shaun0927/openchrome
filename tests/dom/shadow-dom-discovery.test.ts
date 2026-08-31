@@ -4,7 +4,7 @@ import {
   getAllShadowRoots,
   querySelectorInShadowRoots,
   discoverShadowElements,
-} from '../../src/utils/shadow-dom';
+} from '../../src/dom/shadow-dom';
 
 // ─── Mock helpers ─────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { classifyElementAffordance, formatAffordancePrefix, getAffordanceMarker } from '../../src/utils/element-affordance';
+import { classifyElementAffordance, formatAffordancePrefix, getAffordanceMarker } from '../../src/dom/element-affordance';
 
 describe('element affordance classifier', () => {
   test.each([

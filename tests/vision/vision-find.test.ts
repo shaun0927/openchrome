@@ -277,7 +277,7 @@ describe('FindTool schema', () => {
     jest.doMock('../../src/utils/ref-id-manager', () => ({
       getRefIdManager: jest.fn(() => ({})),
     }));
-    jest.doMock('../../src/utils/ax-element-resolver', () => ({
+    jest.doMock('../../src/dom/ax-element-resolver', () => ({
       resolveElementsByAXTree: jest.fn().mockResolvedValue([]),
       invalidateAXCache: jest.fn(),
       clearAXCache: jest.fn(),

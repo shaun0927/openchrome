@@ -8,14 +8,14 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { withTimeout } from '../utils/with-timeout';
-import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
-import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../utils/element-finder';
-import { resolveElementsByAXTree } from '../utils/ax-element-resolver';
+import { discoverElements, cleanupTags, DISCOVERY_TAG } from '../dom/element-discovery';
+import { FoundElement, normalizeQuery, scoreElement, tokenizeQuery } from '../dom/element-finder';
+import { resolveElementsByAXTree } from '../dom/ax-element-resolver';
 import { getCircuitBreaker } from '../utils/ralph/circuit-breaker';
 import { analyzeScreenshot, formatElementMapAsText } from '../vision/screenshot-analyzer';
 import { getVisionMode, trackVisionUsage } from '../vision/config';
 import { detectVisionHints, formatVisionHints } from '../vision/auto-detect';
-import { formatAffordancePrefix } from '../utils/element-affordance';
+import { formatAffordancePrefix } from '../dom/element-affordance';
 import { makeImageContent, type SupportedImageMimeType } from '../utils/image-mime';
 
 const definition: MCPToolDefinition = {

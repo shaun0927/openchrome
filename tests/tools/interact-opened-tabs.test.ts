@@ -13,18 +13,18 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
     resolveToBackendNodeId: jest.fn(),
   })),
 }));
-jest.mock('../../src/utils/ax-element-resolver', () => ({
+jest.mock('../../src/dom/ax-element-resolver', () => ({
   resolveElementsByAXTree: (...args: unknown[]) => mockResolveElementsByAXTree(...args),
   invalidateAXCache: jest.fn(),
   MATCH_LEVEL_LABELS: { 1: 'exact match' },
 }));
-jest.mock('../../src/utils/dom-delta', () => ({
+jest.mock('../../src/dom/dom-delta', () => ({
   withDomDelta: jest.fn().mockImplementation(async (_page: unknown, fn: () => Promise<void>) => {
     await fn();
     return { delta: '' };
   }),
 }));
-jest.mock('../../src/utils/element-discovery', () => ({
+jest.mock('../../src/dom/element-discovery', () => ({
   discoverElements: (...args: unknown[]) => mockDiscoverElements(...args),
   cleanupTags: jest.fn().mockResolvedValue(undefined),
   getTaggedElementRect: jest.fn().mockResolvedValue(null),

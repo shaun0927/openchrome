@@ -22,7 +22,7 @@ jest.mock('../../src/utils/ref-id-manager', () => {
     getRefIdManager: jest.fn(),
   };
 });
-jest.mock('../../src/utils/ax-element-resolver', () => ({
+jest.mock('../../src/dom/ax-element-resolver', () => ({
   resolveElementsByAXTree: jest.fn().mockResolvedValue([]),
   invalidateAXCache: jest.fn(),
   clearAXCache: jest.fn(),
@@ -214,7 +214,7 @@ describe('Snapshot Refs (#831)', () => {
       expect(result.content[0].text).toContain(`[${refId}]`);
 
       // AX-tree resolver must NOT have been called — we took the ref fast-path.
-      const { resolveElementsByAXTree } = await import('../../src/utils/ax-element-resolver');
+      const { resolveElementsByAXTree } = await import('../../src/dom/ax-element-resolver');
       expect(resolveElementsByAXTree).not.toHaveBeenCalled();
     });
 

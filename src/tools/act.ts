@@ -10,15 +10,15 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { withDomDelta } from '../utils/dom-delta';
+import { withDomDelta } from '../dom/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
-import { normalizeQuery } from '../utils/element-finder';
-import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement } from '../utils/ax-element-resolver';
+import { normalizeQuery } from '../dom/element-finder';
+import { resolveElementsByAXTree, invalidateAXCache, AXResolvedElement } from '../dom/ax-element-resolver';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { classifyOutcome, formatOutcomeLine } from '../utils/ralph/outcome-classifier';
 import { humanMouseMove, humanType } from '../stealth/human-behavior';
 import { withTimeout } from '../utils/with-timeout';
-import { cleanupTags, DISCOVERY_TAG } from '../utils/element-discovery';
+import { cleanupTags, DISCOVERY_TAG } from '../dom/element-discovery';
 import { parseInstruction, ParsedAction } from '../actions/action-parser';
 import { matchTemplate } from '../actions/action-templates';
 import {

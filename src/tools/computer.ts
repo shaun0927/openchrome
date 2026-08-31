@@ -10,7 +10,7 @@ import { getSessionManager } from '../session-manager';
 import { getScreenshotScheduler } from '../cdp/screenshot-scheduler';
 import { getRefIdManager, formatStaleRefError, makeStaleRefError } from '../utils/ref-id-manager';
 import { DEFAULT_SCREENSHOT_RACE_TIMEOUT_MS } from '../config/defaults';
-import { withDomDelta } from '../utils/dom-delta';
+import { withDomDelta } from '../dom/dom-delta';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { makeImageContent } from '../utils/image-mime';

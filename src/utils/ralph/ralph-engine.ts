@@ -17,10 +17,10 @@
 import type { Page } from 'puppeteer-core';
 import type { CDPClient } from '../../cdp/client';
 import { dispatchCoordinateClick } from '../../cdp/input';
-import { withDomDelta } from '../dom-delta';
-import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS, AXResolvedElement } from '../ax-element-resolver';
-import { discoverElements, cleanupTags, DISCOVERY_TAG, getTaggedElementRect } from '../element-discovery';
-import { FoundElement, scoreElement, tokenizeQuery } from '../element-finder';
+import { withDomDelta } from '../../dom/dom-delta';
+import { resolveElementsByAXTree, invalidateAXCache, MATCH_LEVEL_LABELS, AXResolvedElement } from '../../dom/ax-element-resolver';
+import { discoverElements, cleanupTags, DISCOVERY_TAG, getTaggedElementRect } from '../../dom/element-discovery';
+import { FoundElement, scoreElement, tokenizeQuery } from '../../dom/element-finder';
 import { classifyOutcome, formatOutcomeLine, InteractionOutcome } from './outcome-classifier';
 import { getTargetId } from '../puppeteer-helpers';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../../config/defaults';
