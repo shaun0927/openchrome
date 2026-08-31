@@ -13,7 +13,7 @@ import { withTimeout } from '../utils/with-timeout';
 import { getAllShadowRoots, querySelectorInShadowRoots } from '../dom/shadow-dom';
 import { isSnapshotCacheEnabled } from '../utils/snapshot-cache-helper';
 import { getCurrentLoaderId, mintNodeRefSync } from '../core/perception/node-ref';
-import { decodeCursor, encodeCursor, paginate } from '../utils/paginate';
+import { decodeCursor, encodeCursor, paginate } from '../mcp/pagination';
 
 // ---------------------------------------------------------------------------
 // Shared types

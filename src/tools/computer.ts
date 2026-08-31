@@ -16,7 +16,7 @@ import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { makeImageContent } from '../utils/image-mime';
 import { withTimeout } from '../utils/with-timeout';
 import { retryWithFallback } from '../utils/retry-with-fallback';
-import { detectPagination, type PaginationInfo } from '../utils/pagination-detector';
+import { detectPagination, type PaginationInfo } from './pagination-detector';
 import {
   getBase64EncodedByteLength,
   resolveViewportDimensions,

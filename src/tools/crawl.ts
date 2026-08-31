@@ -2,7 +2,7 @@
  * Crawl Tool - Recursive web crawling via BFS traversal
  *
  * Opens pages in new tabs, extracts content and links, respects robots.txt
- * and scope constraints. Uses CrawlTracker from crawl-utils for deduplication.
+ * and scope constraints. Uses CrawlTracker from core crawl utilities for deduplication.
  *
  * @see https://github.com/shaun0927/openchrome/issues/576
  */
@@ -22,7 +22,7 @@ import {
   isAllowedByRobots,
   CrawlTracker,
   RobotsRules,
-} from '../utils/crawl-utils';
+} from '../core/crawl/utils';
 import {
   staticFetch,
   isStaticSufficient,
@@ -45,7 +45,7 @@ import {
   parseCrawlCacheMode,
   parseCrawlCacheScope,
 } from '../core/crawl/content-cache';
-import { decodeCursor, encodeCursor } from '../utils/paginate';
+import { decodeCursor, encodeCursor } from '../mcp/pagination';
 
 const CRAWL_CURSOR_PAGE_SIZE = 25;
 

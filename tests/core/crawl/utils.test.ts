@@ -16,7 +16,7 @@ import {
   isAllowedByRobots,
   parseSitemapXml,
   CrawlTracker,
-} from '../../src/utils/crawl-utils';
+} from '../../../src/core/crawl/utils';
 
 // ---------------------------------------------------------------------------
 // normalizeUrl

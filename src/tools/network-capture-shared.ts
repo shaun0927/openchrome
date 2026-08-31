@@ -16,7 +16,7 @@ import {
 } from '../core/network-capture/recorder';
 import { MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { paginate } from '../utils/paginate';
+import { paginate } from '../mcp/pagination';
 
 export const NETWORK_CAPTURE_INPUT_SCHEMA = {
   type: 'object' as const,

@@ -19,7 +19,7 @@ import {
   parseRobotsTxt,
   CrawlTracker,
   urlGlobToRegex,
-} from '../utils/crawl-utils';
+} from '../core/crawl/utils';
 import {
   staticFetch,
   isStaticSufficient,
