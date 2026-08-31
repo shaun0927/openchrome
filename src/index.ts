@@ -36,7 +36,7 @@ import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
 import { resolveHealthEndpointEnabled } from './utils/health-endpoint-gating';
 import { DiskMonitor } from './watchdog/disk-monitor';
 import { ChromeProcessMonitor } from './watchdog/chrome-monitor';
-import { SessionStatePersistence } from './session-state-persistence';
+import { SessionStatePersistence } from './session/state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
 import { getChromeLauncher } from './chrome/launcher';

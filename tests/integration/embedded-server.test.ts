@@ -168,7 +168,7 @@ jest.mock('../../src/watchdog/chrome-monitor', () => ({
   })),
 }));
 
-jest.mock('../../src/session-state-persistence', () => ({
+jest.mock('../../src/session/state-persistence', () => ({
   SessionStatePersistence: jest.fn().mockImplementation(() => ({
     restore: jest.fn().mockResolvedValue(null),
     scheduleSave: jest.fn(),

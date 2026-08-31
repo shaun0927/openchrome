@@ -12,7 +12,7 @@ import {
   TaskRunTransitionError,
   UpdateTaskRunInput,
 } from '../core/task-run';
-import { buildAutoSnapshotArgs, SnapshotTrigger } from '../session-snapshot-policy';
+import { buildAutoSnapshotArgs, SnapshotTrigger } from '../session/snapshot-policy';
 import { collectTabs, generateSnapshotId, saveSnapshot, SessionSnapshot } from './session-snapshot';
 
 const store = new TaskRunStore();
