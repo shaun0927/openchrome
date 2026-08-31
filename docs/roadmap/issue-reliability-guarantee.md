@@ -35,7 +35,7 @@ Originally-missing glue, now **delivered**:
   HTTP transport (`src/transports/http.ts`, PR #392)
 - ~~Reconnection attempts are capped at 5 (fatal for overnight runs)~~ → infinite reconnection in
   HTTP mode (`DEFAULT_MAX_RECONNECT_ATTEMPTS_HTTP = Infinity`, PR #395)
-- ~~There are no rate limits~~ → per-session/tenant token bucket (`src/utils/rate-limiter.ts`, PR #397)
+- ~~There are no rate limits~~ → per-session/tenant token bucket (`src/mcp/rate-limiter.ts`, PR #397)
 - ~~The event-loop watchdog is disabled by default~~ → `DEFAULT_EVENT_LOOP_FATAL_MS = 30000` (PR #398)
 - ~~Domain memory uses synchronous I/O~~ → `fs/promises` async path (`src/memory/domain-memory.ts`, PR #398)
 - ~~There are no Prometheus metrics~~ → `/metrics` endpoint + collector (`src/metrics/collector.ts`, PR #399)

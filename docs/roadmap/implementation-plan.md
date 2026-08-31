@@ -278,7 +278,7 @@ Per-session bucketing prevents one runaway session from throttling others. Bucke
 
 ### Files to Create
 
-**`src/utils/rate-limiter.ts`**
+**`src/mcp/rate-limiter.ts`**
 
 ```typescript
 export interface RateLimiterOptions {
@@ -330,7 +330,7 @@ export const DEFAULT_RATE_LIMIT_PER_MIN = 60;
 
 ### Implementation Steps
 
-1. Implement `TokenBucket` class in `src/utils/rate-limiter.ts` with unit tests.
+1. Implement `TokenBucket` class in `src/mcp/rate-limiter.ts` with unit tests.
 2. Add `DEFAULT_RATE_LIMIT_PER_MIN` to `src/config/defaults.ts`.
 3. Add `rateLimiters` map to `MCPServer`.
 4. Wire rate limit check at the top of `handleToolsCall()`.

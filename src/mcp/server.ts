@@ -43,7 +43,7 @@ import { createBudget, isLegacyBudgetMode } from '../utils/budget';
 import { SessionInitBudgetExhausted } from '../cdp/errors';
 import { getGlobalEventLoopMonitor } from '../watchdog/event-loop-monitor';
 import { getIdleState } from '../utils/idle-state';
-import { SessionRateLimiter } from '../utils/rate-limiter';
+import { SessionRateLimiter } from './rate-limiter';
 import { getGlobalConfig } from '../config/global';
 import { getToolTier, ToolTier } from '../config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from '../metrics/collector';

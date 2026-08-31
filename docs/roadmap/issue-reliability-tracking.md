@@ -101,7 +101,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 **Goal:** Protect the server from request floods that would exhaust CDP connections or Chrome resources, ensuring degradation is graceful (clean rejection) rather than catastrophic (hang or crash).
 
 **Key Changes:**
-- `src/utils/rate-limiter.ts` (new) — sliding-window rate limiter, per-session keyed by HTTP client identity
+- `src/mcp/rate-limiter.ts` (new) — sliding-window rate limiter, per-session keyed by HTTP client identity
 - `src/mcp-server.ts` — rate limiter middleware applied before tool dispatch; over-limit requests return JSON-RPC error immediately (no queuing, no hang)
 - `src/config/defaults.ts` — `OPENCHROME_RATE_LIMIT_RPM` (default: `120`), `OPENCHROME_RATE_LIMIT_BURST` (default: `20`)
 
@@ -110,7 +110,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 **Files Changed:**
 - `src/config/defaults.ts`
 - `src/mcp-server.ts`
-- `src/utils/rate-limiter.ts` (new)
+- `src/mcp/rate-limiter.ts` (new)
 
 **Configuration:**
 - `OPENCHROME_RATE_LIMIT_RPM` — requests per minute limit per session (default: `120`)
