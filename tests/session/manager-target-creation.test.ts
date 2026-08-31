@@ -31,7 +31,7 @@ jest.mock('../../src/cdp/connection-pool', () => ({
   getCDPConnectionPool: jest.fn().mockReturnValue({}),
 }));
 
-jest.mock('../../src/utils/request-queue', () => ({
+jest.mock('../../src/session/request-queue', () => ({
   RequestQueueManager: jest.fn().mockImplementation(() => ({
     enqueue: jest.fn((_: string, fn: () => Promise<unknown>) => fn()),
     deleteQueue: jest.fn(),

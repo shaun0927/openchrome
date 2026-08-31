@@ -24,7 +24,7 @@ import {
   getNamedContextRegistry,
 } from '../chrome/contexts';
 import { getGlobalConfig } from '../config/global';
-import { RequestQueueManager } from '../utils/request-queue';
+import { RequestQueueManager } from './request-queue';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { smartGoto } from '../utils/smart-goto';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS, DEFAULT_WATCHDOG_INTERVAL_MS } from '../config/defaults';

@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { RequestQueue } from '../../src/utils/request-queue';
+import { RequestQueue } from '../../src/session/request-queue';
 
 describe('RequestQueue timer lifecycle', () => {
   afterEach(() => {
