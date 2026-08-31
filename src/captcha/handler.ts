@@ -8,7 +8,7 @@
  */
 
 import type { Page } from 'puppeteer-core';
-import type { BlockingInfo } from '../utils/page-diagnostics';
+import type { BlockingInfo } from '../core/page/diagnostics';
 import { detectCaptcha } from './detect';
 import { getSolverRegistry, waitForSolverReady } from './solver-registry';
 import { injectSolution } from './inject-solution';
@@ -120,7 +120,7 @@ export async function handleCaptcha(
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Post-injection verification: confirm the CAPTCHA is actually dismissed
-    const { detectBlockingPage } = await import('../utils/page-diagnostics');
+    const { detectBlockingPage } = await import('../core/page/diagnostics');
     const stillBlocked = await detectBlockingPage(page).catch(() => null);
     if (stillBlocked?.type === 'captcha') {
       if (domain) {

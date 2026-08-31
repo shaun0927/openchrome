@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 import type { Page } from 'puppeteer-core';
-import { safeTitle } from '../../src/utils/safe-title';
+import { safeTitle } from '../../../src/core/page/safe-title';
 
 describe('safeTitle', () => {
   afterEach(() => {

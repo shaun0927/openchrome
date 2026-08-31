@@ -7,7 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
-import { waitForPageReady } from '../utils/page-ready-state';
+import { waitForPageReady } from '../core/page/ready-state';
 import { formatStaleRefError, getRefIdManager } from '../utils/ref-id-manager';
 import { extractMainContent, toMarkdown } from '../core/extract/html-to-markdown';
 import { sanitizeContent } from '../security/content-sanitizer';

@@ -12,7 +12,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { writeFileAtomicSafe, readFileSafe } from '../utils/atomic-file';
 import { getSessionManager } from '../session-manager';
-import { safeTitle } from '../utils/safe-title';
+import { safeTitle } from '../core/page/safe-title';
 import { getActiveActionRecorder } from '../recording/action-recorder';
 
 // ─── Types ─────────────────────────────────────────────────────────────────

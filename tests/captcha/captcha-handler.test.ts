@@ -1,7 +1,7 @@
 /**
  * CAPTCHA Handler Tests (#574)
  */
-import { BlockingInfo } from '../../src/utils/page-diagnostics';
+import { BlockingInfo } from '../../src/core/page/diagnostics';
 
 describe('CAPTCHA Handler', () => {
   it('should export handleCaptcha function', async () => {

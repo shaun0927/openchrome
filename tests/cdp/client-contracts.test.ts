@@ -19,7 +19,7 @@ jest.mock('../../src/config/global', () => ({
 }));
 
 const smartGoto = jest.fn();
-jest.mock('../../src/utils/smart-goto', () => ({
+jest.mock('../../src/core/page/smart-goto', () => ({
   smartGoto: (...args: unknown[]) => smartGoto(...args),
 }));
 
