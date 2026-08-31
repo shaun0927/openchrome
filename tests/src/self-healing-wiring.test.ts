@@ -93,7 +93,7 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
 }));
 
 import { SessionManager } from '../../src/session-manager';
-import { SessionStatePersistence } from '../../src/session-state-persistence';
+import { SessionStatePersistence } from '../../src/session/state-persistence';
 
 // ─── SessionManager.getSessions() ────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { MCPClient, MCPToolResult } from '../harness/mcp-client';
 import { sleep } from '../harness/time-scale';
-import { SessionStatePersistence } from '../../../src/session-state-persistence';
+import { SessionStatePersistence } from '../../../src/session/state-persistence';
 
 /** Try to parse JSON from individual content items (handles multi-block MCP responses) */
 function tryParseJSON(result: MCPToolResult): unknown | null {
