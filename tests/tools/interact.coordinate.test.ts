@@ -70,7 +70,7 @@ jest.mock('../../src/cdp/target-id', () => ({
 }));
 
 // Outcome classifier mock
-jest.mock('../../src/utils/ralph/outcome-classifier', () => ({
+jest.mock('../../src/recovery/ralph/outcome-classifier', () => ({
   classifyOutcome: jest.fn().mockReturnValue('SUCCESS'),
   formatOutcomeLine: jest.fn().mockImplementation(
     (_outcome: string, verb: string, desc: string, ref: string, source: string) =>
@@ -79,7 +79,7 @@ jest.mock('../../src/utils/ralph/outcome-classifier', () => ({
 }));
 
 // Circuit breaker mock
-jest.mock('../../src/utils/ralph/circuit-breaker', () => ({
+jest.mock('../../src/recovery/ralph/circuit-breaker', () => ({
   getCircuitBreaker: jest.fn().mockReturnValue({
     check: jest.fn().mockReturnValue({ allowed: true }),
     recordFailure: jest.fn(),
@@ -149,8 +149,8 @@ describe('interact tool — coordinate mode', () => {
     jest.mock('../../src/dom/element-discovery', () => ({ discoverElements: jest.fn().mockResolvedValue([]), cleanupTags: jest.fn().mockResolvedValue(undefined), getTaggedElementRect: jest.fn().mockResolvedValue(null), DISCOVERY_TAG: 'data-oc-discovery' }));
     jest.mock('../../src/dom/element-finder', () => ({ normalizeQuery: jest.fn().mockImplementation((q: string) => q), scoreElement: jest.fn().mockReturnValue(50), tokenizeQuery: jest.fn().mockReturnValue([]) }));
     jest.mock('../../src/cdp/target-id', () => ({ getTargetId: jest.fn().mockReturnValue('mock-target') }));
-    jest.mock('../../src/utils/ralph/outcome-classifier', () => ({ classifyOutcome: jest.fn().mockReturnValue('SUCCESS'), formatOutcomeLine: jest.fn().mockReturnValue('✓ Clicked') }));
-    jest.mock('../../src/utils/ralph/circuit-breaker', () => ({ getCircuitBreaker: jest.fn().mockReturnValue({ check: jest.fn().mockReturnValue({ allowed: true }), recordElementFailure: jest.fn(), recordElementSuccess: jest.fn() }) }));
+    jest.mock('../../src/recovery/ralph/outcome-classifier', () => ({ classifyOutcome: jest.fn().mockReturnValue('SUCCESS'), formatOutcomeLine: jest.fn().mockReturnValue('✓ Clicked') }));
+    jest.mock('../../src/recovery/ralph/circuit-breaker', () => ({ getCircuitBreaker: jest.fn().mockReturnValue({ check: jest.fn().mockReturnValue({ allowed: true }), recordElementFailure: jest.fn(), recordElementSuccess: jest.fn() }) }));
     jest.mock('../../src/utils/with-timeout', () => ({ withTimeout: jest.fn().mockImplementation(async (p: Promise<unknown>) => p) }));
     jest.mock('../../src/cdp/input', () => ({ dispatchCoordinateClick: jest.fn().mockResolvedValue(undefined) }));
 

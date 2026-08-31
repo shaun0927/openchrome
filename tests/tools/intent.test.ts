@@ -20,7 +20,7 @@ import {
   buildHitlContext,
   formatHitlResponse,
   type StrategyAttempt,
-} from '../../src/utils/ralph/hitl-escalation';
+} from '../../src/recovery/ralph/hitl-escalation';
 
 describe('issue #894 — intent label', () => {
   describe('journal summary', () => {

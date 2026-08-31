@@ -9,7 +9,7 @@ import {
   OUTCOME_LABELS,
   OUTCOME_SYMBOLS,
   InteractionOutcome,
-} from '../../../src/utils/ralph/outcome-classifier';
+} from '../../../src/recovery/ralph/outcome-classifier';
 
 describe('Outcome Classifier', () => {
   describe('classifyOutcome', () => {

@@ -3,7 +3,7 @@
  * Unit tests for Ralph Engine — Multi-Strategy Waterfall
  */
 
-import { ralphClick, StrategyId } from '../../../src/utils/ralph/ralph-engine';
+import { ralphClick, StrategyId } from '../../../src/recovery/ralph/ralph-engine';
 
 // Mock all dependencies
 jest.mock('../../../src/dom/ax-element-resolver', () => ({
