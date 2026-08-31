@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { cdpRace } from '../../src/utils/cdp-abort';
+import { cdpRace } from '../../src/cdp/abort';
 import { ClientDisconnectError } from '../../src/errors/abort';
 import { ToolContext, isAborted, throwIfAborted } from '../../src/types/mcp';
 
