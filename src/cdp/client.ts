@@ -5,7 +5,7 @@
 import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'puppeteer-core';
 import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
-import { smartGoto } from '../utils/smart-goto';
+import { smartGoto } from '../core/page/smart-goto';
 import { getTargetId } from '../utils/puppeteer-helpers';
 import { getRefIdManager } from '../utils/ref-id-manager';
 import { safeAsyncListener } from '../utils/safe-listener';
@@ -37,7 +37,7 @@ import { getIdleState } from '../utils/idle-state';
 import { assertDomainAllowed, isInternalBrowserUrl } from '../security/domain-guard';
 import { applyRegisteredPreloads } from './preload-injector';
 import { TargetPageIndex } from './target-page-index';
-import { safeTitle } from '../utils/safe-title';
+import { safeTitle } from '../core/page/safe-title';
 
 // Cookie type shared across methods
 type CookieEntry = {

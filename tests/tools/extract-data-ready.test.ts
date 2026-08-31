@@ -1,8 +1,8 @@
 import { extractDataHandler } from '../../src/tools/extract-data';
-import { waitForPageReady } from '../../src/utils/page-ready-state';
+import { waitForPageReady } from '../../src/core/page/ready-state';
 import { getSessionManager } from '../../src/session-manager';
 
-jest.mock('../../src/utils/page-ready-state', () => ({
+jest.mock('../../src/core/page/ready-state', () => ({
   waitForPageReady: jest.fn(),
 }));
 

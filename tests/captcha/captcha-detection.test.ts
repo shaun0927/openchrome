@@ -1,7 +1,7 @@
 /**
  * CAPTCHA Detection Tests (#574)
  */
-import { detectBlockingPage, BlockingInfo } from '../../src/utils/page-diagnostics';
+import { detectBlockingPage, BlockingInfo } from '../../src/core/page/diagnostics';
 
 function mockPage(result: BlockingInfo | null) {
   return { evaluate: () => Promise.resolve(result) } as any;

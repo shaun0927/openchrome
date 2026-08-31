@@ -7,14 +7,14 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, thro
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { pathMetaFor } from './_shared/path-meta';
-import { smartGoto } from '../utils/smart-goto';
-import { safeTitle } from '../utils/safe-title';
+import { smartGoto } from '../core/page/smart-goto';
+import { safeTitle } from '../core/page/safe-title';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
 import { generateVisualSummary } from '../utils/visual-summary';
 import { AdaptiveScreenshot } from '../utils/adaptive-screenshot';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { isDynamicSkillsEnabled } from '../harness/flags';
-import { detectBlockingPage, BlockingInfo } from '../utils/page-diagnostics';
+import { detectBlockingPage, BlockingInfo } from '../core/page/diagnostics';
 import { handleCaptcha } from '../captcha/handler';
 import { getSolverRegistry } from '../captcha/solver-registry';
 import { withTimeout } from '../utils/with-timeout';

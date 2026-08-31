@@ -1,6 +1,6 @@
 import type { MCPResourceDefinition } from './usage-guide';
 import type { SessionManager } from '../session-manager';
-import { safeTitle } from '../utils/safe-title';
+import { safeTitle } from '../core/page/safe-title';
 import { getTaskJournal } from '../journal/task-journal';
 import { getDashboardState } from '../desktop/dashboard-state';
 import { RecordingStore } from '../recording/recording-store';

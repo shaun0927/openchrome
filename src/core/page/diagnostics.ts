@@ -1,5 +1,5 @@
 import type { Page } from 'puppeteer-core';
-import type { CaptchaType } from '../types/captcha';
+import type { CaptchaType } from '../../types/captcha';
 
 export interface PageDiagnostics {
   url: string;

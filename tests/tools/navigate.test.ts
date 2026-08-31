@@ -13,7 +13,7 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 // Mock smart-goto: default implementation calls page.goto so existing tests pass
-import type { SmartGotoResult } from '../../src/utils/smart-goto';
+import type { SmartGotoResult } from '../../src/core/page/smart-goto';
 
 const mockSmartGotoFn = jest.fn<Promise<SmartGotoResult>, [any, string, any?]>(
   async (page, url, opts) => {
@@ -21,7 +21,7 @@ const mockSmartGotoFn = jest.fn<Promise<SmartGotoResult>, [any, string, any?]>(
     return { response: null };
   },
 );
-jest.mock('../../src/utils/smart-goto', () => ({
+jest.mock('../../src/core/page/smart-goto', () => ({
   smartGoto: mockSmartGotoFn,
 }));
 
@@ -39,7 +39,7 @@ describe('NavigateTool', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/smart-goto', () => ({
+    jest.doMock('../../src/core/page/smart-goto', () => ({
       smartGoto: mockSmartGotoFn,
     }));
     const { registerNavigateTool } = await import('../../src/tools/navigate');
