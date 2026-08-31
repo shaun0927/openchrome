@@ -2,7 +2,7 @@ import * as readline from 'readline';
 import type { BrokerMetadata } from '../broker/discovery';
 import { readBrokerMetadata } from '../broker/discovery';
 import { MCPErrorCodes, MCPResponse } from '../types/mcp';
-import { isPidAlive } from '../utils/controller-lock';
+import { isPidAlive } from '../chrome/controller-lock';
 
 /**
  * Exit code a re-electing client uses when it detects its broker owner has died.

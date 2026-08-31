@@ -9,8 +9,8 @@ import {
   parsePsOutput,
   scanMcpConfigRegistrations,
   summarizeDuplicateControllerDiagnostics,
-} from '../../src/utils/duplicate-controller-diagnostics';
-import { acquireControllerLock } from '../../src/utils/controller-lock';
+} from '../../src/chrome/duplicate-controller-diagnostics';
+import { acquireControllerLock } from '../../src/chrome/controller-lock';
 
 describe('duplicate controller diagnostics', () => {
   let tmpDir: string;
