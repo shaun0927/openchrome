@@ -2,7 +2,7 @@
 
 import { withDomDelta } from '../../src/dom/dom-delta';
 import { generateVisualSummary } from '../../src/utils/visual-summary';
-import { getPageDiagnostics, detectBlockingPage } from '../../src/utils/page-diagnostics';
+import { getPageDiagnostics, detectBlockingPage } from '../../src/core/page/diagnostics';
 import { createMockPage } from '../utils/mock-cdp';
 
 // ─── withDomDelta ─────────────────────────────────────────────────────────────

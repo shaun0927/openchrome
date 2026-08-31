@@ -26,7 +26,7 @@ import {
 import { getGlobalConfig } from '../config/global';
 import { RequestQueueManager } from './request-queue';
 import { getRefIdManager } from '../utils/ref-id-manager';
-import { smartGoto } from '../utils/smart-goto';
+import { smartGoto } from '../core/page/smart-goto';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS, DEFAULT_MAX_TARGETS_PER_WORKER, DEFAULT_MEMORY_PRESSURE_THRESHOLD, DEFAULT_CREATE_TARGET_TIMEOUT_MS, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS, DEFAULT_WATCHDOG_INTERVAL_MS } from '../config/defaults';
 import * as os from 'os';
 import { BrowserRouter } from '../router';
@@ -35,7 +35,7 @@ import { StorageStateManager } from '../storage-state';
 import { StorageStateConfig } from '../config';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { getTargetId } from '../utils/puppeteer-helpers';
-import { safeTitle } from '../utils/safe-title';
+import { safeTitle } from '../core/page/safe-title';
 import { getMetricsCollector } from '../metrics/collector';
 import { getLifecycleBus } from '../core/lifecycle';
 import { flush as flushRecorderBuffer } from '../core/skill-memory/recorder-buffer';

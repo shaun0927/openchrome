@@ -13,7 +13,7 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-import type { SmartGotoResult } from '../../src/utils/smart-goto';
+import type { SmartGotoResult } from '../../src/core/page/smart-goto';
 
 // Variables prefixed with `mock` are accessible inside `jest.mock` factories.
 // Wrapped via getter so the factory references the binding lazily — `validate-page`
@@ -22,7 +22,7 @@ import type { SmartGotoResult } from '../../src/utils/smart-goto';
 const mockSmartGotoFn = jest.fn<Promise<SmartGotoResult>, [unknown, string, unknown?]>(
   async () => ({ response: null }),
 );
-jest.mock('../../src/utils/smart-goto', () => ({
+jest.mock('../../src/core/page/smart-goto', () => ({
   smartGoto: (...args: unknown[]) => mockSmartGotoFn(...(args as [unknown, string, unknown?])),
 }));
 
@@ -107,7 +107,7 @@ describe('validate_page handler — auth redirect (P1 regression)', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/smart-goto', () => ({
+    jest.doMock('../../src/core/page/smart-goto', () => ({
       smartGoto: (...args: unknown[]) => mockSmartGotoFn(...(args as [unknown, string, unknown?])),
     }));
     const { registerValidatePageTool } = await import('../../src/tools/validate-page');

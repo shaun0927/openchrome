@@ -24,7 +24,7 @@ jest.mock('../../src/session-manager', () => ({
 
 // smartGoto is used only when tabId is provided; we use the new-tab path so
 // this mock is here only for completeness (navigate.ts imports it).
-jest.mock('../../src/utils/smart-goto', () => ({
+jest.mock('../../src/core/page/smart-goto', () => ({
   smartGoto: jest.fn(async (page: any, url: string, opts: any) => {
     await page.goto(url, opts);
     return { response: null };
@@ -56,7 +56,7 @@ async function getHandler() {
   jest.doMock('../../src/session-manager', () => ({
     getSessionManager: () => mockSessionManager,
   }));
-  jest.doMock('../../src/utils/smart-goto', () => ({
+  jest.doMock('../../src/core/page/smart-goto', () => ({
     smartGoto: jest.fn(async (page: any, url: string, opts: any) => {
       await page.goto(url, opts);
       return { response: null };

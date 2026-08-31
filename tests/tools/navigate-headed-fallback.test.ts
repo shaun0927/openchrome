@@ -16,20 +16,20 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 // Mock smart-goto
-import type { SmartGotoResult } from '../../src/utils/smart-goto';
+import type { SmartGotoResult } from '../../src/core/page/smart-goto';
 const mockSmartGotoFn = jest.fn<Promise<SmartGotoResult>, [any, string, any?]>(
   async (page, url, opts) => {
     await page.goto(url, opts);
     return { response: null };
   },
 );
-jest.mock('../../src/utils/smart-goto', () => ({
+jest.mock('../../src/core/page/smart-goto', () => ({
   smartGoto: mockSmartGotoFn,
 }));
 
 // Mock page-diagnostics
 const mockDetectBlockingPage = jest.fn().mockResolvedValue(null);
-jest.mock('../../src/utils/page-diagnostics', () => ({
+jest.mock('../../src/core/page/diagnostics', () => ({
   detectBlockingPage: (...args: any[]) => mockDetectBlockingPage(...args),
   BlockingInfo: {},
 }));
@@ -87,10 +87,10 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/smart-goto', () => ({
+    jest.doMock('../../src/core/page/smart-goto', () => ({
       smartGoto: mockSmartGotoFn,
     }));
-    jest.doMock('../../src/utils/page-diagnostics', () => ({
+    jest.doMock('../../src/core/page/diagnostics', () => ({
       detectBlockingPage: (...args: any[]) => mockDetectBlockingPage(...args),
       BlockingInfo: {},
     }));

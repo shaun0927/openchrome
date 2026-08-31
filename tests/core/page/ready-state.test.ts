@@ -1,4 +1,4 @@
-import { pageReadyProbe, waitForPageReady } from '../../src/utils/page-ready-state';
+import { pageReadyProbe, waitForPageReady } from '../../../src/core/page/ready-state';
 
 describe('pageReadyProbe', () => {
   let originalDocument: any;

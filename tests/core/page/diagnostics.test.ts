@@ -4,7 +4,7 @@
 
 /// <reference types="jest" />
 
-import { detectBlockingPage } from '../../src/utils/page-diagnostics';
+import { detectBlockingPage } from '../../../src/core/page/diagnostics';
 import type { Page } from 'puppeteer-core';
 
 /**

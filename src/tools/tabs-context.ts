@@ -6,7 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { getSessionManager } from '../session-manager';
-import { safeTitle } from '../utils/safe-title';
+import { safeTitle } from '../core/page/safe-title';
 
 const definition: MCPToolDefinition = {
   name: 'tabs_context',

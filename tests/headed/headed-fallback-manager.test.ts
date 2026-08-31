@@ -78,11 +78,11 @@ jest.mock('../../src/utils/display-detect', () => ({
   hasDisplay: () => mockHasDisplay(),
 }));
 
-jest.mock('../../src/utils/page-diagnostics', () => ({
+jest.mock('../../src/core/page/diagnostics', () => ({
   detectBlockingPage: (...args: any[]) => mockDetectBlockingPage(...args),
 }));
 
-jest.mock('../../src/utils/safe-title', () => ({
+jest.mock('../../src/core/page/safe-title', () => ({
   safeTitle: (...args: any[]) => mockSafeTitle(...args),
 }));
 
@@ -318,10 +318,10 @@ describe('HeadedFallbackManager', () => {
       jest.doMock('../../src/utils/display-detect', () => ({
         hasDisplay: () => true,
       }));
-      jest.doMock('../../src/utils/page-diagnostics', () => ({
+      jest.doMock('../../src/core/page/diagnostics', () => ({
         detectBlockingPage: jest.fn().mockResolvedValue(null),
       }));
-      jest.doMock('../../src/utils/safe-title', () => ({
+      jest.doMock('../../src/core/page/safe-title', () => ({
         safeTitle: jest.fn().mockResolvedValue(''),
       }));
       jest.doMock('../../src/utils/puppeteer-helpers', () => ({

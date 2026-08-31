@@ -12,7 +12,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { safeTitle } from '../utils/safe-title';
+import { safeTitle } from '../core/page/safe-title';
 import { assertDomainAllowed, DomainPolicyError } from '../security/domain-guard';
 import { wrapMutatingHandler } from '../utils/snapshot-cache-helper';
 import { autoRecallForUrl } from '../core/skill-memory/auto-recall';

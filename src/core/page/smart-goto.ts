@@ -7,7 +7,7 @@
  */
 
 import { Page, Frame, HTTPResponse } from 'puppeteer-core';
-import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../config/defaults';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../../config/defaults';
 
 export interface DomStabilityResult {
   stable: boolean;
