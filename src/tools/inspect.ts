@@ -13,7 +13,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { withTimeout } from '../utils/with-timeout';
-import { getAllShadowRoots, querySelectorInShadowRoots } from '../utils/shadow-dom';
+import { getAllShadowRoots, querySelectorInShadowRoots } from '../dom/shadow-dom';
 import { appendMetricsFooter, buildTextMetrics } from '../core/metrics/token-estimate';
 import { prependHeaderText } from './_shared/state-header';
 import {

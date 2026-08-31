@@ -22,14 +22,14 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
 }));
 
 // Mock AX resolver — returns no matches by default; tests override as needed
-jest.mock('../../src/utils/ax-element-resolver', () => ({
+jest.mock('../../src/dom/ax-element-resolver', () => ({
   resolveElementsByAXTree: jest.fn().mockResolvedValue([]),
   invalidateAXCache: jest.fn(),
   MATCH_LEVEL_LABELS: { 1: 'exact match', 2: 'role match', 3: 'name match', 4: 'partial match' },
 }));
 
 // Mock DOM delta — returns empty delta by default
-jest.mock('../../src/utils/dom-delta', () => ({
+jest.mock('../../src/dom/dom-delta', () => ({
   withDomDelta: jest.fn().mockImplementation(async (_page: unknown, fn: () => Promise<void>) => {
     await fn();
     return { delta: '+ button "Login"\n~ aria-pressed: false → true' };
@@ -43,7 +43,7 @@ jest.mock('../../src/stealth/human-behavior', () => ({
 }));
 
 // Mock element discovery cleanup
-jest.mock('../../src/utils/element-discovery', () => ({
+jest.mock('../../src/dom/element-discovery', () => ({
   cleanupTags: jest.fn().mockResolvedValue(undefined),
   DISCOVERY_TAG: 'data-oc-discovery',
 }));
@@ -68,7 +68,7 @@ jest.mock('../../src/utils/with-timeout', () => ({
 }));
 
 import { getSessionManager } from '../../src/session-manager';
-import { resolveElementsByAXTree } from '../../src/utils/ax-element-resolver';
+import { resolveElementsByAXTree } from '../../src/dom/ax-element-resolver';
 
 describe('ActTool', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
@@ -86,12 +86,12 @@ describe('ActTool', () => {
         generateRef: jest.fn().mockReturnValue('ref_1'),
       })),
     }));
-    jest.doMock('../../src/utils/ax-element-resolver', () => ({
+    jest.doMock('../../src/dom/ax-element-resolver', () => ({
       resolveElementsByAXTree: (resolveElementsByAXTree as jest.Mock),
       invalidateAXCache: jest.fn(),
       MATCH_LEVEL_LABELS: { 1: 'exact match', 2: 'role match', 3: 'name match', 4: 'partial match' },
     }));
-    jest.doMock('../../src/utils/dom-delta', () => ({
+    jest.doMock('../../src/dom/dom-delta', () => ({
       withDomDelta: jest.fn().mockImplementation(async (_page: unknown, fn: () => Promise<void>) => {
         await fn();
         return { delta: '+ button "Login"\n~ aria-pressed: false → true' };
@@ -101,7 +101,7 @@ describe('ActTool', () => {
       humanMouseMove: jest.fn().mockResolvedValue(undefined),
       humanType: jest.fn().mockResolvedValue(undefined),
     }));
-    jest.doMock('../../src/utils/element-discovery', () => ({
+    jest.doMock('../../src/dom/element-discovery', () => ({
       cleanupTags: jest.fn().mockResolvedValue(undefined),
       DISCOVERY_TAG: 'data-oc-discovery',
     }));

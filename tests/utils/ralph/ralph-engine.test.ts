@@ -6,25 +6,25 @@
 import { ralphClick, StrategyId } from '../../../src/utils/ralph/ralph-engine';
 
 // Mock all dependencies
-jest.mock('../../../src/utils/ax-element-resolver', () => ({
+jest.mock('../../../src/dom/ax-element-resolver', () => ({
   resolveElementsByAXTree: jest.fn().mockResolvedValue([]),
   invalidateAXCache: jest.fn(),
   MATCH_LEVEL_LABELS: { 1: 'exact match', 2: 'role match', 3: 'name match', 4: 'partial match' },
 }));
 
-jest.mock('../../../src/utils/element-discovery', () => ({
+jest.mock('../../../src/dom/element-discovery', () => ({
   discoverElements: jest.fn().mockResolvedValue([]),
   cleanupTags: jest.fn().mockResolvedValue(undefined),
   getTaggedElementRect: jest.fn().mockResolvedValue(null),
   DISCOVERY_TAG: '__oc_disc',
 }));
 
-jest.mock('../../../src/utils/element-finder', () => ({
+jest.mock('../../../src/dom/element-finder', () => ({
   scoreElement: jest.fn().mockReturnValue(50),
   tokenizeQuery: jest.fn().mockReturnValue(['test']),
 }));
 
-jest.mock('../../../src/utils/dom-delta', () => ({
+jest.mock('../../../src/dom/dom-delta', () => ({
   withDomDelta: jest.fn().mockImplementation(async (_page: any, fn: () => Promise<void>) => {
     await fn();
     return { delta: '' }; // default: no delta = SILENT_CLICK
@@ -39,10 +39,10 @@ jest.mock('../../../src/config/defaults', () => ({
   DEFAULT_DOM_SETTLE_DELAY_MS: 0,
 }));
 
-import { resolveElementsByAXTree } from '../../../src/utils/ax-element-resolver';
-import { discoverElements } from '../../../src/utils/element-discovery';
-import { scoreElement, tokenizeQuery } from '../../../src/utils/element-finder';
-import { withDomDelta } from '../../../src/utils/dom-delta';
+import { resolveElementsByAXTree } from '../../../src/dom/ax-element-resolver';
+import { discoverElements } from '../../../src/dom/element-discovery';
+import { scoreElement, tokenizeQuery } from '../../../src/dom/element-finder';
+import { withDomDelta } from '../../../src/dom/dom-delta';
 
 describe('Ralph Engine', () => {
   let mockPage: any;

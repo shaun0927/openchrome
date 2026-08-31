@@ -11,7 +11,7 @@ import { Page } from 'puppeteer-core';
 import { CDPClient } from '../cdp/client';
 import { FoundElement } from './element-finder';
 import { discoverShadowElements, DEEP_WALK_ELEMENTS_JS, getAllShadowRoots, querySelectorInShadowRoots } from './shadow-dom';
-import { withTimeout } from './with-timeout';
+import { withTimeout } from '../utils/with-timeout';
 
 /**
  * Optional circuit breaker interface for element discovery.

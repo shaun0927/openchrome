@@ -13,7 +13,7 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
   getRefIdManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/ax-element-resolver', () => ({
+jest.mock('../../src/dom/ax-element-resolver', () => ({
   resolveElementsByAXTree: jest.fn().mockResolvedValue([]),
   invalidateAXCache: jest.fn(),
   clearAXCache: jest.fn(),
@@ -37,7 +37,7 @@ describe('FindTool', () => {
     jest.doMock('../../src/utils/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
     }));
-    jest.doMock('../../src/utils/ax-element-resolver', () => ({
+    jest.doMock('../../src/dom/ax-element-resolver', () => ({
       resolveElementsByAXTree: jest.fn().mockResolvedValue(mockAXMatches),
       invalidateAXCache: jest.fn(),
       clearAXCache: jest.fn(),

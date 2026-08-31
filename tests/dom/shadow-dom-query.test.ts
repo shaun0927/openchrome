@@ -27,7 +27,7 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
   getRefIdManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/shadow-dom', () => ({
+jest.mock('../../src/dom/shadow-dom', () => ({
   get getAllShadowRoots() { return shadowDomMockImpl.getAllShadowRoots; },
   get querySelectorInShadowRoots() { return shadowDomMockImpl.querySelectorInShadowRoots; },
   get discoverShadowElements() { return shadowDomMockImpl.discoverShadowElements; },

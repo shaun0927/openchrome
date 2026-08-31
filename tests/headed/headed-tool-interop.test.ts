@@ -116,7 +116,7 @@ async function getInteractHandler(
   jest.doMock('../../src/security/domain-guard', () => ({
     assertDomainAllowed: jest.fn(),
   }));
-  jest.doMock('../../src/utils/dom-delta', () => ({
+  jest.doMock('../../src/dom/dom-delta', () => ({
     withDomDelta: jest.fn().mockResolvedValue({ domDelta: '' }),
   }));
   jest.doMock('../../src/utils/visual-summary', () => ({

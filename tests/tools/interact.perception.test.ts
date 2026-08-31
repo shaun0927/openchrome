@@ -22,7 +22,7 @@ jest.mock('../../src/core/browser-lanes', () => ({
   recordLaneToolCall: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../../src/utils/dom-delta', () => ({
+jest.mock('../../src/dom/dom-delta', () => ({
   withDomDelta: jest.fn().mockImplementation(async (_page: unknown, action: () => Promise<void>) => {
     await action();
     return { delta: 'button state changed' };

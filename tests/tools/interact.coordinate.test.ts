@@ -29,14 +29,14 @@ jest.mock('../../src/utils/ref-id-manager', () => ({
 }));
 
 // AX resolver mock
-jest.mock('../../src/utils/ax-element-resolver', () => ({
+jest.mock('../../src/dom/ax-element-resolver', () => ({
   resolveElementsByAXTree: jest.fn().mockResolvedValue([]),
   invalidateAXCache: jest.fn(),
   MATCH_LEVEL_LABELS: { 1: 'exact match', 2: 'role match', 3: 'name match', 4: 'partial match' },
 }));
 
 // DOM delta mock
-jest.mock('../../src/utils/dom-delta', () => ({
+jest.mock('../../src/dom/dom-delta', () => ({
   withDomDelta: jest.fn().mockImplementation(async (_page: unknown, fn: () => Promise<void>) => {
     await fn();
     return { delta: '' };
@@ -50,7 +50,7 @@ jest.mock('../../src/stealth/human-behavior', () => ({
 }));
 
 // Element discovery mock
-jest.mock('../../src/utils/element-discovery', () => ({
+jest.mock('../../src/dom/element-discovery', () => ({
   discoverElements: jest.fn().mockResolvedValue([]),
   cleanupTags: jest.fn().mockResolvedValue(undefined),
   getTaggedElementRect: jest.fn().mockResolvedValue(null),
@@ -58,7 +58,7 @@ jest.mock('../../src/utils/element-discovery', () => ({
 }));
 
 // Element finder mock
-jest.mock('../../src/utils/element-finder', () => ({
+jest.mock('../../src/dom/element-finder', () => ({
   normalizeQuery: jest.fn().mockImplementation((q: string) => q.toLowerCase()),
   scoreElement: jest.fn().mockReturnValue(50),
   tokenizeQuery: jest.fn().mockReturnValue(['test']),
@@ -143,11 +143,11 @@ describe('interact tool — coordinate mode', () => {
     // Re-apply all mocks after resetModules
     jest.mock('../../src/session-manager', () => ({ getSessionManager: jest.fn().mockReturnValue(mockSessionManager) }));
     jest.mock('../../src/utils/ref-id-manager', () => ({ getRefIdManager: jest.fn(() => ({ generateRef: jest.fn().mockReturnValue('ref_1') })) }));
-    jest.mock('../../src/utils/ax-element-resolver', () => ({ resolveElementsByAXTree: jest.fn().mockResolvedValue([]), invalidateAXCache: jest.fn(), MATCH_LEVEL_LABELS: {} }));
-    jest.mock('../../src/utils/dom-delta', () => ({ withDomDelta: jest.fn().mockImplementation(async (_p: unknown, fn: () => Promise<void>) => { await fn(); return { delta: '' }; }) }));
+    jest.mock('../../src/dom/ax-element-resolver', () => ({ resolveElementsByAXTree: jest.fn().mockResolvedValue([]), invalidateAXCache: jest.fn(), MATCH_LEVEL_LABELS: {} }));
+    jest.mock('../../src/dom/dom-delta', () => ({ withDomDelta: jest.fn().mockImplementation(async (_p: unknown, fn: () => Promise<void>) => { await fn(); return { delta: '' }; }) }));
     jest.mock('../../src/stealth/human-behavior', () => ({ humanMouseMove: jest.fn().mockResolvedValue(undefined) }));
-    jest.mock('../../src/utils/element-discovery', () => ({ discoverElements: jest.fn().mockResolvedValue([]), cleanupTags: jest.fn().mockResolvedValue(undefined), getTaggedElementRect: jest.fn().mockResolvedValue(null), DISCOVERY_TAG: 'data-oc-discovery' }));
-    jest.mock('../../src/utils/element-finder', () => ({ normalizeQuery: jest.fn().mockImplementation((q: string) => q), scoreElement: jest.fn().mockReturnValue(50), tokenizeQuery: jest.fn().mockReturnValue([]) }));
+    jest.mock('../../src/dom/element-discovery', () => ({ discoverElements: jest.fn().mockResolvedValue([]), cleanupTags: jest.fn().mockResolvedValue(undefined), getTaggedElementRect: jest.fn().mockResolvedValue(null), DISCOVERY_TAG: 'data-oc-discovery' }));
+    jest.mock('../../src/dom/element-finder', () => ({ normalizeQuery: jest.fn().mockImplementation((q: string) => q), scoreElement: jest.fn().mockReturnValue(50), tokenizeQuery: jest.fn().mockReturnValue([]) }));
     jest.mock('../../src/utils/puppeteer-helpers', () => ({ getTargetId: jest.fn().mockReturnValue('mock-target') }));
     jest.mock('../../src/utils/ralph/outcome-classifier', () => ({ classifyOutcome: jest.fn().mockReturnValue('SUCCESS'), formatOutcomeLine: jest.fn().mockReturnValue('✓ Clicked') }));
     jest.mock('../../src/utils/ralph/circuit-breaker', () => ({ getCircuitBreaker: jest.fn().mockReturnValue({ check: jest.fn().mockReturnValue({ allowed: true }), recordElementFailure: jest.fn(), recordElementSuccess: jest.fn() }) }));
