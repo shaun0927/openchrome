@@ -9,7 +9,7 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn(() => ({
     generateRef: jest.fn().mockReturnValue('ref_1'),
     isRefStale: jest.fn().mockReturnValue(false),

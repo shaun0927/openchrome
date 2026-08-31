@@ -15,8 +15,8 @@ import { createMockSessionManager, createMockRefIdManager } from '../utils/mock-
 import { sampleAccessibilityTree } from '../utils/test-helpers';
 
 jest.mock('../../src/session-manager', () => ({ getSessionManager: jest.fn() }));
-jest.mock('../../src/utils/ref-id-manager', () => {
-  const actual = jest.requireActual('../../src/utils/ref-id-manager');
+jest.mock('../../src/core/perception/ref-id-manager', () => {
+  const actual = jest.requireActual('../../src/core/perception/ref-id-manager');
   return {
     ...actual,
     getRefIdManager: jest.fn(),
@@ -30,7 +30,7 @@ jest.mock('../../src/dom/ax-element-resolver', () => ({
 }));
 
 import { getSessionManager } from '../../src/session-manager';
-import { getRefIdManager } from '../../src/utils/ref-id-manager';
+import { getRefIdManager } from '../../src/core/perception/ref-id-manager';
 
 describe('Snapshot Refs (#831)', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
@@ -90,8 +90,8 @@ describe('Snapshot Refs (#831)', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => {
-      const actual = jest.requireActual('../../src/utils/ref-id-manager');
+    jest.doMock('../../src/core/perception/ref-id-manager', () => {
+      const actual = jest.requireActual('../../src/core/perception/ref-id-manager');
       return { ...actual, getRefIdManager: () => mockRefIdManager };
     });
 
@@ -130,8 +130,8 @@ describe('Snapshot Refs (#831)', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => {
-      const actual = jest.requireActual('../../src/utils/ref-id-manager');
+    jest.doMock('../../src/core/perception/ref-id-manager', () => {
+      const actual = jest.requireActual('../../src/core/perception/ref-id-manager');
       return { ...actual, getRefIdManager: () => mockRefIdManager };
     });
     const { registerFindTool } = await import('../../src/tools/find');
@@ -460,8 +460,8 @@ describe('Snapshot Refs (#831)', () => {
       jest.doMock('../../src/session-manager', () => ({
         getSessionManager: () => mockSessionManager,
       }));
-      jest.doMock('../../src/utils/ref-id-manager', () => {
-        const actual = jest.requireActual('../../src/utils/ref-id-manager');
+      jest.doMock('../../src/core/perception/ref-id-manager', () => {
+        const actual = jest.requireActual('../../src/core/perception/ref-id-manager');
         return { ...actual, getRefIdManager: () => mockRefIdManager };
       });
 

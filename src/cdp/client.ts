@@ -7,7 +7,7 @@ import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../core/page/smart-goto';
 import { getTargetId } from './target-id';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager } from '../core/perception/ref-id-manager';
 import { safeAsyncListener } from '../utils/safe-listener';
 import {
   DEFAULT_VIEWPORT,

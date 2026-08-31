@@ -9,7 +9,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
-import { getRefIdManager } from '../utils/ref-id-manager';
+import { getRefIdManager } from '../core/perception/ref-id-manager';
 import { withDomDelta } from '../dom/dom-delta';
 import { DEFAULT_DOM_SETTLE_DELAY_MS } from '../config/defaults';
 import { normalizeQuery } from '../dom/element-finder';

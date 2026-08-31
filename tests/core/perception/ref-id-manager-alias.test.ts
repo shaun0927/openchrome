@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { aliasFor, RefIdManager, refIdFromAlias } from '../../src/utils/ref-id-manager';
+import { aliasFor, RefIdManager, refIdFromAlias } from '../../../src/core/perception/ref-id-manager';
 
 describe('short element aliases', () => {
   test('projects ref_N to @eN and back', () => {

@@ -40,7 +40,7 @@ jest.mock('../../src/session/request-queue', () => ({
   })),
 }));
 
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn(() => ({
     clearSessionRefs: jest.fn(),
     clearTargetRefs: jest.fn(),

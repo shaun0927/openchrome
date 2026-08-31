@@ -9,7 +9,7 @@ jest.mock('../../src/session-manager', () => ({
   getSessionManager: jest.fn(),
 }));
 
-jest.mock('../../src/utils/ref-id-manager', () => ({
+jest.mock('../../src/core/perception/ref-id-manager', () => ({
   getRefIdManager: jest.fn(),
 }));
 
@@ -20,7 +20,7 @@ jest.mock('../../src/dom/ax-element-resolver', () => ({
 }));
 
 import { getSessionManager } from '../../src/session-manager';
-import { getRefIdManager } from '../../src/utils/ref-id-manager';
+import { getRefIdManager } from '../../src/core/perception/ref-id-manager';
 
 describe('FindTool', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
@@ -34,7 +34,7 @@ describe('FindTool', () => {
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
     }));
-    jest.doMock('../../src/utils/ref-id-manager', () => ({
+    jest.doMock('../../src/core/perception/ref-id-manager', () => ({
       getRefIdManager: () => mockRefIdManager,
     }));
     jest.doMock('../../src/dom/ax-element-resolver', () => ({
