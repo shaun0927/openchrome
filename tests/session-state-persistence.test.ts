@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { SessionStatePersistence, PersistedSessionState } from '../src/session-state-persistence';
+import { SessionStatePersistence, PersistedSessionState } from '../src/session/state-persistence';
 import { writeFileAtomicSafe, readFileSafe } from '../src/utils/atomic-file';
 
 jest.mock('../src/utils/atomic-file', () => ({

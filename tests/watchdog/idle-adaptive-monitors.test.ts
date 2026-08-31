@@ -20,7 +20,7 @@ import { TabHealthMonitor } from '../../src/cdp/tab-health-monitor';
 import { ChromeProcessMonitor } from '../../src/watchdog/chrome-monitor';
 import { DiskMonitor } from '../../src/watchdog/disk-monitor';
 import { BrowserStateManager } from '../../src/browser-state/snapshot';
-import { SessionStatePersistence } from '../../src/session-state-persistence';
+import { SessionStatePersistence } from '../../src/session/state-persistence';
 import { createIdleState, IDLE_WINDOW_MS } from '../../src/utils/idle-state';
 import type { IdleState } from '../../src/utils/idle-state';
 

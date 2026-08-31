@@ -6,7 +6,7 @@ import {
   normalizeAutoSnapshotPolicy,
   redactSnapshotText,
   shouldTakeAutoSnapshot,
-} from '../../src/session-snapshot-policy';
+} from '../../src/session/snapshot-policy';
 
 describe('auto session snapshot policy', () => {
   test('is disabled by default', () => {

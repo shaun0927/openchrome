@@ -37,7 +37,7 @@ import { HealthEndpoint } from '../watchdog/health-endpoint';
 import { resolveHealthEndpointEnabled } from '../utils/health-endpoint-gating';
 import { DiskMonitor } from '../watchdog/disk-monitor';
 import { ChromeProcessMonitor } from '../watchdog/chrome-monitor';
-import { SessionStatePersistence } from '../session-state-persistence';
+import { SessionStatePersistence } from '../session/state-persistence';
 import { getLifecycleBus, type LifecycleEventBus } from './lifecycle';
 import { writePidFile, cleanOrphanedChromeProcesses } from '../utils/pid-manager';
 import { installParentWatcher } from '../utils/parent-watcher';
