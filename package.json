@@ -50,7 +50,6 @@
     "harness:evaluate-candidates": "ts-node tests/harness/candidates/evaluator.ts",
     "docs:capability-map": "ts-node scripts/gen-capability-map.ts",
     "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check",
-    "lint:skill-tools": "node scripts/lint-skill-tool-refs.mjs skills/openchrome/SKILL.md",
     "verify:auto-elect-smoke": "node scripts/verify/auto-elect-two-client-smoke.mjs",
     "verify:parallel-auto-elect": "node scripts/verify/parallel-auto-elect.mjs --clients=3",
     "build:standalone": "node scripts/build-standalone-cli.cjs",
@@ -80,7 +79,6 @@
   },
   "homepage": "https://github.com/shaun0927/openchrome#readme",
   "devDependencies": {
-    "@types/chrome": "^0.1.36",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
     "@types/proper-lockfile": "^4.1.4",
@@ -119,14 +117,9 @@
   },
   "files": [
     "dist",
-    "assets",
     "config",
     "README.md",
     "docs/agent/capability-map.md",
-    "LICENSE",
-    "skills",
-    "commands",
-    ".codex-plugin",
-    ".claude-plugin"
+    "LICENSE"
   ]
 }

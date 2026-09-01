@@ -7,7 +7,6 @@ separately installed Node.js or npm runtime.
 The standalone CLI is additive:
 
 - npm remains the broadest installation path;
-- the desktop app continues to use the same sidecar build pipeline;
 - Chrome or Chromium is not bundled;
 - only assets present on a specific release are certified for that release.
 

@@ -1,6 +1,6 @@
 /**
  * Jest setup file
- * Provides mocks for both Chrome extension and standalone server tests
+ * Provides shared safety mocks for standalone server tests.
  */
 
 /// <reference types="jest" />
@@ -68,85 +68,6 @@ jest.mock('../src/chrome/launcher', () => ({
   }),
 }));
 
-// ============================================================================
-
-// Mock Chrome API (for extension tests)
-const chromeMock = {
-  tabs: {
-    create: jest.fn(),
-    get: jest.fn(),
-    update: jest.fn(),
-    remove: jest.fn(),
-    query: jest.fn(),
-    group: jest.fn(),
-    ungroup: jest.fn(),
-    goBack: jest.fn(),
-    goForward: jest.fn(),
-    onRemoved: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-    onUpdated: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-  },
-  tabGroups: {
-    update: jest.fn(),
-    get: jest.fn(),
-    query: jest.fn(),
-  },
-  debugger: {
-    attach: jest.fn(),
-    detach: jest.fn(),
-    sendCommand: jest.fn(),
-    onDetach: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-  },
-  runtime: {
-    connect: jest.fn(),
-    connectNative: jest.fn(),
-    sendMessage: jest.fn(),
-    onConnect: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-    onConnectExternal: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-    onMessage: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-    onMessageExternal: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-    onInstalled: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-    onStartup: {
-      addListener: jest.fn(),
-      removeListener: jest.fn(),
-    },
-    lastError: null,
-  },
-  storage: {
-    local: {
-      get: jest.fn(),
-      set: jest.fn(),
-      remove: jest.fn(),
-    },
-  },
-};
-
-// @ts-expect-error - mocking global chrome object
-global.chrome = chromeMock;
-
 // Mock console.error for cleaner test output (capture server logs)
 const originalConsoleError = console.error;
 let capturedLogs: string[] = [];
@@ -201,6 +122,3 @@ beforeEach(() => {
 afterAll(() => {
   console.error = originalConsoleError;
 });
-
-// Export chrome mock for direct access in tests
-export { chromeMock };

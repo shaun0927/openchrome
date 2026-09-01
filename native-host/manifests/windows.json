@@ -1,9 +1,0 @@
-{
-  "name": "com.anthropic.openchrome",
-  "description": "Native messaging host for OpenChrome",
-  "path": "C:\\Users\\%USERNAME%\\.openchrome\\native-host\\host.bat",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://${EXTENSION_ID}/"
-  ]
-}

@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/mascot.png?v=4" alt="OpenChrome Raptor" width="180">
-</p>
-
 <h1 align="center">OpenChrome</h1>
 
 <p align="center">
@@ -90,11 +86,6 @@ isolated profile, broker mode, 향후 auto-elect mode)로 이동하라고 안내
 나중에 `openchrome update`로 CLI와 클라이언트 설정을 갱신할 수 있습니다.
 </details>
 
-**터미널이 부담스럽다면?** 원클릭 [데스크톱 앱](https://github.com/shaun0927/openchrome/releases?q=desktop)
-(macOS / Windows / Linux, 베타)이 Node.js 설정 없이 서버를 실행합니다.
-
----
-
 ## 무엇을 할 수 있나
 
 평범한 언어로 에이전트에게 요청하면 OpenChrome 도구로 매핑됩니다:
@@ -139,8 +130,7 @@ oc playbook run scenario.yaml --vars url=https://iana.org --out report.md
 ### 브라우저 하나를 계속 띄워두기 — HTTP 데몬 모드
 
 OpenChrome을 장기 실행 데몬으로 띄우면 여러 클라이언트(Claude Code + CI +
-대시보드)가 Chrome 프로세스 **하나**를 공유하고, 서버는 자신을 띄운 주체보다
-오래 생존합니다 (Docker, systemd, CI):
+모니터링)가 Chrome 프로세스 **하나**를 공유합니다:
 
 ```bash
 openchrome serve --http 3100 --auth-token <토큰> --idle-timeout 30m
@@ -214,9 +204,8 @@ think-act 루프를 줄이도록 설계됐습니다: LLM 왕복 감소, 실제 �
 openchrome serve --server-mode     # headless + 자동 실행 + 서버 기본값
 ```
 
-로그인 없이 CI/CD와 컨테이너에서 동작합니다 — 내비게이션, 스크래핑, 스크린샷,
-폼, 병렬 워크플로가 모두 클린 세션에서 실행됩니다. 프로덕션용 `Dockerfile` 포함
-(`docker build -t openchrome . && docker run openchrome`).
+로그인 없이 CI와 서버 환경에서 동작합니다 — 내비게이션, 스크래핑, 스크린샷,
+폼, 병렬 워크플로가 모두 클린 세션에서 실행됩니다.
 
 인증 (테넌트별 API 키, JWT/OAuth, 공유 토큰): [`docs/auth.md`](docs/auth.md).
 Transport 안정성 정책: [`docs/transport-lifecycle.md`](docs/transport-lifecycle.md).

@@ -50,7 +50,6 @@ jobs:
           needs_build=false
           needs_src_lint=false
           needs_structure_lint=false
-          needs_skill_lint=false
           needs_capability_check=false
           needs_pack=false
           changed_tests=()
@@ -58,7 +57,7 @@ jobs:
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
             case "$file" in
-              src/*|cli/*|scripts/*|config/*|package.json|package-lock.json|tsconfig*.json|jest*.js|webpack.config.js|.dependency-cruiser.cjs|.eslintrc.json|docs/dev/project-structure.md|tests/fixtures/OWNERS.json)
+              src/*|cli/*|scripts/*|config/*|package.json|package-lock.json|tsconfig*.json|jest*.js|.dependency-cruiser.cjs|.eslintrc.json|docs/dev/project-structure.md|tests/fixtures/OWNERS.json)
                 needs_node=true
                 needs_structure_lint=true
                 case "$file" in
@@ -80,11 +79,6 @@ jobs:
               tests/*|tests/**/*)
                 needs_node=true
                 ;;
-              skills/*|commands/*|.claude-plugin/*|.codex-plugin/*)
-                needs_node=true
-                needs_skill_lint=true
-                needs_pack=true
-                ;;
               README.md|README.ko.md|CONTRIBUTING.md|CHANGELOG.md|LICENSE|SECURITY.md|docs/agent/capability-map.md)
                 needs_node=true
                 needs_capability_check=true
@@ -95,7 +89,6 @@ jobs:
                 needs_build=true
                 needs_src_lint=true
                 needs_structure_lint=true
-                needs_skill_lint=true
                 needs_capability_check=true
                 needs_pack=true
                 ;;
@@ -107,7 +100,6 @@ jobs:
             echo "needs_build=$needs_build"
             echo "needs_src_lint=$needs_src_lint"
             echo "needs_structure_lint=$needs_structure_lint"
-            echo "needs_skill_lint=$needs_skill_lint"
             echo "needs_capability_check=$needs_capability_check"
             echo "needs_pack=$needs_pack"
             printf 'changed_tests<<EOF\n'
@@ -141,10 +133,6 @@ jobs:
         # Baseline-aware: existing violations are allow-listed at
         # scripts/lint-tool-schemas.baseline.json; only NEW violations fail CI.
         # See docs/dev/tool-schema-conventions.md.
-
-      - name: Lint skill tool references
-        if: steps.changes.outputs.needs_skill_lint == 'true'
-        run: npm run lint:skill-tools
 
       - name: Check capability map is in sync
         if: steps.changes.outputs.needs_capability_check == 'true'
