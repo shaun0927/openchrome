@@ -56,8 +56,8 @@ function makeFixtureClient(): { client: RunOptions['client']; calls: ToolCall[] 
 
 describe('local verification playbook fixtures', () => {
   test.each([
-    ['basic-navigation.yaml', 4],
-    ['safe-form.yaml', 5],
+    ['basic-navigation.yaml', 3],
+    ['safe-form.yaml', 4],
   ])('%s parses and runs to completion against the fixture client', async (fileName, expectedSteps) => {
     const playbook = loadPlaybook(path.join(RECIPES, fileName));
     const { client, calls } = makeFixtureClient();

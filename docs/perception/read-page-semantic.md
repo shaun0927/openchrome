@@ -92,18 +92,16 @@ again if the page is still loading or canvas-only.
 ## Token budget contract
 
 Semantic mode is designed to be materially smaller than DOM output on the pinned
-perception fixtures:
+perception scenarios:
 
 - Aggregate `semantic_bytes / dom_bytes <= 0.40`
 - No single fixture exceeds `0.65`
 
-The fixture set lives under `tests/fixtures/perception/` and is checked by
-`tests/core/perception/semantic.token-budget.test.ts`.
+The scenario set lives in `tests/core/perception/semantic.token-budget.test.ts`.
 
 ## Verification anchors
 
 - Pure semantic builder: `tests/core/perception/semantic.test.ts`
 - Token budget: `tests/core/perception/semantic.token-budget.test.ts`
-- Fixtures: `tests/fixtures/perception/*.html`
 - Tool dispatch/schema: `src/tools/read-page.ts`
 - Rule set: `src/core/perception/semantic-rules.json`

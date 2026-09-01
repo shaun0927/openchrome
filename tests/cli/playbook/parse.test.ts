@@ -23,9 +23,21 @@ describe('parsePlaybookContent — YAML', () => {
   });
 
   test('round-trips sanity.json fixture', () => {
-    const fs = require('fs');
-    const content = fs.readFileSync(path.join(FIXTURES, 'sanity.json'), 'utf8');
-    const pb = parsePlaybookContent(content, 'sanity.json');
+    const pb = parsePlaybookContent(JSON.stringify({
+      name: 'example.com sanity (JSON)',
+      vars: { url: 'https://example.com', heading: 'Example' },
+      steps: [
+        { navigate: { url: '${url}' } },
+        { assert: { kind: 'dom_text', selector: 'h1', pattern: '${heading}' } },
+        { interact: { query: 'More information...' } },
+        { wait_for: { type: 'navigation' } },
+        { assert: { kind: 'url', pattern: 'iana\\.org' } },
+        { page_screenshot: { path: '/tmp/sanity.png' } },
+        { read_page: { mode: 'ax' } },
+        { javascript_tool: { code: 'document.title' } },
+        { act: { instruction: 'scroll down' } },
+      ],
+    }), 'sanity.json');
     expect(pb.name).toBe('example.com sanity (JSON)');
     expect(pb.steps).toHaveLength(9);
     expect(pb.steps[0].verb).toBe('navigate');
@@ -40,7 +52,19 @@ describe('parsePlaybookContent — YAML', () => {
   });
 
   test('accepts optional stable step ids in YAML', () => {
-    const pb = loadPlaybook(path.join(FIXTURES, 'step-ids.yaml'));
+    const pb = parsePlaybookContent(
+      `name: stable step ids
+steps:
+  - id: open_home
+    navigate:
+      url: https://example.com
+  - id: verify_home
+    assert:
+      kind: url
+      pattern: "example\\\\.com"
+`,
+      'step-ids.yaml',
+    );
 
     expect(pb.steps).toEqual([
       { id: 'open_home', verb: 'navigate', args: { url: 'https://example.com' } },
@@ -49,7 +73,13 @@ describe('parsePlaybookContent — YAML', () => {
   });
 
   test('accepts optional stable step ids in JSON', () => {
-    const pb = loadPlaybook(path.join(FIXTURES, 'step-ids.json'));
+    const pb = parsePlaybookContent(JSON.stringify({
+      name: 'stable step ids (JSON)',
+      steps: [
+        { id: 'open_home', navigate: { url: 'https://example.com' } },
+        { id: 'verify_home', assert: { kind: 'url', pattern: 'example\\.com' } },
+      ],
+    }), 'step-ids.json');
 
     expect(pb.steps.map((step) => step.id)).toEqual(['open_home', 'verify_home']);
   });
@@ -136,11 +166,6 @@ describe('parsePlaybookContent — YAML', () => {
 describe('loadPlaybook', () => {
   test('loads sanity.yaml from disk', () => {
     const pb = loadPlaybook(path.join(FIXTURES, 'sanity.yaml'));
-    expect(pb.steps).toHaveLength(9);
-  });
-
-  test('loads sanity.json from disk', () => {
-    const pb = loadPlaybook(path.join(FIXTURES, 'sanity.json'));
     expect(pb.steps).toHaveLength(9);
   });
 

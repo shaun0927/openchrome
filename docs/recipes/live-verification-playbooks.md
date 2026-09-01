@@ -16,7 +16,7 @@ python3 -m http.server 8765 --directory tests/fixtures/playbook/site
 # Expected: pass
 node dist/cli/index.js playbook run tests/fixtures/playbook/recipes/basic-navigation.yaml --json
 
-# Expected: pass; local-only submit path, no external side effects
+# Expected: pass; local-only form interaction, no external side effects
 node dist/cli/index.js playbook run tests/fixtures/playbook/recipes/safe-form.yaml --json
 
 # Expected: fail at step 1 and skip step 2 with structured failure evidence

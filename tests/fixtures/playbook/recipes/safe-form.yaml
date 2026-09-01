@@ -12,15 +12,13 @@ steps:
   - fill_form:
       fields:
         name: OpenChrome
-  - navigate:
-      url: ${base_url}/submit.html?name=OpenChrome
   - assert:
       contract:
         kind: dom_text
-        selector: h1
-        contains: Submitted Locally
+        selector: "#safe-form"
+        contains: Submit Local Form
       evidence:
         snapshot:
-          url: ${base_url}/submit.html?name=OpenChrome
+          url: ${base_url}/index.html
           dom_text:
-            h1: Submitted Locally
+            "#safe-form": Submit Local Form

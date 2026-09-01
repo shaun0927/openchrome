@@ -8,12 +8,14 @@
  * the deterministic invocation sequence so an operator (or autopilot loop) can
  * re-run the scenarios verbatim.
  *
- * Pre-req: `npm run fixture-serve` is running on port 4173 with the bundled
- * fixture at `tests/fixtures/skill-replay/index.html` exposed at
- * `http://localhost:4173/skill-replay/`.
+ * Pre-req: a local form fixture is available. Override
+ * OPENCHROME_SKILL_REPLAY_FIXTURE_URL when using a checked-out application page.
  */
 
-const FIXTURE_URL = 'http://localhost:4173/skill-replay/';
+const FIXTURE_URL = process.env.OPENCHROME_SKILL_REPLAY_FIXTURE_URL ?? [
+  'data:text/html;charset=utf-8,',
+  encodeURIComponent('<!doctype html><title>Skill replay fixture</title><form><label>Name <input name="name"></label><label>Email <input name="email"></label><label>Captcha <input name="captcha"></label><button>Submit</button></form>'),
+].join('');
 const DOMAIN = 'localhost';
 const SKILL_NAME = 'form-flow';
 

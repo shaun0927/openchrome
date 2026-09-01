@@ -52,7 +52,7 @@ describe('Stealth v2 Integration: navigate.ts', () => {
 });
 
 describe('Stealth v2 Integration: session-manager.ts', () => {
-  const source = readSource('session-manager.ts');
+  const source = readSource('session/manager.ts');
 
   test('has stealthTargets Set field', () => {
     expect(source).toContain('stealthTargets');

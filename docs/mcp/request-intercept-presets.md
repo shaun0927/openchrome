@@ -98,5 +98,6 @@ real byte counts.
 
 - Unit coverage: `tests/tools/request-intercept-preset.test.ts`
 - Tool-list allow-list: `scripts/verify/A5-tools-parity.mjs`
-- Deterministic fixture for live/manual verification:
-  `tests/fixtures/pages/bandwidth-heavy.html`
+- Live/manual verification: serve any local page with same-origin image, script,
+  stylesheet, font, and media requests, then confirm matching request-intercept
+  byte counters.
