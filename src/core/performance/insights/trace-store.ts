@@ -8,7 +8,7 @@
  * invalidated and the underlying file is deleted.
  *
  * Files live under `path.join(os.homedir(), '.openchrome', 'perf-traces')`
- * (per CLAUDE.md: never `process.env.HOME`). Each trace is gzip-encoded
+ * (never `process.env.HOME`). Each trace is gzip-encoded
  * JSONL where every line is one trace event — this matches the layout
  * the trace recorder already uses (see `src/core/trace/storage.ts`) and
  * keeps the on-disk footprint small for the typical multi-megabyte

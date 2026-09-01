@@ -6,7 +6,6 @@ export interface OpenChromeBuildInfo {
   sourceCommit: string;
   target: string;
   bundler: string;
-  standalone: boolean;
 }
 
 function packageVersion(): string {
@@ -30,6 +29,5 @@ export function getBuildInfo(): OpenChromeBuildInfo {
     sourceCommit: process.env.OPENCHROME_BUILD_COMMIT || 'unknown',
     target: process.env.OPENCHROME_BUILD_TARGET || `${process.platform}-${process.arch}`,
     bundler: process.env.OPENCHROME_BUILD_BUNDLER || `node-${process.version}`,
-    standalone: process.env.OPENCHROME_STANDALONE_BINARY === '1',
   };
 }

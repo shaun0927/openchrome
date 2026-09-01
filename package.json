@@ -44,17 +44,11 @@
     "lint:tool-schemas": "node dist/index.js serve --introspect-tools-list | node scripts/lint-tool-schemas.mjs -",
     "clean": "rimraf dist",
     "prepare": "npm run build",
-    "lint:changed": "node scripts/lint-changed-src.js",
     "harness:parallel-smoke": "ts-node tests/harness/parallel-smoke.ts",
     "harness:certify": "ts-node tests/harness/certification/run-certification.ts",
     "harness:evaluate-candidates": "ts-node tests/harness/candidates/evaluator.ts",
     "docs:capability-map": "ts-node scripts/gen-capability-map.ts",
-    "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check",
-    "verify:auto-elect-smoke": "node scripts/verify/auto-elect-two-client-smoke.mjs",
-    "verify:parallel-auto-elect": "node scripts/verify/parallel-auto-elect.mjs --clients=3",
-    "build:standalone": "node scripts/build-standalone-cli.cjs",
-    "verify:standalone": "node scripts/verify-standalone-cli.cjs",
-    "verify:standalone:browser": "node scripts/verify-standalone-browser-smoke.cjs"
+    "docs:capability-map:check": "ts-node scripts/gen-capability-map.ts --check"
   },
   "keywords": [
     "openchrome",

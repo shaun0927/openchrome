@@ -13,8 +13,8 @@ MCP server entries already registered in Claude Code, Codex CLI, OpenCode, or an
 other host. Existing direct entries such as `openchrome serve --auto-launch` keep
 using that direct topology until you change the host config.
 
-If a release note says a new topology is required to avoid duplicate-controller
-or opaque `-32000` startup failures:
+If a new topology is required to avoid duplicate-controller or opaque `-32000`
+startup failures:
 
 1. update the package (`npm install -g openchrome-mcp@latest` or your package
    manager equivalent);
@@ -23,7 +23,9 @@ or opaque `-32000` startup failures:
 3. restart the MCP host session. Active sessions usually load their MCP tool
    namespace at startup and will not hot-reload a changed config.
 
-For existing host configs, package update alone is not a migration. Rerun `openchrome setup --client <host>` or edit the host config manually, then restart the MCP host. Maintainers can reuse the release-note wording in [`docs/releases/action-required-config-migration.md`](../releases/action-required-config-migration.md) when a release requires host config migration.
+For existing host configs, package update alone is not a migration. Rerun
+`openchrome setup --client <host>` or edit the host config manually, then
+restart the MCP host.
 
 ## Auto-elect default
 

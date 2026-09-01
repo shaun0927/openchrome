@@ -28,7 +28,7 @@
  *     custom hook.
  *   - Replacement emits a `console.error` warning so operators that
  *     accidentally double-register can spot the override during a smoke
- *     test. Per CLAUDE.md `console.log` is forbidden — it corrupts the
+ *     test. `console.log` is forbidden because it corrupts the
  *     MCP JSON-RPC stream on stdout.
  *   - `resetBeforeIrreversibleHookForTests()` restores the default no-op
  *     hook; intended only for test setup/teardown.
@@ -115,7 +115,7 @@ let registeredHook: BeforeIrreversibleHook = defaultBeforeIrreversibleHook;
  */
 export function registerBeforeIrreversibleHook(hook: BeforeIrreversibleHook): void {
   if (registeredHook !== defaultBeforeIrreversibleHook) {
-    // Use console.error per CLAUDE.md — console.log corrupts MCP JSON-RPC.
+    // Use console.error because console.log corrupts MCP JSON-RPC.
     console.error(
       '[pilot] beforeIrreversibleAction hook replaced; previously registered hook is no longer active',
     );

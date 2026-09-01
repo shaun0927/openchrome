@@ -99,7 +99,7 @@ function prescriptiveDefaults(result: Omit<CheckResult, 'durationMs'>): Partial<
           'Do not use --allow-unsafe-shared-attach unless debugging a known race; it is intentionally not selected by default.',
           'Assign independent clients separate --port and --user-data-dir values.',
         ],
-        docs: ['docs/mcp/topologies.md', 'docs/roadmap/ssot-decisions.md'],
+        docs: ['docs/mcp/topologies.md'],
       };
     case 'pid-lock':
       return {

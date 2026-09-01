@@ -13,11 +13,6 @@ OpenChrome is an MCP server that enables multiple Claude Code sessions to contro
 npm install -g openchrome-mcp
 ```
 
-Certified releases may instead provide a self-contained executable that does
-not require Node.js. Pin the release asset and verify its SHA-256 as documented
-in [Standalone OpenChrome CLI](getting-started/standalone-cli.md). Chrome is not
-included in the executable.
-
 ## Quick Start
 
 1. Start Chrome with remote debugging enabled:
@@ -347,8 +342,6 @@ your MCP client config so the runtime path stays in sync.
 
 - [`docs/architecture.md`](architecture.md) — one-page overview of the
   core / pilot tier split and where each subsystem lives
-- [`docs/roadmap/portability-harness-contract.md`](roadmap/portability-harness-contract.md) —
-  the durable design contract every future PR must satisfy
-- [`docs/releases/v1.11.1.md`](releases/v1.11.1.md) — full release notes
-  with the cumulative v1.10.4 → v1.11.1 diff
+- [`docs/mcp/topologies.md`](mcp/topologies.md) — safe multi-client topology
+  choices for Claude Code, Codex CLI, OpenCode, and other MCP hosts
 - `openchrome doctor` — diagnose installation issues

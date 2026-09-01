@@ -221,7 +221,7 @@ export function getBackendNodeRegistry(page: Page): InMemoryBackendNodeRegistry 
           reg!.rotate(loaderId);
         } catch (err) {
           // Never let registry bookkeeping take the page event loop down.
-          // Use console.error per CLAUDE.md (stdout carries MCP JSON-RPC).
+          // Use console.error because stdout carries MCP JSON-RPC.
           console.error(
             '[backend-node-registry] framenavigated rotate failed:',
             err instanceof Error ? err.message : String(err),

@@ -1,254 +1,115 @@
-<h1 align="center">OpenChrome</h1>
+# OpenChrome
 
-<p align="center">
-  <b>Harness-Engineered Browser Automation</b><br>
-  The MCP server that drives and guides AI agents through a real Chrome.
-</p>
+OpenChrome is a browser automation MCP server for controlling a real Chrome
+browser from Claude Code, Codex CLI, OpenCode, or any MCP client.
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/openchrome-mcp"><img src="https://img.shields.io/npm/v/openchrome-mcp" alt="npm"></a>
-  <a href="https://github.com/shaun0927/openchrome/releases/latest"><img src="https://img.shields.io/github/v/release/shaun0927/openchrome" alt="Latest Release"></a>
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
-</p>
+It ships as a Node CLI plus MCP runtime. Desktop apps, browser extensions,
+native-host installers, deployment templates, and release artifact builders are
+outside this repository surface.
 
-<p align="center">
-  <b>English</b> · <a href="README.ko.md">한국어</a>
-</p>
-
----
-
-## What it is
-
-OpenChrome is an **MCP server** that controls your real, already-logged-in Chrome
-through the CDP — no middleware, no separate browser, no re-authentication.
-One Chrome process, many isolated tabs, ~300 MB for 20 parallel lanes.
-
-It is **harness-engineered**: the server doesn't just expose browser APIs, it wraps
-them with a hint engine, a circuit breaker, an automatic-recovery runtime, and
-token-efficient page serialization — so the agent makes fewer mistakes, recovers
-without "thinking", and burns far fewer tokens.
-
-```
-You: compare "AirPods Pro" prices across Amazon, eBay, Walmart, Best Buy
-
-AI:  [4 parallel lanes, already authenticated everywhere]
-     Best Buy $179 · Amazon $189 · Walmart $185 · eBay $172
-     live pages · already authenticated · past bot detection
-```
-
-| | Traditional (Playwright et al.) | OpenChrome |
-|---|:---:|:---:|
-| 5-site task* | ~250s (login each) | **~3s** (parallel) |
-| Memory* | ~2.5 GB (5 browsers) | **~300 MB** (1 Chrome) |
-| Re-auth | every run | **never** |
-| Bot detection | flagged | **invisible** (real Chrome) |
-
----
-
-## Quick start
-
-Install and point your MCP client at it — one command:
+## Install
 
 ```bash
 npm install -g openchrome-mcp
-
-openchrome setup                       # Claude Code
-openchrome setup --client codex        # Codex CLI (auto-elect topology)
-npx openchrome-mcp setup --client opencode   # OpenCode (auto-elect topology)
+openchrome setup --client codex
 ```
 
-Certified releases may also include optional self-contained executables for
-macOS, Windows, and Linux. They require Chrome but not a separate Node.js/npm
-runtime. Pin the release and verify its SHA-256 before use:
-[`docs/getting-started/standalone-cli.md`](docs/getting-started/standalone-cli.md).
+For Claude Code:
 
-Restart your MCP client. That's it — Chrome auto-launches on the first browser/CDP-requiring tool call. Protocol startup, tool discovery, and browser-free diagnostics stay launch-free.
-An already-open Chrome is reused only when it exposes the configured remote-debugging port; a normal Chrome without that CDP endpoint remains separate from the managed browser.
-
-**Updating is not configuration migration.** `npm install -g openchrome-mcp@latest`
-updates the OpenChrome binary, but it does not rewrite existing Claude Code,
-Codex CLI, OpenCode, or other MCP host registrations. If a release note asks you
-to move to a new topology (for example isolated profiles, broker mode, or a
-legacy single-owner or manual broker topology), rerun `openchrome setup --client <host> ...` or update
-the host config manually, then restart that host session so the MCP namespace is
-loaded from the new config.
-
-For manual Codex CLI configuration, run `openchrome config --client codex`
-and add the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
-
-<details>
-<summary>Manual MCP config (Cursor / VS Code / Windsurf / others)</summary>
-
-```json
-{
-  "mcpServers": {
-    "openchrome": {
-      "command": "openchrome",
-      "args": ["serve", "--auto-launch", "--auto-elect", "--minimal"]
-    }
-  }
-}
+```bash
+openchrome setup --client claude
 ```
 
-Run `openchrome update` later to refresh the CLI and client config.
-</details>
+Restart the MCP host after setup so it reloads the generated configuration.
 
-## What you can do with it
+## Run
 
-Ask your agent in plain language — these all map to OpenChrome tools:
+```bash
+openchrome serve --auto-launch --auto-elect --minimal
+```
 
-- **Parallel research** — "screenshot AWS billing, GCP, Stripe, Datadog at once" → 4 lanes, one Chrome, already authenticated.
-- **Authenticated scraping** — crawl dashboards and member-only pages using your existing login. No credentials in config.
-- **Form & flow automation** — fill, click, navigate multi-step flows; the agent gets corrective hints when a step drifts.
-- **Production UI debugging** — `oc_performance_insights` / `oc_vitals` for LCP/CLS, `console_capture`, `oc_devtools_url` to attach live DevTools.
-- **Site monitoring & diffing** — `oc_evidence_bundle` snapshots + `oc_diff` for deterministic before/after (DOM, screenshot pHash, network, console).
-- **Crawling** — async `crawl_start` / `crawl_status` / `crawl_cancel` jobs with cursor pagination.
-- **Verifiable runs** — `oc_assert` checks page state against an Outcome Contract (pass / fail / inconclusive) instead of guessing.
+Manual Codex CLI configuration:
 
-The default surface is 118 tools across navigation, interaction, reading,
-extraction, parallel workflows, contracts, skills, recovery, and diagnostics.
-Full catalogue: [`docs/agent/capability-map.md`](docs/agent/capability-map.md).
-Contributor structure map: [`docs/dev/project-structure.md`](docs/dev/project-structure.md).
+```bash
+openchrome config --client codex
+```
 
----
+Add the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
 
-## Using it conveniently
+## CLI
 
-### Drive it from the shell — no MCP host needed
-
-The CLI can call the MCP surface directly. Great for scripts, CI, and debugging:
+OpenChrome can call its MCP tools directly from the shell:
 
 ```bash
 oc run navigate --arg url=https://example.com
 oc run read_page --arg mode=dom --json
-oc navigate https://example.com      # positional sugar for common tools
+oc navigate https://example.com
 oc click ref_5
 ```
 
-### Declarative scenarios with `oc playbook`
-
-Write a YAML scenario where every step is one tool call with an inline
-Outcome Contract — deterministic, no LLM judgement:
+Playbooks run deterministic YAML scenarios:
 
 ```bash
 oc playbook run scenario.yaml --vars url=https://iana.org --out report.md
 ```
 
-See [`docs/cli/playbook.md`](docs/cli/playbook.md).
+## HTTP Mode
 
-### Keep one browser warm — HTTP daemon mode
-
-Run OpenChrome as a long-lived daemon so multiple clients (Claude Code + CI +
-monitoring) share **one** Chrome process:
+Run a long-lived MCP HTTP daemon when multiple clients should share one managed
+Chrome owner:
 
 ```bash
 openchrome serve --http 3100 --auth-token <token> --idle-timeout 30m
 curl -s http://127.0.0.1:3100/health
 ```
 
-One Chrome process, tabs isolated per session. Without `--idle-timeout` it stays
-up until stopped; with it, it self-exits after the idle window. Full guide:
-[`docs/getting-started/http-daemon.md`](docs/getting-started/http-daemon.md).
+Independent stdio clients should use separate `--port` and `--user-data-dir`
+profiles, or connect through broker mode with `--auto-elect`.
 
-### Diagnose your environment
+## Capabilities
 
-```bash
-openchrome doctor      # Node, disk, Chrome binary/port, orphans, perms, locks
-openchrome check       # verify CLI + runtime wiring
-```
+- Real Chrome control through CDP.
+- Navigation, clicks, typing, screenshots, DOM reads, accessibility reads, and
+  natural-language element lookup.
+- Parallel tab/session workflows with broker-safe profile ownership.
+- Compact page serialization for lower-token agent loops.
+- Outcome contracts, evidence bundles, diffs, and diagnostics.
+- Optional pilot-tier recovery and skill runtime behind `--pilot`.
 
-### Token-efficient page reads
-
-`read_page mode="dom"` serializes the page into a compact text form — **~5–15x
-fewer tokens** than the raw DOM. Each element carries an affordance marker so the
-agent knows the type at a glance:
-
-```
-# [142]<input type="search" .../> ★      ← # text input
-$ [156]<button type="submit"/>Search ★   ← $ button / control
-@ [289]<a href="/home"/>Home ★           ← @ link   (% = visual target)
-```
-
-`[backendNodeId]` identifiers are stable for the node's lifetime — pass `142`,
-`node_142`, or `ref_N` to any action tool. `oc_observe` goes further: it returns
-a ready-to-act numbered list in one call instead of `read_page → query_dom →
-inspect → interact`.
-
----
-
-## Why agents fail less on OpenChrome
-
-The bottleneck in browser automation is the LLM *thinking* between steps — every
-wrong guess costs 10–15s of inference. OpenChrome's harness cuts that loop:
-
-| Subsystem | What it does |
-|---|---|
-| **Hint engine** (30+ rules) | Catches error→recovery patterns and corrects the agent before mistakes cascade. Promotes repeated patterns to permanent rules. |
-| **Recovery runtime** | Deterministic, bounded recovery for a tool call — recover in-server, no LLM round-trip (pilot tier). |
-| **Ralph engine** | 7-strategy interaction waterfall: AX click → CSS → CDP coords → JS → keyboard → raw mouse → human escalation. |
-| **3-level circuit breaker** | Element / page / global — stops the agent burning tokens on permanently broken elements. |
-| **Outcome classifier** | Reports what *actually* happened after a click (SUCCESS / SILENT_CLICK / WRONG_ELEMENT). |
-| **49 reliability mechanisms** | 8 defense layers from process lifecycle to MCP gateway — no single failure hangs the server. See [`docs/architecture.md`](docs/architecture.md). |
-
-The harness is designed to cut the think-act loop: fewer LLM round-trips, faster
-wall time, and lower cost without carrying public scoring harnesses in the
-product repository.
-
----
-
-## Other capabilities worth knowing
-
-- **Parallel sessions** — 1 Chrome, N tabs/lanes; `workerId` + `profileDirectory` give per-client isolation. Multiple MCP clients can share one Chrome safely when they connect through a single broker/HTTP owner (`--broker` / `--connect-broker`); independent stdio clients should use separate `--port` / `--user-data-dir` profiles. If you upgraded OpenChrome after seeing duplicate-controller or `-32000` startup failures, also migrate the MCP host config and restart the host; package updates alone do not change existing registrations. See [`docs/mcp/topologies.md`](docs/mcp/topologies.md).
-- **Anti-bot / Turnstile** — 3-tier auto-fallback (headless → stealth → real headed Chrome) bypasses CDN/WAF blocks. [Turnstile guide](docs/turnstile-guide.md).
-- **Interactive login** — headed by default since the launcher runs visible; complete 2FA/CAPTCHA once, reuse the persistent profile after.
-- **Session persistence** — `--persist-storage` saves cookies + localStorage atomically for headless reuse.
-- **Shadow DOM** — open + closed roots via CDP-pierced reads; `__pierce()` / `__openchrome.querySelectorAllDeep()` helpers in `javascript_tool`.
-- **Element intelligence** — find elements by natural language (AX-first, CSS fallback, Korean role keywords built in: `"버튼"` → button).
-- **Core / pilot tiers** — core is on by default and preserves the stable surface; `--pilot` opts into contract runtime, handoff persistence, voting, and the skill curator.
-
----
-
-## Server & headless deployment
-
-```bash
-openchrome serve --server-mode     # headless + auto-launch + server defaults
-```
-
-Works in CI and server environments with no login — navigation, scraping,
-screenshots, forms, and parallel workflows all run in clean sessions.
-
-Authentication (per-tenant API keys, JWT/OAuth, shared token): [`docs/auth.md`](docs/auth.md).
-Transport stability policy: [`docs/transport-lifecycle.md`](docs/transport-lifecycle.md).
-
----
+Full tool catalogue: [`docs/agent/capability-map.md`](docs/agent/capability-map.md).
 
 ## Documentation
 
 | Topic | Link |
-|---|---|
-| Architecture & reliability layers | [`docs/architecture.md`](docs/architecture.md) |
-| Getting started walkthrough | [`docs/getting-started.md`](docs/getting-started.md) |
-| Full tool catalogue | [`docs/agent/capability-map.md`](docs/agent/capability-map.md) |
-| CLI & playbook | [`docs/cli.md`](docs/cli.md) · [`docs/cli/playbook.md`](docs/cli/playbook.md) |
-| HTTP daemon mode | [`docs/getting-started/http-daemon.md`](docs/getting-started/http-daemon.md) |
-| Research recipes | [`docs/recipes/README.md`](docs/recipes/README.md) |
-| Latest release notes | [`docs/releases/v1.12.5.md`](docs/releases/v1.12.5.md) |
-
----
+| --- | --- |
+| Architecture | [`docs/architecture.md`](docs/architecture.md) |
+| Getting started | [`docs/getting-started.md`](docs/getting-started.md) |
+| CLI | [`docs/cli.md`](docs/cli.md) |
+| Playbooks | [`docs/cli/playbook.md`](docs/cli/playbook.md) |
+| MCP topologies | [`docs/mcp/topologies.md`](docs/mcp/topologies.md) |
+| HTTP daemon | [`docs/getting-started/http-daemon.md`](docs/getting-started/http-daemon.md) |
+| Security model | [`SECURITY.md`](SECURITY.md) |
+| Repository structure | [`docs/dev/project-structure.md`](docs/dev/project-structure.md) |
 
 ## Development
 
 ```bash
 git clone https://github.com/shaun0927/openchrome.git
 cd openchrome
-npm install && npm run build && npm test
+npm install
+npm run build
+npm test
 ```
 
-Lint before submitting source changes: `npm run lint -- --max-warnings=0`
-(or `npm run lint:changed -- --base origin/develop` for changed files only).
-PRs target the `develop` branch.
+Useful checks:
+
+```bash
+npm run lint
+npm run lint:repo-structure
+npm run lint:tier
+npm run docs:capability-map:check
+```
 
 ## License
 
 MIT
-</content>

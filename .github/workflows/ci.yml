@@ -57,11 +57,11 @@ jobs:
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
             case "$file" in
-              src/*|cli/*|scripts/*|config/*|package.json|package-lock.json|tsconfig*.json|jest*.js|.dependency-cruiser.cjs|.eslintrc.json|docs/dev/project-structure.md|tests/fixtures/OWNERS.json)
+              src/*|cli/*|scripts/*|config/*|package.json|package-lock.json|tsconfig*.json|jest*.js|.dependency-cruiser.cjs|.eslintrc.json|docs/dev/project-structure.md)
                 needs_node=true
                 needs_structure_lint=true
                 case "$file" in
-                  docs/dev/project-structure.md|tests/fixtures/OWNERS.json)
+                  docs/dev/project-structure.md)
                     ;;
                   *)
                     needs_src_lint=true
@@ -79,7 +79,7 @@ jobs:
               tests/*|tests/**/*)
                 needs_node=true
                 ;;
-              README.md|README.ko.md|CONTRIBUTING.md|CHANGELOG.md|LICENSE|SECURITY.md|docs/agent/capability-map.md)
+              README.md|LICENSE|SECURITY.md|docs/agent/capability-map.md)
                 needs_node=true
                 needs_capability_check=true
                 needs_pack=true

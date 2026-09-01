@@ -1,6 +1,6 @@
 /**
  * Jest setup file
- * Provides shared safety mocks for standalone server tests.
+ * Provides shared safety mocks for server tests.
  */
 
 /// <reference types="jest" />
@@ -13,14 +13,10 @@
 process.setMaxListeners(Math.max(process.getMaxListeners(), 100));
 
 // ============================================================================
-// GLOBAL SAFETY NET: Prevent real Chrome connections during tests
-// These mocks are overridden by individual test files that provide their own.
-// Without this, singleton leakage between test files in the same Jest worker
-// can cause getCDPClient() or getSessionManager() to connect to a real Chrome
-// instance on port 9222, spawning hundreds of about:blank tabs.
+// GLOBAL SAFETY NET: Prevent real Chrome connections during tests.
+// Individual tests can override these mocks when they provide their own.
 // ============================================================================
 
-// Block puppeteer-core from connecting to real Chrome
 jest.mock('puppeteer-core', () => {
   const mockBrowser = {
     isConnected: jest.fn().mockReturnValue(false),

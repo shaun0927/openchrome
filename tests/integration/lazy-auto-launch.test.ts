@@ -350,7 +350,7 @@ describeFn('lazy --auto-launch process contract (#1528)', () => {
     }
   });
 
-  test('standalone HTTP mode preserves Chrome-ready eager startup', async () => {
+  test('HTTP mode preserves Chrome-ready eager startup', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'openchrome-http-eager-startup-'));
     const home = path.join(tmp, 'home');
     const lockDir = path.join(tmp, 'locks');

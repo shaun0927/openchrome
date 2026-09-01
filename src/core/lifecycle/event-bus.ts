@@ -230,7 +230,7 @@ class LifecycleEventBusImpl implements LifecycleEventBus {
       // Metrics collector is best-effort; never let it propagate.
     }
     // Surface the error on stderr so operators have a breadcrumb. Per
-    // CLAUDE.md we never use stdout (MCP JSON-RPC corruption).
+    // Never use stdout here; it carries MCP JSON-RPC.
     const msg = err instanceof Error ? err.stack ?? err.message : String(err);
     process.stderr.write(
       `[lifecycle-bus] listener "${listener}" failed on "${eventKind}": ${msg}\n`,

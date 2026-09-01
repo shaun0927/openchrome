@@ -26,7 +26,7 @@ const definition: MCPToolDefinition = {
     properties: {
       keepChrome: {
         type: 'boolean',
-        description: 'Keep Chrome running, just disconnect. Default: false in standalone mode, true when running in broker owner mode so shared clients are not impacted.',
+        description: 'Keep Chrome running, just disconnect. Default: true for broker owners so shared clients are not impacted; otherwise false.',
       },
       dryRun: {
         type: 'boolean',

@@ -8,10 +8,6 @@
  * These tests operate at the unit/integration level without a real Chrome
  * process — they wire the session-manager's emitLifecycle calls and
  * LifecycleEventBus directly, verifying the plumbing is correct.
- *
- * Full end-to-end parity (launch Chrome → create session → navigate) is
- * covered by the Real-verification script `scripts/verify/A1-lifecycle-bus.mjs`
- * which requires a running Chrome and is therefore out of CI scope here.
  */
 
 import {

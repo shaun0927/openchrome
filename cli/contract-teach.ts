@@ -72,7 +72,7 @@ export function registerContractCommand(program: Command): void {
         console.error(`  threshold : ${metadata.threshold} (Hamming, /64)`);
         // stdout = machine-readable result. The CLI binary is a separate
         // process from the MCP server, so writing JSON to stdout here does
-        // not corrupt the JSON-RPC stream warned about in CLAUDE.md.
+        // not corrupt the JSON-RPC stream.
         console.log(JSON.stringify(metadata));
       } catch (err) {
         console.error(`❌ teach failed: ${err instanceof Error ? err.message : String(err)}`);
