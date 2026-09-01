@@ -14,7 +14,7 @@ import { getExistingChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { writeFileAtomicSafe } from '../core/fs/atomic-file';
 import { safeTitle } from '../core/page/safe-title';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 import { assertFilePathAllowedBySessionRoots } from '../security/mcp-roots';
 
 // ─── Types ─────────────────────────────────────────────────────────────────

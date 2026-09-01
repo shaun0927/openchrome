@@ -22,7 +22,7 @@ import {
   REQUEST_ID_HEADER_LOWER,
   resolveRequestId,
   runWithRequestContext,
-} from '../observability/request-id';
+} from '../core/observability/request-id';
 import type { ApiKeyStore } from '../auth/api-key-store';
 import { createJwtVerifier, type JwtConfig, type JwtVerifier } from '../auth/jwt-verifier';
 import { resolveEffectiveTenantId } from '../auth/tenant-principal';

@@ -5,7 +5,7 @@ import { getTaskJournal } from '../journal/task-journal';
 import { getDashboardState } from '../desktop/dashboard-state';
 import { RecordingStore } from '../recording/recording-store';
 import { DEFAULT_TENANT_ID, type TenantId } from '../tenant/types';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 
 export const RESOURCE_FORBIDDEN_CODE = -32001;
 export const RESOURCE_SUBSCRIPTION_LIMIT_CODE = -32002;

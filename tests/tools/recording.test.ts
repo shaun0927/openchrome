@@ -67,7 +67,7 @@ jest.mock('../../src/chrome/launcher', () => ({
 
 import { MCPServer } from '../../src/mcp-server';
 import { registerRecordingTools } from '../../src/tools/recording';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

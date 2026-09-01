@@ -9,7 +9,7 @@
 
 import { EventEmitter } from 'node:events';
 import { getListenerErrorStats, resetListenerErrorStatsForTests, safeAsyncListener } from '../../src/utils/safe-listener';
-import { getMetricsCollector } from '../../src/metrics/collector';
+import { getMetricsCollector } from '../../src/core/metrics/collector';
 
 function counterValueFor(listener: string): number {
   const dump = getMetricsCollector().export();

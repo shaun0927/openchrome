@@ -4,7 +4,7 @@ import {
   generateRequestId,
   normalizeRequestId,
   resolveRequestId,
-} from '../../src/observability/request-id';
+} from '../../../src/core/observability/request-id';
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 

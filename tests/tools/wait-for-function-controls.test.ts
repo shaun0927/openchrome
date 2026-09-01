@@ -6,7 +6,7 @@ jest.mock('../../src/session-manager', () => ({
 
 import { getSessionManager } from '../../src/session-manager';
 import { MCPServer } from '../../src/mcp-server';
-import { getMetricsCollector } from '../../src/metrics/collector';
+import { getMetricsCollector } from '../../src/core/metrics/collector';
 import { registerWaitForTool } from '../../src/tools/wait-for';
 
 function makeHandler(page: { waitForFunction: jest.Mock }): Function {

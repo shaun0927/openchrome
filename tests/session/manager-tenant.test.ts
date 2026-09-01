@@ -48,7 +48,7 @@ jest.mock('../../src/core/perception/ref-id-manager', () => ({
 }));
 
 import { SessionManager } from '../../src/session-manager';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 import { TenantManager } from '../../src/tenant/manager';
 import { DEFAULT_TENANT_ID } from '../../src/tenant/types';
 import { resetTenantManager } from '../../src/tenant/registry';

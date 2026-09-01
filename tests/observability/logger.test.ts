@@ -1,5 +1,5 @@
 import { log } from '../../src/observability/logger';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 
 describe('observability logger', () => {
   let errSpy: jest.SpyInstance;

@@ -11,7 +11,7 @@
 import { MCPServer } from '../../src/mcp-server';
 import type { Principal } from '../../src/auth/api-key-types';
 import { PRINCIPAL_SYM } from '../../src/middleware/auth';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 
 const originalEnv = { ...process.env };
 

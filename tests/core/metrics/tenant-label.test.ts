@@ -4,8 +4,8 @@ import {
   isTenantLabelEnabled,
   normaliseTenantLabel,
   withTenantLabel,
-} from '../../src/metrics/collector';
-import { runWithRequestContext } from '../../src/observability/request-id';
+} from '../../../src/core/metrics/collector';
+import { runWithRequestContext } from '../../../src/core/observability/request-id';
 
 describe('normaliseTenantLabel', () => {
   test('falls back to unknown for non-strings', () => {
