@@ -67,7 +67,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 
 | Path | Responsibility |
 | --- | --- |
-| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, request-scoped observability context, contracts, output, metrics collection and token estimates, tracing, crawl, deadline handling, filesystem persistence, secret loading/redaction/substitution, task-run, and task-ledger. |
+| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, request-scoped observability context, contracts, output, metrics collection and token estimates, tracing, crawl, deadline handling, filesystem persistence, secret loading/redaction/substitution, task-run, task-ledger, and skill graph storage/types. |
 | `src/tools/` | MCP tool implementations and tool-local helpers. Tool code may call `src/core`, but core code should not import tools. |
 | `src/mcp/` | MCP server implementation, protocol ingress helpers, session-init policy, and MCP output accounting. `src/mcp-server.ts` is a compatibility re-export for existing imports. |
 | `src/transports/` | MCP/HTTP transport surfaces and protocol adapters. |
@@ -81,6 +81,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 | `src/harness/` | cross-tier feature-flag bootstrap only. It gates pilot families without importing `src/pilot`; stateful runtime ledgers belong under `src/core/task-ledger`, and opt-in run tooling belongs under `src/run-harness`. |
 | `src/run-harness/` | opt-in run tracking tools: run budgets, evidence capture, run store persistence, and MCP tool registration for run-level observability. |
 | `src/pilot/` | higher-level agent runtime features: skills, handoff, voting, credentials, curator, and automation runtime. |
+| `src/resources/` | MCP resource presentation adapters. Skill graph resources read from `src/core/skill` storage; resource adapters must not own graph mutation or pilot executor behavior. |
 | `src/hints/`, `src/recovery/`, `src/failure/` | guidance, recovery, and failure classification. |
 | `src/vision/`, `src/perception`-related core modules | visual and perception-oriented processing. |
 | `src/utils/` | approved cross-cutting leaf utilities only: formatting, logging, retry fallback, listener safety, and URL helpers. No subdirectories or stateful domain services. |
@@ -111,6 +112,5 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 Use this order for future structure work:
 
 1. Collapse duplicate ownership only after import graph inspection.
-2. Clarify `src/pilot/skill`, `src/core/skill`, and `src/resources/skill-graph`.
-3. Move any remaining single-file root modules into their owning folder when the
+2. Move any remaining single-file root modules into their owning folder when the
    import surface is small and tests can prove the move.

@@ -54,6 +54,30 @@ module.exports = {
       from: { path: '^src/core/' },
       to: { path: '^src/dashboard/' },
     },
+    {
+      name: 'core-must-not-import-resource-adapters',
+      severity: 'error',
+      comment:
+        'src/core/ owns storage and domain primitives; MCP resource presentation belongs outside core.',
+      from: { path: '^src/core/' },
+      to: { path: '^src/resources/' },
+    },
+    {
+      name: 'resources-must-not-import-pilot',
+      severity: 'error',
+      comment:
+        'MCP resources may present core state, but pilot executor and replay behavior stays in src/pilot/.',
+      from: { path: '^src/resources/' },
+      to: { path: '^src/pilot/' },
+    },
+    {
+      name: 'pilot-skill-must-not-import-resource-adapters',
+      severity: 'error',
+      comment:
+        'Pilot skill execution may read core skill storage, but MCP resource presentation must not feed executor behavior.',
+      from: { path: '^src/pilot/skill/' },
+      to: { path: '^src/resources/' },
+    },
   ],
   options: {
     tsConfig: { fileName: 'tsconfig.json' },

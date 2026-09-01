@@ -16,7 +16,7 @@ import {
   SkillGraphStorage,
   defaultSkillGraphRootDir,
   type SkillGraphStorageOptions,
-} from '../core/skill/storage';
+} from '../core/skill';
 import type { MCPResourceDefinition } from './usage-guide';
 
 /** The URI prefix for all skill-graph resources. */
