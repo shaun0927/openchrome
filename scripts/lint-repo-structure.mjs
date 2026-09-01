@@ -5,11 +5,11 @@ import { cwd, exit } from 'node:process';
 
 const root = cwd();
 
-const allowedSrcRootFiles = new Set([
-  'index.ts',
-  'mcp-server.ts',
-  'session-manager.ts',
-  'version.ts',
+const allowedSrcRootFiles = new Map([
+  ['index.ts', 'package and CLI entrypoint'],
+  ['mcp-server.ts', 'compatibility shim for src/mcp/server'],
+  ['session-manager.ts', 'compatibility shim for src/session/manager'],
+  ['version.ts', 'compatibility shim for src/core/version'],
 ]);
 
 const allowedSrcUtilsFiles = new Set([
