@@ -17,7 +17,7 @@ import {
   buildReflectionStrategyMetadata,
   parseReflectionStrategy,
 } from '../orchestration/reflection-strategy';
-import { getTaskDriftLedger } from '../harness/task-ledger';
+import { getTaskDriftLedger } from '../core/task-ledger';
 
 const dnsResolve = promisify(dns.resolve);
 

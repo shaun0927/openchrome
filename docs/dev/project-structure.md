@@ -78,6 +78,8 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 | `src/router/` | routing browser/tool commands to the correct target or tab. |
 | `src/observability/` | logging, redaction, and visual trajectory adapters. Request context lives under `src/core/observability` because metrics, security, transports, resources, and tools all share it. |
 | `src/security/` | runtime policy and untrusted-boundary enforcement: domain allow/block policy, MCP root narrowing, tool risk gates, audit logging adapters, and prompt-injection content sanitization. Secret value mechanics stay under `src/core/secrets`; `src/security` may use core primitives, but `src/core` must not import security policy adapters. |
+| `src/harness/` | cross-tier feature-flag bootstrap only. It gates pilot families without importing `src/pilot`; stateful runtime ledgers belong under `src/core/task-ledger`, and opt-in run tooling belongs under `src/run-harness`. |
+| `src/run-harness/` | opt-in run tracking tools: run budgets, evidence capture, run store persistence, and MCP tool registration for run-level observability. |
 | `src/pilot/` | higher-level agent runtime features: skills, handoff, voting, credentials, curator, and automation runtime. |
 | `src/hints/`, `src/recovery/`, `src/failure/` | guidance, recovery, and failure classification. |
 | `src/vision/`, `src/perception`-related core modules | visual and perception-oriented processing. |
@@ -109,7 +111,6 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 Use this order for future structure work:
 
 1. Collapse duplicate ownership only after import graph inspection.
-2. Clarify `src/harness`, `src/run-harness`, and `tests/harness`.
-3. Clarify `src/pilot/skill`, `src/core/skill`, and `src/resources/skill-graph`.
-4. Move any remaining single-file root modules into their owning folder when the
+2. Clarify `src/pilot/skill`, `src/core/skill`, and `src/resources/skill-graph`.
+3. Move any remaining single-file root modules into their owning folder when the
    import surface is small and tests can prove the move.

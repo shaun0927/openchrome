@@ -1,6 +1,6 @@
-import { ActivityTracker } from '../../src/dashboard/activity-tracker';
-import { HintEngine } from '../../src/hints/hint-engine';
-import { TaskDriftLedgerStore, setTaskDriftLedger } from '../../src/harness/task-ledger';
+import { ActivityTracker } from '../../../src/dashboard/activity-tracker';
+import { HintEngine } from '../../../src/hints/hint-engine';
+import { TaskDriftLedgerStore, setTaskDriftLedger } from '../../../src/core/task-ledger';
 
 function result(text: string) {
   return { content: [{ type: 'text', text }] };

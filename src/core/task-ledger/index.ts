@@ -47,3 +47,4 @@ export {
 export { getTaskStore, setTaskStoreForTests } from './singleton';
 export * from './budget';
 export * from './envelope';
+export * from './drift-ledger';

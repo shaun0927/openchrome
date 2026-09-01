@@ -1,5 +1,4 @@
-import type { ToolCallEvent } from '../dashboard/types';
-import { NON_PROGRESS_SIGNALS } from '../hints/progress-tracker';
+import { NON_PROGRESS_SIGNALS } from './non-progress-signals';
 
 export type TaskLedgerAttemptOutcome = 'progress' | 'non_progress' | 'error' | 'blocked';
 export type TaskLedgerDriftSignal =
@@ -56,8 +55,13 @@ export interface TaskLedgerUpdateInput {
   args?: Record<string, unknown>;
   resultText: string;
   isError: boolean;
-  recentCalls?: ToolCallEvent[];
+  recentCalls?: TaskLedgerRecentCall[];
   now?: number;
+}
+
+export interface TaskLedgerRecentCall {
+  toolName: string;
+  args?: Record<string, unknown>;
 }
 
 const MAX_ATTEMPTS = 12;
