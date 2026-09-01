@@ -44,7 +44,7 @@ import {
 import { redactSecrets } from '../core/secrets';
 import { isDynamicSkillsEnabled, isSkillReplayEnabled } from '../harness/flags';
 import { getSessionManager } from '../session-manager';
-import { getVersion } from '../version';
+import { getVersion } from '../core/version';
 
 interface OcSkillRecordOutput {
   skill_id: string;

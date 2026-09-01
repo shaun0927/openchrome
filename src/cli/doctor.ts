@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { getVersion } from '../version';
+import { getVersion } from '../core/version';
 import { checkNodeVersion } from './doctor/checks/node-version';
 import { checkHomeWritable } from './doctor/checks/home-writable';
 import { checkChromeBinary } from './doctor/checks/chrome-binary';
