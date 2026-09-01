@@ -29,6 +29,15 @@ module.exports = {
       from: { path: '^src/core/' },
       to: { path: '^src/observability/' },
     },
+    {
+      name: 'core-must-not-import-security-policy-adapters',
+      severity: 'error',
+      comment:
+        'src/core/ owns reusable primitives, including secret loading/redaction/substitution, but must not ' +
+        'depend on top-level security policy adapters such as domain guards, MCP roots, audit logging, or content sanitization.',
+      from: { path: '^src/core/' },
+      to: { path: '^src/security/' },
+    },
   ],
   options: {
     tsConfig: { fileName: 'tsconfig.json' },
