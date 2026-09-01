@@ -7,8 +7,8 @@
  *   - isStaticSufficient(html, status, contentType): deterministic check used to
  *     decide whether the static response is good enough or the crawler must fall
  *     back to the CDP tab path.
- *   - getBodyText(html): regex-based extractor used when A1's extractMainContent
- *     is not yet available in the tree.
+ *   - getBodyText(html): regex-based extractor used when the shared core
+ *     extractor is not available.
  *
  * Zero new dependencies (Node 20+ built-in fetch / undici).
  *
@@ -253,7 +253,7 @@ async function readBodyWithCap(response: Response, maxBytes: number): Promise<st
 // ---------------------------------------------------------------------------
 
 interface ExtractMainContentFn {
-  (html: string, opts?: { onlyMainContent?: boolean }): string;
+  (html: string, opts?: { onlyMainContent?: boolean }): string | { html: string };
 }
 
 let cachedExtractMainContent: ExtractMainContentFn | null | undefined;
@@ -261,9 +261,9 @@ let cachedExtractMainContent: ExtractMainContentFn | null | undefined;
 function tryLoadA1Extractor(): ExtractMainContentFn | null {
   if (cachedExtractMainContent !== undefined) return cachedExtractMainContent;
   try {
-    // Resolve at runtime so A3 doesn't hard-depend on A1.
+    // Resolve at runtime so static fetch can still fall back in stripped builds.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require('../core/extract/html-to-markdown');
+    const mod = require('../extract/html-to-markdown');
     if (mod && typeof mod.extractMainContent === 'function') {
       cachedExtractMainContent = mod.extractMainContent as ExtractMainContentFn;
       return cachedExtractMainContent;
@@ -276,7 +276,7 @@ function tryLoadA1Extractor(): ExtractMainContentFn | null {
 }
 
 /**
- * Regex-based body-text extractor used when A1's extractMainContent isn't
+ * Regex-based body-text extractor used when the shared core extractor is not
  * available. Strips <script>, <style>, all tags and collapses whitespace.
  *
  * Exported separately so it can be unit-tested independently of the dynamic
@@ -303,8 +303,8 @@ export function getBodyText(html: string): string {
 }
 
 /**
- * Extract body text using A1's extractor when present, otherwise the regex
- * fallback. Behavior is observable through the StaticBodyTextSource return.
+ * Extract body text using the shared core extractor when present, otherwise the
+ * regex fallback. Behavior is observable through the StaticBodyTextSource return.
  */
 export function extractBodyText(html: string): { text: string; source: 'a1' | 'fallback' } {
   const a1 = tryLoadA1Extractor();
@@ -312,6 +312,7 @@ export function extractBodyText(html: string): { text: string; source: 'a1' | 'f
     try {
       const out = a1(html, { onlyMainContent: false });
       if (typeof out === 'string') return { text: out, source: 'a1' };
+      return { text: getBodyText(out.html), source: 'a1' };
     } catch {
       // fall through to regex extractor
     }

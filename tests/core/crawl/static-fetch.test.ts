@@ -144,12 +144,12 @@ describe('getBodyText (regex fallback)', () => {
     expect(getBodyText('')).toBe('');
   });
 
-  test('extractBodyText falls back to regex when A1 extractor is absent', () => {
+  test('extractBodyText uses the core extractor when available', () => {
     __resetExtractorCacheForTests();
-    const html = '<html><body><p>plain content here</p></body></html>';
+    const html = '<html><body><p>plain content here</p><script>alert(1)</script></body></html>';
     const { text, source } = extractBodyText(html);
     expect(text).toBe('plain content here');
-    expect(source).toBe('fallback');
+    expect(source).toBe('a1');
   });
 });
 
