@@ -46,7 +46,7 @@ import { getIdleState } from '../core/activity/idle-state';
 import { SessionRateLimiter } from './rate-limiter';
 import { getGlobalConfig } from '../config/global';
 import { getToolTier, ToolTier } from '../config/tool-tiers';
-import { getMetricsCollector, withTenantLabel } from '../metrics/collector';
+import { getMetricsCollector, withTenantLabel } from '../core/metrics/collector';
 import { logAuditEntry } from '../security/audit-logger';
 import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from '../security/mcp-roots';
 import { isClientDisconnect } from '../errors/abort';
@@ -68,7 +68,7 @@ import {
   getSecretStore,
 } from '../core/secrets';
 import { isCodegenEnabled, recordCodegenStep } from '../core/codegen';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 import type { TransportMessageContext } from '../transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from '../recovery';
 import { redactPredicateSource } from '../core/trace/redactor';

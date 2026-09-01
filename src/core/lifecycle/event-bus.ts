@@ -31,7 +31,7 @@
 
 import { EventEmitter } from 'node:events';
 
-import { getMetricsCollector, MetricsCollector } from '../../metrics/collector';
+import { getMetricsCollector, MetricsCollector } from '../metrics/collector';
 import type {
   LifecycleEvent,
   LifecycleEventKind,

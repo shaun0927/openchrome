@@ -150,7 +150,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 **Goal:** Provide operational visibility into server health and tool call performance via a standard Prometheus scrape endpoint, enabling dashboards, alerting, and capacity planning.
 
 **Key Changes:**
-- `src/metrics/collector.ts` (new) — singleton metrics registry tracking: `tool_calls_total{tool,status}`, `tool_call_duration_seconds{tool}` (histogram), `reconnection_attempts_total`, `rate_limited_requests_total`, `active_sessions`
+- `src/core/metrics/collector.ts` — singleton metrics registry tracking: `tool_calls_total{tool,status}`, `tool_call_duration_seconds{tool}` (histogram), `reconnection_attempts_total`, `rate_limited_requests_total`, `active_sessions`
 - `src/watchdog/health-endpoint.ts` — `/metrics` route added alongside `/health`, returns Prometheus text format (no extra dependency, hand-serialized)
 - `src/mcp-server.ts` — instruments every tool dispatch with call count and duration recording
 
@@ -158,7 +158,7 @@ This initiative spans 7 phases, each shipped as an independent PR against `devel
 
 **Files Changed:**
 - `src/mcp-server.ts`
-- `src/metrics/collector.ts` (new)
+- `src/core/metrics/collector.ts`
 - `src/watchdog/health-endpoint.ts`
 
 **Configuration:**

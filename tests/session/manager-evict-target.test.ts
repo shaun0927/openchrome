@@ -43,7 +43,7 @@ jest.mock('../../src/core/perception/ref-id-manager', () => ({
 }));
 
 import { SessionManager } from '../../src/session-manager';
-import { getMetricsCollector } from '../../src/metrics/collector';
+import { getMetricsCollector } from '../../src/core/metrics/collector';
 
 function counterValueFor(reason: string): number {
   const dump = getMetricsCollector().export();

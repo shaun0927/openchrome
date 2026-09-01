@@ -14,7 +14,7 @@ jest.mock('../../src/session-manager', () => ({
 
 // Mock metrics collector so tests don't depend on singleton state.
 const mockInc = jest.fn();
-jest.mock('../../src/metrics/collector', () => ({
+jest.mock('../../src/core/metrics/collector', () => ({
   getMetricsCollector: jest.fn(() => ({
     inc: mockInc,
   })),
@@ -104,7 +104,7 @@ async function loadHandler(envPreset?: string): Promise<
   jest.doMock('../../src/session-manager', () => ({
     getSessionManager: () => mockSessionManager,
   }));
-  jest.doMock('../../src/metrics/collector', () => ({
+  jest.doMock('../../src/core/metrics/collector', () => ({
     getMetricsCollector: jest.fn(() => ({ inc: mockInc })),
   }));
 

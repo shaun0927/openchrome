@@ -6,7 +6,7 @@ import net from 'node:net';
 import { domainToASCII } from 'node:url';
 
 import { getGlobalConfig } from '../config/global';
-import { getMetricsCollector } from '../metrics/collector';
+import { getMetricsCollector } from '../core/metrics/collector';
 import { extractHostname as extractHostnameFromUrl } from '../utils/url-utils';
 
 export type DomainBlockReason = 'host-not-allowed' | 'scheme-not-allowed' | 'blocked-domain';

@@ -13,7 +13,7 @@
  * When no RequestContext is active (stdio startup, background tasks), the
  * prefix is omitted so existing log greps keep working.
  */
-import { currentRequestId } from './request-id';
+import { currentRequestId } from '../core/observability/request-id';
 
 function emit(args: unknown[]): void {
   const rid = currentRequestId();

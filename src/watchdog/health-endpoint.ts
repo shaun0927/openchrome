@@ -6,7 +6,7 @@
  */
 
 import * as http from 'http';
-import { getMetricsCollector } from '../metrics/collector';
+import { getMetricsCollector } from '../core/metrics/collector';
 import { ReadinessMachine, getReadinessMachine } from './readiness';
 
 export interface HealthData {

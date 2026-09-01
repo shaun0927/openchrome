@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { logAuditEntry, __resetAuditLoggerCachesForTests } from '../../src/security/audit-logger';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 
 jest.mock('../../src/config/global', () => ({
   getGlobalConfig: () => ({

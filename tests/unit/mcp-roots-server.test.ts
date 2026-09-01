@@ -4,7 +4,7 @@ import { pathToFileURL } from 'url';
 import { MCPServer } from '../../src/mcp-server';
 import { TOOL_ANNOTATIONS } from '../../src/types/tool-annotations';
 import type { MCPToolDefinition } from '../../src/types/mcp';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
 
 const navigateDefinition: MCPToolDefinition = {

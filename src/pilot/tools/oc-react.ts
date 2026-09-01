@@ -2,7 +2,7 @@ import type { MCPServer } from '../../mcp-server';
 import type { MCPResult, MCPToolDefinition, ToolHandler } from '../../types/mcp';
 import { TOOL_ANNOTATIONS } from '../../types/tool-annotations';
 import { getSessionManager } from '../../session-manager';
-import { getMetricsCollector } from '../../metrics/collector';
+import { getMetricsCollector } from '../../core/metrics/collector';
 import { registerPreloadScript } from '../../cdp/preload-injector';
 import { REACT_DEVTOOLS_SHIM_ID, REACT_DEVTOOLS_SHIM_SOURCE, assertShimBudget } from '../react/devtools-shim';
 import { redactSensitive } from '../react/inspect';

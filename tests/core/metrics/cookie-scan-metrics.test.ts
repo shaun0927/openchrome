@@ -14,7 +14,7 @@
  * would require heavy puppeteer mocks and live in tests/cdp/client-*.
  */
 
-import { MetricsCollector, getMetricsCollector } from '../../src/metrics/collector';
+import { MetricsCollector, getMetricsCollector } from '../../../src/core/metrics/collector';
 
 function metricsDumpIncludes(substring: string): boolean {
   return getMetricsCollector().export().includes(substring);

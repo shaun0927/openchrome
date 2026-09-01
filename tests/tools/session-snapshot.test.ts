@@ -21,7 +21,7 @@ jest.mock('../../src/core/fs/atomic-file', () => ({
 // fs.promises is mocked selectively per test via jest.spyOn
 import { getSessionManager } from '../../src/session-manager';
 import { writeFileAtomicSafe } from '../../src/core/fs/atomic-file';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 import { clearAllSessionMcpRoots, setSessionMcpRoots } from '../../src/security/mcp-roots';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import type * as http from 'node:http';
-import { REQUEST_ID_HEADER } from '../../observability/request-id';
+import { REQUEST_ID_HEADER } from '../../core/observability/request-id';
 
 export function parseCorsOrigins(raw: string | undefined): Set<string> {
   return new Set((raw || '').split(',').map((origin) => origin.trim()).filter(Boolean));

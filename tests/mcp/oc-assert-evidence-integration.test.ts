@@ -11,7 +11,7 @@ import {
 } from '../../src/core/contracts/assert-evidence-store';
 import { MCPServer } from '../../src/mcp-server';
 import { PRINCIPAL_SYM } from '../../src/middleware/auth';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 import { registerOcAssertTool } from '../../src/tools/oc-assert';
 import { registerOcEvidenceGetTool } from '../../src/tools/oc-evidence-get';
 import type { MCPRequest, MCPResponse } from '../../src/types/mcp';

@@ -1,13 +1,13 @@
 /// <reference types="jest" />
 
-import { getMetricsCollector } from '../../src/metrics/collector';
-import { estimateOutputTokensFromChars, extractCacheStatus } from '../../src/mcp-server';
+import { getMetricsCollector } from '../../../src/core/metrics/collector';
+import { estimateOutputTokensFromChars, extractCacheStatus } from '../../../src/mcp-server';
 
 describe('tool output observability metrics', () => {
   afterEach(() => {
-    jest.dontMock('../../src/session-manager');
-    jest.dontMock('../../src/core/perception/ref-id-manager');
-    jest.dontMock('../../src/dom');
+    jest.dontMock('../../../src/session-manager');
+    jest.dontMock('../../../src/core/perception/ref-id-manager');
+    jest.dontMock('../../../src/dom');
   });
 
   test('registers output size, estimated token, compression, and cache metrics', () => {
@@ -77,17 +77,17 @@ describe('tool output observability metrics', () => {
     ];
     let callIndex = 0;
 
-    jest.doMock('../../src/session-manager', () => ({
+    jest.doMock('../../../src/session-manager', () => ({
       getSessionManager: () => ({
         getPage: jest.fn().mockResolvedValue({}),
         getAvailableTargets: jest.fn().mockResolvedValue([]),
         getCDPClient: jest.fn().mockReturnValue({ send: jest.fn() }),
       }),
     }));
-    jest.doMock('../../src/core/perception/ref-id-manager', () => ({
+    jest.doMock('../../../src/core/perception/ref-id-manager', () => ({
       getRefIdManager: () => ({}),
     }));
-    jest.doMock('../../src/dom', () => ({
+    jest.doMock('../../../src/dom', () => ({
       serializeDOM: jest.fn().mockImplementation(async () => ({
         content: domSnapshots[Math.min(callIndex++, domSnapshots.length - 1)],
         pageStats: {
@@ -103,9 +103,9 @@ describe('tool output observability metrics', () => {
       })),
     }));
 
-    const { SnapshotStore } = await import('../../src/compression/snapshot-store');
+    const { SnapshotStore } = await import('../../../src/compression/snapshot-store');
     SnapshotStore.getInstance().clear();
-    const { registerReadPageTool } = await import('../../src/tools/read-page');
+    const { registerReadPageTool } = await import('../../../src/tools/read-page');
     const tools = new Map<string, (...args: unknown[]) => Promise<unknown>>();
     registerReadPageTool({
       registerTool: (name: string, handler: (...args: unknown[]) => Promise<unknown>) => {

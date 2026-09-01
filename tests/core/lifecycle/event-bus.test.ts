@@ -17,7 +17,7 @@ import {
   LIFECYCLE_LISTENER_ERROR_METRIC,
   resetLifecycleBusForTests,
 } from '../../../src/core/lifecycle/event-bus';
-import { MetricsCollector } from '../../../src/metrics/collector';
+import { MetricsCollector } from '../../../src/core/metrics/collector';
 import type { LifecycleEvent } from '../../../src/core/lifecycle/events';
 
 function makeLaunchEvent(overrides: Partial<LifecycleEvent & { kind: 'chrome:launch' }> = {}): LifecycleEvent {

@@ -29,6 +29,14 @@ const allowedTestsUtilsFiles = new Set([
   'test-helpers.ts',
 ]);
 
+const disallowedSrcDomainDirs = new Map([
+  ['metrics', 'Runtime metrics primitives belong under src/core/metrics.'],
+]);
+
+const disallowedTestsDomainDirs = new Map([
+  ['metrics', 'Metrics tests belong under tests/core/metrics.'],
+]);
+
 const errors = [];
 
 function listFiles(dir) {
@@ -49,6 +57,32 @@ for (const file of listFiles('src')) {
       `src/${file} is a root source file without an approved entrypoint/shim role. ` +
       'Move implementation code into an owning src/<domain>/ folder.',
     );
+  }
+}
+
+for (const [dir, message] of disallowedSrcDomainDirs) {
+  try {
+    const stat = statSync(join(root, 'src', dir));
+    if (stat.isDirectory()) {
+      errors.push(`src/${dir} is a deprecated domain directory. ${message}`);
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+for (const [dir, message] of disallowedTestsDomainDirs) {
+  try {
+    const stat = statSync(join(root, 'tests', dir));
+    if (stat.isDirectory()) {
+      errors.push(`tests/${dir} is a deprecated domain test directory. ${message}`);
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
   }
 }
 

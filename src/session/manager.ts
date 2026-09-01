@@ -36,14 +36,14 @@ import { StorageStateConfig } from '../config';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { getTargetId } from '../cdp/target-id';
 import { safeTitle } from '../core/page/safe-title';
-import { getMetricsCollector } from '../metrics/collector';
+import { getMetricsCollector } from '../core/metrics/collector';
 import { getLifecycleBus } from '../core/lifecycle';
 import { flush as flushRecorderBuffer } from '../core/skill-memory/recorder-buffer';
 import type { LifecycleEvent, SessionDestroyReason } from '../core/lifecycle';
 import { getTenantManager, isStrictTenantIsolationEnabled } from '../tenant/registry';
 import type { TenantManager } from '../tenant/manager';
 import { DEFAULT_TENANT_ID, type TenantId } from '../tenant/types';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 import { Budget, isLegacyBudgetMode } from '../core/deadline/budget';
 import {
   DEFAULT_SESSION_INIT_BUDGET_LAUNCH_FRACTION,

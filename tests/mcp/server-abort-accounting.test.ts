@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 import { MCPServer } from '../../src/mcp-server';
-import { getMetricsCollector } from '../../src/metrics/collector';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { getMetricsCollector } from '../../src/core/metrics/collector';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 import { ClientDisconnectError } from '../../src/errors/abort';
 
 describe('MCPServer aborted tool accounting', () => {

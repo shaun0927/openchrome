@@ -20,6 +20,15 @@ module.exports = {
       from: { path: '^src/core/' },
       to: { path: '^src/pilot/' },
     },
+    {
+      name: 'core-must-not-import-observability-adapters',
+      severity: 'error',
+      comment:
+        'src/core/ owns shared observability primitives such as request context, but must not ' +
+        'depend on top-level observability adapters for logging, redaction, or visual trajectories.',
+      from: { path: '^src/core/' },
+      to: { path: '^src/observability/' },
+    },
   ],
   options: {
     tsConfig: { fileName: 'tsconfig.json' },
