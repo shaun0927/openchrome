@@ -33,8 +33,6 @@
 // output once an integration harness exists that can render file:// pages.
 const DOM_PROXY_OVERHEAD_FACTOR = 3;
 
-import * as fs from 'fs';
-import * as path from 'path';
 import {
   buildSemanticView,
   type SemanticAXNode,
@@ -45,13 +43,13 @@ import {
 import rulesJson from '../../../src/core/perception/semantic-rules.json';
 
 const RULES = rulesJson as SemanticRuleSet;
-const FIXTURE_DIR = path.join(__dirname, '..', '..', 'fixtures', 'perception');
 
 const PER_FIXTURE_LIMIT = 0.65;
 const AGGREGATE_LIMIT = 0.40;
 
 interface FixtureScenario {
   file: string;
+  domProxyBytes: number;
   axNodes: SemanticAXNode[];
   domElements: SemanticDomElement[];
 }
@@ -65,6 +63,7 @@ interface FixtureScenario {
 const SCENARIOS: FixtureScenario[] = [
   {
     file: 'product-card.html',
+    domProxyBytes: 858 * DOM_PROXY_OVERHEAD_FACTOR,
     axNodes: [
       { nodeId: 1, role: 'main', childIds: [2] },
       { nodeId: 2, backendDOMNodeId: 10, role: 'article', name: 'Premium Wireless Headphones', childIds: [3, 4, 5, 6, 7, 8] },
@@ -87,6 +86,7 @@ const SCENARIOS: FixtureScenario[] = [
   },
   {
     file: 'signup-form.html',
+    domProxyBytes: 1010 * DOM_PROXY_OVERHEAD_FACTOR,
     axNodes: [
       { nodeId: 1, role: 'main', childIds: [2] },
       { nodeId: 2, backendDOMNodeId: 20, role: 'form', name: 'Create your account', childIds: [3, 4, 5, 6, 7, 8] },
@@ -103,6 +103,7 @@ const SCENARIOS: FixtureScenario[] = [
   },
   {
     file: 'news-article.html',
+    domProxyBytes: 1286 * DOM_PROXY_OVERHEAD_FACTOR,
     axNodes: [
       { nodeId: 1, role: 'main', childIds: [2] },
       { nodeId: 2, backendDOMNodeId: 30, role: 'article', name: 'City Approves New Transit Plan', childIds: [3, 4, 5, 6] },
@@ -120,6 +121,7 @@ const SCENARIOS: FixtureScenario[] = [
   },
   {
     file: 'search-results.html',
+    domProxyBytes: 1366 * DOM_PROXY_OVERHEAD_FACTOR,
     axNodes: (() => {
       const nodes: SemanticAXNode[] = [
         { nodeId: 1, role: 'main', childIds: [2] },
@@ -153,6 +155,7 @@ const SCENARIOS: FixtureScenario[] = [
   },
   {
     file: 'canvas-only.html',
+    domProxyBytes: 196 * DOM_PROXY_OVERHEAD_FACTOR,
     axNodes: [
       { nodeId: 1, role: 'WebArea', name: 'Canvas Only', childIds: [] },
     ],
@@ -190,11 +193,7 @@ interface FixtureMeasurement {
 
 function measureAll(): FixtureMeasurement[] {
   return SCENARIOS.map((scenario) => {
-    const fixturePath = path.join(FIXTURE_DIR, scenario.file);
-    // Raw fixture HTML bytes scaled by the documented overhead factor
-    // to approximate real `serializeDOM` output. See file header.
-    const rawHtmlBytes = fs.statSync(fixturePath).size;
-    const domBytes = rawHtmlBytes * DOM_PROXY_OVERHEAD_FACTOR;
+    const domBytes = scenario.domProxyBytes;
     const view = buildView(scenario);
     const semanticBytes = Buffer.byteLength(JSON.stringify(view), 'utf8');
     return {

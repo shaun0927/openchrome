@@ -100,7 +100,7 @@ describe('TOOL_ANNOTATIONS table', () => {
     const pilotProxyDir = path.join(__dirname, '..', '..', 'src', 'pilot', 'proxy');
     const pilotToolsDir = path.join(__dirname, '..', '..', 'src', 'pilot', 'tools');
     const runHarnessDir = path.join(__dirname, '..', '..', 'src', 'run-harness');
-    const mcpServerFile = path.join(__dirname, '..', '..', 'src', 'mcp-server.ts');
+    const mcpServerFile = path.join(__dirname, '..', '..', 'src', 'mcp', 'server.ts');
 
     const referencedNames = new Set<string>();
 

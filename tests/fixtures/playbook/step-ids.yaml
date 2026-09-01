@@ -1,9 +1,0 @@
-name: stable step ids
-steps:
-  - id: open_home
-    navigate:
-      url: https://example.com
-  - id: verify_home
-    assert:
-      kind: url
-      pattern: "example\\.com"

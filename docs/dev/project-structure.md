@@ -98,8 +98,10 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 - Put external integration adapters under `tests/external/`.
 - Keep public scoring harnesses, third-party runner checkouts, external
   datasets, and generated result snapshots out of the product repository.
-- Shared test fixtures belong under `tests/fixtures/`; feature-local fixtures
-  stay next to their owning test group.
+- Shared test fixtures are the exception, not the default. Every tracked file
+  under `tests/fixtures/` must be listed in `tests/fixtures/OWNERS.json` with
+  one owning test or verification script, its contract, and its verification
+  command. Feature-local fixtures stay next to their owning test group.
 
 ## Artifact Policy
 

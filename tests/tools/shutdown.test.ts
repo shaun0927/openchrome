@@ -4,6 +4,8 @@ const cleanupAllSessions = jest.fn();
 const getAllSessionInfos = jest.fn();
 const poolShutdown = jest.fn();
 const cdpDisconnect = jest.fn();
+const addTargetDestroyedListener = jest.fn();
+const addConnectionListener = jest.fn();
 const launcherClose = jest.fn();
 const shutdownHeadedFallback = jest.fn();
 
@@ -22,6 +24,16 @@ jest.mock('../../src/cdp/client', () => ({
   getCDPClient: () => ({
     isConnected: () => true,
     disconnect: cdpDisconnect,
+    addTargetDestroyedListener,
+    addConnectionListener,
+  }),
+  getCDPClientFactory: () => ({
+    getClient: () => ({
+      isConnected: () => true,
+      disconnect: cdpDisconnect,
+      addTargetDestroyedListener,
+      addConnectionListener,
+    }),
   }),
 }));
 

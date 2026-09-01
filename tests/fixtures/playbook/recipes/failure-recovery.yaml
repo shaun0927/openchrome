@@ -15,4 +15,4 @@ steps:
           dom_text:
             h1: Playbook Fixture Home
   - navigate:
-      url: ${base_url}/details.html
+      url: ${base_url}/index.html

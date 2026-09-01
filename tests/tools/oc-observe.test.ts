@@ -27,8 +27,8 @@ import { getRefIdManager } from '../../src/core/perception/ref-id-manager';
 import type { ObserveResponse } from '../../src/tools/oc-observe';
 
 /**
- * Build an AX-tree fixture that mirrors `tests/fixtures/oc-observe/static.html`.
- * Box geometry is hand-computed to be stable across runs.
+ * Build a stable AX-tree fixture. Box geometry is hand-computed to be stable
+ * across runs.
  */
 function buildAxFixture() {
   return {
