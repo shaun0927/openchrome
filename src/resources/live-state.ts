@@ -2,7 +2,7 @@ import type { MCPResourceDefinition } from './usage-guide';
 import type { SessionManager } from '../session-manager';
 import { safeTitle } from '../core/page/safe-title';
 import { getTaskJournal } from '../journal/task-journal';
-import { getDashboardState } from '../desktop/dashboard-state';
+import { getDashboardState } from '../dashboard/state';
 import { RecordingStore } from '../recording/recording-store';
 import { DEFAULT_TENANT_ID, type TenantId } from '../tenant/types';
 import { currentRequestContext } from '../core/observability/request-id';
