@@ -1,5 +1,5 @@
 import type * as http from 'node:http';
-import { getDashboardState } from '../../desktop/dashboard-state';
+import { getDashboardState } from '../../dashboard/state';
 import { authorizeDashboardEndpoint, canSeeTenant } from '../../middleware/dashboard-authz';
 import { logAuditEntry } from '../../security/audit-logger';
 import type { SessionManager } from '../../session-manager';

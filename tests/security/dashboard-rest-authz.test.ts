@@ -237,7 +237,7 @@ describe('dashboard REST authorization', () => {
     );
     transport = booted.transport;
 
-    const { getDashboardState } = await import('../../src/desktop/dashboard-state');
+    const { getDashboardState } = await import('../../src/dashboard/state');
     const state = getDashboardState();
     state.recordToolStart('alpha-session', 'navigate', { url: 'https://alpha.example' }, 'call-alpha');
     state.recordToolStart('beta-session', 'navigate', { url: 'https://beta.example' }, 'call-beta');
@@ -265,7 +265,7 @@ describe('dashboard REST authorization', () => {
     );
     transport = booted.transport;
 
-    const { getDashboardState } = await import('../../src/desktop/dashboard-state');
+    const { getDashboardState } = await import('../../src/dashboard/state');
     const state = getDashboardState();
     // Use suffixed session IDs unique to this test so the monotonic
     // counter is isolated from the preceding `hides cross-tenant tool
@@ -294,7 +294,7 @@ describe('dashboard REST authorization', () => {
     const booted = await boot();
     transport = booted.transport;
 
-    const { getDashboardState } = await import('../../src/desktop/dashboard-state');
+    const { getDashboardState } = await import('../../src/dashboard/state');
     const state = getDashboardState();
     state.recordToolStart('alpha-session', 'monotonic_tool', undefined, 'mono-call-1');
     state.recordToolEnd('mono-call-1', 'success');

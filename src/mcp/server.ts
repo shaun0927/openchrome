@@ -57,7 +57,7 @@ import { getVersion } from '../core/version';
 import { isTimeoutError } from '../errors/timeout';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getTaskJournal } from '../journal/task-journal';
-import { getDashboardState } from '../desktop/dashboard-state';
+import { getDashboardState } from '../dashboard/state';
 import { getActionRecorder } from '../recording/action-recorder';
 import { extractTaskId, getTaskStore, recordTaskToolCall } from '../core/task-ledger';
 import {
