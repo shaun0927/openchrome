@@ -38,6 +38,22 @@ module.exports = {
       from: { path: '^src/core/' },
       to: { path: '^src/security/' },
     },
+    {
+      name: 'core-must-not-import-hints-adapters',
+      severity: 'error',
+      comment:
+        'src/core/ task primitives must not depend on top-level hint generation or recovery-advice adapters.',
+      from: { path: '^src/core/' },
+      to: { path: '^src/hints/' },
+    },
+    {
+      name: 'core-must-not-import-dashboard-adapters',
+      severity: 'error',
+      comment:
+        'src/core/ must not depend on dashboard transport/view types; pass structural data into core boundaries instead.',
+      from: { path: '^src/core/' },
+      to: { path: '^src/dashboard/' },
+    },
   ],
   options: {
     tsConfig: { fileName: 'tsconfig.json' },

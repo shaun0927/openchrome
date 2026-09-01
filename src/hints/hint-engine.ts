@@ -41,7 +41,7 @@ import {
   isTaskDriftLedgerEnabled,
   type TaskDriftLedgerStore,
   type TaskLedger,
-} from '../harness/task-ledger';
+} from '../core/task-ledger';
 
 export interface HintContext {
   toolName: string;

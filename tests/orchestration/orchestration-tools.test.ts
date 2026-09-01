@@ -13,7 +13,7 @@ import { OrchestrationStateManager } from '../../src/orchestration/state-manager
 import { WorkflowEngine } from '../../src/orchestration/workflow-engine';
 import { createMockSessionManager } from '../mocks/orchestration-fixtures';
 import { getResultText, parseResultJSON, isErrorResult } from '../utils/test-helpers';
-import { TaskDriftLedgerStore, setTaskDriftLedger } from '../../src/harness/task-ledger';
+import { TaskDriftLedgerStore, setTaskDriftLedger } from '../../src/core/task-ledger';
 
 // Mock the session manager module
 jest.mock('../../src/session-manager', () => ({
