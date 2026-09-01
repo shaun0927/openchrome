@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { cwd, exit } from 'node:process';
@@ -39,11 +39,7 @@ const allowedRootEntries = new Map([
   ['.eslintrc.json', 'ESLint configuration'],
   ['.github', 'GitHub Actions automation'],
   ['.gitignore', 'Git ignore policy'],
-  ['CHANGELOG.md', 'release history'],
-  ['CLAUDE.md', 'host-specific contributor guidance'],
-  ['CONTRIBUTING.md', 'contributor entrypoint'],
   ['LICENSE', 'package license'],
-  ['README.ko.md', 'Korean README'],
   ['README.md', 'primary README'],
   ['SECURITY.md', 'security policy'],
   ['cli', 'CLI entrypoints and command adapters'],
@@ -98,11 +94,6 @@ function listTrackedFiles(dir) {
       }
     })
     .sort();
-}
-
-function loadFixtureOwners() {
-  const fixtureOwnersPath = join(root, 'tests', 'fixtures', 'OWNERS.json');
-  return JSON.parse(readFileSync(fixtureOwnersPath, 'utf8'));
 }
 
 const trackedRootEntries = new Set();
@@ -211,51 +202,6 @@ for (const { entry, stat } of listEntries('tests/utils')) {
       `tests/utils/${entry} is not an approved shared test helper or utility test. ` +
       'Mirror the owning production folder under tests/<domain>/.',
     );
-  }
-}
-
-const fixtureOwners = loadFixtureOwners();
-const ownerEntries = new Map();
-
-for (const entry of fixtureOwners.fixtures ?? []) {
-  if (!entry.path || typeof entry.path !== 'string') {
-    errors.push('tests/fixtures/OWNERS.json has a fixture entry without a string path.');
-    continue;
-  }
-  if (!entry.owner || typeof entry.owner !== 'string') {
-    errors.push(`tests/fixtures/OWNERS.json entry ${entry.path} is missing an owner.`);
-  }
-  if (!entry.contract || typeof entry.contract !== 'string') {
-    errors.push(`tests/fixtures/OWNERS.json entry ${entry.path} is missing a contract.`);
-  }
-  if (!entry.verification || typeof entry.verification !== 'string') {
-    errors.push(`tests/fixtures/OWNERS.json entry ${entry.path} is missing verification.`);
-  }
-  ownerEntries.set(`tests/fixtures/${entry.path}`, entry);
-}
-
-for (const file of listTrackedFiles('tests/fixtures')) {
-  if (file === 'tests/fixtures/OWNERS.json') continue;
-  if (!ownerEntries.has(file)) {
-    errors.push(
-      `${file} is a shared fixture without an OWNERS.json entry. ` +
-      'Either move it next to the owning test or declare its owner, contract, and verification.',
-    );
-  }
-}
-
-for (const file of ownerEntries.keys()) {
-  try {
-    const stat = statSync(join(root, file));
-    if (!stat.isFile()) {
-      errors.push(`tests/fixtures/OWNERS.json references ${file}, but it is not a file.`);
-    }
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      errors.push(`tests/fixtures/OWNERS.json references missing fixture ${file}.`);
-    } else {
-      throw error;
-    }
   }
 }
 

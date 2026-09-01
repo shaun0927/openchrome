@@ -16,7 +16,6 @@ const describeOrSkip = enabled ? describe : describe.skip;
 
 describeOrSkip('oc_observe ↔ read_page ref parity (#844 dependency)', () => {
   test('placeholder — wire this up against a live page once #844 lands', () => {
-    // Real verification lives in scripts/verify/browserbase-A-observe.mjs.
     // Once #844 introduces a stable backend-node uid, replace this stub with:
     //   1. Drive a Puppeteer page to a deterministic fixture.
     //   2. Call read_page(mode='ax', tabId) — extract the ref for some node.

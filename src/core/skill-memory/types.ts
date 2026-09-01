@@ -139,8 +139,7 @@ export interface SkillRecord {
 
 /**
  * Where a {@link SkillRecord} came from and whether its writer claimed it was
- * contract-verified. Part of the Verified Skill Loop (see
- * docs/roadmap/ssot-decisions.md D2).
+ * contract-verified. Part of the Verified Skill Loop.
  */
 export interface SkillProvenance {
   /**

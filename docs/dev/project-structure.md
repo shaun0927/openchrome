@@ -11,8 +11,8 @@ folder-boundary decisions here.
 | `src/` | shipped TypeScript runtime | Production code only. Tests, generated reports, and public scoring data stay out. |
 | `cli/` | CLI entrypoints and command adapters | Thin command surfaces that call runtime modules. Do not duplicate domain logic here. |
 | `tests/` | Jest, e2e, fixtures, integration checks | Mirror `src/` where practical. Browser-level scenario tests live under `tests/e2e`. |
-| `docs/` | user and contributor documentation | One canonical page per concept; README links to docs instead of copying details. |
-| `scripts/` | maintenance and generation scripts | Scripts should either update tracked artifacts deterministically or write to ignored output paths. |
+| `docs/` | user and contributor documentation | Keep only durable CLI/MCP docs. Roadmaps, release notes, recipes, and validation transcripts stay out of the repository. |
+| `scripts/` | maintenance and generation scripts | Keep only scripts referenced by package scripts, CI, or tests. One-off verification scripts stay out. |
 | `config/` | shipped runtime policy config | Package-facing configuration consumed by runtime code. Local overrides stay ignored. |
 
 ## Allowed Root Entries
@@ -20,9 +20,7 @@ folder-boundary decisions here.
 The repository root should stay small. A root entry is allowed only when it is
 one of these package or toolchain surfaces:
 
-- standard project documents (`README.md`, `LICENSE`, `SECURITY.md`,
-  `CONTRIBUTING.md`, `CHANGELOG.md`) and host-specific contributor guidance
-  (`CLAUDE.md`);
+- standard project documents (`README.md`, `LICENSE`, `SECURITY.md`);
 - package and compiler configuration (`package.json`, lockfile, TypeScript,
   Jest, ESLint, dependency-cruiser);
 - GitHub automation (`.github/`);
@@ -36,8 +34,8 @@ documentation under `docs/`, runnable maintenance code under `scripts/`, and
 ignored local outputs under paths covered by `.gitignore`.
 `npm run lint:repo-structure` enforces the approved repository root allow-list,
 the current `src/` root entry allow-list, the approved `src/utils` leaf
-allow-list, the approved `tests/utils` shared helper allow-list, shared fixture
-ownership, and prevents reintroducing the deprecated `tests/src` bucket.
+allow-list, the approved `tests/utils` shared helper allow-list, and prevents
+reintroducing the deprecated `tests/src` bucket.
 The remaining `src/` root files are limited to the package/CLI entrypoint
 (`src/index.ts`) and compatibility shims (`src/mcp-server.ts`,
 `src/session-manager.ts`, `src/version.ts`). New runtime implementation belongs
@@ -46,12 +44,12 @@ under the owning folder.
 ## Package Publish Surface
 
 `package.json#files` is the canonical allow-list for project-owned npm package
-content. npm also includes standard metadata such as `package.json`, README
-files, and `LICENSE`. As of this document, the package intentionally publishes:
+content. npm also includes standard metadata such as `package.json`, `README.md`,
+and `LICENSE`. As of this document, the package intentionally publishes:
 
 - `dist/` compiled runtime and CLI entrypoints;
 - `config/` shipped runtime policy configuration;
-- README files, `LICENSE`, and `docs/agent/capability-map.md`.
+- `README.md`, `LICENSE`, and `docs/agent/capability-map.md`.
 
 ## Runtime Module Boundaries
 
@@ -84,10 +82,9 @@ files, and `LICENSE`. As of this document, the package intentionally publishes:
 - Put external integration adapters under `tests/external/`.
 - Keep public scoring harnesses, third-party runner checkouts, external
   datasets, and generated result snapshots out of the product repository.
-- Shared test fixtures are the exception, not the default. Every tracked file
-  under `tests/fixtures/` must be listed in `tests/fixtures/OWNERS.json` with
-  one owning test or verification script, its contract, and its verification
-  command. Feature-local fixtures stay next to their owning test group.
+- Shared test fixtures are the exception, not the default. Keep only fixtures
+  read by retained tests. Feature-local fixtures stay next to their owning test
+  group.
 
 ## Artifact Policy
 

@@ -151,7 +151,7 @@ function defaultEmitAudit(event: string, payload: Record<string, unknown>): void
     logAuditEntry(event, 'dynamic-skills', payload);
   } catch (err) {
     // Audit logging must never crash the pilot path — log to stderr
-    // and continue. CLAUDE.md mandates console.error here.
+    // and continue. stdout carries MCP JSON-RPC, so use console.error here.
     console.error(`[dynamic-skills] audit emit failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

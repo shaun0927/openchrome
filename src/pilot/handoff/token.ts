@@ -13,10 +13,8 @@
  *   - Single-use: the manager (`./manager.ts`) enforces — `redeem()`
  *     removes the entry on success and refuses subsequent attempts.
  *
- * Storage at rest is out of scope for this PR — issue #794 will land
- * keychain / AES-256-GCM persistence on top of the in-memory registry.
- * See docs/roadmap/portability-harness-contract.md "Handoff token
- * encryption" for the persistence design.
+ * Storage at rest is handled by the handoff persistence layer on top of the
+ * in-memory registry.
  */
 
 import * as crypto from 'node:crypto';

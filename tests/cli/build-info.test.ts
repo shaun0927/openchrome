@@ -10,28 +10,24 @@ describe('CLI build provenance', () => {
     Object.assign(process.env, original);
   });
 
-  test('uses embedded standalone metadata when present', () => {
-    process.env.OPENCHROME_STANDALONE_BINARY = '1';
+  test('uses embedded build metadata when present', () => {
     process.env.OPENCHROME_BUILD_VERSION = '9.8.7';
     process.env.OPENCHROME_BUILD_COMMIT = 'a'.repeat(40);
-    process.env.OPENCHROME_BUILD_TARGET = 'x86_64-unknown-linux-gnu';
-    process.env.OPENCHROME_BUILD_BUNDLER = 'bun-1.3.14';
+    process.env.OPENCHROME_BUILD_TARGET = 'linux-x64';
+    process.env.OPENCHROME_BUILD_BUNDLER = 'node-20';
 
     expect(getBuildInfo()).toEqual({
       version: '9.8.7',
       sourceCommit: 'a'.repeat(40),
-      target: 'x86_64-unknown-linux-gnu',
-      bundler: 'bun-1.3.14',
-      standalone: true,
+      target: 'linux-x64',
+      bundler: 'node-20',
     });
   });
 
   test('keeps npm execution backward compatible', () => {
-    delete process.env.OPENCHROME_STANDALONE_BINARY;
     delete process.env.OPENCHROME_BUILD_VERSION;
     const info = getBuildInfo();
     expect(info.version).toMatch(/^\d+\.\d+\.\d+/);
-    expect(info.standalone).toBe(false);
     expect(info.bundler).toContain('node-');
   });
 });

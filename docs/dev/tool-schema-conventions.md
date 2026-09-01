@@ -80,6 +80,5 @@ node scripts/lint-tool-schemas.mjs /tmp/oc-tools.json --update-baseline
 
 | Script | What it checks |
 |---|---|
-| `lint-changed-src.js` | TypeScript code style on changed files |
 | `lint-tool-schemas.mjs` | Schema-shape budgets (this doc) |
 | `lint-tool-tiers` | Tool tier boundary (dep-cruiser) |

@@ -53,8 +53,8 @@ All flags live in `src/index.ts`. Every env var listed here is read in the same 
 | Flag / env var | Default | Description |
 |----------------|---------|-------------|
 | `OPENCHROME_HEALTH_ENDPOINT` | on for `http`/`both`, off for `stdio` | Force-enable (`1`/`true`) or force-disable (`0`/`false`) the `/health` and `/metrics` HTTP listener. Invalid values fall through to the transport-mode default. |
-| `OPENCHROME_HEALTH_PORT` | `3101` (separate from MCP port) | Port for the standalone health endpoint when it is enabled in stdio mode. In `http`/`both` mode the health routes are served on the same port as `/mcp`. |
-| `OPENCHROME_HEALTH_BIND` | `127.0.0.1` | Bind address for the standalone health endpoint. |
+| `OPENCHROME_HEALTH_PORT` | `3101` (separate from MCP port) | Port for the separate health endpoint when it is enabled in stdio mode. In `http`/`both` mode the health routes are served on the same port as `/mcp`. |
+| `OPENCHROME_HEALTH_BIND` | `127.0.0.1` | Bind address for the separate health endpoint. |
 
 ### Parent-process watcher
 

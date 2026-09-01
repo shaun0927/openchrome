@@ -1,15 +1,12 @@
 /**
  * Harness feature-flag loader.
  *
- * Implements the activation policy from the portability-harness contract
- * (docs/roadmap/portability-harness-contract.md):
+ * Implements pilot activation policy:
  *
- *   - `--pilot` CLI flag (or OPENCHROME_PILOT env) gates the pilot tier as a whole.
- *   - When the gate is closed, no module from `src/pilot/**` is loaded into the
- *     process; `bootstrapPilot()` returns null without invoking `import()`.
- *   - When the gate is open, six per-family sub-flags individually enable the
- *     specific pilot families. Each defaults to *active* inside pilot and can
- *     be overridden to false via its environment variable.
+ *   - `--pilot` CLI flag (or OPENCHROME_PILOT env) gates the pilot tier.
+ *   - When the gate is closed, no module from `src/pilot/**` is loaded.
+ *   - When the gate is open, per-family sub-flags individually enable pilot
+ *     families. Each defaults to active inside pilot and can be overridden.
  *
  * This module lives in `src/core/` conceptually (it ships unflagged) but stays
  * at `src/harness/` so both core and pilot modules can import it without
@@ -220,7 +217,7 @@ export function activeFamilies(): string[] {
 
 /**
  * Writes a single line to stderr describing which tiers and families are
- * active. Per CLAUDE.md never use stdout — that carries the MCP JSON-RPC
+ * active. Never use stdout because it carries the MCP JSON-RPC
  * payload and would corrupt the protocol.
  */
 export function logActiveFlags(): void {

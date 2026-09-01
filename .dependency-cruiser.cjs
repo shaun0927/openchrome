@@ -4,7 +4,8 @@
  * Enforces:
  *   - src/core/** may NOT import from src/pilot/** (lint error).
  *
- * See docs/roadmap/portability-harness-contract.md for the full rule set.
+ * Core modules must not import opt-in pilot modules. Keep the core runtime
+ * usable without loading the pilot tier.
  */
 module.exports = {
   forbidden: [
@@ -16,7 +17,7 @@ module.exports = {
         'and may relax invariants (background work, workflow policy) that core forbids. ' +
         'This rule subsumes the lifecycle-bus import direction (issue #857): ' +
         'src/core/lifecycle/ is under src/core/ and inherits the same prohibition. ' +
-        'See docs/roadmap/portability-harness-contract.md "Import direction (enforced by lint)".',
+        'Core modules must stay independent from opt-in pilot modules.',
       from: { path: '^src/core/' },
       to: { path: '^src/pilot/' },
     },
