@@ -1,12 +1,12 @@
-import fs from 'fs';
+import { readFileSync } from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { parse } from 'yaml';
 
 const targets = require('../../scripts/standalone/targets.cjs') as {
   PINNED_BUN_VERSION: string;
   TARGETS: Record<string, { bunTarget: string; standaloneAsset: string }>;
   resolveTarget: (input: string) => { target: string; standaloneAsset: string };
-  outputName: (target: { target: string; standaloneAsset: string; extension: string }, kind: string) => string;
 };
 
 describe('standalone CLI build contract', () => {
@@ -29,11 +29,6 @@ describe('standalone CLI build contract', () => {
     expect(targets.resolveTarget(alias).standaloneAsset).toBe(expected);
   });
 
-  test('sidecar naming stays compatible with Tauri externalBin', () => {
-    const target = targets.resolveTarget('windows-x64') as { target: string; standaloneAsset: string; extension: string };
-    expect(targets.outputName(target, 'sidecar')).toBe('openchrome-sidecar-x86_64-pc-windows-msvc.exe');
-  });
-
   test('build script documents fail-closed target, tag, and output controls', () => {
     const script = path.join(process.cwd(), 'scripts', 'build-standalone-cli.cjs');
     const output = execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
@@ -42,24 +37,31 @@ describe('standalone CLI build contract', () => {
     expect(output).toContain('--output-dir <path>');
   });
 
-  test('desktop and release workflows share the canonical builder', () => {
-    const desktopScript = fs.readFileSync(path.join(process.cwd(), 'desktop', 'scripts', 'build-sidecar.js'), 'utf8');
-    const desktopWorkflow = fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'desktop-release.yml'), 'utf8');
-    const cliWorkflow = fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'cli-release.yml'), 'utf8');
-    expect(desktopScript).toContain('build-standalone-cli.cjs');
-    expect(desktopWorkflow).toContain('build-standalone-cli.cjs');
-    expect(desktopWorkflow).toContain('npm run build');
-    expect(desktopWorkflow.indexOf('npm run build')).toBeLessThan(
-      desktopWorkflow.indexOf('build-standalone-cli.cjs'),
+  test('CLI release workflow uses the canonical builder and certified browser smoke', () => {
+    const cliWorkflow = readFileSync(path.join(process.cwd(), '.github', 'workflows', 'cli-release.yml'), 'utf8');
+    const workflow = parse(cliWorkflow);
+    const matrix = workflow.jobs.build.strategy.matrix.include;
+    const steps = workflow.jobs.build.steps;
+
+    expect(workflow.on).toHaveProperty('workflow_dispatch');
+    expect(workflow.on.push.tags).toEqual(['v*']);
+    expect(workflow.on).not.toHaveProperty('pull_request');
+    expect(workflow.env.BUN_VERSION).toBe(targets.PINNED_BUN_VERSION);
+    expect(matrix.map((entry: { target: string }) => entry.target).sort()).toEqual(Object.keys(targets.TARGETS).sort());
+    expect(matrix.find((entry: { platform_name: string }) => entry.platform_name === 'macos-x64').os).toBe('macos-15-intel');
+    expect(steps.find((step: { name: string }) => step.name === 'Setup Bun ${{ env.BUN_VERSION }}')).toMatchObject({
+      uses: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
+      with: { 'bun-version': '${{ env.BUN_VERSION }}' },
+    });
+    expect(steps.find((step: { name: string }) => step.name === 'Build standalone executable').run).toContain(
+      'scripts/build-standalone-cli.cjs',
     );
-    expect(cliWorkflow).toContain('build-standalone-cli.cjs');
-    expect(cliWorkflow).toContain('macos-15-intel');
-    expect(cliWorkflow).toContain("bun-version: ${{ env.BUN_VERSION }}");
-    expect(cliWorkflow).toContain('verify-standalone-browser-smoke.cjs');
-    expect(cliWorkflow).toContain('browser-actions/setup-chrome@e574b4b3a21156ab45dd6b5f67e884fd26eed829');
-    expect(cliWorkflow).toContain('chrome-version: 131.0.6778.87');
-    expect(cliWorkflow).toContain('workflow_dispatch:');
-    expect(cliWorkflow).toContain('tags:');
-    expect(cliWorkflow).not.toContain('pull_request:');
+    expect(steps.find((step: { name: string }) => step.name === 'Install Chrome for live standalone smoke')).toMatchObject({
+      uses: 'browser-actions/setup-chrome@e574b4b3a21156ab45dd6b5f67e884fd26eed829',
+      with: { 'chrome-version': '131.0.6778.87' },
+    });
+    expect(steps.find((step: { name: string }) => step.name === 'Verify standalone navigate and read_page against real Chrome').run).toContain(
+      'scripts/verify-standalone-browser-smoke.cjs',
+    );
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Dashboard State - Tracks tool calls and session info for the desktop dashboard.
+ * Dashboard State - Tracks tool calls and session info for HTTP dashboard APIs.
  *
  * Provides a lightweight ring buffer of recent tool calls per session,
  * consumed by the REST API endpoints in the HTTP transport.

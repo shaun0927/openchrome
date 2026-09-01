@@ -3,8 +3,8 @@
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true,
-    "types": ["node", "jest", "chrome"]
+    "types": ["node", "jest"]
   },
-  "include": ["src/**/*", "extension/src/**/*", "cli/**/*", "tests/**/*"],
+  "include": ["src/**/*", "cli/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist"]
 }

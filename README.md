@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/mascot.png?v=4" alt="OpenChrome Raptor" width="180">
-</p>
-
 <h1 align="center">OpenChrome</h1>
 
 <p align="center">
@@ -97,11 +93,6 @@ and add the printed `[mcp_servers.openchrome]` block to `~/.codex/config.toml`.
 Run `openchrome update` later to refresh the CLI and client config.
 </details>
 
-**Prefer no terminal?** A one-click [desktop app](https://github.com/shaun0927/openchrome/releases?q=desktop)
-(macOS / Windows / Linux, beta) runs the server with no Node.js setup.
-
----
-
 ## What you can do with it
 
 Ask your agent in plain language — these all map to OpenChrome tools:
@@ -148,8 +139,7 @@ See [`docs/cli/playbook.md`](docs/cli/playbook.md).
 ### Keep one browser warm — HTTP daemon mode
 
 Run OpenChrome as a long-lived daemon so multiple clients (Claude Code + CI +
-a dashboard) share **one** Chrome process, and the server outlives whatever
-launched it (Docker, systemd, CI):
+monitoring) share **one** Chrome process:
 
 ```bash
 openchrome serve --http 3100 --auth-token <token> --idle-timeout 30m
@@ -224,63 +214,11 @@ product repository.
 openchrome serve --server-mode     # headless + auto-launch + server defaults
 ```
 
-Works in CI/CD and containers with no login — navigation, scraping, screenshots,
-forms, and parallel workflows all run in clean sessions. A production
-`Dockerfile` is included (`docker build -t openchrome . && docker run openchrome`).
+Works in CI and server environments with no login — navigation, scraping,
+screenshots, forms, and parallel workflows all run in clean sessions.
 
 Authentication (per-tenant API keys, JWT/OAuth, shared token): [`docs/auth.md`](docs/auth.md).
 Transport stability policy: [`docs/transport-lifecycle.md`](docs/transport-lifecycle.md).
-
----
-
-## Host plugins
-
-OpenChrome ships plugin manifests for Claude Code and Codex CLI so both hosts
-load the MCP server and skill body from the **same shared source** — no
-per-host duplication.
-
-### Claude Code
-
-Load from the repo for local development:
-
-```bash
-claude --plugin-dir /path/to/openchrome
-```
-
-Or install from npm after the package is published to a marketplace:
-
-```bash
-/plugin install openchrome   # once listed in a marketplace
-```
-
-The skill body lives under `skills/openchrome/` and the `/openchrome:connect`
-slash command is registered from the top-level `commands/` directory. Run
-`/reload-plugins` after updating to pick up new content.
-
-Manifest: `.claude-plugin/plugin.json` — registers the `openchrome` MCP server
-(`openchrome serve --auto-launch`). Skills and commands are auto-discovered
-from `skills/` and `commands/`.
-
-### Codex CLI
-
-Load from the repo for local development:
-
-```bash
-codex --plugin-dir /path/to/openchrome
-```
-
-Or follow the Codex plugin installation instructions once the package is listed
-in the Codex plugin registry.
-
-Manifest: `.codex-plugin/plugin.json` — identical MCP server entry point and
-skill path; the two manifests share the same `skills/openchrome/` body.
-
-### Shared skill body
-
-Both manifests share `skills/openchrome/SKILL.md` as the single source of
-truth for skill content, and the slash command stub at `commands/connect.md`
-registers `/openchrome:connect`. The `commands/` directory sits at the plugin
-root so both hosts auto-discover it.
 
 ---
 

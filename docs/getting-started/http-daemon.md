@@ -280,9 +280,8 @@ curl -s http://127.0.0.1:3100/metrics
 Invoke-RestMethod -Uri http://127.0.0.1:3100/metrics
 ```
 
-The desktop dashboard (if installed) reads the same endpoints. External
-monitoring probes (Prometheus, Uptime Robot, etc.) can poll `/health` without
-credentials.
+External monitoring probes (Prometheus, Uptime Robot, etc.) can poll `/health`
+without credentials.
 
 ---
 

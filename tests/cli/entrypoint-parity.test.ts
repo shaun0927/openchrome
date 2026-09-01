@@ -46,7 +46,6 @@ describe('CLI entrypoint parity', () => {
 
   test.each([
     [['help', 'launch'], 'Usage: openchrome launch'],
-    [['help', 'sessions'], 'Usage: openchrome sessions'],
   ])('bin wrapper preserves local help for %j', (args, expectedUsage) => {
     const result = runWrapper(args);
     expect(result.status).toBe(0);

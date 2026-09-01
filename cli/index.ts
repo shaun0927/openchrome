@@ -3,10 +3,7 @@
  * CLI for OpenChrome
  *
  * Commands:
- * - install: Install extension and native messaging host
- * - uninstall: Remove extension and native messaging host
- * - serve: Start MCP server for Claude Code
- * - sessions: List or clear sessions
+ * - serve: Start MCP server
  * - launch: Start Claude Code with isolated config
  * - doctor: Check installation status
  * - recover: Recover corrupted .claude.json
@@ -14,9 +11,6 @@
  */
 
 import { Command } from 'commander';
-// Legacy imports - kept for backward compatibility but deprecated
-// import { install, installNativeHost } from './install';
-// import { uninstall } from './uninstall';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -184,40 +178,6 @@ vault
     const store = await loadVaultStore();
     await store.rotateKey(passphrase);
     console.log(JSON.stringify({ ok: true, rotated: true }));
-  });
-
-program
-  .command('install')
-  .description('[DEPRECATED] Extension install is no longer needed. Use CDP mode instead.')
-  .option('-f, --force', 'Force reinstall even if already installed')
-  .option('--extension-id <id>', 'Chrome extension ID (for native host configuration)')
-  .action(async () => {
-    console.log('⚠️  DEPRECATED: Extension installation is no longer needed.\n');
-    console.log('OpenChrome now uses CDP (Chrome DevTools Protocol) mode,');
-    console.log('which does not require a Chrome extension.\n');
-    console.log('Quick Start:');
-    console.log('  1. Start Chrome with debugging port:');
-    console.log('     chrome --remote-debugging-port=9222\n');
-    console.log('  2. Add to ~/.claude.json:');
-    console.log('     {');
-    console.log('       "mcpServers": {');
-    console.log('         "openchrome": {');
-    console.log('           "command": "openchrome",');
-    console.log('           "args": ["serve"]');
-    console.log('         }');
-    console.log('       }');
-    console.log('     }\n');
-    console.log('  3. Restart Claude Code\n');
-    console.log('Run "openchrome doctor" to verify your setup.');
-  });
-
-program
-  .command('uninstall')
-  .description('[DEPRECATED] No longer needed - CDP mode has no extension to uninstall')
-  .action(async () => {
-    console.log('⚠️  DEPRECATED: Uninstall is no longer needed.\n');
-    console.log('OpenChrome now uses CDP mode, which has no extension to uninstall.');
-    console.log('Simply remove the MCP server config from ~/.claude.json if you want to disable it.');
   });
 
 function printHostConfigMigrationNotice(label: string): void {
@@ -542,19 +502,6 @@ program
   .allowUnknownOption()
   .helpOption(false)
   .action(() => runFullCliCommand());
-
-program
-  .command('sessions')
-  .description('List or clear sessions')
-  .option('--clear', 'Clear all inactive sessions')
-  .action(async (options) => {
-    console.log('Session management requires the extension to be running.');
-    if (options.clear) {
-      console.log('To clear sessions, use the extension popup.');
-    } else {
-      console.log('To view sessions, check the extension popup in Chrome.');
-    }
-  });
 
 program
   .command('doctor')
@@ -1017,58 +964,6 @@ program
     console.log(`Removed ${backupsRemoved} old backup(s)`);
     console.log('\nCleanup complete!');
   });
-
-/**
- * Get the extension installation path
- */
-function getExtensionPath(): string {
-  return path.join(os.homedir(), '.openchrome', 'extension');
-}
-
-/**
- * Check if native host manifest exists
- */
-function checkNativeHostManifest(): boolean {
-  const platform = os.platform();
-  let manifestPath: string;
-
-  switch (platform) {
-    case 'win32':
-      // Check registry or user data path
-      manifestPath = path.join(
-        os.homedir(),
-        'AppData',
-        'Local',
-        'Google',
-        'Chrome',
-        'User Data',
-        'NativeMessagingHosts',
-        'com.anthropic.openchrome.json'
-      );
-      break;
-    case 'darwin':
-      manifestPath = path.join(
-        os.homedir(),
-        'Library',
-        'Application Support',
-        'Google',
-        'Chrome',
-        'NativeMessagingHosts',
-        'com.anthropic.openchrome.json'
-      );
-      break;
-    default:
-      manifestPath = path.join(
-        os.homedir(),
-        '.config',
-        'google-chrome',
-        'NativeMessagingHosts',
-        'com.anthropic.openchrome.json'
-      );
-  }
-
-  return fs.existsSync(manifestPath);
-}
 
 /**
  * Get sessions directory

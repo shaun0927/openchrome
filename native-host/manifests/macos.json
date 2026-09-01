@@ -1,9 +1,0 @@
-{
-  "name": "com.anthropic.openchrome",
-  "description": "Native messaging host for OpenChrome",
-  "path": "/Users/${USER}/.openchrome/native-host/host.js",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://${EXTENSION_ID}/"
-  ]
-}

@@ -13,15 +13,7 @@ folder-boundary decisions here.
 | `tests/` | Jest, e2e, fixtures, integration checks | Mirror `src/` where practical. Browser-level scenario tests live under `tests/e2e`. |
 | `docs/` | user and contributor documentation | One canonical page per concept; README links to docs instead of copying details. |
 | `scripts/` | maintenance and generation scripts | Scripts should either update tracked artifacts deterministically or write to ignored output paths. |
-| `deploy/` | deployment examples | Keep Docker, systemd, and process-manager examples here. |
-| `native-host/` | browser native-messaging host assets | Manifests and host implementation for native messaging. |
-| `assets/` | published static assets | Small stable assets included in package output. |
 | `config/` | shipped runtime policy config | Package-facing configuration consumed by runtime code. Local overrides stay ignored. |
-| `extension/` | browser extension package | Extension source and manifest files only. |
-| `desktop/` | Tauri desktop app | Desktop application code and app-specific build assets. |
-| `commands/` | plugin slash commands | Published host-plugin commands. Keep command logic as short routing instructions. |
-| `skills/` | plugin skill bodies | Published host-plugin skills. Shared skill content lives here, not inside host-specific manifests. |
-| `.claude-plugin/`, `.codex-plugin/` | host plugin manifests | Thin package manifests only. They point at shared `skills/` and `commands/` content. |
 
 ## Allowed Root Entries
 
@@ -32,12 +24,11 @@ one of these package or toolchain surfaces:
   `CONTRIBUTING.md`, `CHANGELOG.md`) and host-specific contributor guidance
   (`CLAUDE.md`);
 - package and compiler configuration (`package.json`, lockfile, TypeScript,
-  Jest, ESLint, dependency-cruiser, webpack);
-- container and deployment entrypoints (`Dockerfile`, `.dockerignore`);
+  Jest, ESLint, dependency-cruiser);
 - GitHub automation (`.github/`);
 - publish surfaces declared in `package.json#files`;
-- first-level source, test, docs, script, app, extension, and deployment
-  directories listed in the table above.
+- first-level source, test, docs, and script directories listed in the table
+  above.
 
 Do not add ad hoc root folders for experiments, generated reports, worktrees,
 agent-local state, or one-off validation outputs. Put durable contributor
@@ -59,15 +50,8 @@ content. npm also includes standard metadata such as `package.json`, README
 files, and `LICENSE`. As of this document, the package intentionally publishes:
 
 - `dist/` compiled runtime and CLI entrypoints;
-- `assets/` stable package assets;
 - `config/` shipped runtime policy configuration;
-- README files, `LICENSE`, and `docs/agent/capability-map.md`;
-- `skills/`, `commands/`, `.claude-plugin/`, and `.codex-plugin/` for host
-  plugin discovery.
-
-The host-specific manifests must stay thin. Shared skill and command content
-belongs in `skills/` and `commands/`; do not fork equivalent copies under
-`.claude-plugin/` or `.codex-plugin/`.
+- README files, `LICENSE`, and `docs/agent/capability-map.md`.
 
 ## Runtime Module Boundaries
 
