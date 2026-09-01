@@ -67,7 +67,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 
 | Path | Responsibility |
 | --- | --- |
-| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, request-scoped observability context, contracts, output, metrics collection and token estimates, tracing, crawl, deadline handling, filesystem persistence, task-run, and task-ledger. |
+| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, request-scoped observability context, contracts, output, metrics collection and token estimates, tracing, crawl, deadline handling, filesystem persistence, secret loading/redaction/substitution, task-run, and task-ledger. |
 | `src/tools/` | MCP tool implementations and tool-local helpers. Tool code may call `src/core`, but core code should not import tools. |
 | `src/mcp/` | MCP server implementation, protocol ingress helpers, session-init policy, and MCP output accounting. `src/mcp-server.ts` is a compatibility re-export for existing imports. |
 | `src/transports/` | MCP/HTTP transport surfaces and protocol adapters. |
@@ -77,6 +77,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 | `src/session/` | session ownership, lease, snapshot, and lifecycle coordination. `src/session-manager.ts` is a compatibility re-export for existing imports; new code should import from `src/session/manager` or the nearest package entrypoint. |
 | `src/router/` | routing browser/tool commands to the correct target or tab. |
 | `src/observability/` | logging, redaction, and visual trajectory adapters. Request context lives under `src/core/observability` because metrics, security, transports, resources, and tools all share it. |
+| `src/security/` | runtime policy and untrusted-boundary enforcement: domain allow/block policy, MCP root narrowing, tool risk gates, audit logging adapters, and prompt-injection content sanitization. Secret value mechanics stay under `src/core/secrets`; `src/security` may use core primitives, but `src/core` must not import security policy adapters. |
 | `src/pilot/` | higher-level agent runtime features: skills, handoff, voting, credentials, curator, and automation runtime. |
 | `src/hints/`, `src/recovery/`, `src/failure/` | guidance, recovery, and failure classification. |
 | `src/vision/`, `src/perception`-related core modules | visual and perception-oriented processing. |
@@ -108,8 +109,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 Use this order for future structure work:
 
 1. Collapse duplicate ownership only after import graph inspection.
-2. Clarify `src/security` versus `src/core/secrets`.
-3. Clarify `src/harness`, `src/run-harness`, and `tests/harness`.
-4. Clarify `src/pilot/skill`, `src/core/skill`, and `src/resources/skill-graph`.
-5. Move any remaining single-file root modules into their owning folder when the
+2. Clarify `src/harness`, `src/run-harness`, and `tests/harness`.
+3. Clarify `src/pilot/skill`, `src/core/skill`, and `src/resources/skill-graph`.
+4. Move any remaining single-file root modules into their owning folder when the
    import surface is small and tests can prove the move.
