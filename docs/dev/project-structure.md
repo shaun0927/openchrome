@@ -73,6 +73,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 | `src/transports/` | MCP/HTTP transport surfaces and protocol adapters. |
 | `src/chrome/`, `src/cdp/`, `src/browser-state/` | Chrome process, PID/guardian cleanup, controller ownership, CDP, and browser state integration. |
 | `src/dom/` | DOM serialization, element discovery, AX resolution, shadow DOM traversal, and DOM-change feedback. |
+| `src/extraction/` | `extract_data` schema validation, extraction mode planning, semantic host payloads, and browser-side strategy script generation. Shared HTML-to-markdown and content filtering primitives live under `src/core/extract`. |
 | `src/session/` | session ownership, lease, snapshot, and lifecycle coordination. `src/session-manager.ts` is a compatibility re-export for existing imports; new code should import from `src/session/manager` or the nearest package entrypoint. |
 | `src/router/` | routing browser/tool commands to the correct target or tab. |
 | `src/observability/` | logging, redaction, and visual trajectory adapters. Request context lives under `src/core/observability` because metrics, security, transports, resources, and tools all share it. |
@@ -107,9 +108,8 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 Use this order for future structure work:
 
 1. Collapse duplicate ownership only after import graph inspection.
-2. Clarify `src/extraction` versus `src/core/extract`.
-3. Clarify `src/security` versus `src/core/secrets`.
-4. Clarify `src/harness`, `src/run-harness`, and `tests/harness`.
-5. Clarify `src/pilot/skill`, `src/core/skill`, and `src/resources/skill-graph`.
-6. Move any remaining single-file root modules into their owning folder when the
+2. Clarify `src/security` versus `src/core/secrets`.
+3. Clarify `src/harness`, `src/run-harness`, and `tests/harness`.
+4. Clarify `src/pilot/skill`, `src/core/skill`, and `src/resources/skill-graph`.
+5. Move any remaining single-file root modules into their owning folder when the
    import surface is small and tests can prove the move.
