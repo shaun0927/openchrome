@@ -45,6 +45,10 @@ ignored local outputs under paths covered by `.gitignore`.
 `npm run lint:repo-structure` enforces the current `src/` root entry allow-list,
 the approved `src/utils` leaf allow-list, the approved `tests/utils` shared
 helper allow-list, and prevents reintroducing the deprecated `tests/src` bucket.
+The remaining `src/` root files are limited to the package/CLI entrypoint
+(`src/index.ts`) and compatibility shims (`src/mcp-server.ts`,
+`src/session-manager.ts`, `src/version.ts`). New runtime implementation belongs
+under the owning folder.
 
 ## Package Publish Surface
 
@@ -67,7 +71,7 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 
 | Path | Responsibility |
 | --- | --- |
-| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, request-scoped observability context, contracts, output, metrics collection and token estimates, tracing, crawl, deadline handling, filesystem persistence, secret loading/redaction/substitution, task-run, task-ledger, and skill graph storage/types. |
+| `src/core/` | domain primitives shared by runtime features: lifecycle, process liveness, request-scoped observability context, contracts, output, metrics collection and token estimates, tracing, crawl, deadline handling, filesystem persistence, package version resolution, secret loading/redaction/substitution, task-run, task-ledger, and skill graph storage/types. |
 | `src/tools/` | MCP tool implementations and tool-local helpers. Tool code may call `src/core`, but core code should not import tools. |
 | `src/mcp/` | MCP server implementation, protocol ingress helpers, session-init policy, and MCP output accounting. `src/mcp-server.ts` is a compatibility re-export for existing imports. |
 | `src/transports/` | MCP/HTTP transport surfaces and protocol adapters. |
@@ -109,8 +113,5 @@ belongs in `skills/` and `commands/`; do not fork equivalent copies under
 
 ## Current Cleanup Backlog
 
-Use this order for future structure work:
-
-1. Collapse duplicate ownership only after import graph inspection.
-2. Move any remaining single-file root modules into their owning folder when the
-   import surface is small and tests can prove the move.
+No active structure cleanup backlog remains. Future structure work should still
+start with import graph inspection and land as one owner-family PR at a time.

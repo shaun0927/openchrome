@@ -21,7 +21,7 @@
  */
 
 import * as readline from 'readline';
-import { getVersion } from '../version';
+import { getVersion } from '../core/version';
 import { MCPErrorCodes, type MCPResponse } from '../types/mcp';
 import type { DuplicateControllerError } from '../chrome/controller-lock';
 

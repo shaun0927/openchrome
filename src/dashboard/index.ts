@@ -5,7 +5,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { getVersion } from '../version.js';
+import { getVersion } from '../core/version.js';
 import { Renderer, getRenderer } from './renderer.js';
 import { KeyboardHandler, getKeyboardHandler, KeyEvent } from './keyboard-handler.js';
 import { ActivityTracker, getActivityTracker } from './activity-tracker.js';
