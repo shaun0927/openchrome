@@ -49,6 +49,7 @@ jobs:
           needs_node=false
           needs_build=false
           needs_src_lint=false
+          needs_structure_lint=false
           needs_skill_lint=false
           needs_capability_check=false
           needs_pack=false
@@ -57,11 +58,18 @@ jobs:
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
             case "$file" in
-              src/*|cli/*|scripts/*|config/*|package.json|package-lock.json|tsconfig*.json|jest*.js|webpack.config.js|.dependency-cruiser.cjs|.eslintrc.json)
+              src/*|cli/*|scripts/*|config/*|package.json|package-lock.json|tsconfig*.json|jest*.js|webpack.config.js|.dependency-cruiser.cjs|.eslintrc.json|docs/dev/project-structure.md|tests/fixtures/OWNERS.json)
                 needs_node=true
-                needs_build=true
-                needs_src_lint=true
-                needs_capability_check=true
+                needs_structure_lint=true
+                case "$file" in
+                  docs/dev/project-structure.md|tests/fixtures/OWNERS.json)
+                    ;;
+                  *)
+                    needs_src_lint=true
+                    needs_build=true
+                    needs_capability_check=true
+                    ;;
+                esac
                 ;;
               tests/*.test.ts|tests/**/*.test.ts)
                 needs_node=true
@@ -86,6 +94,7 @@ jobs:
                 needs_node=true
                 needs_build=true
                 needs_src_lint=true
+                needs_structure_lint=true
                 needs_skill_lint=true
                 needs_capability_check=true
                 needs_pack=true
@@ -97,6 +106,7 @@ jobs:
             echo "needs_node=$needs_node"
             echo "needs_build=$needs_build"
             echo "needs_src_lint=$needs_src_lint"
+            echo "needs_structure_lint=$needs_structure_lint"
             echo "needs_skill_lint=$needs_skill_lint"
             echo "needs_capability_check=$needs_capability_check"
             echo "needs_pack=$needs_pack"
@@ -118,7 +128,7 @@ jobs:
         run: npm run lint
 
       - name: Lint repository structure
-        if: steps.changes.outputs.needs_src_lint == 'true'
+        if: steps.changes.outputs.needs_structure_lint == 'true'
         run: npm run lint:repo-structure
 
       - name: Lint tier boundary (core must not import pilot)
