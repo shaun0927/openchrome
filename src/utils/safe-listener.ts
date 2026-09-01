@@ -14,7 +14,7 @@
  *   }));
  */
 
-import { getMetricsCollector } from '../metrics/collector';
+import { getMetricsCollector } from '../core/metrics/collector';
 
 interface ListenerErrorBucket {
   minuteEpoch: number;

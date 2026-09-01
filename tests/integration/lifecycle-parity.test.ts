@@ -20,7 +20,7 @@ import {
   LIFECYCLE_LISTENER_ERROR_METRIC,
   resetLifecycleBusForTests,
 } from '../../src/core/lifecycle/event-bus';
-import { MetricsCollector } from '../../src/metrics/collector';
+import { MetricsCollector } from '../../src/core/metrics/collector';
 import type { LifecycleEvent, LifecycleEventKind } from '../../src/core/lifecycle/events';
 
 function mkEvent(kind: LifecycleEventKind, extra: Record<string, unknown> = {}): LifecycleEvent {

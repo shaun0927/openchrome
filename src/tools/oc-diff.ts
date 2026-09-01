@@ -9,7 +9,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { defaultEvidenceRootDir } from '../core/contracts/evidence-bundle';
 import { diffDom, normalizeDomInput } from '../core/contracts/dom-normalize';
 import { hammingDistance } from '../core/perception/cache';
-import { getMetricsCollector } from '../metrics/collector';
+import { getMetricsCollector } from '../core/metrics/collector';
 
 const VALID_KINDS = ['dom', 'screenshot', 'url', 'console', 'network'] as const;
 type DiffKind = typeof VALID_KINDS[number];

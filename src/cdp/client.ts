@@ -30,7 +30,7 @@ import {
 } from '../config/defaults';
 import { Budget, isLegacyBudgetMode } from '../core/deadline/budget';
 import { withTimeout } from '../core/deadline/with-timeout';
-import { getMetricsCollector } from '../metrics/collector';
+import { getMetricsCollector } from '../core/metrics/collector';
 import { OpenChromeConnectionError } from '../errors/connection';
 import { getStealthFingerprintDefenseScript, getStealthStackSanitizationScript } from '../stealth/fingerprint-defense';
 import { getIdleState } from '../core/activity/idle-state';

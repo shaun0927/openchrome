@@ -22,7 +22,7 @@ import {
   redactArgs,
   type RedactionConfig,
 } from '../observability/redaction';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 
 export interface AuditLogMeta {
   /** Correlation ID; falls back to the active RequestContext or `null`. */

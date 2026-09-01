@@ -49,7 +49,7 @@ jest.mock('../../src/session-manager', () => ({
 }));
 
 import { CDPClient } from '../../src/cdp/client';
-import { getMetricsCollector } from '../../src/metrics/collector';
+import { getMetricsCollector } from '../../src/core/metrics/collector';
 
 function counterValueFor(listener: string): number {
   const dump = getMetricsCollector().export();

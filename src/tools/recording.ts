@@ -11,7 +11,7 @@ import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getActionRecorder, registerSessionRecorder, unregisterSessionRecorder } from '../recording/action-recorder';
 import { getRecordingStore } from '../recording/recording-store';
 import { RecordingAction, RecordingMetadata } from '../recording/types';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 import { assertFilePathAllowedBySessionRoots } from '../security/mcp-roots';
 
 /** Matches the RECORDING_ID_PATTERN exported from recording-store */

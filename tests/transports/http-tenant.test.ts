@@ -5,7 +5,7 @@
 
 import * as http from 'node:http';
 import type { ApiKeyStore } from '../../src/auth/api-key-store';
-import { currentRequestContext } from '../../src/observability/request-id';
+import { currentRequestContext } from '../../src/core/observability/request-id';
 
 const { HTTPTransport } = require('../../src/transports/http');
 

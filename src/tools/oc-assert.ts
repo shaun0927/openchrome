@@ -45,7 +45,7 @@ import {
   AssertEvidenceStore,
   getAssertEvidenceStore,
 } from '../core/contracts/assert-evidence-store';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 import { DEFAULT_TENANT_ID } from '../tenant/types';
 import { resolveEffectiveTenantId } from '../auth/tenant-principal';
 import {

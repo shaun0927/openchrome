@@ -1,6 +1,6 @@
 import type { MCPResponse } from '../types/mcp';
 import type { MCPTransport } from '../transports';
-import { currentRequestContext } from '../observability/request-id';
+import { currentRequestContext } from '../core/observability/request-id';
 import { parseResourceSubscriptionLimit, RESOURCE_SUBSCRIPTION_LIMIT_CODE, ResourceRpcError } from './live-state';
 
 interface SubscriptionSession {

@@ -13,7 +13,7 @@
 
 import { MCPServer } from '../../src/mcp-server';
 import type { MCPResponse } from '../../src/types/mcp';
-import { runWithRequestContext } from '../../src/observability/request-id';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 
 class CapturingTransport {
   public sent: Array<Record<string, unknown>> = [];

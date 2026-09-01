@@ -12,7 +12,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { formatCDPResult, CDPEvalResult } from './javascript';
-import { getMetricsCollector } from '../metrics/collector';
+import { getMetricsCollector } from '../core/metrics/collector';
 import { LruTtlCache } from '../core/idempotency/lru';
 
 const definition: MCPToolDefinition = {
