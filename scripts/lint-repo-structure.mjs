@@ -21,6 +21,10 @@ const allowedSrcUtilsFiles = new Set([
   'url-utils.ts',
 ]);
 
+const allowedSrcHarnessFiles = new Set([
+  'flags.ts',
+]);
+
 const allowedTestsUtilsFiles = new Set([
   'mock-cdp.ts',
   'mock-session.ts',
@@ -109,6 +113,22 @@ for (const { entry, stat } of listEntries('src/utils')) {
     errors.push(
       `src/utils/${entry} is not an approved leaf utility. ` +
       'Put domain-owned helpers under src/core, src/cdp, src/chrome, src/session, or src/tools.',
+    );
+  }
+}
+
+for (const { entry, stat } of listEntries('src/harness')) {
+  if (stat.isDirectory()) {
+    errors.push(
+      `src/harness/${entry} is a harness subdirectory. ` +
+      'Keep src/harness limited to cross-tier feature-flag bootstrap code.',
+    );
+    continue;
+  }
+  if (stat.isFile() && !allowedSrcHarnessFiles.has(entry)) {
+    errors.push(
+      `src/harness/${entry} is not an approved harness bootstrap file. ` +
+      'Put runtime ledgers under src/core/task-ledger and run-level tooling under src/run-harness.',
     );
   }
 }

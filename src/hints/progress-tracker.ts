@@ -7,6 +7,7 @@
  */
 
 import type { ToolCallEvent } from '../dashboard/types.js';
+import { NON_PROGRESS_SIGNALS } from '../core/task-ledger/non-progress-signals.js';
 
 export type ProgressStatus = 'progressing' | 'stalling' | 'stuck';
 
@@ -35,30 +36,6 @@ function isObservationCall(call: ToolCallEvent): boolean {
  * Signals in tool results that indicate NO meaningful progress was made,
  * even if the tool call technically "succeeded".
  */
-const NON_PROGRESS_SIGNALS = [
-  'authRedirect',                    // Auth redirect detected
-  'not interactive',                 // Clicked non-interactive element
-  'is stale',                        // Stale ref
-  'timed out',                       // Timeout
-  'No significant visual change',    // Screenshot unchanged
-  'element not found',               // Element not found (tightened from 'not found')
-  'no longer available',             // Tab gone
-  'Login page detected',             // Login redirect (from hint)
-  'CAPTCHA',                         // CAPTCHA blocked
-  '404',                             // Page not found
-  'Access Denied',                   // Access denied
-  'Forbidden',                       // 403
-  'net::ERR_',                       // Chromium network errors
-  'Navigation timeout',              // Puppeteer navigation timeout
-  'Protocol error',                  // CDP-level failures
-  'bot-check',                       // Bot verification page detected
-  'captcha detected',                // CAPTCHA page detected
-  'Blocking page detected',          // Any blocking page warning from navigate
-  'blocked by',                      // Network security block (e.g. "blocked by network security")
-  'network security',                // CDN/WAF network security block
-  'been blocked',                    // Generic "you've been blocked" messages
-];
-
 export class ProgressTracker {
   /**
    * Evaluate recent tool calls to determine if the agent is making progress.
