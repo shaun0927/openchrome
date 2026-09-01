@@ -29,7 +29,8 @@ The repository root should stay small. A root entry is allowed only when it is
 one of these package or toolchain surfaces:
 
 - standard project documents (`README.md`, `LICENSE`, `SECURITY.md`,
-  `CONTRIBUTING.md`, `CHANGELOG.md`);
+  `CONTRIBUTING.md`, `CHANGELOG.md`) and host-specific contributor guidance
+  (`CLAUDE.md`);
 - package and compiler configuration (`package.json`, lockfile, TypeScript,
   Jest, ESLint, dependency-cruiser, webpack);
 - container and deployment entrypoints (`Dockerfile`, `.dockerignore`);
@@ -42,9 +43,10 @@ Do not add ad hoc root folders for experiments, generated reports, worktrees,
 agent-local state, or one-off validation outputs. Put durable contributor
 documentation under `docs/`, runnable maintenance code under `scripts/`, and
 ignored local outputs under paths covered by `.gitignore`.
-`npm run lint:repo-structure` enforces the current `src/` root entry allow-list,
-the approved `src/utils` leaf allow-list, the approved `tests/utils` shared
-helper allow-list, and prevents reintroducing the deprecated `tests/src` bucket.
+`npm run lint:repo-structure` enforces the approved repository root allow-list,
+the current `src/` root entry allow-list, the approved `src/utils` leaf
+allow-list, the approved `tests/utils` shared helper allow-list, shared fixture
+ownership, and prevents reintroducing the deprecated `tests/src` bucket.
 The remaining `src/` root files are limited to the package/CLI entrypoint
 (`src/index.ts`) and compatibility shims (`src/mcp-server.ts`,
 `src/session-manager.ts`, `src/version.ts`). New runtime implementation belongs

@@ -34,6 +34,45 @@ const allowedTestsUtilsFiles = new Set([
   'test-helpers.ts',
 ]);
 
+const allowedRootEntries = new Map([
+  ['.claude-plugin', 'Claude Code plugin manifest surface published by package.json#files'],
+  ['.codex-plugin', 'Codex plugin manifest surface published by package.json#files'],
+  ['.dependency-cruiser.cjs', 'dependency boundary lint configuration'],
+  ['.dockerignore', 'root Docker build context ignore file'],
+  ['.eslintrc.json', 'ESLint configuration'],
+  ['.github', 'GitHub Actions automation'],
+  ['.gitignore', 'Git ignore policy'],
+  ['CHANGELOG.md', 'release history'],
+  ['CLAUDE.md', 'host-specific contributor guidance'],
+  ['CONTRIBUTING.md', 'contributor entrypoint'],
+  ['Dockerfile', 'root container entrypoint'],
+  ['LICENSE', 'package license'],
+  ['README.ko.md', 'Korean README'],
+  ['README.md', 'primary README'],
+  ['SECURITY.md', 'security policy'],
+  ['assets', 'published static assets'],
+  ['cli', 'CLI entrypoints and command adapters'],
+  ['commands', 'published plugin slash commands'],
+  ['config', 'published runtime policy config'],
+  ['deploy', 'deployment examples'],
+  ['desktop', 'Tauri desktop app'],
+  ['docs', 'documentation'],
+  ['extension', 'browser extension package'],
+  ['jest.ci.config.js', 'CI Jest configuration'],
+  ['jest.config.js', 'Jest configuration'],
+  ['native-host', 'native messaging host assets'],
+  ['package-lock.json', 'npm lockfile'],
+  ['package.json', 'npm package manifest'],
+  ['scripts', 'maintenance and verification scripts'],
+  ['skills', 'published plugin skills'],
+  ['src', 'shipped TypeScript runtime'],
+  ['tests', 'test suites and approved shared fixtures'],
+  ['tsconfig.cli.json', 'CLI TypeScript configuration'],
+  ['tsconfig.json', 'runtime TypeScript configuration'],
+  ['tsconfig.test.json', 'test TypeScript configuration'],
+  ['webpack.config.js', 'webpack configuration'],
+]);
+
 const disallowedSrcDomainDirs = new Map([
   ['metrics', 'Runtime metrics primitives belong under src/core/metrics.'],
 ]);
@@ -76,6 +115,21 @@ function listTrackedFiles(dir) {
 function loadFixtureOwners() {
   const fixtureOwnersPath = join(root, 'tests', 'fixtures', 'OWNERS.json');
   return JSON.parse(readFileSync(fixtureOwnersPath, 'utf8'));
+}
+
+const trackedRootEntries = new Set();
+for (const file of listTrackedFiles('.')) {
+  const rootEntry = file.split('/')[0];
+  trackedRootEntries.add(rootEntry);
+}
+
+for (const rootEntry of [...trackedRootEntries].sort()) {
+  if (!allowedRootEntries.has(rootEntry)) {
+    errors.push(
+      `${rootEntry} is a tracked root entry without an approved repository-surface role. ` +
+      'Move it under an owning folder or add the role to docs/dev/project-structure.md and this lint allow-list.',
+    );
+  }
 }
 
 for (const file of listFiles('src')) {
