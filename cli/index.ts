@@ -465,14 +465,14 @@ program
   .option('--all-tools', 'Expose all tools from startup (bypass progressive disclosure)')
   .option('--server-mode', 'Server/headless mode: auto-launch headless Chrome, skip cookie bridge')
   .option('--http [port]', 'Use Streamable HTTP transport instead of stdio (default port: 3100)')
-  .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; loads src/pilot/ modules when set')
+  .option('--pilot', 'Enable experimental pilot tier. Off by default; loads src/pilot/ modules when set')
   .option('--dashboard', 'Enable terminal dashboard for real-time monitoring')
   .option('--persist-storage', 'Enable browser state persistence (cookies + localStorage)')
   .option('--storage-dir <path>', 'Directory for storage state files (default: .openchrome/storage-state/)')
   // Shared-profile / parallel-session topology (#1359 broker, #1480). These are
   // implemented in dist/index.js and reach it via the argv passthrough below;
   // they are declared here so `openchrome serve --help` documents them instead of
-  // hiding the only sanctioned multi-session path (see docs/roadmap/ssot-decisions.md D3).
+  // hiding the sanctioned multi-session path documented in docs/mcp/topologies.md.
   .option('--broker', 'Run as the shared-profile broker owner (HTTP daemon plus broker discovery metadata). Requires --auto-launch.')
   .option('--connect-broker', 'Proxy stdio MCP requests to the discovered broker for this (port, profile) instead of attaching to Chrome directly')
   .option('--auto-elect', 'Coordinated sharing: auto-launch lock winner becomes broker owner and surplus sessions auto-attach as clients')

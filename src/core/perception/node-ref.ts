@@ -80,7 +80,7 @@ export async function mintNodeRef(
   try {
     loaderId = await getCurrentLoaderId(page, cdp);
   } catch (err) {
-    // Use console.error per CLAUDE.md (stdout carries MCP JSON-RPC).
+    // Use console.error because stdout carries MCP JSON-RPC.
     console.error(
       '[node-ref] getCurrentLoaderId failed, emitting null uid:',
       err instanceof Error ? err.message : String(err),

@@ -3,7 +3,7 @@
  *
  * A tenant owns an isolated Puppeteer BrowserContext so its cookies,
  * localStorage, IndexedDB, and service worker caches are scoped away
- * from other tenants. See docs/roadmap and GitHub issue #7 for context.
+ * from other tenants.
  */
 
 import type { BrowserContext } from 'puppeteer-core';

@@ -132,7 +132,7 @@ program
   .option('--auto-elect', 'Coordinated sharing (#1480): force-enable auto-election for compatible serve paths (also: OPENCHROME_AUTO_ELECT=1).')
   .option('--no-auto-elect', 'Disable coordinated auto-election and preserve fail-fast duplicate-controller behavior (also: OPENCHROME_AUTO_ELECT=0).')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
-  .option('--pilot', 'Enable experimental pilot tier (see docs/roadmap/portability-harness-contract.md). Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
+  .option('--pilot', 'Enable experimental pilot tier. Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
   .option('--slim', 'Expose only core tools (alias for --tools-only core).')
   .option('--tools-only <csv>', 'Expose only tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot. Default: all groups exposed.')
   .option('--disable-tools <csv>', 'Remove tools belonging to the specified capability groups (comma-separated). Valid values: core,crawl,recording,workflow,storage,profile,totp,pilot.')
@@ -687,7 +687,7 @@ program
       : null;
 
     // Dev-only hook: artificial delay for the tools component transition.
-    // Gated: absent from production dist (see scripts/verify/A6-no-dev-hooks-in-dist.mjs).
+    // Gated: absent from production dist unless explicitly enabled for local validation.
     const isDevHooks = process.env.NODE_ENV !== 'production' && process.env.OPENCHROME_DEV_HOOKS === '1';
     if (isDevHooks && process.env.OPENCHROME_FAKE_SLOW_TOOLS) {
       const delayMs = parseInt(process.env.OPENCHROME_FAKE_SLOW_TOOLS, 10);

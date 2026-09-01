@@ -4,7 +4,7 @@
  *
  * The deterministic claim is:
  *
- *   sizeof(combined) < sizeof(standalone-action) + sizeof(standalone-read_page)
+ *   sizeof(combined) < sizeof(action-only) + sizeof(read_page-only)
  *
  * The savings come from collapsing two MCP envelopes / metadata blocks into
  * one. The fixture (`index.html`) is checked in so the comparison is stable
@@ -100,8 +100,8 @@ function wireBytesOf(result: MCPResult, id: number): number {
   return Buffer.byteLength(JSON.stringify(envelope), 'utf8');
 }
 
-/** A representative standalone interact response for the fixture button click. */
-function standaloneInteractResponse(): MCPResult {
+/** A representative interact response for the fixture button click. */
+function actionOnlyResponse(): MCPResult {
   return {
     content: [
       {
@@ -116,8 +116,8 @@ function standaloneInteractResponse(): MCPResult {
   };
 }
 
-/** A representative standalone read_page DOM response (what a follow-up call would return). */
-function standaloneReadPageResponse(): MCPResult {
+/** A representative read_page DOM response (what a follow-up call would return). */
+function readPageOnlyResponse(): MCPResult {
   return {
     content: [{ type: 'text', text: fixtureSnapshotText }],
   };
@@ -210,7 +210,7 @@ describe('returnAfterState helper (issue #845)', () => {
 
   describe('appendReturnAfterState', () => {
     test('no-ops when mode is none and leaves response byte-identical', async () => {
-      const baseline = standaloneInteractResponse();
+      const baseline = actionOnlyResponse();
       const before = wireBytesOf(baseline, 1);
       const captured = await appendReturnAfterState(
         baseline,
@@ -225,7 +225,7 @@ describe('returnAfterState helper (issue #845)', () => {
     });
 
     test('attaches structured result.state when mode is dom and leaves content untouched', async () => {
-      const baseline = standaloneInteractResponse();
+      const baseline = actionOnlyResponse();
       const contentBefore = JSON.stringify(baseline.content);
       const captured = await appendReturnAfterState(
         baseline,
@@ -252,19 +252,19 @@ describe('returnAfterState helper (issue #845)', () => {
   });
 
   describe('token-cost guard (combined < a + b)', () => {
-    test('one chained envelope ships fewer bytes than two standalone envelopes', async () => {
+    test('one chained envelope ships fewer bytes than two separate envelopes', async () => {
       // Baseline pattern: two MCP calls — one input tool + one read_page.
-      const standaloneAction = standaloneInteractResponse();
-      const standaloneRead = standaloneReadPageResponse();
-      const sizeA = wireBytesOf(standaloneAction, 1);
-      const sizeB = wireBytesOf(standaloneRead, 2);
+      const actionOnly = actionOnlyResponse();
+      const readPageOnly = readPageOnlyResponse();
+      const sizeA = wireBytesOf(actionOnly, 1);
+      const sizeB = wireBytesOf(readPageOnly, 2);
 
       // Chained pattern: one MCP call carrying both action result and snapshot.
       // Use the no-loaderId page mock so the comparison is dominated by the
       // JSON-RPC envelope saved (not by the mock's chosen loaderId length —
       // production loaderIds are typically a 32-char hex string and the
       // saving still holds for realistic snapshots).
-      const combined = standaloneInteractResponse();
+      const combined = actionOnlyResponse();
       const captured = await appendReturnAfterState(
         combined,
         mockPageNoLoaderId as never,
