@@ -320,17 +320,22 @@ async function headedAutoRetry(
         // Get the live Page object from HeadedFallbackManager and register it
         const page = headedFallback.getPage(result.targetId);
         if (page) {
-          await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
+          if (await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page) === false) throw new Error('Target registration refused');
         } else {
           // Fallback: register without page injection (navigation-only, no tool access)
-          await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
+          if (await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId) === false) throw new Error('Target registration refused');
         }
 
         tabId = result.targetId;
         assignedWorkerId = resolvedWorkerId;
         console.error(`[navigate] Headed tab registered: tabId=${tabId.slice(0, 8)}... workerId=${resolvedWorkerId}`);
-      } catch (regErr) {
-        console.error('[navigate] Headed tab registration failed (page still accessible via headed Chrome):', regErr instanceof Error ? regErr.message : regErr);
+      } catch {
+        const page = headedFallback.getPage(result.targetId);
+        const closed = page ? await page.close().then(() => true, () => false) : false;
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          code: 'TARGET_REGISTRATION_FAILED', execution: 'completed', targetId: result.targetId,
+          createdTargetClosed: closed, message: 'Navigation ran, but the target could not be admitted. Do not retry side effects blindly.',
+        }) }] };
       }
     }
 
@@ -395,14 +400,19 @@ async function headedNavigateDirect(
 
         const page = headedFallback.getPage(result.targetId);
         if (page) {
-          await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
+          if (await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page) === false) throw new Error('Target registration refused');
         } else {
-          await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
+          if (await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId) === false) throw new Error('Target registration refused');
         }
 
         tabId = result.targetId;
-      } catch (regErr) {
-        console.error('[navigate] Headed tab registration failed:', regErr instanceof Error ? regErr.message : regErr);
+      } catch {
+        const page = headedFallback.getPage(result.targetId);
+        const closed = page ? await page.close().then(() => true, () => false) : false;
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          code: 'TARGET_REGISTRATION_FAILED', execution: 'completed', targetId: result.targetId,
+          createdTargetClosed: closed, message: 'Navigation ran, but the target could not be admitted. Do not retry side effects blindly.',
+        }) }] };
       }
     }
 

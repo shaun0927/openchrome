@@ -90,7 +90,7 @@ describe('SessionManager.evictTarget', () => {
     expect(sm.evictTarget('missing-target')).toBe(false);
   });
 
-  test('registerExternalTarget enforces maxTargetsPerWorker and closes oldest browser target', async () => {
+  test('registerExternalTarget refuses capacity without discarding existing work', async () => {
     const sm = new SessionManager(undefined, {
       autoCleanup: false,
       useConnectionPool: false,
@@ -106,12 +106,12 @@ describe('SessionManager.evictTarget', () => {
 
     await sm.registerExternalTarget('target-1', 's1', 'default');
     await sm.registerExternalTarget('target-2', 's1', 'default');
-    await sm.registerExternalTarget('target-3', 's1', 'default');
+    expect(await sm.registerExternalTarget('target-3', 's1', 'default')).toBe(false);
 
-    expect(closeTargetSpy).toHaveBeenCalledWith('s1', 'target-1');
-    expect(sm.getTargetOwner('target-1')).toBeUndefined();
+    expect(closeTargetSpy).not.toHaveBeenCalled();
+    expect(sm.getTargetOwner('target-1')).toEqual({ sessionId: 's1', workerId: 'default' });
     expect(sm.getTargetOwner('target-2')).toEqual({ sessionId: 's1', workerId: 'default' });
-    expect(sm.getTargetOwner('target-3')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getTargetOwner('target-3')).toBeUndefined();
     expect(sm.getSessionInfo('s1')?.targetCount).toBe(2);
     expect(sm.getSessionInfo('s1')?.workers[0].targetCount).toBe(2);
   });
@@ -141,11 +141,11 @@ describe('SessionManager.evictTarget', () => {
       sm.registerExternalTarget('target-4', 's1', 'default'),
     ]);
 
-    expect(closedTargets).toEqual(['target-1', 'target-2']);
-    expect(sm.getTargetOwner('target-1')).toBeUndefined();
-    expect(sm.getTargetOwner('target-2')).toBeUndefined();
-    expect(sm.getTargetOwner('target-3')).toEqual({ sessionId: 's1', workerId: 'default' });
-    expect(sm.getTargetOwner('target-4')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(closedTargets).toEqual([]);
+    expect(sm.getTargetOwner('target-1')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getTargetOwner('target-2')).toEqual({ sessionId: 's1', workerId: 'default' });
+    expect(sm.getTargetOwner('target-3')).toBeUndefined();
+    expect(sm.getTargetOwner('target-4')).toBeUndefined();
     expect(sm.getSessionInfo('s1')?.targetCount).toBe(2);
     expect(sm.getSessionInfo('s1')?.workers[0].targetCount).toBe(2);
   });

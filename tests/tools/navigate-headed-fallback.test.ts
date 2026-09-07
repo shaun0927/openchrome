@@ -169,7 +169,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       mockDetectBlockingPage.mockResolvedValue({ type: 'access-denied', detail: 'fixture block' });
       const result = await handler(testSessionId, { url: 'https://fixture.example' }) as MCPResult;
       const parsed = parseResultJSON<NavResult>(result);
-      expect(result.isError).toBe(true);
+      expect((result as MCPResult).isError).toBe(true);
       expect(parsed.code).toBe('HEADED_FALLBACK_REQUIRES_USER');
       expect(parsed.status).toBe('needs_user_input');
       expect(mockHeadedNavigatePersistent).not.toHaveBeenCalled();
@@ -389,6 +389,18 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
   });
 
   describe('session integration (#485)', () => {
+    test('refused registration closes the new page and reports navigation already ran', async () => {
+      const handler = await getNavigateHandler();
+      const mockPage = createMockPage({ url: 'https://example.test/', targetId: 'headed-target-123' });
+      mockHeadedGetPage.mockReturnValue(mockPage);
+      (mockSessionManager.registerHeadedPage as jest.Mock).mockResolvedValueOnce(false);
+      const result = await handler(testSessionId, { url: 'https://example.test', headed: true });
+      expect((result as MCPResult).isError).toBe(true);
+      expect(parseResultJSON(result as MCPResult)).toMatchObject({
+        code: 'TARGET_REGISTRATION_FAILED', execution: 'completed', createdTargetClosed: true,
+      });
+      expect(mockPage.close).toHaveBeenCalledTimes(1);
+    });
     test('headed=true registers page via registerHeadedPage when getPage returns a page', async () => {
       const handler = await getNavigateHandler();
       const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });

@@ -24,7 +24,10 @@ async function main(): Promise<void> {
     return i < 0 ? fallback : process.argv[i + 1];
   };
   const entry = path.resolve(option('--entry', 'dist/index.js'));
+  const relativeEntry = path.relative(process.cwd(), entry);
+  const entryOutsideCheckout = relativeEntry === '..' || relativeEntry.startsWith(`..${path.sep}`) || path.isAbsolute(relativeEntry);
   const artifact = option('--artifact', '');
+  const runtimeContract = process.argv.includes('--runtime-contract');
   const output = path.resolve(option('--output', 'artifacts/frontier/acceptance.json'));
   try {
     await fs.copyFile(output, output.replace(/\.json$/, '') + `-previous-${Date.now()}.json`);
@@ -71,7 +74,7 @@ async function main(): Promise<void> {
   });
   await new Promise<void>(resolve => fixture.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(fixture.address() as { port: number }).port}`;
-  const client = new MCPClient({ entry, nodeArgs: ['--require', bootstrap], timeoutMs: 60_000, startupTimeoutMs: 120_000, args: [
+  const client = new MCPClient({ entry, cwd: root, nodeArgs: ['--require', bootstrap], timeoutMs: 60_000, startupTimeoutMs: 120_000, args: [
     '--headless', '--no-auto-elect', '--launch-mode', 'isolated',
     '--port', String(port), '--user-data-dir', profile,
   ], env: {
@@ -79,12 +82,16 @@ async function main(): Promise<void> {
     OPENCHROME_CONTROLLER_LOCK_DIR: path.join(root, 'locks'),
     OPENCHROME_BROKER_REGISTRY_DIR: path.join(root, 'brokers'),
     OC_STORAGE_DIR: path.join(root, 'storage'),
+    NODE_PATH: '',
+    NODE_OPTIONS: '',
   } });
   const samples: ProcessMemorySample[] = [];
   const timings: Array<{ tool: string; durationMs: number }> = [];
   const manifest = JSON.parse(await fs.readFile(path.join(path.dirname(entry), '..', 'package.json'), 'utf8'));
   const report: Record<string, unknown> = {
     schemaVersion: 1, startedAt: new Date().toISOString(), entry,
+    childWorkingDirectory: root,
+    dependencyIsolation: { nodePath: 'empty', entryOutsideCheckout },
     harnessSourceSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim(),
     harnessDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8', windowsHide: true }).trim()),
     packageVersion: manifest.version, packageGitHead: manifest.gitHead ?? null,
@@ -128,6 +135,21 @@ async function main(): Promise<void> {
       const payload = JSON.parse(result.content.find(item => item.type === 'text')!.text!);
       assert.equal(typeof payload.tabId, 'string');
       tabs.push(payload.tabId);
+    }
+    if (runtimeContract) {
+      const profileResult = await tool('oc_profile_status', {});
+      const profileStatus = JSON.parse(profileResult.content.find(item => item.type === 'text')!.text!);
+      assert.equal(profileStatus.authentication, 'unverified');
+      assert.equal(profileStatus.storageRestore.status, 'unavailable');
+      assert.equal(profileStatus.storageRestore.reason, 'missing');
+      const extra = await tool('tabs_create', { url: 'about:blank' });
+      const extraId = JSON.parse(extra.content.find(item => item.type === 'text')!.text!).tabId;
+      const refused = await client.callTool('tabs_create', { url: 'about:blank' });
+      assert.equal(refused.raw.isError, true, 'sixth tab must be refused instead of evicting active work');
+      assert.ok(refused.text.includes('TARGET_CAPACITY'));
+      await tool('tabs_close', { tabId: extraId });
+      report.runtimeContract = { unverifiedAuthentication: true, missingSnapshotExplicit: true, capacityRefused: true };
+      // The receipts below independently prove all four original targets survived.
     }
     const version = await fetch(`http://127.0.0.1:${port}/json/version`).then(r => r.json());
     report.browser = version.Browser;

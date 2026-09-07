@@ -39,14 +39,16 @@ export class MCPClient {
   private entry: string;
   private startupTimeoutMs: number;
   private nodeArgs: string[];
+  private cwd?: string;
 
-  constructor(opts?: { timeoutMs?: number; env?: Record<string, string>; args?: string[]; entry?: string; startupTimeoutMs?: number; nodeArgs?: string[] }) {
+  constructor(opts?: { timeoutMs?: number; env?: Record<string, string>; args?: string[]; entry?: string; startupTimeoutMs?: number; nodeArgs?: string[]; cwd?: string }) {
     this.defaultTimeoutMs = opts?.timeoutMs ?? 30_000;
     this.extraEnv = opts?.env ?? {};
     this.extraArgs = opts?.args ?? [];
     this.entry = opts?.entry ?? path.join(process.cwd(), 'dist', 'index.js');
     this.startupTimeoutMs = opts?.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
     this.nodeArgs = opts?.nodeArgs ?? [];
+    this.cwd = opts?.cwd;
   }
 
   private rejectPending(error: Error): void {
@@ -83,6 +85,7 @@ export class MCPClient {
     return new Promise((resolve, reject) => {
       const child = spawn('node', this.getServeArgs(serverPath), {
         windowsHide: true,
+        cwd: this.cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...this.extraEnv },
       });

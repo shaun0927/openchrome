@@ -59,6 +59,29 @@ function createManager(maxTargetsPerWorker = 5): SessionManager {
 }
 
 describe('SessionManager target creation ledger', () => {
+  test('reserves an in-flight creation slot and releases it after creation failure', async () => {
+    const manager = createManager(1);
+    await manager.createSession({ id: 'capacity' });
+    let rejectCreate!: (error: Error) => void;
+    let started!: () => void;
+    const dispatched = new Promise<void>(resolve => { started = resolve; });
+    mockCdpClientInstance.createPage.mockImplementationOnce(() => {
+      started();
+      return new Promise((_, reject) => { rejectCreate = reject; });
+    });
+    const first = manager.createTarget('capacity', 'https://example.test');
+    const failure = expect(first).rejects.toThrow('creation failed');
+    await dispatched;
+    await expect(manager.createTarget('capacity', 'https://example.test')).rejects.toMatchObject({
+      code: 'TARGET_CAPACITY', execution: 'not_started',
+    });
+    expect(mockCdpClientInstance.closePage).not.toHaveBeenCalled();
+    rejectCreate(new Error('creation failed'));
+    await failure;
+    mockCdpClientInstance.createPage.mockRejectedValueOnce(new Error('retry dispatched'));
+    await expect(manager.createTarget('capacity', 'https://example.test')).rejects.toThrow('retry dispatched');
+    expect(mockCdpClientInstance.createPage).toHaveBeenCalledTimes(2);
+  });
   test('delayed startup cleanup preserves another in-flight blank tab', async () => {
     jest.useFakeTimers();
     const startupClose = jest.fn(async () => {});
