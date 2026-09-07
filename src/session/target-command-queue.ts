@@ -12,9 +12,26 @@ interface QueueItem<T> {
   fn: () => Promise<T>;
   resolve: (value: T) => void;
   reject: (error: Error) => void;
+  cleanup: () => void;
+  options: TargetQueueOptions;
+}
+
+export interface TargetQueueOptions {
+  /** Absolute deadline for admission, not proof that an in-flight action was stopped. */
+  deadline?: number;
+  signal?: AbortSignal;
+}
+
+export class TargetQueueAdmissionError extends Error {
+  readonly execution = 'not_started';
+  constructor(readonly code: 'QUEUE_FULL' | 'QUEUE_DEADLINE' | 'QUEUE_ABORTED', targetId: string) {
+    super(`${code}: command for target ${targetId} was not started`);
+    this.name = 'TargetQueueAdmissionError';
+  }
 }
 
 export class TargetQueueCancelledError extends Error {
+  readonly execution = 'not_started';
   constructor(targetId: string) {
     super(`Target queue cancelled for closed or expired target ${targetId}`);
     this.name = 'TargetQueueCancelledError';
@@ -35,15 +52,43 @@ export class TargetCommandQueue {
     totalExecutionMs: 0,
   };
 
-  constructor(targetId: string) {
+  constructor(targetId: string, private readonly maxPending = 128, private readonly maxQueueWaitMs = 120_000) {
+    if (!Number.isSafeInteger(maxPending) || maxPending < 1 || !Number.isFinite(maxQueueWaitMs) || maxQueueWaitMs <= 0) {
+      throw new Error('Invalid target queue limits');
+    }
     this.targetId = targetId;
   }
 
-  enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  enqueue<T>(fn: () => Promise<T>, options: TargetQueueOptions = {}): Promise<T> {
     if (this.closed) return Promise.reject(new TargetQueueCancelledError(this.targetId));
+    if (options.deadline !== undefined && !Number.isFinite(options.deadline)) return Promise.reject(new Error('Invalid queue deadline'));
+    const now = Date.now();
+    const deadline = Math.min(options.deadline ?? Infinity, now + this.maxQueueWaitMs);
+    const code = options.signal?.aborted ? 'QUEUE_ABORTED' : deadline <= now ? 'QUEUE_DEADLINE' : this.queue.length >= this.maxPending ? 'QUEUE_FULL' : undefined;
+    if (code) {
+      this.metrics.rejected++;
+      return Promise.reject(new TargetQueueAdmissionError(code, this.targetId));
+    }
     this.metrics.enqueued++;
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({ enqueuedAt: Date.now(), fn, resolve: resolve as (value: unknown) => void, reject });
+      const item: QueueItem<unknown> = {
+        enqueuedAt: now, fn, resolve: resolve as (value: unknown) => void, reject,
+        options: { ...options, deadline }, cleanup: () => undefined,
+      };
+      const remove = (reason: 'QUEUE_DEADLINE' | 'QUEUE_ABORTED'): void => {
+        const index = this.queue.indexOf(item);
+        if (index === -1) return; // Already executing: do not invent cancellation.
+        this.queue.splice(index, 1);
+        item.cleanup();
+        this.metrics.rejected++;
+        reject(new TargetQueueAdmissionError(reason, this.targetId));
+      };
+      const abort = (): void => remove('QUEUE_ABORTED');
+      const timer = setTimeout(() => remove('QUEUE_DEADLINE'), Math.min(deadline - now, 2_147_483_647));
+      timer.unref?.();
+      item.cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); };
+      options.signal?.addEventListener('abort', abort, { once: true });
+      this.queue.push(item);
       this.start();
     });
   }
@@ -62,7 +107,9 @@ export class TargetCommandQueue {
     this.closed = true;
     const error = new TargetQueueCancelledError(this.targetId);
     while (this.queue.length > 0) {
-      this.queue.shift()!.reject(error);
+      const item = this.queue.shift()!;
+      item.cleanup();
+      item.reject(error);
       this.metrics.cancelled++;
     }
   }
@@ -72,16 +119,23 @@ export class TargetCommandQueue {
   }
 
   private start(): void {
-    if (!this.processing) this.processing = this.drain();
+    if (!this.processing) {
+      // Set the running marker before invoking user work, including synchronous throws.
+      this.processing = Promise.resolve();
+      void this.drain();
+    }
   }
 
   private async drain(): Promise<void> {
     try {
       while (this.queue.length > 0 && !this.closed) {
         const item = this.queue.shift()!;
+        item.cleanup();
         const startedAt = Date.now();
         this.metrics.totalWaitMs += Math.max(0, startedAt - item.enqueuedAt);
         try {
+          if (item.options.signal?.aborted) throw new TargetQueueAdmissionError('QUEUE_ABORTED', this.targetId);
+          if (startedAt >= item.options.deadline!) throw new TargetQueueAdmissionError('QUEUE_DEADLINE', this.targetId);
           const value = await item.fn();
           this.metrics.completed++;
           this.metrics.totalExecutionMs += Math.max(0, Date.now() - startedAt);
@@ -101,13 +155,13 @@ export class TargetCommandQueue {
 export class TargetQueueManager {
   private readonly queues = new Map<string, TargetCommandQueue>();
 
-  enqueue<T>(targetId: string, fn: () => Promise<T>): Promise<T> {
+  enqueue<T>(targetId: string, fn: () => Promise<T>, options?: TargetQueueOptions): Promise<T> {
     let queue = this.queues.get(targetId);
     if (!queue) {
       queue = new TargetCommandQueue(targetId);
       this.queues.set(targetId, queue);
     }
-    return queue.enqueue(fn);
+    return queue.enqueue(fn, options);
   }
 
   /**

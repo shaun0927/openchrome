@@ -36,11 +36,17 @@ export class MCPClient {
   private defaultTimeoutMs: number;
   private extraEnv: Record<string, string>;
   private extraArgs: string[];
+  private entry: string;
+  private startupTimeoutMs: number;
+  private nodeArgs: string[];
 
-  constructor(opts?: { timeoutMs?: number; env?: Record<string, string>; args?: string[] }) {
+  constructor(opts?: { timeoutMs?: number; env?: Record<string, string>; args?: string[]; entry?: string; startupTimeoutMs?: number; nodeArgs?: string[] }) {
     this.defaultTimeoutMs = opts?.timeoutMs ?? 30_000;
     this.extraEnv = opts?.env ?? {};
     this.extraArgs = opts?.args ?? [];
+    this.entry = opts?.entry ?? path.join(process.cwd(), 'dist', 'index.js');
+    this.startupTimeoutMs = opts?.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
+    this.nodeArgs = opts?.nodeArgs ?? [];
   }
 
   private rejectPending(error: Error): void {
@@ -65,17 +71,18 @@ export class MCPClient {
       ?? process.env.OPENCHROME_E2E_SERVER_ARGS
       ?? '';
     const harnessArgs = configuredArgs.trim() ? configuredArgs.trim().split(/\s+/) : [];
-    return [serverPath, 'serve', '--auto-launch', ...harnessArgs, ...this.extraArgs];
+    return [...this.nodeArgs, serverPath, 'serve', '--auto-launch', ...harnessArgs, ...this.extraArgs];
   }
 
   async start(): Promise<void> {
-    const serverPath = path.join(process.cwd(), 'dist', 'index.js');
+    const serverPath = this.entry;
     if (!fs.existsSync(serverPath)) {
       throw new Error(`MCP server not built. Run: npm run build\n  Expected: ${serverPath}`);
     }
 
     return new Promise((resolve, reject) => {
       const child = spawn('node', this.getServeArgs(serverPath), {
+        windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...this.extraEnv },
       });
@@ -188,8 +195,8 @@ export class MCPClient {
       });
 
       startupTimer = setTimeout(() => {
-        rejectStartup(lifecycleError(`Server startup timeout (${STARTUP_TIMEOUT_MS}ms)`));
-      }, STARTUP_TIMEOUT_MS);
+        rejectStartup(lifecycleError(`Server startup timeout (${this.startupTimeoutMs}ms)`));
+      }, this.startupTimeoutMs);
       startupTimer.unref();
     });
   }

@@ -271,6 +271,17 @@ async function headedAutoRetry(
   sessionId?: string,
   profileDirectory?: string,
 ): Promise<MCPResult | null> {
+  if (getGlobalConfig().headless === true) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({
+        action: 'navigate', url: targetUrl, status: 'needs_user_input',
+        code: 'HEADED_FALLBACK_REQUIRES_USER', reason: blockingInfo.type,
+        headed: false, visibilityPolicy: 'headless',
+        message: 'Automatic headed fallback was suppressed by the headless policy. Request user interaction before explicitly opening a visible browser.',
+      }) }],
+    };
+  }
   const headedFallback = getHeadedFallback(getGlobalConfig().port);
   if (!headedFallback.isAvailable()) {
     console.error('[navigate] Tier 3 skipped: no display available for headed Chrome');
@@ -521,7 +532,7 @@ const handler: ToolHandler = async (
       return { content: [{ type: 'text', text: 'Error: taskId and laneId must be supplied together' }], isError: true };
     }
     try {
-      const lane = getBrowserLane(laneRef.taskId, laneRef.laneId);
+      const lane = getBrowserLane(laneRef.taskId, laneRef.laneId, sessionId);
       laneWorkerId = lane.workerId;
       if (!tabId) tabId = lane.targetIds[lane.targetIds.length - 1];
       if (tabId && !lane.targetIds.includes(tabId)) {

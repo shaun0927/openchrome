@@ -459,7 +459,7 @@ const coreHandler: ToolHandler = async (
 ): Promise<MCPResult> => {
   throwIfAborted(context);
   let scopedArgs: Record<string, unknown>;
-  try { scopedArgs = applyLaneTarget(args); } catch (error) { return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true }; }
+  try { scopedArgs = applyLaneTarget(args, sessionId); } catch (error) { return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true }; }
   const tabId = scopedArgs.tabId as string;
   const mode = (args.mode as string) || 'ref';
   const query = args.query as string;
@@ -1584,7 +1584,7 @@ const coreHandler: ToolHandler = async (
 const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult> => {
   let tabId: string | undefined;
   try {
-    tabId = applyLaneTarget(args).tabId as string | undefined;
+    tabId = applyLaneTarget(args, sessionId).tabId as string | undefined;
   } catch {
     // coreHandler preserves the existing lane-validation error contract.
   }
@@ -1615,7 +1615,9 @@ const handler: ToolHandler = async (sessionId, args, context): Promise<MCPResult
   }
 
   try {
-    return await sessionManager.runTargetExclusive(sessionId, tabId, execute);
+    return await sessionManager.runTargetExclusive(sessionId, tabId, execute, {
+      ...(context ? { deadline: context.startTime + context.deadlineMs, signal: context.signal } : {}),
+    });
   } catch (error) {
     return {
       content: [{ type: 'text', text: `Interact error: ${error instanceof Error ? error.message : String(error)}` }],

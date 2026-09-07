@@ -74,6 +74,11 @@ describe('browser lanes (#1037)', () => {
   test('applyLaneTarget rejects cross-lane tabId', () => {
     expect(() => applyLaneTarget({ taskId, laneId: 'lane_alpha', tabId: 'tab-b' })).toThrow(/does not belong/);
   });
+  test('a caller cannot resolve or operate a lane from another session', () => {
+    expect(() => getBrowserLane(taskId, 'lane_alpha', 'session-b')).toThrow('not visible');
+    expect(() => applyLaneTarget({ taskId, laneId: 'lane_alpha' }, 'session-b')).toThrow('not visible');
+    expect(getBrowserLane(taskId, 'lane_alpha', 'session-a').sessionId).toBe('session-a');
+  });
 
 
   test('reconcileBrowserLaneTargets marks missing restored targets as recoverable failures', async () => {

@@ -1,6 +1,7 @@
 /**
  * E2E-6: Memory Stability
- * Validates: Heap delta < 50MB after extended operation.
+ * Validates external MCP process resident-memory growth after successful work.
+ * This does not measure V8 heap or the Chrome process tree.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -26,7 +27,7 @@ describe('E2E-6: Memory Stability', () => {
     await mcp.stop();
   }, 30_000);
 
-  test('heap delta remains under 50MB after extended operation', async () => {
+  test('MCP resident-memory growth remains under 50MB after successful extended operation', async () => {
     const port = getFixturePort();
     const sampler = new HeapSampler({ pid: mcp.pid });
     sampler.takeBaseline();
@@ -41,18 +42,23 @@ describe('E2E-6: Memory Stability', () => {
     // 30 minutes of continuous work (5 min at CI scale)
     const endTime = Date.now() + scaled(30 * 60 * 1000);
     let cycle = 0;
+    const failures: string[] = [];
 
     while (Date.now() < endTime) {
       const site = sites[cycle % sites.length];
       try {
         const navRes = await mcp.callTool('navigate', { url: site });
+        if (navRes.raw.isError) throw new Error(`navigate failed: ${navRes.text}`);
         let loopTabId: string | undefined;
         try {
           const navResData = JSON.parse(navRes.content?.find((c: { text?: string }) => c.text)?.text || navRes.text || '{}');
           loopTabId = navResData.tabId;
         } catch { /* fall through without tabId */ }
-        await mcp.callTool('read_page', loopTabId ? { tabId: loopTabId } : {});
+        if (!loopTabId) throw new Error('Navigation did not return a target id');
+        const read = await mcp.callTool('read_page', { tabId: loopTabId });
+        if (read.raw.isError) throw new Error(`read_page failed: ${read.text}`);
       } catch (err) {
+        failures.push(`cycle ${cycle}: ${(err as Error).message}`);
         console.error(`[memory-stability] Cycle ${cycle} error: ${(err as Error).message}`);
       }
 
@@ -61,13 +67,15 @@ describe('E2E-6: Memory Stability', () => {
         sampler.takeSample();
         const delta = sampler.getDelta();
         const heapDeltaMB = delta.heapUsedDelta / (1024 * 1024);
-        console.error(`[memory-stability] Cycle ${cycle}: heap delta=${heapDeltaMB.toFixed(1)}MB`);
+        console.error(`[memory-stability] Cycle ${cycle}: resident delta=${heapDeltaMB.toFixed(1)}MB`);
       }
 
       await scaledSleep(5000);
     }
 
     console.error(`[memory-stability] Completed ${cycle} cycles`);
+    expect(cycle).toBeGreaterThan(0);
+    expect(failures).toEqual([]);
     sampler.assertStable(50); // < 50MB delta
   }, scaled(1_860_000) + JEST_OVERHEAD_MS); // scaled timeout + fixed overhead buffer
 });

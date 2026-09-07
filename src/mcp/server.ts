@@ -68,7 +68,7 @@ import {
   getSecretStore,
 } from '../core/secrets';
 import { isCodegenEnabled, recordCodegenStep } from '../core/codegen';
-import { currentRequestContext } from '../core/observability/request-id';
+import { currentRequestContext, runWithRequestContext, generateRequestId } from '../core/observability/request-id';
 import type { TransportMessageContext } from '../transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from '../recovery';
 import { redactPredicateSource } from '../core/trace/redactor';
@@ -444,11 +444,26 @@ export class MCPServer {
   private recoveryLedger: RecoveryTrajectoryLedger | null = null;
   private options: MCPServerOptions;
   private profileWarningShown = false;
-  private exposedTier: ToolTier = 1;
-  private clientSupportsListChanged = true;
+  private readonly defaultDisclosure = { tier: 1 as ToolTier, listChanged: true, detected: false };
+  private readonly disclosureBySession = new Map<string, { tier: ToolTier; listChanged: boolean; detected: boolean }>();
+  private disclosureState(): { tier: ToolTier; listChanged: boolean; detected: boolean } {
+    const id = currentRequestContext()?.mcpSessionId;
+    if (!id) return this.defaultDisclosure;
+    let state = this.disclosureBySession.get(id);
+    if (!state) {
+      state = { tier: this.options?.initialToolTier ?? 1, listChanged: true, detected: false };
+      this.disclosureBySession.set(id, state);
+    }
+    return state;
+  }
+  private get exposedTier(): ToolTier { return this.disclosureState().tier; }
+  private set exposedTier(value: ToolTier) { this.disclosureState().tier = value; }
+  private get clientSupportsListChanged(): boolean { return this.disclosureState().listChanged; }
+  private set clientSupportsListChanged(value: boolean) { this.disclosureState().listChanged = value; }
   /** Active capability filter. undefined = no filter (all capabilities exposed). */
   private capabilityFilter: Set<ToolCapability> | undefined;
-  private clientDetected = false;
+  private get clientDetected(): boolean { return this.disclosureState().detected; }
+  private set clientDetected(value: boolean) { this.disclosureState().detected = value; }
   private heartbeatIdleTimer: NodeJS.Timeout | null = null;
   private stopPromise: Promise<void> | null = null;
   private rateLimiter: SessionRateLimiter | null = null;
@@ -678,7 +693,12 @@ export class MCPServer {
       method,
       ...(params ? { params } : {}),
     };
-    this.sendResponse(notification as unknown as MCPResponse);
+    const sessionId = currentRequestContext()?.mcpSessionId;
+    if (sessionId && this.transport?.sendToSession) {
+      this.transport.sendToSession(sessionId, notification as unknown as MCPResponse);
+    } else if (!sessionId) {
+      this.sendResponse(notification as unknown as MCPResponse);
+    }
   }
 
   /**
@@ -920,6 +940,7 @@ export class MCPServer {
     const cleanupConnectionState = (sessionId: string): void => {
       this.rejectPendingS2cRequestsForSession(sessionId, 's2c_aborted:connection_closed');
       this.clientCapabilitiesBySession.delete(sessionId);
+      this.disclosureBySession.delete(sessionId);
       this.resourceSubscriptions.cleanupSession(sessionId);
     };
 
@@ -1182,6 +1203,13 @@ export class MCPServer {
     signal?: AbortSignal,
     transportContext?: TransportMessageContext,
   ): Promise<MCPResponse> {
+    const current = currentRequestContext();
+    if (transportContext?.mcpSessionId && current?.mcpSessionId !== transportContext.mcpSessionId) {
+      return runWithRequestContext({
+        ...current, requestId: current?.requestId ?? generateRequestId(),
+        mcpSessionId: transportContext.mcpSessionId,
+      }, () => this.handleRequest(request, principal, signal, transportContext));
+    }
     const { id, method, params } = request;
 
     try {
@@ -1266,7 +1294,7 @@ export class MCPServer {
 
 
   private async refreshSessionRoots(mcpSessionId: string): Promise<void> {
-    const caps = this.clientCapabilitiesBySession.get(mcpSessionId) ?? this.clientCapabilities;
+    const caps = this.clientCapabilitiesBySession.get(mcpSessionId) ?? {};
     if (!caps.roots) return;
     const roots = await this.requestFromClient<unknown>('roots/list', undefined, { timeoutMs: 250 });
     setSessionMcpRoots(mcpSessionId, roots);
@@ -1327,10 +1355,11 @@ export class MCPServer {
         ...(caps.sampling !== undefined ? { sampling: caps.sampling } : {}),
         ...(caps.elicitation !== undefined ? { elicitation: caps.elicitation } : {}),
       };
-      this.clientCapabilities = captured;
       const mcpSessionId = currentRequestContext()?.mcpSessionId;
       if (mcpSessionId) {
         this.clientCapabilitiesBySession.set(mcpSessionId, captured);
+      } else {
+        this.clientCapabilities = captured;
       }
     }
 
@@ -3237,6 +3266,8 @@ export class MCPServer {
   }
 
   private async _stopInternal(): Promise<void> {
+    this.disclosureBySession.clear();
+    this.clientCapabilitiesBySession.clear();
     // #960 — reject every in-flight server→client request before the
     // transport tears down so callers don't hang forever on Promises that
     // can never resolve.

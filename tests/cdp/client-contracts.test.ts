@@ -9,6 +9,7 @@ const mockLauncher = {
   ensureChrome: jest.fn(),
   invalidateInstance: jest.fn(),
   getInstance: jest.fn(() => ({ launchMode: 'isolated' })),
+  getChromePid: jest.fn(() => 4321),
 };
 jest.mock('../../src/chrome/launcher', () => ({
   getChromeLauncher: jest.fn(() => mockLauncher),
@@ -320,4 +321,16 @@ describe('CDPClient target/page contracts (#687 Wave 4 prereq)', () => {
     expect(startupTarget.page).toHaveBeenCalledTimes(1);
   });
 
+});
+
+
+test('managed launcher PID remains visible when puppeteer connects instead of launches', () => {
+  const client = new CDPClient();
+  expect(client.getChromePid()).toBeNull();
+  (client as any).browser = { process: () => null };
+  mockLauncher.getInstance.mockReturnValue({ launchMode: 'isolated' });
+  expect(client.getChromePid()).toBe(4321);
+  mockLauncher.getInstance.mockReturnValue({ launchMode: 'attach' });
+  expect(client.getChromePid()).toBeNull();
+  mockLauncher.getInstance.mockReturnValue({ launchMode: 'isolated' });
 });

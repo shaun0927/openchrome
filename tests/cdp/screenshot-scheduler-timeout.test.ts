@@ -31,6 +31,17 @@ function makeMockPage(): Page {
 }
 
 describe('ScreenshotScheduler - queue wait timeout', () => {
+  test('rejects overload without allocating an unbounded pending queue', async () => {
+    const scheduler = new ScreenshotScheduler(1, 30_000, 1);
+    const client = makeMockCDPClient(100);
+    const first = scheduler.capture(makeMockPage(), client);
+    const second = scheduler.capture(makeMockPage(), client);
+    await expect(scheduler.capture(makeMockPage(), client)).rejects.toThrow('queue full');
+    expect(scheduler.getStats()).toMatchObject({ active: 1, pending: 1 });
+    await jest.advanceTimersByTimeAsync(250);
+    await Promise.all([first, second]);
+    expect(scheduler.getStats()).toMatchObject({ active: 0, pending: 0, completed: 2 });
+  });
   beforeEach(() => {
     jest.useFakeTimers();
   });

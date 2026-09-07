@@ -1,5 +1,7 @@
 /**
- * Chrome Process Monitor — tracks Chrome RSS memory usage.
+ * Chrome Process Monitor — tracks the root and descendants' resident memory.
+ * Windows reports summed working sets; Unix reports summed RSS. Shared pages
+ * may appear in multiple processes, so this is not private-byte accounting.
  * Emits 'warn' and 'critical' events when thresholds are exceeded.
  * Part of the reliability initiative: early warning before Chrome OOM-kills.
  *
@@ -8,7 +10,7 @@
  * chain so each tick picks its next delay fresh.
  */
 
-import { execFile } from 'child_process';
+import { readProcessMemory, ProcessMemorySample } from '../core/process/memory';
 import { EventEmitter } from 'events';
 import {
   DEFAULT_CHROME_MONITOR_INTERVAL_MS,
@@ -24,6 +26,10 @@ export interface ChromeProcessStats {
   pid: number;
   rssBytes: number;
   timestamp: number;
+  processCount?: number;
+  processIds?: number[];
+  scope?: ProcessMemorySample['scope'];
+  metric?: ProcessMemorySample['metric'];
 }
 
 export class ChromeProcessMonitor extends EventEmitter {
@@ -36,6 +42,10 @@ export class ChromeProcessMonitor extends EventEmitter {
   private readonly idleState: IdleState;
   private stopped = true;
   private lastDelayMs = 0;
+  private generation = 0;
+  private sampling = false;
+  private identity: string | undefined;
+  private sampleAbort: AbortController | undefined;
 
   constructor(opts?: { intervalMs?: number; warnBytes?: number; criticalBytes?: number; idleState?: IdleState }) {
     super();
@@ -46,11 +56,9 @@ export class ChromeProcessMonitor extends EventEmitter {
   }
 
   start(pid: number): void {
-    if (process.platform === 'win32') {
-      console.error('[ChromeMonitor] Memory monitoring not supported on Windows, skipping');
-      return;
-    }
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('Invalid Chrome process id');
     this.stop();
+    this.identity = undefined;
     this.stopped = false;
     this.pid = pid;
     this.check(); // immediate first check
@@ -58,12 +66,17 @@ export class ChromeProcessMonitor extends EventEmitter {
   }
 
   stop(): void {
+    this.sampleAbort?.abort();
+    this.sampleAbort = undefined;
+    this.generation++;
+    this.sampling = false;
     this.stopped = true;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
     this.pid = null;
+    this.lastStats = null;
   }
 
   getStats(): ChromeProcessStats | null {
@@ -93,17 +106,20 @@ export class ChromeProcessMonitor extends EventEmitter {
   }
 
   private check(): void {
-    if (!this.pid) return;
-    execFile('ps', ['-o', 'rss=', '-p', String(this.pid)], (err, stdout) => {
-      if (err) {
-        // Chrome process may have died; clear stats silently
-        this.lastStats = null;
-        return;
-      }
-      const rssKb = parseInt(stdout.trim(), 10);
-      if (isNaN(rssKb)) return;
-      const rssBytes = rssKb * 1024;
-      this.lastStats = { pid: this.pid!, rssBytes, timestamp: Date.now() };
+    if (!this.pid || this.sampling || this.stopped) return;
+    const pid = this.pid;
+    const generation = this.generation;
+    this.sampling = true;
+    this.sampleAbort = new AbortController();
+    void readProcessMemory(pid, true, this.sampleAbort.signal).then(sample => {
+      if (generation !== this.generation || this.stopped) return;
+      if (this.identity !== undefined && sample.identity !== this.identity) throw new Error('Chrome process identity changed');
+      this.identity = sample.identity;
+      const rssBytes = sample.residentBytes;
+      this.lastStats = {
+        pid, rssBytes, timestamp: sample.timestamp, processCount: sample.processCount,
+        processIds: sample.processIds, scope: sample.scope, metric: sample.metric,
+      };
 
       if (rssBytes > this.criticalBytes) {
         console.error(
@@ -116,6 +132,38 @@ export class ChromeProcessMonitor extends EventEmitter {
         );
         this.emit('warn', this.lastStats);
       }
+    }).catch(error => {
+      if (generation !== this.generation || this.stopped) return;
+      this.lastStats = null;
+      this.emit('unavailable', { pid, reason: error instanceof Error ? error.message : String(error) });
+    }).finally(() => {
+      if (generation === this.generation) { this.sampling = false; this.sampleAbort = undefined; }
     });
   }
+}
+
+/** Attach after transport startup without causing a browser connection. */
+export function monitorChromeConnection(monitor: ChromeProcessMonitor, client: {
+  getChromePid(): number | null;
+  addConnectionListener(listener: (event: { type: string }) => void): void;
+  removeConnectionListener(listener: (event: { type: string }) => void): void;
+}): () => void {
+  let activePid: number | null = null;
+  const sync = () => {
+    const pid = client.getChromePid();
+    if (pid === activePid) return;
+    monitor.stop();
+    activePid = pid;
+    if (pid !== null) monitor.start(pid);
+  };
+  const listener = (event: { type: string }) => {
+    if (event.type === 'connected' || event.type === 'reconnected') sync();
+    if (event.type === 'disconnected' || event.type === 'reconnect_failed') {
+      activePid = null;
+      monitor.stop();
+    }
+  };
+  client.addConnectionListener(listener);
+  sync();
+  return () => { client.removeConnectionListener(listener); monitor.stop(); };
 }

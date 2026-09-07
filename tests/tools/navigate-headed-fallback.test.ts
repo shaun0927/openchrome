@@ -82,7 +82,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
   let mockSessionManager: ReturnType<typeof createMockSessionManager>;
   let testSessionId: string;
 
-  const getNavigateHandler = async () => {
+  const getNavigateHandler = async (headless = false) => {
     jest.resetModules();
     jest.doMock('../../src/session-manager', () => ({
       getSessionManager: () => mockSessionManager,
@@ -110,7 +110,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       }),
     }));
     jest.doMock('../../src/config/global', () => ({
-      getGlobalConfig: () => ({ port: 9222 }),
+      getGlobalConfig: () => ({ port: 9222, headless }),
     }));
 
     const { registerNavigateTool } = await import('../../src/tools/navigate');
@@ -164,6 +164,17 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
   });
 
   describe('Tier 3: automatic escalation from Tier 2', () => {
+    test('headless policy requires user input instead of opening a visible fallback', async () => {
+      const handler = await getNavigateHandler(true);
+      mockDetectBlockingPage.mockResolvedValue({ type: 'access-denied', detail: 'fixture block' });
+      const result = await handler(testSessionId, { url: 'https://fixture.example' }) as MCPResult;
+      const parsed = parseResultJSON<NavResult>(result);
+      expect(result.isError).toBe(true);
+      expect(parsed.code).toBe('HEADED_FALLBACK_REQUIRES_USER');
+      expect(parsed.status).toBe('needs_user_input');
+      expect(mockHeadedNavigatePersistent).not.toHaveBeenCalled();
+      expect(mockHeadedNavigate).not.toHaveBeenCalled();
+    });
     test('escalates to headed Chrome when both normal and stealth are blocked', async () => {
       const handler = await getNavigateHandler();
 

@@ -13,6 +13,8 @@ const mockCdpClientInstance = {
   getPageByTargetId: jest.fn().mockResolvedValue(null),
   closePage: jest.fn().mockResolvedValue(undefined),
   send: jest.fn(),
+  createPage: jest.fn(),
+  getChromeLifecycleMode: jest.fn().mockReturnValue('isolated'),
 };
 
 jest.mock('../../src/cdp/client', () => ({
@@ -57,6 +59,36 @@ function createManager(maxTargetsPerWorker = 5): SessionManager {
 }
 
 describe('SessionManager target creation ledger', () => {
+  test('delayed startup cleanup preserves another in-flight blank tab', async () => {
+    jest.useFakeTimers();
+    const startupClose = jest.fn(async () => {});
+    const pendingClose = jest.fn(async () => {});
+    const target = (id: string, url: string, close: typeof startupClose) => ({
+      _targetId: id, type: () => 'page', url: () => url,
+      page: async () => ({ isClosed: () => false, close }),
+    });
+    const startup = target('startup', 'chrome://newtab/', startupClose);
+    const pending = target('pending', 'about:blank', pendingClose);
+    const first = target('first', 'https://fixture.example', jest.fn(async () => {}));
+    let visible = [startup];
+    mockCdpClientInstance.getBrowser.mockReturnValue({ targets: jest.fn(() => visible) } as never);
+    mockCdpClientInstance.createPage.mockImplementationOnce(async () => {
+      visible = [startup, first];
+      return { target: () => first, url: first.url };
+    });
+    try {
+      const manager = createManager();
+      await manager.createTarget('s-cleanup', 'https://fixture.example');
+      // The second creator has a Chrome target but has not committed ownership.
+      visible.push(pending);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(startupClose).toHaveBeenCalledTimes(1);
+      expect(pendingClose).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+      mockCdpClientInstance.getBrowser.mockReturnValue({ targets: jest.fn(() => []) });
+    }
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     targetDestroyedListeners.length = 0;

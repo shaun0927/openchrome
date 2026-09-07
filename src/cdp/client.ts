@@ -500,10 +500,15 @@ export class CDPClient {
 
   /**
    * Get the Chrome process PID, if available.
-   * Returns null when connecting to an already-running Chrome (no process spawned by puppeteer).
+   * Includes Chrome spawned by our launcher and then attached via CDP.
+   * A user-owned attach-mode browser has no managed PID here.
    */
   getChromePid(): number | null {
-    return this.browser?.process()?.pid ?? null;
+    if (!this.browser) return null;
+    const spawnedPid = this.browser.process()?.pid;
+    if (spawnedPid) return spawnedPid;
+    const launcher = getChromeLauncher(this.port);
+    return launcher.getInstance()?.launchMode === 'isolated' ? launcher.getChromePid() ?? null : null;
   }
 
   /**

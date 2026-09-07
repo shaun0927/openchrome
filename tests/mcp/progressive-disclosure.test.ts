@@ -59,6 +59,28 @@ async function initializeAndList(server: MCPServer, clientName: string, capabili
 describe('MCP progressive disclosure client detection', () => {
   afterEach(() => jest.clearAllMocks());
 
+  test.each([['opencode', 'unknown-editor'], ['unknown-editor', 'opencode']])(
+    'transport sessions isolate disclosure when %s initializes first', async (first, second) => {
+      const server = makeServer();
+      for (const name of [first, second]) {
+        await server.handleRequest({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+          clientInfo: { name }, capabilities: {},
+        } }, undefined, undefined, { mcpSessionId: name });
+      }
+      const list = async (id: string) => {
+        const result = await server.handleRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, undefined, undefined, { mcpSessionId: id }) as TestResponse;
+        return result.result?.tools?.map(tool => tool.name) ?? [];
+      };
+      const [known, unknown] = await Promise.all([list('opencode'), list('unknown-editor')]);
+      expect(known).toContain('expand_tools'); expect(known).not.toContain('tabs_activate');
+      expect(unknown).not.toContain('expand_tools'); expect(unknown).toContain('tabs_activate');
+      await server.handleRequest({ jsonrpc: '2.0', id: 3, method: 'initialize', params: {
+        clientInfo: { name: 'opencode' }, capabilities: {},
+      } }, undefined, undefined, { mcpSessionId: 'third' });
+      expect(await list('third')).toEqual(known);
+    },
+  );
+
   test('OpenCode gets a small progressive startup surface', async () => {
     const { init, toolDefs, tools } = await initializeAndList(makeServer(), 'opencode');
 

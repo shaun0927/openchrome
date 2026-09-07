@@ -2,10 +2,8 @@
  * Screenshot Scheduler - Concurrency-controlled screenshot pipeline
  *
  * Prevents GPU/renderer contention when multiple tabs request
- * screenshots simultaneously. Without this, 20 concurrent screenshot
- * requests serialize through Chrome's renderer, causing 185s+ timeouts.
- *
- * Performance impact: 20 concurrent screenshots from 4000ms to ~800ms
+ * screenshots simultaneously. Queue capacity and wait time are bounded;
+ * actual throughput depends on the browser, pages and environment.
  */
 
 import { Page } from 'puppeteer-core';
@@ -47,8 +45,13 @@ export class ScreenshotScheduler {
 
   constructor(
     private readonly concurrency: number = 5,
-    private readonly queueTimeoutMs: number = DEFAULT_SCREENSHOT_QUEUE_TIMEOUT_MS
-  ) {}
+    private readonly queueTimeoutMs: number = DEFAULT_SCREENSHOT_QUEUE_TIMEOUT_MS,
+    private readonly maxPending: number = 64,
+  ) {
+    if (!Number.isSafeInteger(concurrency) || concurrency < 1 || !Number.isFinite(queueTimeoutMs) || queueTimeoutMs <= 0 || !Number.isSafeInteger(maxPending) || maxPending < 1) {
+      throw new Error('Invalid screenshot scheduler limits');
+    }
+  }
 
   /**
    * Capture a screenshot with concurrency control.
@@ -63,6 +66,7 @@ export class ScreenshotScheduler {
 
     // Wait for a slot if at capacity, with timeout to prevent indefinite starvation
     if (this.active >= this.concurrency) {
+      if (this.queue.length >= this.maxPending) throw new Error('Screenshot queue full; request was not started');
       await new Promise<void>((resolve, reject) => {
         let settled = false;
 
@@ -79,6 +83,7 @@ export class ScreenshotScheduler {
           }
           settled = true;
           clearTimeout(timer);
+          this.active++; // Reserve before waking the waiter; new arrivals cannot steal its slot.
           resolve();
         };
 
@@ -93,9 +98,9 @@ export class ScreenshotScheduler {
 
         this.queue.push(wrappedResolve);
       });
+    } else {
+      this.active++;
     }
-
-    this.active++;
     const waitMs = Date.now() - queuedAt;
     const captureStart = Date.now();
 

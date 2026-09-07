@@ -2,11 +2,11 @@
  * Heap Sampler for E2E memory stability tests.
  * Takes baseline + periodic samples, asserts delta within limits.
  *
- * When a `pid` is provided, measures the target process's RSS via `ps`
- * (macOS/Linux) or `wmic` (Windows) instead of the Jest runner's heap.
+ * An external pid measures process RSS (Unix) or working set (Windows),
+ * not its V8 heap and not the Chrome process tree. Missing samples invalidate
+ * the window; legacy heap fields contain resident bytes in external mode.
  */
-import { execSync } from 'child_process';
-import * as os from 'os';
+import { readProcessMemorySync } from '../../../src/core/process/memory';
 
 export interface HeapSample {
   timestamp: number;
@@ -25,6 +25,8 @@ export class HeapSampler {
   private baseline: HeapSample | null = null;
   private samples: HeapSample[] = [];
   private pid: number | undefined;
+  private identity: string | undefined;
+  private collectionFailure: Error | undefined;
 
   constructor(opts?: HeapSamplerOptions) {
     this.pid = opts?.pid;
@@ -34,6 +36,8 @@ export class HeapSampler {
    * Take baseline measurement.
    */
   takeBaseline(): HeapSample {
+    this.identity = undefined;
+    this.collectionFailure = undefined;
     // Force GC if available (only meaningful for in-process mode)
     if (!this.pid && global.gc) global.gc();
 
@@ -70,12 +74,16 @@ export class HeapSampler {
    * @throws If delta exceeds limit.
    */
   assertStable(maxDeltaMB: number): void {
+    if (!Number.isFinite(maxDeltaMB) || maxDeltaMB < 0) throw new Error('Invalid memory growth limit');
+    if (this.collectionFailure) throw this.collectionFailure;
     // Take a final sample with GC (GC only meaningful for in-process mode)
     if (!this.pid && global.gc) global.gc();
     this.takeSample();
 
+    if (!this.baseline || this.samples.length < 2) throw new Error('Memory stability requires a baseline and a valid follow-up sample');
+
     const delta = this.getDelta();
-    const deltaHeapMB = delta.heapUsedDelta / (1024 * 1024);
+    const deltaHeapMB = (Math.max(...this.samples.map(sample => sample.heapUsed)) - this.baseline.heapUsed) / (1024 * 1024);
     const deltaRssMB = delta.rssDelta / (1024 * 1024);
 
     if (deltaHeapMB > maxDeltaMB) {
@@ -131,39 +139,16 @@ export class HeapSampler {
 
   /**
    * Snapshot memory for an external process by PID.
-   * Uses `ps -o rss=` on macOS/Linux, `wmic` on Windows.
-   * RSS is reported in KB by ps; we convert to bytes.
-   * Since we cannot access a remote V8 heap, RSS is used for all heap metrics.
-   * Returns null-equivalent sample (zeros) if the process has exited.
+   * Reads resident memory, not the external process's V8 heap. Legacy heap
+   * fields retain resident bytes for compatibility. Collection failure or
+   * process identity change invalidates this entire measurement window.
    */
   private snapshotExternalPid(pid: number): HeapSample {
     try {
-      let rssBytes: number;
-
-      if (os.platform() === 'win32') {
-        // wmic returns WorkingSetSize in bytes
-        const out = execSync(`wmic process where ProcessId=${pid} get WorkingSetSize /value`, {
-          timeout: 5000,
-          encoding: 'utf8',
-        });
-        const match = out.match(/WorkingSetSize=(\d+)/);
-        if (!match) {
-          // Process not found — skip sample by returning last known or zero
-          return this.lastSampleOrZero();
-        }
-        rssBytes = parseInt(match[1], 10);
-      } else {
-        // macOS / Linux: ps -o rss= -p <pid> returns KB
-        const out = execSync(`ps -o rss= -p ${pid}`, {
-          timeout: 5000,
-          encoding: 'utf8',
-        });
-        const trimmed = out.trim();
-        if (!trimmed) {
-          return this.lastSampleOrZero();
-        }
-        rssBytes = parseInt(trimmed, 10) * 1024;
-      }
+      const sample = readProcessMemorySync(pid);
+      if (this.identity !== undefined && this.identity !== sample.identity) throw new Error('Measured process identity changed');
+      this.identity = sample.identity;
+      const rssBytes = sample.residentBytes;
 
       // Use RSS as the primary metric for all heap fields since we cannot
       // introspect another process's V8 heap.
@@ -174,21 +159,9 @@ export class HeapSampler {
         rss: rssBytes,
         external: 0,
       };
-    } catch {
-      // Process may have exited — skip this sample silently
-      console.error(`[heap-sampler] Could not read memory for pid ${pid}, process may have exited`);
-      return this.lastSampleOrZero();
+    } catch (error) {
+      this.collectionFailure = new Error(`Memory stability inconclusive for pid ${pid}: ${error instanceof Error ? error.message : String(error)}`);
+      throw this.collectionFailure;
     }
-  }
-
-  /**
-   * Return the last recorded sample, or a zero-filled sample if none exists yet.
-   * Used when the target process is unreachable so we don't inflate deltas.
-   */
-  private lastSampleOrZero(): HeapSample {
-    if (this.samples.length > 0) {
-      return { ...this.samples[this.samples.length - 1], timestamp: Date.now() };
-    }
-    return { timestamp: Date.now(), heapUsed: 0, heapTotal: 0, rss: 0, external: 0 };
   }
 }

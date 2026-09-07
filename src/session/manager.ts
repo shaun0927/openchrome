@@ -1278,12 +1278,9 @@ export class SessionManager {
 
     const targetId = getTargetId(page.target());
 
-    // Clean up blank targets that Chrome can leave visible around first navigation.
-    // - New, untracked about:blank targets can be Site Isolation renderer ghosts.
-    // - A freshly launched managed Chrome also creates an initial chrome://newtab/
-    //   page before OpenChrome creates the requested page. Prune that startup tab
-    //   only for isolated/managed Chrome so attach mode never closes user tabs.
-    // Runs after a brief delay to catch async target creation by Chrome.
+    // Prune only the known startup tab of an owned Chrome. A new, untracked
+    // about:blank may belong to another in-flight createTarget; URL and absence
+    // from targetToWorker do not establish orphan ownership.
     const cleanupExistingIds = existingTargetIds;
     const cleanupTargetId = targetId;
     const cleanupBrowser = cdpClient.getBrowser();
@@ -1303,8 +1300,7 @@ export class SessionManager {
           const isBlankLike = candidateUrl === 'about:blank' || isStartupNewTab;
           if (!isBlankLike) return false;
 
-          if (isStartupNewTab) return cleanupStartupBlankTargets && cleanupExistingIds.has(candidateTargetId);
-          return !cleanupExistingIds.has(candidateTargetId);
+          return cleanupStartupBlankTargets && cleanupExistingIds.has(candidateTargetId);
         });
         for (const t of orphans) {
           try {
@@ -1975,6 +1971,7 @@ export class SessionManager {
     sessionId: string,
     targetId: string,
     fn: () => Promise<T>,
+    options?: import('./target-command-queue').TargetQueueOptions,
   ): Promise<T> {
     if (!this.validateTargetOwnership(sessionId, targetId)) {
       throw new Error(this.buildStaleTargetError(sessionId, targetId));
@@ -1988,7 +1985,7 @@ export class SessionManager {
         throw new Error(this.buildStaleTargetError(sessionId, targetId));
       }
       return fn();
-    });
+    }, options);
   }
 
   /**
