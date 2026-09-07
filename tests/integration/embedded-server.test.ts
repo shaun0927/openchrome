@@ -161,6 +161,7 @@ jest.mock('../../src/watchdog/disk-monitor', () => ({
 }));
 
 jest.mock('../../src/watchdog/chrome-monitor', () => ({
+  monitorChromeConnection: jest.fn(() => jest.fn()),
   ChromeProcessMonitor: jest.fn().mockImplementation(() => ({
     start: jest.fn(),
     stop: jest.fn(),

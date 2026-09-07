@@ -157,18 +157,24 @@ export async function createBrowserLane(input: {
   return cloneLane(lane);
 }
 
-export function listBrowserLanes(taskId: string): BrowserLane[] {
+export function listBrowserLanes(taskId: string, sessionId?: string): BrowserLane[] {
   const meta = getTaskStore().readMetaSync(taskId);
   if (!meta) throw new Error(`unknown task ${taskId}`);
-  return getTaskLanes(meta);
+  if (sessionId && meta.owner?.session_id && meta.owner.session_id !== sessionId) {
+    throw new Error('Task is not visible in this session');
+  }
+  return getTaskLanes(meta).filter(lane => !sessionId || lane.sessionId === sessionId);
 }
 
-export function getBrowserLane(taskId: string, laneId: string): BrowserLane {
+export function getBrowserLane(taskId: string, laneId: string, sessionId?: string): BrowserLane {
   assertLaneId(laneId);
   const meta = getTaskStore().readMetaSync(taskId);
   if (!meta) throw new Error(`unknown task ${taskId}`);
   const lane = findTaskLane(meta, laneId);
   if (!lane) throw new Error(`unknown lane ${laneId} for task ${taskId}`);
+  if (sessionId && (lane.sessionId !== sessionId || (meta.owner?.session_id && meta.owner.session_id !== sessionId))) {
+    throw new Error('Lane is not visible in this session');
+  }
   return lane;
 }
 
@@ -223,11 +229,11 @@ export function resolveLaneForTool(args: Record<string, unknown>): { taskId?: st
   return { taskId, laneId };
 }
 
-export function applyLaneTarget(args: Record<string, unknown>): Record<string, unknown> {
+export function applyLaneTarget(args: Record<string, unknown>, sessionId?: string): Record<string, unknown> {
   const { taskId, laneId } = resolveLaneForTool(args);
   if (!taskId && !laneId) return args;
   if (!taskId || !laneId) throw new Error('taskId and laneId must be supplied together');
-  const lane = getBrowserLane(taskId, laneId);
+  const lane = getBrowserLane(taskId, laneId, sessionId);
   const tabId = typeof args.tabId === 'string' && args.tabId ? args.tabId : lane.targetIds[lane.targetIds.length - 1];
   if (!tabId) throw new Error(`lane ${laneId} has no target; call oc_lane_create with initialUrl or navigate with taskId/laneId first`);
   if (!lane.targetIds.includes(tabId)) throw new Error(`tabId ${tabId} does not belong to lane ${laneId}`);

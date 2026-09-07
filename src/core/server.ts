@@ -36,7 +36,7 @@ import { EventLoopMonitor, setGlobalEventLoopMonitor } from '../watchdog/event-l
 import { HealthEndpoint } from '../watchdog/health-endpoint';
 import { resolveHealthEndpointEnabled } from './health-endpoint-gating';
 import { DiskMonitor } from '../watchdog/disk-monitor';
-import { ChromeProcessMonitor } from '../watchdog/chrome-monitor';
+import { ChromeProcessMonitor, monitorChromeConnection } from '../watchdog/chrome-monitor';
 import { SessionStatePersistence } from '../session/state-persistence';
 import { getLifecycleBus, type LifecycleEventBus } from './lifecycle';
 import { writePidFile, cleanOrphanedChromeProcesses } from '../chrome/pid-manager';
@@ -168,6 +168,7 @@ class OpenChromeServerImpl implements OpenChromeServer {
   private _tabHealthMonitor: TabHealthMonitor | null = null;
   private _eventLoopMonitor: EventLoopMonitor | null = null;
   private _diskMonitor: DiskMonitor | null = null;
+  private _stopChromeConnectionMonitor: (() => void) | undefined;
   private _chromeProcessMonitor: ChromeProcessMonitor | null = null;
   private _healthEndpoint: HealthEndpoint | null = null;
   private _idleTimeoutHandle: ReturnType<typeof installIdleTimeout> | null = null;
@@ -426,13 +427,6 @@ class OpenChromeServerImpl implements OpenChromeServer {
         console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
       });
     });
-    processWatchdog.on('chrome-relaunched', () => {
-      const newPid = cdpClient.getChromePid();
-      if (newPid != null && process.platform !== 'win32') {
-        chromeProcessMonitor.stop();
-        chromeProcessMonitor.start(newPid);
-      }
-    });
     processWatchdog.start();
 
     const tabHealthMonitor = new TabHealthMonitor({
@@ -511,11 +505,8 @@ class OpenChromeServerImpl implements OpenChromeServer {
       console.error('[SelfHealing] Session state restore failed:', err);
     });
 
-    // Chrome process monitor
-    const chromePid = cdpClient.getChromePid();
-    if (chromePid != null) {
-      chromeProcessMonitor.start(chromePid);
-    }
+    // Memory observation follows demand-driven browser connection.
+    this._stopChromeConnectionMonitor = monitorChromeConnection(chromeProcessMonitor, cdpClient);
 
     // Event wiring
     sessionManager.addEventListener((event) => {
@@ -571,6 +562,8 @@ class OpenChromeServerImpl implements OpenChromeServer {
     this._tabHealthMonitor?.stopAll();
     this._eventLoopMonitor?.stop();
     this._diskMonitor?.stop();
+    this._stopChromeConnectionMonitor?.();
+    this._stopChromeConnectionMonitor = undefined;
     this._chromeProcessMonitor?.stop();
     await this._healthEndpoint?.stop();
 

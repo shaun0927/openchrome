@@ -24,6 +24,14 @@ export interface CDPClientLike {
   send<T>(page: Page, method: string, params?: Record<string, unknown>): Promise<T>;
 }
 
+export interface StorageRestoreResult {
+  status: 'restored' | 'unavailable' | 'unsupported_version' | 'failed' | 'timed_out';
+  /** Restoration is not proof that a server still accepts this account. */
+  authentication: 'unverified';
+  execution: 'not_started' | 'completed' | 'partial' | 'unknown';
+  reason?: 'missing' | 'unreadable';
+}
+
 /**
  * Pure-data shape captured by the shared CDP walker. Used by both the
  * file-backed StorageStateManager.save()/restore() path and the in-memory
@@ -323,13 +331,15 @@ function cookieUrlFor(
 export class StorageStateManager {
   private watchdogTimer: NodeJS.Timeout | null = null;
   private saving: boolean = false;
+  private restorePending = false;
+  private preserveSnapshot = false;
 
   /**
    * Save current browser state (cookies + localStorage) to file.
    * Uses the shared envelope walker (`captureContextEnvelopeData`).
    */
   async save(page: Page, cdpClient: CDPClientLike, filePath: string): Promise<void> {
-    if (this.saving) return; // prevent concurrent saves
+    if (this.saving || this.restorePending || this.preserveSnapshot) return;
     this.saving = true;
     try {
       const capture = await captureContextEnvelopeData(page, cdpClient, {
@@ -358,32 +368,60 @@ export class StorageStateManager {
   }
 
   /**
-   * Restore browser state from file.
-   * Uses the shared envelope walker (`applyContextEnvelopeData`) for the
-   * cookie-set leg, but keeps the legacy origin-scoped localStorage
-   * detection so older snapshots round-trip cleanly.
+   * Compatibility wrapper: true means storage operations completed, never
+   * that a protected resource accepted the restored credentials.
    */
   async restore(page: Page, cdpClient: CDPClientLike, filePath: string): Promise<boolean> {
-    const result = await readFileSafe<StorageState>(filePath);
-    if (!result.success || !result.data) {
-      return false; // File missing or corrupted — silently skip
-    }
+    return (await this.restoreDetailed(page, cdpClient, filePath)).status === 'restored';
+  }
 
-    const state = result.data;
+  /**
+   * Failures preserve the existing snapshot, including final-session saves.
+   * A successful explicit retry unlocks saving. If CDP never settles, recreate
+   * the affected session/browser before retrying; a timeout is not a rollback.
+   */
+  async restoreDetailed(
+    page: Page, cdpClient: CDPClientLike, filePath: string,
+    timeoutMs = DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS,
+  ): Promise<StorageRestoreResult> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid restore timeout');
+    const outcome = (status: StorageRestoreResult['status'], execution: StorageRestoreResult['execution']): StorageRestoreResult =>
+      ({ status, execution, authentication: 'unverified' });
+    if (this.restorePending) return outcome('failed', 'not_started');
+    this.restorePending = true;
+    this.preserveSnapshot = true;
+    let workOwnsGuard = false;
+    try {
+      const result = await readFileSafe<StorageState>(filePath);
+      if (!result.success || !result.data) {
+        if (result.error === 'File does not exist') this.preserveSnapshot = false;
+        return { ...outcome('unavailable', 'not_started'), reason: result.error === 'File does not exist' ? 'missing' : 'unreadable' };
+      }
 
-    // Validate version
-    if (state.version !== 1) {
-      return false;
-    }
+      const state = result.data;
 
-    let restoreTid: ReturnType<typeof setTimeout>;
-    await Promise.race([
-      (async () => {
+      // Validate version
+      if (state.version !== 1) {
+        return outcome('unsupported_version', 'not_started');
+      }
+
+      let expired = false;
+      let storageFailed = false;
+      let restoreTid: ReturnType<typeof setTimeout> | undefined;
+      workOwnsGuard = true;
+      const work = (async (): Promise<StorageRestoreResult> => {
         // Restore cookies
         if (state.cookies && state.cookies.length > 0) {
-          // Filter out expired session cookies but keep persistent ones
+          // A first navigation may already have established a newer login.
+          // Automatic restoration fills gaps; it never replaces live credentials.
+          const current = await cdpClient.send<{ cookies?: StorageState['cookies'] }>(page, 'Network.getAllCookies', {});
+          if (expired) return outcome('timed_out', 'unknown');
+          const cookieKey = (c: StorageState['cookies'][number]): string => `${c.domain}\n${c.path}\n${c.name}`;
+          const liveKeys = new Set((current.cookies ?? []).map(cookieKey));
+          // Cookie expiry filtering does not validate server-side authentication.
           const validCookies = state.cookies.filter(c => {
-            if (c.session) return true; // session cookies are always valid
+            if (liveKeys.has(cookieKey(c))) return false;
+            if (c.session) return true;
             if (c.expires > 0 && c.expires < Date.now() / 1000) return false; // expired
             return true;
           });
@@ -393,10 +431,12 @@ export class StorageStateManager {
           }
         }
 
+        if (expired) return outcome('timed_out', 'unknown');
         // Restore localStorage (origin-scoped)
         if (state.localStorage && Object.keys(state.localStorage).length > 0) {
           try {
             const pageOrigin = await page.evaluate(() => window.location.origin) as string;
+            if (expired) return outcome('timed_out', 'unknown');
 
             // Detect format: old (flat) vs new (origin-scoped)
             const firstValue = Object.values(state.localStorage)[0];
@@ -408,7 +448,7 @@ export class StorageStateManager {
               if (originData && Object.keys(originData).length > 0) {
                 await page.evaluate((data: Record<string, string>) => {
                   for (const [key, value] of Object.entries(data)) {
-                    window.localStorage.setItem(key, value);
+                    if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, value);
                   }
                 }, originData);
               }
@@ -416,21 +456,37 @@ export class StorageStateManager {
               // Legacy format: flat (backward compatible — inject all, as before)
               await page.evaluate((data: Record<string, string>) => {
                 for (const [key, value] of Object.entries(data)) {
-                  window.localStorage.setItem(key, value);
+                  if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, value);
                 }
               }, state.localStorage as Record<string, string>);
             }
           } catch {
-            // Skip if localStorage can't be accessed (about:blank, chrome://)
+            storageFailed = true;
           }
         }
-      })().finally(() => clearTimeout(restoreTid)),
-      new Promise<void>((resolve) => {
-        restoreTid = setTimeout(resolve, DEFAULT_STORAGE_STATE_RESTORE_TIMEOUT_MS);
-      }),
-    ]);
-
-    return true;
+        return outcome(storageFailed ? 'failed' : 'restored', storageFailed ? 'partial' : 'completed');
+      })().catch(() => outcome('failed', 'unknown')).finally(() => {
+        clearTimeout(restoreTid);
+        this.restorePending = false;
+      });
+      const completion = await Promise.race([
+        work,
+        new Promise<StorageRestoreResult>((resolve) => {
+          restoreTid = setTimeout(() => {
+            expired = true;
+            resolve(outcome('timed_out', 'unknown'));
+          }, timeoutMs);
+        }),
+      ]);
+      // An already dispatched CDP command cannot be rolled back. Keep saves and
+      // additional restores blocked until it settles, and launch no later steps.
+      if (expired) return completion;
+      if (completion.status === 'restored') this.preserveSnapshot = false;
+      this.restorePending = false;
+      return completion;
+    } finally {
+      if (!workOwnsGuard) this.restorePending = false;
+    }
   }
 
   /**

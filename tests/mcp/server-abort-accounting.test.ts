@@ -40,3 +40,30 @@ describe('MCPServer aborted tool accounting', () => {
     expect(exportText).toContain(`openchrome_tool_calls_aborted_total{tool="${toolName}",reason="client_disconnect",tenant="acme"} 1`);
   });
 });
+
+
+test('cancellation notification only interrupts the matching transport session and request ID', async () => {
+  const server = new MCPServer({ getOrCreateSession: jest.fn().mockResolvedValue({ id: 's' }), addEventListener: jest.fn(), sessionCount: 0 } as any);
+  const signals: AbortSignal[] = [];
+  let release!: () => void;
+  let ready!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { ready = resolve; });
+  server.registerTool('cancel_fixture', async (_session, _args, context) => {
+    signals.push(context!.signal!);
+    if (signals.length === 2) ready();
+    await pending;
+    return { content: [{ type: 'text', text: 'done' }] };
+  }, { name: 'cancel_fixture', description: 'Cancellation fixture', inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } });
+  const request = { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'cancel_fixture', arguments: {}, sessionId: 's' } };
+  const first = server.handleMessage({ ...request }, undefined, { mcpSessionId: 'one' });
+  const second = server.handleMessage({ ...request }, undefined, { mcpSessionId: 'two' });
+  await started;
+  expect(await server.handleMessage({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 9 } }, undefined, { mcpSessionId: 'two' })).toBeNull();
+  expect(signals[0].aborted).toBe(false);
+  expect(signals[1].aborted).toBe(true);
+  expect((await second)?.result).toMatchObject({ isError: true, structuredContent: { execution: 'unknown', retryAllowed: false } });
+  release();
+  expect((await first)?.result).not.toHaveProperty('isError', true);
+});

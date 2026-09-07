@@ -100,22 +100,21 @@ const handler: ToolHandler = async (
       const targetIds = sessionManager.getWorkerTargetIds(sessionId, workerInfo.id);
       workerTabs[workerInfo.id] = [];
 
-      for (const targetId of targetIds) {
-        try {
-          const page = await sessionManager.getPage(sessionId, targetId, workerInfo.id, 'tabs_context');
-          if (page) {
-            const tabInfo: TabInfo = {
-              tabId: targetId,
-              workerId: workerInfo.id,
-              url: page.url(),
-              title: await safeTitle(page),
-              context: sessionManager.getTargetContextName(targetId),
-            };
-            tabInfos.push(tabInfo);
-            workerTabs[workerInfo.id].push(tabInfo);
-          }
-        } catch {
-          // Target may have been closed, skip it
+      // These reads are independent. Bound fan-out even when operators raise
+      // the worker tab limit, and preserve the existing target order.
+      for (let offset = 0; offset < targetIds.length; offset += 5) {
+        const batch = await Promise.all(targetIds.slice(offset, offset + 5).map(async targetId => {
+          try {
+            const page = await sessionManager.getPage(sessionId, targetId, workerInfo.id, 'tabs_context');
+            if (!page) return null;
+            return { tabId: targetId, workerId: workerInfo.id, url: page.url(),
+              title: await safeTitle(page), context: sessionManager.getTargetContextName(targetId) };
+          } catch { return null; } // Target may have closed during the snapshot.
+        }));
+        for (const tabInfo of batch) {
+          if (!tabInfo) continue;
+          tabInfos.push(tabInfo);
+          workerTabs[workerInfo.id].push(tabInfo);
         }
       }
     }

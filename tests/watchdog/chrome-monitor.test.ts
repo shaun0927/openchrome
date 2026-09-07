@@ -1,411 +1,86 @@
-/// <reference types="jest" />
-import { ChromeProcessMonitor, ChromeProcessStats } from '../../src/watchdog/chrome-monitor';
+import { ChromeProcessMonitor, monitorChromeConnection } from '../../src/watchdog/chrome-monitor';
+import { readProcessMemory, ProcessMemorySample } from '../../src/core/process/memory';
 
-// Mock child_process.execFile
-jest.mock('child_process', () => ({
-  execFile: jest.fn(),
-}));
-
-import { execFile } from 'child_process';
-
-const mockExecFile = execFile as jest.MockedFunction<typeof execFile>;
-
-// Helper: resolve execFile with a given KB string on next call
-function mockPs(kbString: string): void {
-  mockExecFile.mockImplementationOnce((_cmd, _args, callback: any) => {
-    callback(null, kbString, '');
-    return {} as any;
-  });
-}
-
-// Helper: reject execFile (process died)
-function mockPsError(err: Error = new Error('no such process')): void {
-  mockExecFile.mockImplementationOnce((_cmd, _args, callback: any) => {
-    callback(err, '', '');
-    return {} as any;
-  });
-}
+jest.mock('../../src/core/process/memory', () => ({ readProcessMemory: jest.fn() }));
+const read = readProcessMemory as jest.MockedFunction<typeof readProcessMemory>;
+const sample = (bytes = 1024, identity = '12:first'): ProcessMemorySample => ({
+  pid: 12, identity, residentBytes: bytes, timestamp: Date.now(), processCount: 3,
+  processIds: [12, 13, 14], scope: 'process-tree', metric: 'working-set',
+});
+async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }
 
 describe('ChromeProcessMonitor', () => {
-  const TEST_PID = 12345;
-
-  // Thresholds chosen to be easy to reason about in KB
-  // warnBytes  = 500 MB  = 512000 KB
-  // critBytes  = 1000 MB = 1024000 KB
-  const WARN_BYTES = 500 * 1024 * 1024;
-  const CRIT_BYTES = 1000 * 1024 * 1024;
-
   let monitor: ChromeProcessMonitor;
-  let originalPlatform: NodeJS.Platform;
-
   beforeEach(() => {
-    jest.useFakeTimers();
-    mockExecFile.mockReset();
-    originalPlatform = process.platform;
-    // Force non-Windows platform so tests run consistently on all CI platforms.
-    // The Windows-skip behavior is tested separately in the 'Windows platform' describe block.
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-    monitor = new ChromeProcessMonitor({
-      intervalMs: 1000,
-      warnBytes: WARN_BYTES,
-      criticalBytes: CRIT_BYTES,
-    });
+    jest.useFakeTimers(); read.mockReset(); read.mockResolvedValue(sample());
+    monitor = new ChromeProcessMonitor({ intervalMs: 1000, warnBytes: 2000, criticalBytes: 4000 });
   });
-
-  afterEach(() => {
-    monitor.stop();
-    jest.useRealTimers();
-    // Restore platform if it was overridden
-    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  afterEach(() => { monitor.stop(); jest.useRealTimers(); });
+  test('samples descendants on all platforms and schedules follow-up', async () => {
+    expect(monitor.getStats()).toBeNull(); monitor.start(12); await flush();
+    expect(read).toHaveBeenCalledWith(12, true, expect.any(AbortSignal));
+    expect(monitor.getStats()).toMatchObject({ pid: 12, rssBytes: 1024, processCount: 3, scope: 'process-tree' });
+    jest.advanceTimersByTime(1000); await flush(); expect(read).toHaveBeenCalledTimes(2);
   });
-
-  // ─── 1. start / stop lifecycle ───────────────────────────────────────────────
-
-  describe('start() and stop() lifecycle', () => {
-    test('start() invokes execFile immediately for the first check', () => {
-      mockPs('1024'); // 1 MB — below thresholds
-      monitor.start(TEST_PID);
-      expect(mockExecFile).toHaveBeenCalledTimes(1);
-      expect(mockExecFile).toHaveBeenCalledWith(
-        'ps',
-        ['-o', 'rss=', '-p', String(TEST_PID)],
-        expect.any(Function),
-      );
-    });
-
-    test('start() schedules periodic sampling via the configured timer cadence', () => {
-      mockPs('1024');
-      monitor.start(TEST_PID);
-      expect(mockExecFile).toHaveBeenCalledTimes(1); // immediate check
-
-      mockPs('1024');
-      jest.advanceTimersByTime(1000);
-      expect(mockExecFile).toHaveBeenCalledTimes(2); // first interval tick
-
-      mockPs('1024');
-      jest.advanceTimersByTime(1000);
-      expect(mockExecFile).toHaveBeenCalledTimes(3); // second interval tick
-    });
-
-    test('stop() clears the pending timer so no further execFile calls occur', () => {
-      mockPs('1024');
-      monitor.start(TEST_PID);
-      monitor.stop();
-
-      jest.advanceTimersByTime(5000);
-      // Still only 1 call — the immediate one before stop()
-      expect(mockExecFile).toHaveBeenCalledTimes(1);
-    });
+  test.each([[1000, 0, 0], [2000, 0, 0], [3000, 1, 0], [4000, 1, 0], [5000, 0, 1]])(
+    'pressure events for %i bytes', async (bytes, warnings, criticals) => {
+      read.mockResolvedValue(sample(bytes)); const warn = jest.fn(); const critical = jest.fn();
+      monitor.on('warn', warn); monitor.on('critical', critical); monitor.start(12); await flush();
+      expect(warn).toHaveBeenCalledTimes(warnings); expect(critical).toHaveBeenCalledTimes(criticals);
+    },
+  );
+  test('collection failure clears previous data and is observable', async () => {
+    const unavailable = jest.fn(); monitor.on('unavailable', unavailable); monitor.start(12); await flush();
+    read.mockRejectedValueOnce(new Error('collector unavailable')); jest.advanceTimersByTime(1000); await flush();
+    expect(monitor.getStats()).toBeNull();
+    expect(unavailable).toHaveBeenCalledWith({ pid: 12, reason: 'collector unavailable' });
   });
-
-  // ─── 2. getStats() ───────────────────────────────────────────────────────────
-
-  describe('getStats()', () => {
-    test('returns null before start() is called', () => {
-      expect(monitor.getStats()).toBeNull();
-    });
-
-    test('returns null immediately after construction, before any sampling', () => {
-      // start() not called
-      expect(monitor.getStats()).toBeNull();
-    });
-
-    test('returns ChromeProcessStats after successful sampling', () => {
-      const RSS_KB = 204800; // 200 MB
-      mockPs(String(RSS_KB));
-      monitor.start(TEST_PID);
-
-      const stats = monitor.getStats();
-      expect(stats).not.toBeNull();
-      expect(stats!.pid).toBe(TEST_PID);
-      expect(stats!.rssBytes).toBe(RSS_KB * 1024);
-      expect(stats!.timestamp).toBeGreaterThan(0);
-    });
-
-    test('stats shape matches ChromeProcessStats interface', () => {
-      mockPs('102400'); // 100 MB
-      monitor.start(TEST_PID);
-
-      const stats = monitor.getStats() as ChromeProcessStats;
-      expect(typeof stats.pid).toBe('number');
-      expect(typeof stats.rssBytes).toBe('number');
-      expect(typeof stats.timestamp).toBe('number');
-    });
+  test('PID reuse cannot silently replace measured browser', async () => {
+    monitor.start(12); await flush(); read.mockResolvedValue(sample(1000, '12:second'));
+    jest.advanceTimersByTime(1000); await flush(); expect(monitor.getStats()).toBeNull();
   });
-
-  // ─── 3. 'warn' event ─────────────────────────────────────────────────────────
-
-  describe("emits 'warn' event", () => {
-    test("emits 'warn' when RSS exceeds warnBytes but not criticalBytes", () => {
-      // 600 MB — above warn (500 MB), below critical (1000 MB)
-      const RSS_KB = 600 * 1024;
-      mockPs(String(RSS_KB));
-
-      const warnHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.start(TEST_PID);
-
-      expect(warnHandler).toHaveBeenCalledTimes(1);
-      expect(warnHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          pid: TEST_PID,
-          rssBytes: RSS_KB * 1024,
-          timestamp: expect.any(Number),
-        }),
-      );
-    });
-
-    test("'warn' event is re-emitted on subsequent interval ticks when still above threshold", () => {
-      const RSS_KB = 600 * 1024;
-
-      mockPs(String(RSS_KB)); // immediate
-      mockPs(String(RSS_KB)); // first tick
-
-      const warnHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.start(TEST_PID);
-      expect(warnHandler).toHaveBeenCalledTimes(1);
-
-      jest.advanceTimersByTime(1000);
-      expect(warnHandler).toHaveBeenCalledTimes(2);
-    });
+  test('stop suppresses late callbacks and pressure events', async () => {
+    let resolve!: (value: ProcessMemorySample) => void;
+    read.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+    const critical = jest.fn(); monitor.on('critical', critical);
+    monitor.start(12); monitor.stop(); resolve(sample(5000)); await flush(); jest.advanceTimersByTime(5000);
+    expect(monitor.getStats()).toBeNull(); expect(critical).not.toHaveBeenCalled(); expect(read).toHaveBeenCalledTimes(1);
   });
-
-  // ─── 4. 'critical' event ─────────────────────────────────────────────────────
-
-  describe("emits 'critical' event", () => {
-    test("emits 'critical' when RSS exceeds criticalBytes", () => {
-      // 1100 MB — above critical (1000 MB)
-      const RSS_KB = 1100 * 1024;
-      mockPs(String(RSS_KB));
-
-      const criticalHandler = jest.fn();
-      monitor.on('critical', criticalHandler);
-      monitor.start(TEST_PID);
-
-      expect(criticalHandler).toHaveBeenCalledTimes(1);
-      expect(criticalHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          pid: TEST_PID,
-          rssBytes: RSS_KB * 1024,
-          timestamp: expect.any(Number),
-        }),
-      );
-    });
-
-    test("does NOT emit 'warn' when 'critical' fires (critical takes precedence)", () => {
-      const RSS_KB = 1100 * 1024;
-      mockPs(String(RSS_KB));
-
-      const warnHandler = jest.fn();
-      const criticalHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.on('critical', criticalHandler);
-      monitor.start(TEST_PID);
-
-      expect(criticalHandler).toHaveBeenCalledTimes(1);
-      expect(warnHandler).not.toHaveBeenCalled();
-    });
+  test('slow collection cannot create overlapping collectors', () => {
+    read.mockReturnValueOnce(new Promise(() => undefined)); monitor.start(12); jest.advanceTimersByTime(5000);
+    expect(read).toHaveBeenCalledTimes(1);
   });
-
-  // ─── 5. No events below thresholds ───────────────────────────────────────────
-
-  describe('does not emit events below thresholds', () => {
-    test("no 'warn' or 'critical' when RSS is below warnBytes", () => {
-      // 100 MB — well below warn (500 MB)
-      mockPs(String(100 * 1024));
-
-      const warnHandler = jest.fn();
-      const criticalHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.on('critical', criticalHandler);
-      monitor.start(TEST_PID);
-
-      expect(warnHandler).not.toHaveBeenCalled();
-      expect(criticalHandler).not.toHaveBeenCalled();
-    });
-
-    test("no events when RSS equals warnBytes exactly (boundary — not strictly greater)", () => {
-      // rssBytes === warnBytes, condition is strictly >
-      const RSS_KB = WARN_BYTES / 1024;
-      mockPs(String(RSS_KB));
-
-      const warnHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.start(TEST_PID);
-
-      expect(warnHandler).not.toHaveBeenCalled();
-    });
-
-    test("no events when RSS equals criticalBytes exactly", () => {
-      const RSS_KB = CRIT_BYTES / 1024;
-      mockPs(String(RSS_KB));
-
-      const criticalHandler = jest.fn();
-      monitor.on('critical', criticalHandler);
-      monitor.start(TEST_PID);
-
-      expect(criticalHandler).not.toHaveBeenCalled();
-    });
+  test('restart ignores earlier generation', async () => {
+    let resolve!: (value: ProcessMemorySample) => void;
+    read.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+    monitor.start(12); monitor.start(12); await flush(); resolve(sample(99999)); await flush();
+    expect(monitor.getStats()?.rssBytes).toBe(1024);
   });
-
-  // ─── 6. stop() clears stats and timer ────────────────────────────────────────
-
-  describe('stop() behaviour', () => {
-    test('stop() sets pid to null so subsequent interval ticks are no-ops', () => {
-      mockPs('102400');
-      monitor.start(TEST_PID);
-      monitor.stop();
-
-      // No mock needed — check() early-returns when pid is null
-      jest.advanceTimersByTime(5000);
-      // Still only the single immediate execFile call
-      expect(mockExecFile).toHaveBeenCalledTimes(1);
-    });
-
-    test('stop() is safe to call multiple times without error', () => {
-      mockPs('102400');
-      monitor.start(TEST_PID);
-      expect(() => {
-        monitor.stop();
-        monitor.stop();
-        monitor.stop();
-      }).not.toThrow();
-    });
-
-    test('stop() is safe to call before start()', () => {
-      expect(() => monitor.stop()).not.toThrow();
-    });
-
-    test('getStats() still returns last known stats after stop()', () => {
-      // The implementation sets pid=null on stop() but does not clear lastStats.
-      // Verify the actual behaviour rather than an assumed one.
-      mockPs('204800');
-      monitor.start(TEST_PID);
-      const statsBefore = monitor.getStats();
-      monitor.stop();
-      // lastStats is preserved (implementation does not reset it)
-      expect(monitor.getStats()).toEqual(statsBefore);
-    });
+  test.each([0, -1, NaN, 1.5])('rejects invalid PID %s', pid => {
+    expect(() => monitor.start(pid)).toThrow('Invalid Chrome process id');
   });
+});
 
-  // ─── 7. execFile error (Chrome died) ─────────────────────────────────────────
 
-  describe('handles execFile error gracefully', () => {
-    test('clears lastStats when ps returns an error', () => {
-      mockPs('204800'); // successful first check → populates stats
-      monitor.start(TEST_PID);
-      expect(monitor.getStats()).not.toBeNull();
-
-      // Second check — Chrome died
-      mockPsError();
-      jest.advanceTimersByTime(1000);
-
-      expect(monitor.getStats()).toBeNull();
-    });
-
-    test('does not emit warn or critical when ps errors', () => {
-      mockPsError();
-
-      const warnHandler = jest.fn();
-      const criticalHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.on('critical', criticalHandler);
-      monitor.start(TEST_PID);
-
-      expect(warnHandler).not.toHaveBeenCalled();
-      expect(criticalHandler).not.toHaveBeenCalled();
-    });
-
-    test('does not throw when ps errors', () => {
-      mockPsError();
-      expect(() => monitor.start(TEST_PID)).not.toThrow();
-    });
-  });
-
-  // ─── 8. NaN output from ps ───────────────────────────────────────────────────
-
-  describe('handles NaN output from ps gracefully', () => {
-    test('does not update stats when ps returns non-numeric output', () => {
-      mockPs('  \n  '); // blank — parseInt returns NaN
-      monitor.start(TEST_PID);
-      expect(monitor.getStats()).toBeNull();
-    });
-
-    test('does not emit any event when ps returns garbage', () => {
-      mockPs('garbage-output');
-
-      const warnHandler = jest.fn();
-      const criticalHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.on('critical', criticalHandler);
-      monitor.start(TEST_PID);
-
-      expect(warnHandler).not.toHaveBeenCalled();
-      expect(criticalHandler).not.toHaveBeenCalled();
-    });
-
-    test('does not throw on NaN output', () => {
-      mockPs('not-a-number');
-      expect(() => monitor.start(TEST_PID)).not.toThrow();
-    });
-  });
-
-  // ─── 9. Windows — skip monitoring ────────────────────────────────────────────
-
-  describe('Windows platform', () => {
-    beforeEach(() => {
-      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-    });
-
-    test('start() returns early on Windows without calling execFile', () => {
-      monitor.start(TEST_PID);
-      expect(mockExecFile).not.toHaveBeenCalled();
-    });
-
-    test('getStats() remains null on Windows', () => {
-      monitor.start(TEST_PID);
-      expect(monitor.getStats()).toBeNull();
-    });
-
-    test('no events emitted on Windows', () => {
-      const warnHandler = jest.fn();
-      const criticalHandler = jest.fn();
-      monitor.on('warn', warnHandler);
-      monitor.on('critical', criticalHandler);
-      monitor.start(TEST_PID);
-
-      jest.advanceTimersByTime(5000);
-      expect(warnHandler).not.toHaveBeenCalled();
-      expect(criticalHandler).not.toHaveBeenCalled();
-    });
-  });
-
-  // ─── 10. start() idempotency ─────────────────────────────────────────────────
-
-  describe('start() idempotency', () => {
-    test('calling start() twice does not create duplicate intervals', () => {
-      mockPs('1024'); // first start immediate
-      mockPs('1024'); // second start immediate (replaces first timer)
-      monitor.start(TEST_PID);
-      monitor.start(TEST_PID);
-
-      // After two starts only 2 immediate checks, not duplicate timer ticks
-      mockPs('1024'); // single tick
-      jest.advanceTimersByTime(1000);
-      expect(mockExecFile).toHaveBeenCalledTimes(3); // 2 immediate + 1 tick
-    });
-
-    test('calling start() twice then stop() fully stops monitoring', () => {
-      mockPs('1024');
-      mockPs('1024');
-      monitor.start(TEST_PID);
-      monitor.start(TEST_PID);
-      monitor.stop();
-
-      jest.advanceTimersByTime(10000);
-      // No additional calls beyond the two immediate checks
-      expect(mockExecFile).toHaveBeenCalledTimes(2);
-    });
+describe('lazy browser memory monitoring', () => {
+  test('starts only on a managed connection and detaches on shutdown', () => {
+    let pid: number | null = null;
+    let event!: (event: { type: string }) => void;
+    const client = {
+      getChromePid: () => pid,
+      addConnectionListener: (fn: typeof event) => { event = fn; },
+      removeConnectionListener: jest.fn(),
+    };
+    const monitor = { start: jest.fn(), stop: jest.fn() };
+    const dispose = monitorChromeConnection(monitor as never, client);
+    expect(monitor.start).not.toHaveBeenCalled();
+    pid = 12; event({ type: 'connected' });
+    expect(monitor.start).toHaveBeenCalledWith(12);
+    event({ type: 'connected' });
+    expect(monitor.start).toHaveBeenCalledTimes(1);
+    event({ type: 'disconnected' });
+    expect(monitor.stop).toHaveBeenCalled();
+    dispose();
+    expect(client.removeConnectionListener).toHaveBeenCalledWith(event);
   });
 });

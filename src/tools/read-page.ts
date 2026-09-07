@@ -332,7 +332,7 @@ const handler: ToolHandler = async (
 ): Promise<MCPResult> => {
   throwIfAborted(context);
   let scopedArgs: Record<string, unknown>;
-  try { scopedArgs = applyLaneTarget(args); } catch (error) { return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true }; }
+  try { scopedArgs = applyLaneTarget(args, sessionId); } catch (error) { return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true }; }
   const tabId = scopedArgs.tabId as string;
   const filter = (args.filter as string) || 'all';
   const defaultDepth = filter === 'interactive' ? 5 : 8;

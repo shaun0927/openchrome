@@ -20,6 +20,7 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   interact: 1,
   form_input: 1,
   tabs_context: 1,
+  oc_browser_control: 1,
   tabs_create: 1,
   tabs_close: 1,
   wait_for: 1,

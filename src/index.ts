@@ -35,7 +35,7 @@ import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-lo
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
 import { resolveHealthEndpointEnabled } from './core/health-endpoint-gating';
 import { DiskMonitor } from './watchdog/disk-monitor';
-import { ChromeProcessMonitor } from './watchdog/chrome-monitor';
+import { ChromeProcessMonitor, monitorChromeConnection } from './watchdog/chrome-monitor';
 import { SessionStatePersistence } from './session/state-persistence';
 import { getCDPClient } from './cdp/client';
 import { getSessionManager } from './session-manager';
@@ -1043,15 +1043,7 @@ program
         console.error('[SelfHealing] Post-relaunch reconnect failed:', err);
       });
     });
-    // Update ChromeProcessMonitor PID after watchdog relaunch
-    processWatchdog.on('chrome-relaunched', () => {
-      const newPid = cdpClient.getChromePid();
-      if (newPid != null && process.platform !== 'win32') {
-        chromeProcessMonitor.stop();
-        chromeProcessMonitor.start(newPid);
-        console.error(`[SelfHealing] ChromeProcessMonitor restarted (new pid=${newPid})`);
-      }
-    });
+
     // Readiness: flip chrome to failing when watchdog detects Chrome died
     processWatchdog.on('chrome-died', () => {
       setComponent('chrome', 'failing');
@@ -1237,16 +1229,8 @@ program
     diskMonitor.start();
     console.error('[SelfHealing] DiskMonitor started (5-min interval)');
 
-    // Chrome Process Monitor — track Chrome RSS memory, warn before OOM
-    // browser.process() returns null when connecting to an already-running Chrome,
-    // so we only start the monitor when puppeteer spawned the process.
-    const chromePid = cdpClient.getChromePid();
-    if (chromePid != null) {
-      chromeProcessMonitor.start(chromePid);
-      console.error(`[SelfHealing] ChromeProcessMonitor started (pid=${chromePid})`);
-    } else {
-      console.error('[SelfHealing] ChromeProcessMonitor skipped (no puppeteer-spawned Chrome process)');
-    }
+    // Wait for the first demanded connection; observing memory must not launch Chrome.
+    const stopChromeConnectionMonitor = monitorChromeConnection(chromeProcessMonitor, cdpClient);
 
     // Gap 1: register tabs with TabHealthMonitor when targets are added/removed
     sessionManager.addEventListener((event) => {
@@ -1308,7 +1292,7 @@ program
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();
       diskMonitor?.stop();
-      chromeProcessMonitor.stop();
+      stopChromeConnectionMonitor();
       await healthEndpoint?.stop();
 
       // Force-save storage state before exit to preserve cookies across restarts

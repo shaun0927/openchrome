@@ -4,6 +4,8 @@ import { authorizeDashboardEndpoint, canSeeTenant } from '../../middleware/dashb
 import { logAuditEntry } from '../../security/audit-logger';
 import type { SessionManager } from '../../session-manager';
 import { renderPrometheusMetrics, type PrometheusMetric } from '../prometheus';
+import { getScreenshotScheduler } from '../../cdp/screenshot-scheduler';
+import { getBrowserLane } from '../../core/browser-lanes';
 
 type DashboardEndpoint = 'screenshot' | 'sessions' | 'tool-calls' | 'metrics';
 
@@ -25,10 +27,12 @@ function writeDashboardAuthzFailure(
   res.end(JSON.stringify({ error }));
 }
 
-async function captureScreenshot(
+export async function captureScreenshot(
   sessionManager: SessionManager,
   sessionId: string,
-): Promise<{ base64: string; format: string; sessionId: string }> {
+  requestedTargetId?: string,
+  laneRef?: { taskId: string; laneId: string },
+): Promise<{ base64: string; format: string; sessionId: string; targetId: string; capturedAt: number; selection: string }> {
   const infos = sessionManager.getAllSessionInfos();
   const sessionInfo = infos.find((s) => s.id === sessionId);
 
@@ -36,11 +40,16 @@ async function captureScreenshot(
     throw new Error(`No tabs found for session "${sessionId}"`);
   }
 
-  // Get the first worker's first target as the "active" page
   const cdpClient = sessionManager.getCDPClient();
-  let targetId: string | undefined;
+  let targetId = requestedTargetId;
+  if (laneRef) {
+    const lane = getBrowserLane(laneRef.taskId, laneRef.laneId, sessionId);
+    if (lane.status !== 'open') throw new Error('Requested lane is not open');
+    targetId = requestedTargetId ?? lane.targetIds[lane.targetIds.length - 1];
+    if (!targetId || !lane.targetIds.includes(targetId)) throw new Error('Target does not belong to the requested lane');
+  }
 
-  for (const worker of sessionInfo.workers) {
+  for (const worker of requestedTargetId || laneRef ? [] : sessionInfo.workers) {
     const workerData = sessionManager.getWorker(sessionId, worker.id);
     if (workerData && workerData.targets.size > 0) {
       // Get the most recently added target (last in insertion order)
@@ -55,21 +64,21 @@ async function captureScreenshot(
     throw new Error(`No active target found for session "${sessionId}"`);
   }
 
-  const page = await cdpClient.getPageByTargetId(targetId);
+  // Explicit target requests must never fall back to a different page.
+  if (!sessionManager.validateTargetOwnership(sessionId, targetId)) {
+    throw new Error('Requested screenshot target is unavailable in this session');
+  }
+  const page = await sessionManager.getPage(sessionId, targetId, undefined, 'page_screenshot');
   if (!page || page.isClosed()) {
     throw new Error(`Page for target ${targetId} is closed or unavailable`);
   }
 
-  const cdpSession = await page.createCDPSession();
-  try {
-    const result = await cdpSession.send('Page.captureScreenshot', {
-      format: 'webp',
-      quality: 60,
-    }) as { data: string };
-    return { base64: result.data, format: 'webp', sessionId };
-  } finally {
-    await cdpSession.detach().catch(() => { /* ignore */ });
-  }
+  const result = await getScreenshotScheduler().capture(page, cdpClient, { format: 'webp', quality: 60 });
+  return {
+    base64: result.data, format: 'webp', sessionId, targetId, capturedAt: Date.now(),
+    selection: laneRef ? 'task-lane' : requestedTargetId ? 'explicit' : 'legacy-first-worker-latest-target',
+    ...laneRef,
+  };
 }
 
 export function handleDashboardScreenshot(
@@ -105,9 +114,17 @@ export function handleDashboardScreenshot(
     return;
   }
 
-  captureScreenshot(sessionManager, sessionId)
+  const requestedTargetId = url.searchParams.get('target_id') || url.searchParams.get('tabId') || undefined;
+  const taskId = url.searchParams.get('task_id') || url.searchParams.get('taskId');
+  const laneId = url.searchParams.get('lane_id') || url.searchParams.get('laneId');
+  if (Boolean(taskId) !== Boolean(laneId)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'taskId and laneId must be supplied together' }));
+    return;
+  }
+  captureScreenshot(sessionManager, sessionId, requestedTargetId, taskId && laneId ? { taskId, laneId } : undefined)
     .then((data) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(data));
     })
     .catch((err) => {

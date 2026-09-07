@@ -134,26 +134,21 @@ describe('TabHealthMonitor idle-adaptive cadence', () => {
 });
 
 describe('ChromeProcessMonitor idle-adaptive cadence', () => {
-  // Windows-skip shortcut: the monitor refuses to start() on win32; test is
-  // meaningless there. Skip instead of asserting.
-  const platformSupportsMonitor = process.platform !== 'win32';
-  const itIfSupported = platformSupportsMonitor ? test : test.skip;
-
-  itIfSupported('active rate preserved when not idle (30s default)', () => {
+  test('active rate preserved when not idle (30s default)', () => {
     const m = new ChromeProcessMonitor({ intervalMs: 30_000, idleState: activeState() });
     m.start(process.pid);
     expect(m.getCurrentDelayMs()).toBe(30_000);
     m.stop();
   });
 
-  itIfSupported('drops to idle rate (180s)', () => {
+  test('drops to idle rate (180s)', () => {
     const m = new ChromeProcessMonitor({ intervalMs: 30_000, idleState: idleState() });
     m.start(process.pid);
     expect(m.getCurrentDelayMs()).toBe(180_000);
     m.stop();
   });
 
-  itIfSupported('ratio 6× — within 10× cap', () => {
+  test('ratio 6× — within 10× cap', () => {
     const a = new ChromeProcessMonitor({ intervalMs: 30_000, idleState: activeState() });
     const i = new ChromeProcessMonitor({ intervalMs: 30_000, idleState: idleState() });
     a.start(process.pid); i.start(process.pid);

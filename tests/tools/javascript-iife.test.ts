@@ -134,3 +134,11 @@ describe('wrapInIIFE', () => {
     expect(wrapInIIFE(code)).toBe(code);
   });
 });
+
+
+test('same-line statements execute after the first awaited expression', async () => {
+  const events: number[] = [];
+  const code = wrapInIIFE('await Promise.resolve(); events.push(1); events.push(2);');
+  await new Function('events', 'return ' + code)(events);
+  expect(events).toEqual([1, 2]);
+});

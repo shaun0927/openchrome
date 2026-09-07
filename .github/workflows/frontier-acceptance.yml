@@ -1,0 +1,56 @@
+name: Installed browser acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/harness/frontier-acceptance.ts'
+      - 'tests/harness/windows-focus.ps1'
+      - 'tests/e2e/harness/mcp-client.ts'
+      - 'package*.json'
+      - '.github/workflows/frontier-acceptance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  installed-candidate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Pack and install the candidate
+        run: |
+          mkdir -p artifacts/frontier
+          npm pack --ignore-scripts --pack-destination artifacts/frontier --json > artifacts/frontier/package.json
+          PACKAGE=$(node -p "require('./artifacts/frontier/package.json')[0].filename")
+          INSTALL_DIR=$(node -e "process.stdout.write(require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'oc-installed-')))")
+          npm install --prefix "$INSTALL_DIR" --ignore-scripts --no-audit --no-fund "./artifacts/frontier/$PACKAGE"
+          echo "CANDIDATE_PACKAGE=artifacts/frontier/$PACKAGE" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ENTRY=$INSTALL_DIR/node_modules/openchrome-mcp/dist/index.js" >> "$GITHUB_ENV"
+      - name: Run through the installed entrypoint and real headless Chrome
+        run: npm run harness:frontier -- --runtime-contract --confirmed-scope --entry "$CANDIDATE_ENTRY" --artifact "$CANDIDATE_PACKAGE" --output artifacts/frontier/installed-acceptance.json
+      - name: Keep reports including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: installed-browser-${{ matrix.os }}
+          path: |
+            artifacts/frontier/*acceptance*.json
+            artifacts/frontier/package.json
+          if-no-files-found: warn

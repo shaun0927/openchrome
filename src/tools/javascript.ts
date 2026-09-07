@@ -133,6 +133,7 @@ export function wrapInIIFE(code: string): string {
     // declaration, control-flow statement, closing brace, or comment).
     const isAutoReturnable =
       lastLine.length > 0 &&
+      !lastLine.replace(/;\s*$/, '').includes(';') &&
       !lastLine.startsWith('let ') &&
       !lastLine.startsWith('const ') &&
       !lastLine.startsWith('var ') &&

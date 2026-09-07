@@ -32,6 +32,7 @@ import * as os from 'os';
 import { BrowserRouter } from '../router';
 import { BrowserBackend, HybridConfig, RouteReason } from '../types/browser-backend';
 import { StorageStateManager } from '../storage-state';
+import type { StorageRestoreResult } from '../storage-state/storage-state-manager';
 import { StorageStateConfig } from '../config';
 import { assertDomainAllowed } from '../security/domain-guard';
 import { getTargetId } from '../cdp/target-id';
@@ -72,7 +73,7 @@ export interface SessionManagerConfig {
   maxSessions?: number;
   /** Maximum workers per session (default: 20) */
   maxWorkersPerSession?: number;
-  /** Maximum targets (tabs) per worker (default: 5). Oldest closed when exceeded. */
+  /** Maximum targets (tabs) per worker (default: 5). New work is rejected at capacity. */
   maxTargetsPerWorker?: number;
   /** Memory pressure threshold in bytes. Below this free memory, aggressive cleanup triggers. (default: 500MB) */
   memoryPressureThreshold?: number;
@@ -138,6 +139,7 @@ const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'str
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private targetToWorker = new TargetOwnershipRegistry();
+  private humanHeldTargets = new Set<string>();
   private targetLeases = new TargetLeaseRegistry();
   /**
    * Maps targetId → `{browser, name}` for the owning named context (#848).
@@ -174,7 +176,30 @@ export class SessionManager {
     string,
     { path_taken: RouteReason; backend: BrowserBackend; fallback: boolean; at: number }
   >();
-  private storageStateManagers = new Map<string, StorageStateManager>();
+  private storageStateManagers = new Map<string, Map<string, StorageStateManager>>();
+  private targetReservations = new WeakMap<Worker, number>();
+
+  private reserveTargetSlot(worker: Worker): () => void {
+    const reserved = this.targetReservations.get(worker) ?? 0;
+    if (worker.targets.size + reserved >= this.config.maxTargetsPerWorker) {
+      throw Object.assign(new Error('TARGET_CAPACITY: close an eligible tab or raise maxTargetsPerWorker before creating another'), {
+        code: 'TARGET_CAPACITY', execution: 'not_started',
+      });
+    }
+    this.targetReservations.set(worker, reserved + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.targetReservations.set(worker, Math.max(0, (this.targetReservations.get(worker) ?? 1) - 1));
+    };
+  }
+  private storageRestoreResults = new Map<string, StorageRestoreResult>();
+
+  getStorageRestoreStatus(sessionId: string): StorageRestoreResult | undefined {
+    const result = this.storageRestoreResults.get(sessionId);
+    return result ? { ...result } : undefined;
+  }
   private storageStateConfig: StorageStateConfig | null = null;
   private pendingCreations = new Map<string, Promise<Session>>();
   private externalTargetRegistrationLocks = new Map<string, Promise<boolean>>();
@@ -326,6 +351,12 @@ export class SessionManager {
       }
       throw err;
     }
+  }
+
+  setTargetHumanControl(sessionId: string, targetId: string, held: boolean): void {
+    if (!this.validateTargetOwnership(sessionId, targetId)) throw new Error('Target ownership mismatch');
+    if (held) this.humanHeldTargets.add(targetId);
+    else { this.humanHeldTargets.delete(targetId); this.targetLeases.touch(targetId); }
   }
 
   getTargetLease(targetId: string): TargetLeaseRecord | undefined {
@@ -700,8 +731,8 @@ export class SessionManager {
     // Save storage state before cleanup (save first, then stop watchdog).
     // #848: flush ONE representative tab per named context so per-context
     // cookies / localStorage are partitioned in their own snapshot files.
-    const manager = this.storageStateManagers.get(sessionId);
-    if (manager) {
+    const managers = this.storageStateManagers.get(sessionId);
+    if (managers) {
       try {
         const flushedContexts = new Set<string>();
         for (const worker of session.workers.values()) {
@@ -711,7 +742,7 @@ export class SessionManager {
             const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
             const p = await cdpClient.getPageByTargetId(tid);
             if (p) {
-              await manager.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
+              await managers.get(ctxName)?.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
               flushedContexts.add(ctxName);
             }
           }
@@ -719,9 +750,10 @@ export class SessionManager {
       } catch {
         // Best-effort: don't block deletion on storage state errors
       }
-      manager.stopWatchdog();
+      for (const manager of managers.values()) manager.stopWatchdog();
       this.storageStateManagers.delete(sessionId);
     }
+    this.storageRestoreResults.delete(sessionId);
 
     // Delete all workers
     for (const workerId of session.workers.keys()) {
@@ -763,6 +795,7 @@ export class SessionManager {
     const isMemoryPressure = options?.force === true;
 
     for (const [sessionId, session] of this.sessions) {
+      if ([...this.humanHeldTargets].some(target => this.getTargetOwner(target)?.sessionId === sessionId)) continue;
       // Protect the "default" session from normal TTL expiry — it's the
       // primary session for most single-agent workflows. Under memory
       // pressure (force=true) we still clean it up to prevent OOM.
@@ -779,7 +812,7 @@ export class SessionManager {
       }
     }
 
-    const expiredLeases = this.targetLeases.expire(now);
+    const expiredLeases = this.targetLeases.expire(now, this.humanHeldTargets);
     for (const lease of expiredLeases) {
       this.targetQueueManager.cancelTarget(lease.targetId);
       // #1359 backlog item 7: reclaim the orphaned tab of an idle/crashed owner.
@@ -1175,203 +1208,199 @@ export class SessionManager {
       targetUrl: url,
     });
 
-    // Enforce per-worker tab limit: close oldest tab when limit reached
-    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
-      // Set iterates in insertion order (ES2015+), which corresponds to creation order
-      // as long as targets are only added (never removed and re-added).
-      const oldestTargetId = worker.targets.values().next().value;
-      if (oldestTargetId) {
-        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest tab ${oldestTargetId}`);
-        await this.closeTarget(sessionId, oldestTargetId);
+    // A tab's age does not prove that its form, upload or authentication flow
+    // is safe to discard. Reserve capacity before any asynchronous creation.
+    const releaseSlot = this.reserveTargetSlot(worker);
+    try {
+
+      // Create page — try connection pool first for pre-warmed pages, fall back to direct creation
+      const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
+      let page: Page;
+
+      // #848: when an isolatedContext is requested, mint or look up the
+      // named BrowserContext on the same Chrome process and route the new
+      // page through it. The connection pool serves pages from the default
+      // context, so we bypass it for named contexts.
+      let namedContext: import('puppeteer-core').BrowserContext | null = null;
+      if (useNamedContext) {
+        namedContext = await this.namedContextRegistry.getOrCreate(
+          cdpClient.getBrowser(),
+          isolatedContext!,
+        );
       }
-    }
 
-    // Create page — try connection pool first for pre-warmed pages, fall back to direct creation
-    const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
-    let page: Page;
-
-    // #848: when an isolatedContext is requested, mint or look up the
-    // named BrowserContext on the same Chrome process and route the new
-    // page through it. The connection pool serves pages from the default
-    // context, so we bypass it for named contexts.
-    let namedContext: import('puppeteer-core').BrowserContext | null = null;
-    if (useNamedContext) {
-      namedContext = await this.namedContextRegistry.getOrCreate(
-        cdpClient.getBrowser(),
-        isolatedContext!,
+      // Snapshot existing target IDs before page creation.
+      // Chrome's Site Isolation can create orphan about:blank targets during cross-origin
+      // navigation (renderer process swap). We detect and close these after navigation.
+      const existingTargetIds = new Set(
+        cdpClient.getBrowser().targets()
+          .filter(t => t.type() === 'page')
+          .map(t => getTargetId(t))
       );
-    }
+      const shouldPruneStartupBlankTargets =
+        Array.from(this.targetToWorker.keys()).length === 0 &&
+        existingTargetIds.size === 1 &&
+        cdpClient.getChromeLifecycleMode() === 'isolated';
 
-    // Snapshot existing target IDs before page creation.
-    // Chrome's Site Isolation can create orphan about:blank targets during cross-origin
-    // navigation (renderer process swap). We detect and close these after navigation.
-    const existingTargetIds = new Set(
-      cdpClient.getBrowser().targets()
-        .filter(t => t.type() === 'page')
-        .map(t => getTargetId(t))
-    );
-    const shouldPruneStartupBlankTargets =
-      Array.from(this.targetToWorker.keys()).length === 0 &&
-      existingTargetIds.size === 1 &&
-      cdpClient.getChromeLifecycleMode() === 'isolated';
-
-    if (namedContext) {
-      // Named-context path: bypass the pool (which serves the default
-      // context) and create directly inside the named BrowserContext.
-      page = await cdpClient.createPage(url, namedContext);
-    } else if (this.connectionPool && this.config.useConnectionPool) {
-      let poolPage: Page | null = null;
-      try {
-        poolPage = await this.connectionPool.acquirePage();
-        // Navigate the pre-warmed page to the target URL
-        if (url) {
-          // #857: capture the from-URL BEFORE navigation so the lifecycle
-          // bus reports the transition the operator actually drove (pool
-          // pages typically start at 'about:blank' but a recycled page may
-          // carry its prior URL until smartGoto resolves).
-          const fromUrl = poolPage.url();
-          await smartGoto(poolPage, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
-          const navTargetId = getTargetId(poolPage.target());
-          this.emitLifecycle({
-            kind: 'target:navigate',
-            sessionId,
-            workerId: worker.id,
-            targetId: navTargetId,
-            fromUrl,
-            toUrl: url,
-            ts: Date.now(),
-          });
-        }
-        // Copy cookies from the worker's browser context if available
-        // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
+      if (namedContext) {
+        // Named-context path: bypass the pool (which serves the default
+        // context) and create directly inside the named BrowserContext.
+        page = await cdpClient.createPage(url, namedContext);
+      } else if (this.connectionPool && this.config.useConnectionPool) {
+        let poolPage: Page | null = null;
         try {
-          await Promise.race([
-            (async () => {
-              if (worker.context) {
-                const cookies = await worker.context.cookies();
-                if (cookies.length > 0) {
-                  await poolPage.setCookie(...cookies);
+          poolPage = await this.connectionPool.acquirePage();
+          // Navigate the pre-warmed page to the target URL
+          if (url) {
+            // #857: capture the from-URL BEFORE navigation so the lifecycle
+            // bus reports the transition the operator actually drove (pool
+            // pages typically start at 'about:blank' but a recycled page may
+            // carry its prior URL until smartGoto resolves).
+            const fromUrl = poolPage.url();
+            await smartGoto(poolPage, url, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS });
+            const navTargetId = getTargetId(poolPage.target());
+            this.emitLifecycle({
+              kind: 'target:navigate',
+              sessionId,
+              workerId: worker.id,
+              targetId: navTargetId,
+              fromUrl,
+              toUrl: url,
+              ts: Date.now(),
+            });
+          }
+          // Copy cookies from the worker's browser context if available
+          // (pool pages start blank — replicate what cdpClient.createPage() does for contexts)
+          try {
+            await Promise.race([
+              (async () => {
+                if (worker.context) {
+                  const cookies = await worker.context.cookies();
+                  if (cookies.length > 0) {
+                    await poolPage.setCookie(...cookies);
+                  }
                 }
-              }
-            })(),
-            new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS)),
-          ]);
+              })(),
+              new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_COOKIE_CONTEXT_TIMEOUT_MS)),
+            ]);
+          } catch (err) {
+            console.error(`[SessionManager] Cookie context copy failed, continuing without cookies: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          page = poolPage;
+          console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
         } catch (err) {
-          console.error(`[SessionManager] Cookie context copy failed, continuing without cookies: ${err instanceof Error ? err.message : String(err)}`);
+          // Close the acquired pool page to prevent about:blank ghost tabs.
+          // Close first (removes from Chrome), then release (cleans pool tracking).
+          // Do NOT just releasePage — that returns it to pool as about:blank.
+          if (poolPage) {
+            await poolPage.close().catch(() => {});
+            this.connectionPool.releasePage(poolPage).catch(() => {});
+          }
+          console.error(`[SessionManager] Pool acquire/navigate failed, falling back to direct creation:`, err);
+          page = await cdpClient.createPage(url, worker.context);
         }
-        page = poolPage;
-        console.error(`[SessionManager] Acquired page from pool for session ${sessionId}`);
-      } catch (err) {
-        // Close the acquired pool page to prevent about:blank ghost tabs.
-        // Close first (removes from Chrome), then release (cleans pool tracking).
-        // Do NOT just releasePage — that returns it to pool as about:blank.
-        if (poolPage) {
-          await poolPage.close().catch(() => {});
-          this.connectionPool.releasePage(poolPage).catch(() => {});
-        }
-        console.error(`[SessionManager] Pool acquire/navigate failed, falling back to direct creation:`, err);
+      } else {
         page = await cdpClient.createPage(url, worker.context);
       }
-    } else {
-      page = await cdpClient.createPage(url, worker.context);
-    }
 
-    const targetId = getTargetId(page.target());
+      const targetId = getTargetId(page.target());
 
-    // Clean up blank targets that Chrome can leave visible around first navigation.
-    // - New, untracked about:blank targets can be Site Isolation renderer ghosts.
-    // - A freshly launched managed Chrome also creates an initial chrome://newtab/
-    //   page before OpenChrome creates the requested page. Prune that startup tab
-    //   only for isolated/managed Chrome so attach mode never closes user tabs.
-    // Runs after a brief delay to catch async target creation by Chrome.
-    const cleanupExistingIds = existingTargetIds;
-    const cleanupTargetId = targetId;
-    const cleanupBrowser = cdpClient.getBrowser();
-    const cleanupStartupBlankTargets = shouldPruneStartupBlankTargets;
-    setTimeout(async () => {
-      try {
-        const orphans = cleanupBrowser.targets().filter(t => {
-          if (t.type() !== 'page') return false;
-          const candidateTargetId = getTargetId(t);
-          if (candidateTargetId === cleanupTargetId) return false;
-          if (this.targetToWorker.has(candidateTargetId)) return false;
+      // Prune only the known startup tab of an owned Chrome. A new, untracked
+      // about:blank may belong to another in-flight createTarget; URL and absence
+      // from targetToWorker do not establish orphan ownership.
+      const cleanupExistingIds = existingTargetIds;
+      const cleanupTargetId = targetId;
+      const cleanupBrowser = cdpClient.getBrowser();
+      const cleanupStartupBlankTargets = shouldPruneStartupBlankTargets;
+      setTimeout(async () => {
+        try {
+          const orphans = cleanupBrowser.targets().filter(t => {
+            if (t.type() !== 'page') return false;
+            const candidateTargetId = getTargetId(t);
+            if (candidateTargetId === cleanupTargetId) return false;
+            if (this.targetToWorker.has(candidateTargetId)) return false;
 
-          const candidateUrl = t.url();
-          const isStartupNewTab =
-            candidateUrl === 'chrome://newtab/' ||
-            candidateUrl.startsWith('chrome://new-tab-page');
-          const isBlankLike = candidateUrl === 'about:blank' || isStartupNewTab;
-          if (!isBlankLike) return false;
+            const candidateUrl = t.url();
+            const isStartupNewTab =
+              candidateUrl === 'chrome://newtab/' ||
+              candidateUrl.startsWith('chrome://new-tab-page');
+            const isBlankLike = candidateUrl === 'about:blank' || isStartupNewTab;
+            if (!isBlankLike) return false;
 
-          if (isStartupNewTab) return cleanupStartupBlankTargets && cleanupExistingIds.has(candidateTargetId);
-          return !cleanupExistingIds.has(candidateTargetId);
-        });
-        for (const t of orphans) {
-          try {
-            const orphanPage = await t.page();
-            if (orphanPage && !orphanPage.isClosed()) {
-              await orphanPage.close();
-              console.error(`[SessionManager] Closed orphan blank ghost tab: ${getTargetId(t)} (${t.url()})`);
-            }
-          } catch { /* target may already be destroyed */ }
-        }
-      } catch { /* best-effort cleanup */ }
-    }, 500);
+            return cleanupStartupBlankTargets && cleanupExistingIds.has(candidateTargetId);
+          });
+          for (const t of orphans) {
+            try {
+              const orphanPage = await t.page();
+              if (orphanPage && !orphanPage.isClosed()) {
+                await orphanPage.close();
+                console.error(`[SessionManager] Closed orphan blank ghost tab: ${getTargetId(t)} (${t.url()})`);
+              }
+            } catch { /* target may already be destroyed */ }
+          }
+        } catch { /* best-effort cleanup */ }
+      }, 500);
 
-    worker.targets.add(targetId);
-    worker.lastActivityAt = Date.now();
+      worker.targets.add(targetId);
+      releaseSlot();
+      worker.lastActivityAt = Date.now();
 
-    this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
+      this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
 
-    // #848: book-keep the named-context association and increment the
-    // registry's tab count so the lifecycle hook (onTargetClosed →
-    // decrementTabCount) can auto-destroy the context when it goes idle.
-    let resolvedContextName: string = DEFAULT_CONTEXT_NAME;
-    let resolvedIsolated = false;
-    if (useNamedContext && isolatedContext) {
-      const ownerBrowser = cdpClient.getBrowser();
-      this.targetToContext.set(targetId, { browser: ownerBrowser, name: isolatedContext });
-      this.namedContextRegistry.incrementTabCount(ownerBrowser, isolatedContext);
-      resolvedContextName = isolatedContext;
-      resolvedIsolated = true;
-    }
-    this.acquireTargetLease(targetId, sessionId, worker.id, resolvedContextName);
-
-    this.emitEvent({
-      type: 'session:target-added',
-      sessionId,
-      workerId: worker.id,
-      targetId,
-      timestamp: Date.now(),
-    });
-    this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
-
-    this.touchSession(sessionId);
-
-    // Restore storage state on first target for this session
-    const session = this.sessions.get(sessionId)!;
-    const allTargetsCount = Array.from(session.workers.values()).reduce((sum, w) => sum + w.targets.size, 0);
-    if (this.storageStateConfig?.enabled && allTargetsCount === 1) {
-      try {
-        const ssManager = new StorageStateManager();
-        this.storageStateManagers.set(sessionId, ssManager);
-        const filePath = this.getStorageStatePath(sessionId, resolvedContextName);
-        await ssManager.restore(page, this.cdpClient, filePath);
-
-        const intervalMs = this.storageStateConfig?.watchdogIntervalMs ||
-          Number(process.env.OPENCHROME_WATCHDOG_INTERVAL_MS) || DEFAULT_WATCHDOG_INTERVAL_MS;
-        ssManager.startWatchdog(page, this.cdpClient, {
-          intervalMs,
-          filePath,
-        });
-      } catch (err) {
-        console.error(`[SessionManager] Storage state restore failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-        // Clean up the inconsistent manager entry so deleteSession doesn't operate on an uninitialized manager
-        this.storageStateManagers.delete(sessionId);
+      // #848: book-keep the named-context association and increment the
+      // registry's tab count so the lifecycle hook (onTargetClosed →
+      // decrementTabCount) can auto-destroy the context when it goes idle.
+      let resolvedContextName: string = DEFAULT_CONTEXT_NAME;
+      let resolvedIsolated = false;
+      if (useNamedContext && isolatedContext) {
+        const ownerBrowser = cdpClient.getBrowser();
+        this.targetToContext.set(targetId, { browser: ownerBrowser, name: isolatedContext });
+        this.namedContextRegistry.incrementTabCount(ownerBrowser, isolatedContext);
+        resolvedContextName = isolatedContext;
+        resolvedIsolated = true;
       }
-    }
+      this.acquireTargetLease(targetId, sessionId, worker.id, resolvedContextName);
 
-    return { targetId, page, workerId: worker.id, contextName: resolvedContextName, isolated: resolvedIsolated };
+      this.emitEvent({
+        type: 'session:target-added',
+        sessionId,
+        workerId: worker.id,
+        targetId,
+        timestamp: Date.now(),
+      });
+      this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
+
+      this.touchSession(sessionId);
+
+      // One restore/watchdog per named context; accounts must not share failure guards.
+      let managers = this.storageStateManagers.get(sessionId);
+      if (this.storageStateConfig?.enabled && !managers?.has(resolvedContextName)) {
+        if (!managers) { managers = new Map(); this.storageStateManagers.set(sessionId, managers); }
+        try {
+          const ssManager = new StorageStateManager();
+          managers.set(resolvedContextName, ssManager);
+          const filePath = this.getStorageStatePath(sessionId, resolvedContextName);
+          const restore = await ssManager.restoreDetailed(page, cdpClient, filePath);
+          this.storageRestoreResults.set(sessionId, restore);
+
+          const intervalMs = this.storageStateConfig?.watchdogIntervalMs ||
+            Number(process.env.OPENCHROME_WATCHDOG_INTERVAL_MS) || DEFAULT_WATCHDOG_INTERVAL_MS;
+          if (restore.status === 'restored' || restore.reason === 'missing') ssManager.startWatchdog(page, cdpClient, {
+            intervalMs,
+            filePath,
+          });
+        } catch (err) {
+          this.storageRestoreResults.set(sessionId, { status: 'failed', execution: 'unknown', authentication: 'unverified' });
+          console.error(`[SessionManager] Storage state restore failed for session ${sessionId}`);
+          // Clean up the inconsistent manager entry so deleteSession doesn't operate on an uninitialized manager
+          managers.delete(resolvedContextName);
+        }
+      }
+
+      return { targetId, page, workerId: worker.id, contextName: resolvedContextName, isolated: resolvedIsolated };
+    } finally {
+      releaseSlot();
+    }
   }
 
   /**
@@ -1399,41 +1428,39 @@ export class SessionManager {
       targetUrl: url,
     });
 
-    // Enforce per-worker tab limit: close oldest tab when limit reached
-    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
-      const oldestTargetId = worker.targets.values().next().value;
-      if (oldestTargetId) {
-        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest tab ${oldestTargetId}`);
-        await this.closeTarget(sessionId, oldestTargetId);
-      }
+    const releaseSlot = this.reserveTargetSlot(worker);
+    try {
+
+      // Use the worker's CDPClient (may be on a different Chrome instance)
+      const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
+
+      // Open tab without CDP, wait for settle, then attach
+      const { page, targetId } = await cdpClient.createTargetStealth(url, settleMs);
+
+      worker.targets.add(targetId);
+      releaseSlot();
+      worker.lastActivityAt = Date.now();
+      this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
+      this.acquireTargetLease(targetId, sessionId, worker.id);
+
+      // Track as stealth target for human-behavior integration in tools
+      this.stealthTargets.add(targetId);
+
+      this.emitEvent({
+        type: 'session:target-added',
+        sessionId,
+        workerId: worker.id,
+        targetId,
+        timestamp: Date.now(),
+      });
+      this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
+
+      this.touchSession(sessionId);
+
+      return { targetId, page, workerId: worker.id };
+    } finally {
+      releaseSlot();
     }
-
-    // Use the worker's CDPClient (may be on a different Chrome instance)
-    const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
-
-    // Open tab without CDP, wait for settle, then attach
-    const { page, targetId } = await cdpClient.createTargetStealth(url, settleMs);
-
-    worker.targets.add(targetId);
-    worker.lastActivityAt = Date.now();
-    this.targetToWorker.set(targetId, { sessionId, workerId: worker.id });
-    this.acquireTargetLease(targetId, sessionId, worker.id);
-
-    // Track as stealth target for human-behavior integration in tools
-    this.stealthTargets.add(targetId);
-
-    this.emitEvent({
-      type: 'session:target-added',
-      sessionId,
-      workerId: worker.id,
-      targetId,
-      timestamp: Date.now(),
-    });
-    this.emitLifecycle({ kind: 'target:create', sessionId, workerId: worker.id, targetId, url: url ?? '', ts: Date.now() });
-
-    this.touchSession(sessionId);
-
-    return { targetId, page, workerId: worker.id };
   }
 
   /**
@@ -1682,14 +1709,15 @@ export class SessionManager {
    * Injects the page into the main CDPClient's targetIdIndex so all tools
    * (read_page, interact, screenshot, etc.) work without a separate connection. (#485)
    */
-  async registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): Promise<void> {
+  async registerHeadedPage(targetId: string, sessionId: string, workerId: string, page: Page): Promise<boolean> {
     // Register target ownership (no parent — headed pages are top-level navigations).
     const registered = await this.registerExternalTarget(targetId, sessionId, workerId);
-    if (!registered) return;
+    if (!registered) return false;
 
     // Inject the page into the main CDPClient's index so getPageByTargetId()
     // returns it and the stale-target guards in getCDPSession()/send() pass.
     this.cdpClient.indexExternalPage(targetId, page);
+    return true;
   }
 
   /**
@@ -1812,21 +1840,9 @@ export class SessionManager {
       ? this.targetToContext.get(opts.inheritContextFromTargetId)
       : undefined;
 
-    // Enforce per-worker tab limit for externally-created targets too
-    // (popups, headed fallback pages, and other out-of-band registrations).
-    // Use closeTarget(), not evictTarget(), so the browser tab is actually
-    // closed and cannot leak after the ownership record is removed. The public
-    // wrapper serializes this block per worker so concurrent popups cannot all
-    // close the same oldest target and then overfill the worker.
-    if (worker.targets.size >= this.config.maxTargetsPerWorker) {
-      const oldestTargetId = Array.from(worker.targets).find((candidate) => candidate !== opts?.openerTargetId);
-      if (oldestTargetId) {
-        console.error(`[SessionManager] Worker ${worker.id} reached tab limit (${this.config.maxTargetsPerWorker}), closing oldest external tab ${oldestTargetId}`);
-        await this.closeTarget(sessionId, oldestTargetId);
-      } else {
-        return false;
-      }
-    }
+    // Registration never discards an existing tab to make room. Callers own
+    // cleanup of a newly-created target when registration returns false.
+    if (worker.targets.size + (this.targetReservations.get(worker) ?? 0) >= this.config.maxTargetsPerWorker) return false;
 
     if (
       this.deletingSessions.has(sessionId) ||
@@ -1975,6 +1991,7 @@ export class SessionManager {
     sessionId: string,
     targetId: string,
     fn: () => Promise<T>,
+    options?: import('./target-command-queue').TargetQueueOptions,
   ): Promise<T> {
     if (!this.validateTargetOwnership(sessionId, targetId)) {
       throw new Error(this.buildStaleTargetError(sessionId, targetId));
@@ -1988,7 +2005,7 @@ export class SessionManager {
         throw new Error(this.buildStaleTargetError(sessionId, targetId));
       }
       return fn();
-    });
+    }, options);
   }
 
   /**
@@ -2017,6 +2034,7 @@ export class SessionManager {
    * Handle target closed event
    */
   onTargetClosed(targetId: string): void {
+    this.humanHeldTargets.delete(targetId);
     flushRecorderBuffer(targetId);
     this.targetCreationLedger.markClosed(targetId);
     const ownerInfo = this.targetToWorker.get(targetId);
@@ -2051,6 +2069,17 @@ export class SessionManager {
     // #848: drop the named-context association and let the registry GC the
     // BrowserContext when the last tab closes and no resume token pins it.
     const ctxEntry = this.targetToContext.get(targetId);
+    if (ownerInfo && session) {
+      const contextName = ctxEntry?.name ?? DEFAULT_CONTEXT_NAME;
+      const remaining = [...session.workers.values()].some(worker =>
+        [...worker.targets].some(id => this.getTargetContextName(id) === contextName));
+      if (!remaining) {
+        const managers = this.storageStateManagers.get(ownerInfo.sessionId);
+        managers?.get(contextName)?.stopWatchdog();
+        managers?.delete(contextName);
+        if (managers?.size === 0) this.storageStateManagers.delete(ownerInfo.sessionId);
+      }
+    }
     if (ctxEntry) {
       this.targetToContext.delete(targetId);
       this.namedContextRegistry.decrementTabCount(ctxEntry.browser, ctxEntry.name).catch((err) => {
@@ -2420,8 +2449,8 @@ export class SessionManager {
     if (!this.storageStateConfig?.enabled) return;
 
     for (const [sessionId, session] of this.sessions) {
-      const manager = this.storageStateManagers.get(sessionId);
-      if (!manager) continue;
+      const managers = this.storageStateManagers.get(sessionId);
+      if (!managers) continue;
 
       try {
         // #848: flush per named context (default + each isolatedContext)
@@ -2433,7 +2462,7 @@ export class SessionManager {
             const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
             const p = await cdpClient.getPageByTargetId(tid);
             if (p) {
-              await manager.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
+              await managers.get(ctxName)?.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
               console.error(`[SessionManager] Storage state saved for session ${sessionId} (context=${ctxName}) on shutdown`);
               flushedContexts.add(ctxName);
             }

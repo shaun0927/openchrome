@@ -554,6 +554,23 @@ describe('MCPServer', () => {
   });
 
   describe('Connection Error Recovery', () => {
+    test.each([true, false])('does not repeat an uncertain write (thrown=%s)', async (thrown) => {
+      let receipts = 0;
+      const handler = jest.fn(async () => {
+        receipts++;
+        if (thrown) throw new Error('Connection closed');
+        return { isError: true, content: [{ type: 'text' as const, text: 'Connection closed' }] };
+      });
+      server.registerTool('uncertain_write', handler, {
+        name: 'uncertain_write', description: 'Mutation', inputSchema: { type: 'object', properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      });
+      const response = await server.handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'uncertain_write', arguments: {} } }) as MCPResultResponse;
+      expect(receipts).toBe(1);
+      expect(response.result!.isError).toBe(true);
+      expect((response.result as { structuredContent?: unknown }).structuredContent).toMatchObject({ execution: 'unknown', retryAllowed: false });
+      expect(mockForceReconnect).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
       mockForceReconnect.mockClear();
     });
@@ -572,7 +589,7 @@ describe('MCPServer', () => {
         name: 'retry_tool',
         description: 'Test retry',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('retry_tool', handler, definition);
 
@@ -600,7 +617,7 @@ describe('MCPServer', () => {
         name: 'fail_tool',
         description: 'Always fails',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('fail_tool', handler, definition);
 
@@ -615,7 +632,7 @@ describe('MCPServer', () => {
 
       expect(response.result!.isError).toBe(true);
       expect(response.result!.content![0].text).toContain('Connection closed');
-      expect(response.result!.content![0].text).toContain('auto-reconnect was attempted');
+      expect(response.result!.content![0].text).toContain('verify its outcome before retrying');
       expect(response.result!.content![0].text).toContain('tabs_context');
       expect(mockForceReconnect).toHaveBeenCalledTimes(1);
     });
@@ -629,7 +646,7 @@ describe('MCPServer', () => {
         name: 'normal_error_tool',
         description: 'Normal error',
         inputSchema: { type: 'object' as const, properties: {}, required: [] },
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       };
       server.registerTool('normal_error_tool', handler, definition);
 
@@ -672,7 +689,7 @@ describe('MCPServer', () => {
           name: toolName,
           description: 'Test',
           inputSchema: { type: 'object' as const, properties: {}, required: [] },
-          annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+          annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         };
         server.registerTool(toolName, handler, definition);
 
@@ -699,7 +716,7 @@ describe('MCPServer', () => {
           name,
           description: 'swallowed-error tool',
           inputSchema: { type: 'object' as const, properties: {}, required: [] },
-          annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+          annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         };
         server.registerTool(name, handler, definition);
         return { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } } as MCPRequest;
@@ -762,9 +779,9 @@ describe('MCPServer', () => {
           const response = await responsePromise;
 
           expect(handler).toHaveBeenCalledTimes(2);
-          // Retry timed out → catch keeps the original swallowed error result.
+          // Expose the deadline instead of masking it with the initial connection error.
           expect(response.result!.isError).toBe(true);
-          expect(response.result!.content![0].text).toContain('WebSocket is not open');
+          expect(response.result!.content![0].text).toContain('TOOL_DEADLINE');
         } finally {
           jest.useRealTimers();
         }
@@ -786,10 +803,10 @@ describe('MCPServer', () => {
           const response = await responsePromise;
 
           // Reconnect timed out before the retry was dispatched → handler called once,
-          // original error result preserved (never-hang honored at the reconnect step).
+          // explicit deadline outcome ends the request.
           expect(handler).toHaveBeenCalledTimes(1);
           expect(response.result!.isError).toBe(true);
-          expect(response.result!.content![0].text).toContain('WebSocket is not open');
+          expect(response.result!.content![0].text).toContain('TOOL_DEADLINE');
         } finally {
           jest.useRealTimers();
         }
@@ -821,7 +838,7 @@ describe('MCPServer', () => {
       const response = (await server.handleRequest(request)) as MCPResultResponse;
 
       expect(response.result!.isError).toBe(true);
-      expect(response.result!.content![0].text).toContain('auto-reconnect was attempted');
+      expect(response.result!.content![0].text).toContain('verify its outcome before retrying');
       expect(response.result!.content![0].text).toContain('tabs_context');
     });
   });

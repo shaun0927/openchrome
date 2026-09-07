@@ -25,6 +25,11 @@ export interface MCPToolResult {
 }
 
 export class MCPClient {
+  getLastRequestId(): number { return this.requestId; }
+  notify(method: string, params: Record<string, unknown>): void {
+    if (!this.canSend(this.process)) throw new Error('MCP client is not running');
+    this.process!.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  }
   private process: ChildProcess | null = null;
   private requestId = 0;
   private pending = new Map<number, {
@@ -36,11 +41,19 @@ export class MCPClient {
   private defaultTimeoutMs: number;
   private extraEnv: Record<string, string>;
   private extraArgs: string[];
+  private entry: string;
+  private startupTimeoutMs: number;
+  private nodeArgs: string[];
+  private cwd?: string;
 
-  constructor(opts?: { timeoutMs?: number; env?: Record<string, string>; args?: string[] }) {
+  constructor(opts?: { timeoutMs?: number; env?: Record<string, string>; args?: string[]; entry?: string; startupTimeoutMs?: number; nodeArgs?: string[]; cwd?: string }) {
     this.defaultTimeoutMs = opts?.timeoutMs ?? 30_000;
     this.extraEnv = opts?.env ?? {};
     this.extraArgs = opts?.args ?? [];
+    this.entry = opts?.entry ?? path.join(process.cwd(), 'dist', 'index.js');
+    this.startupTimeoutMs = opts?.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
+    this.nodeArgs = opts?.nodeArgs ?? [];
+    this.cwd = opts?.cwd;
   }
 
   private rejectPending(error: Error): void {
@@ -65,17 +78,19 @@ export class MCPClient {
       ?? process.env.OPENCHROME_E2E_SERVER_ARGS
       ?? '';
     const harnessArgs = configuredArgs.trim() ? configuredArgs.trim().split(/\s+/) : [];
-    return [serverPath, 'serve', '--auto-launch', ...harnessArgs, ...this.extraArgs];
+    return [...this.nodeArgs, serverPath, 'serve', '--auto-launch', ...harnessArgs, ...this.extraArgs];
   }
 
   async start(): Promise<void> {
-    const serverPath = path.join(process.cwd(), 'dist', 'index.js');
+    const serverPath = this.entry;
     if (!fs.existsSync(serverPath)) {
       throw new Error(`MCP server not built. Run: npm run build\n  Expected: ${serverPath}`);
     }
 
     return new Promise((resolve, reject) => {
       const child = spawn('node', this.getServeArgs(serverPath), {
+        windowsHide: true,
+        cwd: this.cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...this.extraEnv },
       });
@@ -188,8 +203,8 @@ export class MCPClient {
       });
 
       startupTimer = setTimeout(() => {
-        rejectStartup(lifecycleError(`Server startup timeout (${STARTUP_TIMEOUT_MS}ms)`));
-      }, STARTUP_TIMEOUT_MS);
+        rejectStartup(lifecycleError(`Server startup timeout (${this.startupTimeoutMs}ms)`));
+      }, this.startupTimeoutMs);
       startupTimer.unref();
     });
   }

@@ -13,6 +13,7 @@ import { getChromeLauncher } from '../chrome/launcher';
 import { getChromePool } from '../chrome/pool';
 import { getGlobalConfig } from '../config/global';
 import { formatAge } from '../utils/format-age';
+import { getSessionManager } from '../session-manager';
 
 const definition: MCPToolDefinition = {
   name: 'oc_profile_status',
@@ -26,7 +27,7 @@ const definition: MCPToolDefinition = {
 };
 
 const handler: ToolHandler = async (
-  _sessionId: string,
+  sessionId: string,
   _args: Record<string, unknown>
 ): Promise<MCPResult> => {
   try {
@@ -46,6 +47,8 @@ const handler: ToolHandler = async (
 
     const result: Record<string, unknown> = {
       profileType: state.type,
+      authentication: 'unverified',
+      storageRestore: getSessionManager().getStorageRestoreStatus(sessionId) ?? { status: 'not_attempted' },
       capabilities,
       ...(state.sourceProfile && {
         realProfileLocked: true,

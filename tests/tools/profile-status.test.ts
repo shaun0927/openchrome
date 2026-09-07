@@ -36,6 +36,7 @@ describe('oc_profile_status tool', () => {
 
   beforeEach(() => {
     const mockSessionManager = createMockSessionManager();
+    Object.assign(mockSessionManager, { getStorageRestoreStatus: jest.fn().mockReturnValue(undefined) });
     (getSessionManager as jest.Mock).mockReturnValue(mockSessionManager);
     server = new MCPServer(mockSessionManager as any);
     registerProfileStatusTool(server);
@@ -59,6 +60,8 @@ describe('oc_profile_status tool', () => {
     expect(result.content).toHaveLength(2);
     const data = JSON.parse(result.content[0].text);
     expect(data.profileType).toBe('real');
+    expect(data.authentication).toBe('unverified');
+    expect(data.storageRestore.status).toBe('not_attempted');
     expect(data.capabilities.extensions).toBe(true);
     expect(data.capabilities.savedPasswords).toBe(true);
     expect(data.capabilities.localStorage).toBe(true);

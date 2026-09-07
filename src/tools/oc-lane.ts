@@ -72,12 +72,12 @@ const createHandler: ToolHandler = async (sessionId, args) => {
     return jsonResult({ ok: true, lane });
   } catch (e) { return err(`oc_lane_create: ${e instanceof Error ? e.message : String(e)}`); }
 };
-const listHandler: ToolHandler = async (_sessionId, args) => {
-  try { const tid = taskId(args); if (!tid) return err('oc_lane_list: taskId is required'); return jsonResult({ ok: true, lanes: listBrowserLanes(tid) }); }
+const listHandler: ToolHandler = async (sessionId, args) => {
+  try { const tid = taskId(args); if (!tid) return err('oc_lane_list: taskId is required'); return jsonResult({ ok: true, lanes: listBrowserLanes(tid, sessionId) }); }
   catch (e) { return err(`oc_lane_list: ${e instanceof Error ? e.message : String(e)}`); }
 };
-const getHandler: ToolHandler = async (_sessionId, args) => {
-  try { const tid = taskId(args); const lid = laneId(args); if (!tid || !lid) return err('oc_lane_get: taskId and laneId are required'); return jsonResult({ ok: true, lane: getBrowserLane(tid, lid) }); }
+const getHandler: ToolHandler = async (sessionId, args) => {
+  try { const tid = taskId(args); const lid = laneId(args); if (!tid || !lid) return err('oc_lane_get: taskId and laneId are required'); return jsonResult({ ok: true, lane: getBrowserLane(tid, lid, sessionId) }); }
   catch (e) { return err(`oc_lane_get: ${e instanceof Error ? e.message : String(e)}`); }
 };
 const closeHandler: ToolHandler = async (sessionId, args) => {

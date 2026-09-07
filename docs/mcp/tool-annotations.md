@@ -116,6 +116,7 @@ These tools combine network egress with destructive worst-case capability. They 
 | Tool                    | Notes                                                            |
 | ----------------------- | ---------------------------------------------------------------- |
 | `computer`              | Generic UI action (click/type/scroll)                            |
+| `oc_browser_control`    | Explicit pause/resume input ownership and page-condition checks   |
 | `interact`              | Smart interaction primitive                                      |
 | `form_input`            | Type into specific input                                         |
 | `fill_form`             | Composite form-fill                                              |

@@ -271,6 +271,17 @@ async function headedAutoRetry(
   sessionId?: string,
   profileDirectory?: string,
 ): Promise<MCPResult | null> {
+  if (getGlobalConfig().headless === true) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({
+        action: 'navigate', url: targetUrl, status: 'needs_user_input',
+        code: 'HEADED_FALLBACK_REQUIRES_USER', reason: blockingInfo.type,
+        headed: false, visibilityPolicy: 'headless',
+        message: 'Automatic headed fallback was suppressed by the headless policy. Request user interaction before explicitly opening a visible browser.',
+      }) }],
+    };
+  }
   const headedFallback = getHeadedFallback(getGlobalConfig().port);
   if (!headedFallback.isAvailable()) {
     console.error('[navigate] Tier 3 skipped: no display available for headed Chrome');
@@ -309,17 +320,22 @@ async function headedAutoRetry(
         // Get the live Page object from HeadedFallbackManager and register it
         const page = headedFallback.getPage(result.targetId);
         if (page) {
-          await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
+          if (await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page) === false) throw new Error('Target registration refused');
         } else {
           // Fallback: register without page injection (navigation-only, no tool access)
-          await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
+          if (await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId) === false) throw new Error('Target registration refused');
         }
 
         tabId = result.targetId;
         assignedWorkerId = resolvedWorkerId;
         console.error(`[navigate] Headed tab registered: tabId=${tabId.slice(0, 8)}... workerId=${resolvedWorkerId}`);
-      } catch (regErr) {
-        console.error('[navigate] Headed tab registration failed (page still accessible via headed Chrome):', regErr instanceof Error ? regErr.message : regErr);
+      } catch {
+        const page = headedFallback.getPage(result.targetId);
+        const closed = page ? await page.close().then(() => true, () => false) : false;
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          code: 'TARGET_REGISTRATION_FAILED', execution: 'completed', targetId: result.targetId,
+          createdTargetClosed: closed, message: 'Navigation ran, but the target could not be admitted. Do not retry side effects blindly.',
+        }) }] };
       }
     }
 
@@ -384,14 +400,19 @@ async function headedNavigateDirect(
 
         const page = headedFallback.getPage(result.targetId);
         if (page) {
-          await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page);
+          if (await sessionManager.registerHeadedPage(result.targetId, sessionId, resolvedWorkerId, page) === false) throw new Error('Target registration refused');
         } else {
-          await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId);
+          if (await sessionManager.registerExternalTarget(result.targetId, sessionId, resolvedWorkerId) === false) throw new Error('Target registration refused');
         }
 
         tabId = result.targetId;
-      } catch (regErr) {
-        console.error('[navigate] Headed tab registration failed:', regErr instanceof Error ? regErr.message : regErr);
+      } catch {
+        const page = headedFallback.getPage(result.targetId);
+        const closed = page ? await page.close().then(() => true, () => false) : false;
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          code: 'TARGET_REGISTRATION_FAILED', execution: 'completed', targetId: result.targetId,
+          createdTargetClosed: closed, message: 'Navigation ran, but the target could not be admitted. Do not retry side effects blindly.',
+        }) }] };
       }
     }
 
@@ -521,7 +542,7 @@ const handler: ToolHandler = async (
       return { content: [{ type: 'text', text: 'Error: taskId and laneId must be supplied together' }], isError: true };
     }
     try {
-      const lane = getBrowserLane(laneRef.taskId, laneRef.laneId);
+      const lane = getBrowserLane(laneRef.taskId, laneRef.laneId, sessionId);
       laneWorkerId = lane.workerId;
       if (!tabId) tabId = lane.targetIds[lane.targetIds.length - 1];
       if (tabId && !lane.targetIds.includes(tabId)) {

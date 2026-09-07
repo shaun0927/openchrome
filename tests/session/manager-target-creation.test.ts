@@ -13,6 +13,8 @@ const mockCdpClientInstance = {
   getPageByTargetId: jest.fn().mockResolvedValue(null),
   closePage: jest.fn().mockResolvedValue(undefined),
   send: jest.fn(),
+  createPage: jest.fn(),
+  getChromeLifecycleMode: jest.fn().mockReturnValue('isolated'),
 };
 
 jest.mock('../../src/cdp/client', () => ({
@@ -57,6 +59,59 @@ function createManager(maxTargetsPerWorker = 5): SessionManager {
 }
 
 describe('SessionManager target creation ledger', () => {
+  test('reserves an in-flight creation slot and releases it after creation failure', async () => {
+    const manager = createManager(1);
+    await manager.createSession({ id: 'capacity' });
+    let rejectCreate!: (error: Error) => void;
+    let started!: () => void;
+    const dispatched = new Promise<void>(resolve => { started = resolve; });
+    mockCdpClientInstance.createPage.mockImplementationOnce(() => {
+      started();
+      return new Promise((_, reject) => { rejectCreate = reject; });
+    });
+    const first = manager.createTarget('capacity', 'https://example.test');
+    const failure = expect(first).rejects.toThrow('creation failed');
+    await dispatched;
+    await expect(manager.createTarget('capacity', 'https://example.test')).rejects.toMatchObject({
+      code: 'TARGET_CAPACITY', execution: 'not_started',
+    });
+    expect(mockCdpClientInstance.closePage).not.toHaveBeenCalled();
+    rejectCreate(new Error('creation failed'));
+    await failure;
+    mockCdpClientInstance.createPage.mockRejectedValueOnce(new Error('retry dispatched'));
+    await expect(manager.createTarget('capacity', 'https://example.test')).rejects.toThrow('retry dispatched');
+    expect(mockCdpClientInstance.createPage).toHaveBeenCalledTimes(2);
+  });
+  test('delayed startup cleanup preserves another in-flight blank tab', async () => {
+    jest.useFakeTimers();
+    const startupClose = jest.fn(async () => {});
+    const pendingClose = jest.fn(async () => {});
+    const target = (id: string, url: string, close: typeof startupClose) => ({
+      _targetId: id, type: () => 'page', url: () => url,
+      page: async () => ({ isClosed: () => false, close }),
+    });
+    const startup = target('startup', 'chrome://newtab/', startupClose);
+    const pending = target('pending', 'about:blank', pendingClose);
+    const first = target('first', 'https://fixture.example', jest.fn(async () => {}));
+    let visible = [startup];
+    mockCdpClientInstance.getBrowser.mockReturnValue({ targets: jest.fn(() => visible) } as never);
+    mockCdpClientInstance.createPage.mockImplementationOnce(async () => {
+      visible = [startup, first];
+      return { target: () => first, url: first.url };
+    });
+    try {
+      const manager = createManager();
+      await manager.createTarget('s-cleanup', 'https://fixture.example');
+      // The second creator has a Chrome target but has not committed ownership.
+      visible.push(pending);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(startupClose).toHaveBeenCalledTimes(1);
+      expect(pendingClose).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+      mockCdpClientInstance.getBrowser.mockReturnValue({ targets: jest.fn(() => []) });
+    }
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     targetDestroyedListeners.length = 0;
@@ -203,4 +258,30 @@ describe('SessionManager target creation ledger', () => {
     expect(events.indexOf('parallel:start')).toBeLessThan(events.indexOf('first:end'));
     expect(events.indexOf('second:start')).toBeGreaterThan(events.indexOf('first:end'));
   });
+});
+
+
+test('human control survives even forced idle cleanup until explicit release', async () => {
+  const manager = createManager();
+  await manager.createSession({ id: 'human' });
+  await manager.registerExternalTarget('human-tab', 'human', 'default');
+  manager.setTargetHumanControl('human', 'human-tab', true);
+  expect(await manager.cleanupInactiveSessions(-1, { force: true })).toEqual([]);
+  expect(manager.getTargetOwner('human-tab')?.sessionId).toBe('human');
+  expect(() => manager.setTargetHumanControl('other', 'human-tab', false)).toThrow();
+  manager.setTargetHumanControl('human', 'human-tab', false);
+  expect(await manager.cleanupInactiveSessions(-1, { force: true })).toEqual(['human']);
+});
+
+
+test('closing the last context tab releases its storage watchdog and manager', async () => {
+  const manager = createManager();
+  await manager.createSession({ id: 'watchdog' });
+  await manager.registerExternalTarget('watchdog-tab', 'watchdog', 'default');
+  const stopWatchdog = jest.fn();
+  const managers = new Map([['default', { stopWatchdog }]]);
+  (manager as any).storageStateManagers.set('watchdog', managers);
+  manager.onTargetClosed('watchdog-tab');
+  expect(stopWatchdog).toHaveBeenCalledTimes(1);
+  expect((manager as any).storageStateManagers.has('watchdog')).toBe(false);
 });
