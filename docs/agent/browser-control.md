@@ -2,6 +2,16 @@
 
 `oc_browser_control` exposes current operation facts and a small human input lease. The host still owns the task, account choice and decision to continue.
 
+## Start without keeping a blank window open
+
+From a directory where the candidate package is installed, start its standalone MCP entrypoint with an isolated browser:
+
+```bash
+node ./node_modules/openchrome-mcp/dist/index.js --headless --launch-mode isolated --no-auto-elect
+```
+
+Browser startup remains lazy: listing tools does not launch Chrome; the first browser operation does. Explicit headless mode prevents automatic headed fallback. The acceptance harness tests this standalone configuration; attached user browsers and shared broker deployment require their corresponding configuration.
+
 ## Inspect a background tab
 
 Call `oc_browser_control` with `{"action":"status","tabId":"<managed target>"}`. It returns active tools, recent completion times, pending writes and the current phase. Arguments, cookies, page text and URL query strings are not included. Use existing `read_page` and `page_screenshot` tools for page evidence.
