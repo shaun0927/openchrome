@@ -65,4 +65,11 @@ describe('storage restoration outcomes', () => {
     expect(writeFileAtomicSafe).not.toHaveBeenCalled();
     expect(client.send).not.toHaveBeenCalled();
   });
+  it('does not replace a fresh live session with an older saved cookie', async () => {
+    const send = jest.fn().mockResolvedValue({ cookies: [{ name: 'session', value: 'fresh', session: true }] });
+    const page = { evaluate: jest.fn().mockResolvedValue('https://example.test') } as unknown as Page;
+    expect((await new StorageStateManager().restoreDetailed(page, { send }, 'state.json')).status).toBe('restored');
+    expect(send.mock.calls.filter(call => call[1] === 'Network.setCookies')).toEqual([]);
+  });
+
 });

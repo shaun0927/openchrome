@@ -16,6 +16,7 @@ import { registerFindTool } from './find';
 import { registerFormInputTool } from './form-input';
 import { registerJavascriptTool } from './javascript';
 import { registerTabsContextTool } from './tabs-context';
+import { registerBrowserControlTool } from './browser-control';
 import { registerTabsCreateTool } from './tabs-create';
 import { registerTabsCloseTool } from './tabs-close';
 import { registerTabsActivateTool } from './tabs-activate';
@@ -203,6 +204,7 @@ import { getHandleStore } from '../core/output/handle-store';
  * lint:tools-capabilities enforces that every registered tool appears here.
  */
 export const TOOL_CAPABILITY_MAP: Record<string, ToolCapability> = {
+  oc_browser_control: 'core',
   // core — fundamental browser control
   act: 'core',
   computer: 'core',
@@ -441,6 +443,7 @@ export function registerAllTools(
 
   // Tab management
   registerTabsContextTool(proxy);
+  registerBrowserControlTool(proxy);
   registerTabsCreateTool(proxy);
   registerTabsCloseTool(proxy);
   registerTabsActivateTool(proxy);

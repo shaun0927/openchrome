@@ -139,6 +139,7 @@ const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'str
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private targetToWorker = new TargetOwnershipRegistry();
+  private humanHeldTargets = new Set<string>();
   private targetLeases = new TargetLeaseRegistry();
   /**
    * Maps targetId → `{browser, name}` for the owning named context (#848).
@@ -175,7 +176,7 @@ export class SessionManager {
     string,
     { path_taken: RouteReason; backend: BrowserBackend; fallback: boolean; at: number }
   >();
-  private storageStateManagers = new Map<string, StorageStateManager>();
+  private storageStateManagers = new Map<string, Map<string, StorageStateManager>>();
   private targetReservations = new WeakMap<Worker, number>();
 
   private reserveTargetSlot(worker: Worker): () => void {
@@ -350,6 +351,12 @@ export class SessionManager {
       }
       throw err;
     }
+  }
+
+  setTargetHumanControl(sessionId: string, targetId: string, held: boolean): void {
+    if (!this.validateTargetOwnership(sessionId, targetId)) throw new Error('Target ownership mismatch');
+    if (held) this.humanHeldTargets.add(targetId);
+    else { this.humanHeldTargets.delete(targetId); this.targetLeases.touch(targetId); }
   }
 
   getTargetLease(targetId: string): TargetLeaseRecord | undefined {
@@ -724,8 +731,8 @@ export class SessionManager {
     // Save storage state before cleanup (save first, then stop watchdog).
     // #848: flush ONE representative tab per named context so per-context
     // cookies / localStorage are partitioned in their own snapshot files.
-    const manager = this.storageStateManagers.get(sessionId);
-    if (manager) {
+    const managers = this.storageStateManagers.get(sessionId);
+    if (managers) {
       try {
         const flushedContexts = new Set<string>();
         for (const worker of session.workers.values()) {
@@ -735,7 +742,7 @@ export class SessionManager {
             const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
             const p = await cdpClient.getPageByTargetId(tid);
             if (p) {
-              await manager.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
+              await managers.get(ctxName)?.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
               flushedContexts.add(ctxName);
             }
           }
@@ -743,7 +750,7 @@ export class SessionManager {
       } catch {
         // Best-effort: don't block deletion on storage state errors
       }
-      manager.stopWatchdog();
+      for (const manager of managers.values()) manager.stopWatchdog();
       this.storageStateManagers.delete(sessionId);
     }
     this.storageRestoreResults.delete(sessionId);
@@ -788,6 +795,7 @@ export class SessionManager {
     const isMemoryPressure = options?.force === true;
 
     for (const [sessionId, session] of this.sessions) {
+      if ([...this.humanHeldTargets].some(target => this.getTargetOwner(target)?.sessionId === sessionId)) continue;
       // Protect the "default" session from normal TTL expiry — it's the
       // primary session for most single-agent workflows. Under memory
       // pressure (force=true) we still clean it up to prevent OOM.
@@ -804,7 +812,7 @@ export class SessionManager {
       }
     }
 
-    const expiredLeases = this.targetLeases.expire(now);
+    const expiredLeases = this.targetLeases.expire(now, this.humanHeldTargets);
     for (const lease of expiredLeases) {
       this.targetQueueManager.cancelTarget(lease.targetId);
       // #1359 backlog item 7: reclaim the orphaned tab of an idle/crashed owner.
@@ -1364,13 +1372,13 @@ export class SessionManager {
 
       this.touchSession(sessionId);
 
-      // Restore storage state on first target for this session
-      const session = this.sessions.get(sessionId)!;
-      const allTargetsCount = Array.from(session.workers.values()).reduce((sum, w) => sum + w.targets.size, 0);
-      if (this.storageStateConfig?.enabled && allTargetsCount === 1) {
+      // One restore/watchdog per named context; accounts must not share failure guards.
+      let managers = this.storageStateManagers.get(sessionId);
+      if (this.storageStateConfig?.enabled && !managers?.has(resolvedContextName)) {
+        if (!managers) { managers = new Map(); this.storageStateManagers.set(sessionId, managers); }
         try {
           const ssManager = new StorageStateManager();
-          this.storageStateManagers.set(sessionId, ssManager);
+          managers.set(resolvedContextName, ssManager);
           const filePath = this.getStorageStatePath(sessionId, resolvedContextName);
           const restore = await ssManager.restoreDetailed(page, cdpClient, filePath);
           this.storageRestoreResults.set(sessionId, restore);
@@ -1385,7 +1393,7 @@ export class SessionManager {
           this.storageRestoreResults.set(sessionId, { status: 'failed', execution: 'unknown', authentication: 'unverified' });
           console.error(`[SessionManager] Storage state restore failed for session ${sessionId}`);
           // Clean up the inconsistent manager entry so deleteSession doesn't operate on an uninitialized manager
-          this.storageStateManagers.delete(sessionId);
+          managers.delete(resolvedContextName);
         }
       }
 
@@ -2026,6 +2034,7 @@ export class SessionManager {
    * Handle target closed event
    */
   onTargetClosed(targetId: string): void {
+    this.humanHeldTargets.delete(targetId);
     flushRecorderBuffer(targetId);
     this.targetCreationLedger.markClosed(targetId);
     const ownerInfo = this.targetToWorker.get(targetId);
@@ -2060,6 +2069,17 @@ export class SessionManager {
     // #848: drop the named-context association and let the registry GC the
     // BrowserContext when the last tab closes and no resume token pins it.
     const ctxEntry = this.targetToContext.get(targetId);
+    if (ownerInfo && session) {
+      const contextName = ctxEntry?.name ?? DEFAULT_CONTEXT_NAME;
+      const remaining = [...session.workers.values()].some(worker =>
+        [...worker.targets].some(id => this.getTargetContextName(id) === contextName));
+      if (!remaining) {
+        const managers = this.storageStateManagers.get(ownerInfo.sessionId);
+        managers?.get(contextName)?.stopWatchdog();
+        managers?.delete(contextName);
+        if (managers?.size === 0) this.storageStateManagers.delete(ownerInfo.sessionId);
+      }
+    }
     if (ctxEntry) {
       this.targetToContext.delete(targetId);
       this.namedContextRegistry.decrementTabCount(ctxEntry.browser, ctxEntry.name).catch((err) => {
@@ -2429,8 +2449,8 @@ export class SessionManager {
     if (!this.storageStateConfig?.enabled) return;
 
     for (const [sessionId, session] of this.sessions) {
-      const manager = this.storageStateManagers.get(sessionId);
-      if (!manager) continue;
+      const managers = this.storageStateManagers.get(sessionId);
+      if (!managers) continue;
 
       try {
         // #848: flush per named context (default + each isolatedContext)
@@ -2442,7 +2462,7 @@ export class SessionManager {
             const cdpClient = this.getCDPClientForWorker(sessionId, worker.id);
             const p = await cdpClient.getPageByTargetId(tid);
             if (p) {
-              await manager.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
+              await managers.get(ctxName)?.save(p, cdpClient, this.getStorageStatePath(sessionId, ctxName));
               console.error(`[SessionManager] Storage state saved for session ${sessionId} (context=${ctxName}) on shutdown`);
               flushedContexts.add(ctxName);
             }

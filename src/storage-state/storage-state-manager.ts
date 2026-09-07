@@ -412,8 +412,15 @@ export class StorageStateManager {
       const work = (async (): Promise<StorageRestoreResult> => {
         // Restore cookies
         if (state.cookies && state.cookies.length > 0) {
+          // A first navigation may already have established a newer login.
+          // Automatic restoration fills gaps; it never replaces live credentials.
+          const current = await cdpClient.send<{ cookies?: StorageState['cookies'] }>(page, 'Network.getAllCookies', {});
+          if (expired) return outcome('timed_out', 'unknown');
+          const cookieKey = (c: StorageState['cookies'][number]): string => `${c.domain}\n${c.path}\n${c.name}`;
+          const liveKeys = new Set((current.cookies ?? []).map(cookieKey));
           // Cookie expiry filtering does not validate server-side authentication.
           const validCookies = state.cookies.filter(c => {
+            if (liveKeys.has(cookieKey(c))) return false;
             if (c.session) return true;
             if (c.expires > 0 && c.expires < Date.now() / 1000) return false; // expired
             return true;
@@ -441,7 +448,7 @@ export class StorageStateManager {
               if (originData && Object.keys(originData).length > 0) {
                 await page.evaluate((data: Record<string, string>) => {
                   for (const [key, value] of Object.entries(data)) {
-                    window.localStorage.setItem(key, value);
+                    if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, value);
                   }
                 }, originData);
               }
@@ -449,7 +456,7 @@ export class StorageStateManager {
               // Legacy format: flat (backward compatible — inject all, as before)
               await page.evaluate((data: Record<string, string>) => {
                 for (const [key, value] of Object.entries(data)) {
-                  window.localStorage.setItem(key, value);
+                  if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, value);
                 }
               }, state.localStorage as Record<string, string>);
             }

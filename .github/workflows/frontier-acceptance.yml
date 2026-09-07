@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/harness/frontier-acceptance.ts'
+      - 'tests/harness/windows-focus.ps1'
       - 'tests/e2e/harness/mcp-client.ts'
       - 'package*.json'
       - '.github/workflows/frontier-acceptance.yml'
@@ -43,7 +44,7 @@ jobs:
           echo "CANDIDATE_PACKAGE=artifacts/frontier/$PACKAGE" >> "$GITHUB_ENV"
           echo "CANDIDATE_ENTRY=$INSTALL_DIR/node_modules/openchrome-mcp/dist/index.js" >> "$GITHUB_ENV"
       - name: Run through the installed entrypoint and real headless Chrome
-        run: npm run harness:frontier -- --runtime-contract --entry "$CANDIDATE_ENTRY" --artifact "$CANDIDATE_PACKAGE" --output artifacts/frontier/installed-acceptance.json
+        run: npm run harness:frontier -- --runtime-contract --confirmed-scope --entry "$CANDIDATE_ENTRY" --artifact "$CANDIDATE_PACKAGE" --output artifacts/frontier/installed-acceptance.json
       - name: Keep reports including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

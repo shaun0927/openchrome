@@ -25,6 +25,11 @@ export interface MCPToolResult {
 }
 
 export class MCPClient {
+  getLastRequestId(): number { return this.requestId; }
+  notify(method: string, params: Record<string, unknown>): void {
+    if (!this.canSend(this.process)) throw new Error('MCP client is not running');
+    this.process!.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  }
   private process: ChildProcess | null = null;
   private requestId = 0;
   private pending = new Map<number, {

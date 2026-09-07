@@ -259,3 +259,29 @@ describe('SessionManager target creation ledger', () => {
     expect(events.indexOf('second:start')).toBeGreaterThan(events.indexOf('first:end'));
   });
 });
+
+
+test('human control survives even forced idle cleanup until explicit release', async () => {
+  const manager = createManager();
+  await manager.createSession({ id: 'human' });
+  await manager.registerExternalTarget('human-tab', 'human', 'default');
+  manager.setTargetHumanControl('human', 'human-tab', true);
+  expect(await manager.cleanupInactiveSessions(-1, { force: true })).toEqual([]);
+  expect(manager.getTargetOwner('human-tab')?.sessionId).toBe('human');
+  expect(() => manager.setTargetHumanControl('other', 'human-tab', false)).toThrow();
+  manager.setTargetHumanControl('human', 'human-tab', false);
+  expect(await manager.cleanupInactiveSessions(-1, { force: true })).toEqual(['human']);
+});
+
+
+test('closing the last context tab releases its storage watchdog and manager', async () => {
+  const manager = createManager();
+  await manager.createSession({ id: 'watchdog' });
+  await manager.registerExternalTarget('watchdog-tab', 'watchdog', 'default');
+  const stopWatchdog = jest.fn();
+  const managers = new Map([['default', { stopWatchdog }]]);
+  (manager as any).storageStateManagers.set('watchdog', managers);
+  manager.onTargetClosed('watchdog-tab');
+  expect(stopWatchdog).toHaveBeenCalledTimes(1);
+  expect((manager as any).storageStateManagers.has('watchdog')).toBe(false);
+});

@@ -1,3 +1,4 @@
+import { assertToolAttemptActive, trackAttemptCommand } from '../core/deadline/tool-attempt';
 /**
  * CDP Client - Wrapper around puppeteer-core for Chrome DevTools Protocol
  */
@@ -2445,6 +2446,7 @@ export class CDPClient {
     method: string,
     params?: Record<string, unknown>
   ): Promise<T> {
+    assertToolAttemptActive();
     // Fail fast if the target is no longer valid (browser may have reconnected)
     const targetId = getTargetId(page.target());
     if (targetId && !this.targetIdIndex.has(targetId)) {
@@ -2457,8 +2459,9 @@ export class CDPClient {
     }
 
     const session = await this.getCDPSession(page);
+    assertToolAttemptActive();
     return withTimeout(
-      session.send(method as any, params as any) as Promise<T>,
+      trackAttemptCommand(session.send(method as any, params as any) as Promise<T>),
       DEFAULT_CDP_SEND_TIMEOUT_MS,
       `CDP ${method}`
     );

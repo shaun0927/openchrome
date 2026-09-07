@@ -2,7 +2,7 @@
 
 > Generated from `src/tools/index.ts`. Do not edit by hand; run `npm run docs:capability-map`.
 
-Total tools: 120
+Total tools: 121
 
 ## core
 
@@ -30,6 +30,7 @@ Total tools: 120
 - `network_capture_full` — Capture network requests with response bodies (capped).
 - `network_capture_lite` — Capture network request metadata + headers (no bodies).
 - `oc_assert` — Evaluate a single Outcome Contract assertion against caller-supplied evidence (snapshot), persist the redacted result for bounded retrieval, and return verdict pass/fail/inconclusive plus failed leaf assertions.
+- `oc_browser_control` — Observe a managed tab, check caller-supplied page/account conditions, or pause automatic input for explicit human control.
 - `oc_checkpoint` — Save, load, list, or delete automation checkpoints for long-running session continuity.
 - `oc_connection_health` — Get CDP connection health metrics including heartbeat mode, reconnect count, ping latency, connection state, and live reconnection progress.
 - `oc_context_export` — Export the active tab's auth-relevant state (cookies + local/sessionStorage + optional UA/viewport/HTTP-auth) as a portable plaintext envelope.

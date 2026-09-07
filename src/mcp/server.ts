@@ -3,6 +3,8 @@
  */
 
 import * as path from 'path';
+import { runToolAttempt, ToolAttemptError, currentAttemptSignal, drainAttemptCommands, runWithCommandScope } from '../core/deadline/tool-attempt';
+import { BrowserOperations, BrowserAdmissionError, operationTargets } from '../core/browser-operations';
 import {
   MCPRequest,
   MCPResponse,
@@ -287,9 +289,8 @@ const PROGRESSIVE_DISCLOSURE_CLIENTS = new Set([
 ]);
 
 const RECONNECTION_GUIDANCE =
-  '\n\nNote: The browser connection was lost and auto-reconnect was attempted. ' +
-  'Simply retry your operation — Chrome will be re-launched automatically if needed. ' +
-  'If the error persists, use tabs_context to get fresh tab IDs.';
+  '\n\nThe browser connection was lost. Use tabs_context to inspect live targets. ' +
+  'A mutating operation may already have executed; verify its outcome before retrying.';
 
 /**
  * Secrets substitution whitelist (#834).
@@ -537,6 +538,9 @@ export class MCPServer {
     // sessionManager uses, unlike the transport's Mcp-Session-Id.
     if (typeof this.sessionManager.addEventListener === 'function') {
       this.sessionManager.addEventListener((event) => {
+        if (event.targetId && (event.type === 'session:target-removed' || event.type === 'session:target-closed')) {
+          this.browserOperations.removeTarget(event.targetId);
+        }
         if (event.type === 'session:deleted') {
           const boundTenantId = this.sessionTenants.get(event.sessionId);
           this.sessionTenants.delete(event.sessionId);
@@ -666,8 +670,32 @@ export class MCPServer {
     // (No runtime guard here — the test suite registers synthetic dummy
     // tools with dynamic names that don't appear in TOOL_ANNOTATIONS, and
     // those legitimately bring their own inline annotations.)
-    this.tools.set(name, { name, handler, definition, ...options });
+    const guarded: ToolHandler = async (sessionId, args, context) => runWithCommandScope(async () => {
+      if (context?.signal?.aborted || currentAttemptSignal()?.aborted) throw new ToolAttemptError('TOOL_CANCELLED', 'not_started');
+      if (name === 'oc_browser_control') return handler(sessionId, args, context);
+      const customPredicate = name === 'wait_for' && args.type === 'function';
+      const broadScope = customPredicate || ['javascript_tool', 'batch_execute', 'execute_plan', 'cookies', 'storage', 'worker', 'oc_stop'].includes(name);
+      const finish = this.browserOperations.begin(sessionId, broadScope ? [] : operationTargets(args), name, customPredicate || definition.annotations?.readOnlyHint !== true);
+      try {
+        const result = await handler(sessionId, args, context);
+        await drainAttemptCommands();
+        finish(!result.isError);
+        return result;
+      } catch (error) {
+        await drainAttemptCommands();
+        finish(false);
+        throw error;
+      }
+    });
+    this.tools.set(name, { name, handler: guarded, definition, ...options });
     this.manifestVersion++;
+  }
+
+  readonly browserOperations = new BrowserOperations();
+  private readonly toolCancellations = new Map<string, AbortController>();
+
+  private cancellationKey(id: unknown, context?: TransportMessageContext): string {
+    return JSON.stringify([context?.mcpSessionId ?? currentRequestContext()?.mcpSessionId ?? 'stdio', id]);
   }
 
   /**
@@ -960,8 +988,9 @@ export class MCPServer {
               'HTTP transport deletion',
             );
           }
-          this.sessionTenants.delete(browserSessionId);
-          if (typeof this.sessionManager.deleteSession === 'function') {
+          const heldForHuman = this.browserOperations.hasHandoff(browserSessionId);
+          if (!heldForHuman) this.sessionTenants.delete(browserSessionId);
+          if (!heldForHuman && typeof this.sessionManager.deleteSession === 'function') {
             void this.sessionManager.deleteSession(browserSessionId).catch((error) => {
               console.error(`[MCPServer] Failed to delete implicit browser session ${browserSessionId}: ${formatError(error)}`);
             });
@@ -1073,6 +1102,13 @@ export class MCPServer {
     // Notifications have no `id` field — must NOT receive a response per JSON-RPC 2.0 spec
     if (isJsonRpcNotification(parsed)) {
       const method = parsed.method as string;
+      if (method === 'notifications/cancelled') {
+        const id = (parsed.params as { requestId?: unknown } | undefined)?.requestId;
+        if (typeof id === 'string' || typeof id === 'number') {
+          this.toolCancellations.get(this.cancellationKey(id, transportContext))?.abort(new ToolAttemptError('TOOL_CANCELLED', 'unknown'));
+        }
+        return null;
+      }
       if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
         const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
@@ -1224,9 +1260,22 @@ export class MCPServer {
           result = await this.handleToolsList(params, transportContext);
           break;
 
-        case 'tools/call':
-          result = await this.handleToolsCall(params, id, principal, signal, transportContext);
+        case 'tools/call': {
+          const key = this.cancellationKey(id, transportContext);
+          if (this.toolCancellations.has(key)) return this.errorResponse(id, MCPErrorCodes.INVALID_REQUEST, 'Duplicate active request id');
+          const controller = new AbortController();
+          const abort = (): void => controller.abort(signal?.reason);
+          if (signal?.aborted) abort();
+          else signal?.addEventListener('abort', abort, { once: true });
+          this.toolCancellations.set(key, controller);
+          try {
+            result = await this.handleToolsCall(params, id, principal, controller.signal, transportContext);
+          } finally {
+            signal?.removeEventListener('abort', abort);
+            this.toolCancellations.delete(key);
+          }
           break;
+        }
 
         case 'resources/list':
           result = await this.handleResourcesList();
@@ -2149,6 +2198,9 @@ export class MCPServer {
         this.createProgressReporter(progressToken);
 
       let result: MCPResult;
+      const executionStartedAt = Date.now();
+      const executionDeadline = executionStartedAt + DEFAULT_TOOL_EXECUTION_TIMEOUT_MS;
+      const retrySafe = tool.definition.annotations?.readOnlyHint === true && !(toolName === 'wait_for' && substitutedArgs.type === 'function');
       try {
         const toolContext: ToolContext = {
           startTime: Date.now(),
@@ -2159,37 +2211,21 @@ export class MCPServer {
           requestClient: this.requestFromClient.bind(this),
           reportProgress,
         };
-        let tid: ReturnType<typeof setTimeout>;
-        result = await Promise.race([
-          Promise.resolve(tool.handler(sessionId, substitutedArgs, toolContext)).finally(() => clearTimeout(tid)),
-          new Promise<never>((_, reject) => {
-            tid = setTimeout(
-              () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms`)),
-              DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
-            );
-          }),
-        ]);
+        result = await runToolAttempt(
+          attemptSignal => tool.handler(sessionId, substitutedArgs, { ...toolContext, signal: attemptSignal }),
+          executionDeadline, signal,
+        );
       } catch (handlerError) {
-        if (isConnectionError(handlerError)) {
+        if (isConnectionError(handlerError) && retrySafe && !signal?.aborted && Date.now() < executionDeadline) {
           // Attempt internal reconnection before surfacing error to LLM
           console.error(`[MCPServer] Connection error during ${toolName}, attempting auto-reconnect...`);
           const cdpClient = getCDPClient();
           try {
-            let reconnectTid: ReturnType<typeof setTimeout>;
-            await Promise.race([
-              cdpClient.forceReconnect().finally(() => clearTimeout(reconnectTid)),
-              new Promise<never>((_, reject) => {
-                reconnectTid = setTimeout(() => reject(new Error(`Reconnect timed out after ${DEFAULT_RECONNECT_TIMEOUT_MS}ms`)), DEFAULT_RECONNECT_TIMEOUT_MS);
-              }),
-            ]);
-            console.error(`[MCPServer] Reconnected, retrying ${toolName}...`);
-            // Wait for session state reconciliation before retrying
-            try {
+            await runToolAttempt(async recoverySignal => {
+              await cdpClient.forceReconnect();
+              if (recoverySignal.aborted) throw recoverySignal.reason;
               await this.sessionManager.reconcileAfterReconnect();
-            } catch (reconcileErr) {
-              console.error('[MCPServer] Post-reconnect reconciliation failed, aborting retry:', reconcileErr);
-              throw handlerError; // Abort retry — stale state would cause wrong-target errors
-            }
+            }, Math.min(executionDeadline, Date.now() + DEFAULT_RECONNECT_TIMEOUT_MS), signal);
             const retryToolContext: ToolContext = {
               startTime: Date.now(),
               deadlineMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
@@ -2199,18 +2235,13 @@ export class MCPServer {
               requestClient: this.requestFromClient.bind(this),
               reportProgress,
             };
-            let tid2: ReturnType<typeof setTimeout>;
-            result = await Promise.race([
-              Promise.resolve(tool.handler(sessionId, substitutedArgs, retryToolContext)).finally(() => clearTimeout(tid2)),
-              new Promise<never>((_, reject) => {
-                tid2 = setTimeout(
-                  () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (retry)`)),
-                  DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
-                );
-              }),
-            ]);
+            result = await runToolAttempt(
+              attemptSignal => tool.handler(sessionId, substitutedArgs, { ...retryToolContext, startTime: executionStartedAt, signal: attemptSignal }),
+              executionDeadline, signal,
+            );
           } catch (retryError) {
-            throw handlerError; // throw ORIGINAL error
+            if (retryError instanceof ToolAttemptError) throw retryError;
+            throw handlerError; // Preserve the original connection failure otherwise
           }
         } else {
           throw handlerError;
@@ -2235,30 +2266,18 @@ export class MCPServer {
         // otherwise calls String(value). A plain `{ message: errorText }` object
         // therefore stringifies to "[object Object]" and matches no pattern — which
         // had silently made this whole swallowed-error retry path dead code. (L1)
-        if (isConnectionError(errorText)) {
+        if (isConnectionError(errorText) && !retrySafe) {
+          result = { ...result, structuredContent: { ...result.structuredContent, execution: 'unknown', retryAllowed: false } };
+        }
+        if (isConnectionError(errorText) && retrySafe && !signal?.aborted && Date.now() < executionDeadline) {
           console.error(`[MCPServer] Detected swallowed connection error in "${toolName}" result, attempting reconnect + retry`);
           try {
             const cdpClientRetry = getCDPClient();
-            // Race the reconnect against DEFAULT_RECONNECT_TIMEOUT_MS, exactly like the
-            // thrown-error retry path above. A bare `await forceReconnect()` would
-            // re-open the same hang window the handler race below closes: if Chrome is
-            // dead and the reconnect never resolves, the stdio path would hang here
-            // before the retry is even dispatched. (SSOT decision D5 / L1)
-            let swallowedReconnectTid: ReturnType<typeof setTimeout>;
-            await Promise.race([
-              cdpClientRetry.forceReconnect().finally(() => clearTimeout(swallowedReconnectTid)),
-              new Promise<never>((_, reject) => {
-                swallowedReconnectTid = setTimeout(
-                  () => reject(new Error(`Reconnect timed out after ${DEFAULT_RECONNECT_TIMEOUT_MS}ms (swallowed-error path)`)),
-                  DEFAULT_RECONNECT_TIMEOUT_MS,
-                );
-              }),
-            ]);
-            // Wait for session state reconciliation before retrying — mirrors the
-            // thrown-error retry path above. If reconciliation fails this throws and
-            // the catch below keeps the original error result, since stale target
-            // state would otherwise cause wrong-target errors. (SSOT decision D4 / L1)
-            await this.sessionManager.reconcileAfterReconnect();
+            await runToolAttempt(async recoverySignal => {
+              await cdpClientRetry.forceReconnect();
+              if (recoverySignal.aborted) throw recoverySignal.reason;
+              await this.sessionManager.reconcileAfterReconnect();
+            }, Math.min(executionDeadline, Date.now() + DEFAULT_RECONNECT_TIMEOUT_MS), signal);
             // Retry the tool call once
             const swallowedRetryContext: ToolContext = {
               startTime: Date.now(),
@@ -2273,19 +2292,14 @@ export class MCPServer {
             // initial dispatch and the thrown-error retry. A bare `await` here can
             // hang the stdio path indefinitely (no outer request timeout exists in
             // stdio mode), violating the never-hang contract. (SSOT decision D5 / L1)
-            let swallowedRetryTid: ReturnType<typeof setTimeout>;
-            result = await Promise.race([
-              Promise.resolve(tool.handler(sessionId, substitutedArgs, swallowedRetryContext)).finally(() => clearTimeout(swallowedRetryTid)),
-              new Promise<never>((_, reject) => {
-                swallowedRetryTid = setTimeout(
-                  () => reject(new Error(`Tool '${toolName}' timed out after ${DEFAULT_TOOL_EXECUTION_TIMEOUT_MS}ms (swallowed-error retry)`)),
-                  DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
-                );
-              }),
-            ]);
+            result = await runToolAttempt(
+              attemptSignal => tool.handler(sessionId, substitutedArgs, { ...swallowedRetryContext, startTime: executionStartedAt, signal: attemptSignal }),
+              executionDeadline, signal,
+            );
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
           } catch (retryError) {
             console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);
+            if (retryError instanceof ToolAttemptError) throw retryError;
             // Keep original error result
           }
         }
@@ -2625,11 +2639,15 @@ export class MCPServer {
       // NOTE: navigate.ts now handles timeout coherence itself (checking readyState/elementCount
       // to decide success-with-warning vs genuine error). This fallback is kept for backward
       // compatibility with any other tools that set timeoutRecoverable=true.
-      const errorIsError = !(isTimeoutError(error) && tool.timeoutRecoverable);
+      const errorIsError = error instanceof ToolAttemptError || !(isTimeoutError(error) && tool.timeoutRecoverable);
 
       const errResult: MCPResult = {
         content: [{ type: 'text', text: `Error: ${displayMessage}` }],
         isError: errorIsError,
+        ...((error instanceof ToolAttemptError || error instanceof BrowserAdmissionError || isConnectionError(error)) && {
+          structuredContent: { execution: error instanceof ToolAttemptError || error instanceof BrowserAdmissionError ? error.execution : 'unknown',
+            code: error instanceof ToolAttemptError || error instanceof BrowserAdmissionError ? error.code : 'CONNECTION_LOST', retryAllowed: false },
+        }),
       };
 
       if (callId) {

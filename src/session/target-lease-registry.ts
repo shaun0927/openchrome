@@ -122,10 +122,10 @@ export class TargetLeaseRegistry {
     return released;
   }
 
-  expire(now = Date.now()): TargetLeaseRecord[] {
+  expire(now = Date.now(), held: ReadonlySet<string> = new Set()): TargetLeaseRecord[] {
     const expired: TargetLeaseRecord[] = [];
     for (const [targetId, lease] of this.leases) {
-      if (lease.leaseExpiresAt !== undefined && lease.leaseExpiresAt <= now) {
+      if (!held.has(targetId) && lease.leaseExpiresAt !== undefined && lease.leaseExpiresAt <= now) {
         this.leases.delete(targetId);
         expired.push(lease);
       }
