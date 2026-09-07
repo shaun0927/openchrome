@@ -1,5 +1,7 @@
 import { execFile, execFileSync } from 'child_process';
 
+export const PROCESS_MEMORY_TIMEOUT_MS = 10_000;
+
 export interface ProcessMemoryRow {
   pid: number;
   parentPid: number;
@@ -16,6 +18,7 @@ export interface ProcessMemorySample {
   timestamp: number;
   scope: 'process' | 'process-tree';
   metric: 'working-set' | 'rss';
+  collectionDurationMs?: number;
 }
 
 function validPid(pid: number): void {
@@ -87,28 +90,30 @@ function command(pid: number, tree: boolean, platform: NodeJS.Platform): { file:
     return {
       file: 'powershell.exe',
       args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-        `$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process${filter} | Select-Object ProcessId,ParentProcessId,WorkingSetSize,@{n='CreationDate';e={if($_.CreationDate){$_.CreationDate.ToUniversalTime().ToString('o')}else{''}}} | ConvertTo-Json -Compress`],
+        `$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,WorkingSetSize,CreationDate${filter} | Select-Object ProcessId,ParentProcessId,WorkingSetSize,@{n='CreationDate';e={if($_.CreationDate){$_.CreationDate.ToUniversalTime().ToString('o')}else{''}}} | ConvertTo-Json -Compress`],
     };
   }
   return { file: 'ps', args: [...(tree ? ['-A'] : ['-p', String(pid)]), '-o', 'pid=,ppid=,rss=,lstart='] };
 }
 
-const options = { encoding: 'utf8' as const, timeout: 5000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 };
+const options = { encoding: 'utf8' as const, timeout: PROCESS_MEMORY_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 };
 
 export function readProcessMemorySync(pid: number, tree = false): ProcessMemorySample {
+  const startedAt = Date.now();
   const platform = process.platform;
   const cmd = command(pid, tree, platform);
   const raw = execFileSync(cmd.file, cmd.args, options);
-  return selectProcessMemory(parseProcessMemory(raw, platform), pid, tree, platform);
+  return { ...selectProcessMemory(parseProcessMemory(raw, platform), pid, tree, platform), collectionDurationMs: Date.now() - startedAt };
 }
 
 export function readProcessMemory(pid: number, tree = true, signal?: AbortSignal): Promise<ProcessMemorySample> {
+  const startedAt = Date.now();
   const platform = process.platform;
   const cmd = command(pid, tree, platform);
   return new Promise((resolve, reject) => {
     execFile(cmd.file, cmd.args, { ...options, signal }, (error, stdout) => {
       if (error) { reject(error); return; }
-      try { resolve(selectProcessMemory(parseProcessMemory(stdout, platform), pid, tree, platform)); }
+      try { resolve({ ...selectProcessMemory(parseProcessMemory(stdout, platform), pid, tree, platform), collectionDurationMs: Date.now() - startedAt }); }
       catch (parseError) { reject(parseError); }
     });
   });

@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { MCPClient } from '../e2e/harness/mcp-client';
-import { readProcessMemory, ProcessMemorySample } from '../../src/core/process/memory';
+import { readProcessMemory, ProcessMemorySample, PROCESS_MEMORY_TIMEOUT_MS } from '../../src/core/process/memory';
 
 async function freePort(): Promise<number> {
   const server = createNetServer();
@@ -92,11 +92,11 @@ async function main(): Promise<void> {
     artifactSha512: artifact ? crypto.createHash('sha512').update(await fs.readFile(artifact)).digest('base64') : null,
     platform: process.platform, os: os.release(), node: process.version,
     profile: 'fresh isolated temporary profile; four named contexts',
-    measurement: { startupTimeoutMs: 120_000, warmupRounds: 1, measuredRounds: 5, parallelism: 4,
+    measurement: { startupTimeoutMs: 120_000, collectorTimeoutMs: PROCESS_MEMORY_TIMEOUT_MS, warmupRounds: 1, measuredRounds: 5, parallelism: 4,
       sampling: 'awaited process-tree sample after launch and each measured round',
       missingSamplesAllowed: 0, metricCaveat: 'Summed working set/RSS includes shared pages; not private bytes.',
       verdictScope: 'functional smoke and sample availability; no speed or leak threshold claim' },
-    timings, samples, status: 'running',
+    timings, samples, status: 'running', measurementStatus: 'not_started',
   };
   const write = async () => { await fs.mkdir(path.dirname(output), { recursive: true }); await fs.writeFile(output, JSON.stringify(report, null, 2)); };
   let chromePid: number | undefined;
@@ -134,9 +134,15 @@ async function main(): Promise<void> {
     const marker = JSON.parse(await fs.readFile(path.join(profile, '.openchrome-managed'), 'utf8'));
     chromePid = marker.pid;
     const sample = async () => {
-      const value = await readProcessMemory(chromePid!, true);
-      if (samples.length) assert.equal(value.identity, samples[0].identity, 'Chrome PID reused');
-      samples.push(value);
+      try {
+        const value = await readProcessMemory(chromePid!, true);
+        if (samples.length) assert.equal(value.identity, samples[0].identity, 'Chrome PID reused');
+        samples.push(value);
+        report.measurementStatus = 'valid';
+      } catch (error) {
+        report.measurementStatus = 'inconclusive';
+        throw error;
+      }
     };
     await sample();
     for (let round = 0; round < 6; round++) {
