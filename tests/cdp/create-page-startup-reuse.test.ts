@@ -1,5 +1,9 @@
 /// <reference types="jest" />
 
+jest.mock('../../src/cdp/background-page', () => ({
+  createBackgroundPage: (browser: { newPage(): Promise<unknown> }, context?: { newPage(): Promise<unknown> }) => (context ?? browser).newPage(),
+}));
+
 // Tests for the first-call NTP reuse path in CDPClient.createPage().
 // See issue #1346: managed Chrome auto-opens a startup New Tab Page.
 // On the very first createPage() per CDPClient, we navigate that

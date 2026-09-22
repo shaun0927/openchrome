@@ -334,3 +334,6 @@ test('managed launcher PID remains visible when puppeteer connects instead of la
   expect(client.getChromePid()).toBeNull();
   mockLauncher.getInstance.mockReturnValue({ launchMode: 'isolated' });
 });
+jest.mock('../../src/cdp/background-page', () => ({
+  createBackgroundPage: (browser: { newPage(): Promise<unknown> }, context?: { newPage(): Promise<unknown> }) => (context ?? browser).newPage(),
+}));
