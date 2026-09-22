@@ -817,7 +817,9 @@ export class MCPServer {
     for (const controller of this.toolCancellations.values()) {
       controller.abort(new ToolAttemptError('TOOL_CANCELLED', 'unknown'));
     }
-    await settle(2_000);
+    // Short budgets (SIGHUP) get a proportionally short grace for the
+    // cancelled calls to report back.
+    await settle(Math.min(2_000, Math.max(250, Math.floor(deadlineMs / 4))));
     console.error(`[MCPServer] drain: ${inFlight - cancelled} call(s) completed, ${cancelled} cancelled at the ${deadlineMs}ms deadline`);
     return { completed: inFlight - cancelled, cancelled };
   }
