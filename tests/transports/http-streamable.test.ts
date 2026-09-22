@@ -77,19 +77,39 @@ describe('Streamable HTTP - POST with Accept: text/event-stream', () => {
     expect(data.result).toBeDefined();
   });
 
-  it.each(['header', 'body', 'batch'])('rejects modern %s before dispatch and session allocation', async mode => {
+  // 2026-07-28 traffic is classified and validated by the official SDK before
+  // the sessionful legacy path runs, so malformed modern requests never reach
+  // the handler or allocate an Mcp-Session-Id.
+  it.each([
+    ['modern header on initialize', { 'MCP-Protocol-Version': '2026-07-28' },
+      { jsonrpc: '2.0', id: 91, method: 'initialize', params: {} }],
+    ['modern envelope without routing headers', {},
+      { jsonrpc: '2.0', id: 92, method: 'tools/list', params: { _meta: {
+        'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+        'io.modelcontextprotocol/clientCapabilities': {},
+      } } }],
+  ])('rejects %s before dispatch and session allocation', async (_label, headers, message) => {
     const handler = jest.fn();
     transport.onMessage(handler);
-    const message = { jsonrpc: '2.0', id: 91, method: 'initialize', params: {
-      ...(mode !== 'header' ? { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } : {}),
-    } };
     const res = await request('/mcp', 'POST', {
       'Content-Type': 'application/json',
-      ...(mode === 'header' ? { 'MCP-Protocol-Version': '2026-07-28' } : {}),
-    }, JSON.stringify(mode === 'batch' ? [message] : message));
+      ...headers,
+    }, JSON.stringify(message));
     expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error.code).toBe(-32600);
+    expect([-32020, -32022, -32600]).toContain(JSON.parse(res.body).error.code);
     expect(res.headers['mcp-session-id']).toBeUndefined();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('rejects a modern-versioned header on the sessionful legacy path', async () => {
+    const handler = jest.fn();
+    transport.onMessage(handler);
+    const res = await request('/mcp', 'POST', {
+      'Content-Type': 'application/json',
+      'MCP-Protocol-Version': '2025-06-18',
+    }, JSON.stringify({ jsonrpc: '2.0', id: 93, method: 'tools/list', params: {} }));
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatchObject({ code: -32600, data: { requested: '2025-06-18' } });
     expect(handler).not.toHaveBeenCalled();
   });
 

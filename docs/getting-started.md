@@ -189,7 +189,7 @@ This checks your entire environment in one pass and prints an actionable report:
 ```
 === openchrome doctor ===
 
-[  ok  ] Node.js version  v20.11.0 (required: >=18.0.0)
+[  ok  ] Node.js version  v20.11.0 (required: >=20.0.0)
 [  ok  ] ~/.openchrome/ writable  /Users/you/.openchrome
 [ fail ] Chrome binary  Chrome executable not found on this system
          Fix: Install Google Chrome, or set CHROME_PATH env var to the binary path
