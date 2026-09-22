@@ -32,7 +32,7 @@ export function buildShadowLearningEvent(input: BuildShadowLearningEventInput): 
     label: null,
     privacy: {
       redacted: redacted.redacted,
-      contains_sensitive: redacted.containsSensitive,
+      contains_sensitive: false,
     },
   };
 }

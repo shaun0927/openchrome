@@ -44,7 +44,7 @@ function sanitizeEvent(event: LearningEvent): LearningEvent {
       abstain: review.abstain === true, disagreement: review.answer !== event.deterministic_answer,
     } : null,
     label: event.label ? { answer: event.label.answer, source: event.label.source, created_at: now } : null,
-    privacy: { redacted: true, contains_sensitive: event.privacy.contains_sensitive || redacted.containsSensitive } };
+    privacy: { redacted: true, contains_sensitive: false } };
 }
 
 export async function readLearningEventsFromJsonl(file: string): Promise<LearningEvent[]> {
