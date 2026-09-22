@@ -939,7 +939,10 @@ export class MCPServer {
    * the sessionful legacy HTTP path uses the server's own primitive.
    */
   private getCurrentRequestClient(): NonNullable<ToolContext['requestClient']> {
-    return currentRequestContext()?.requestClient ?? this.requestFromClient.bind(this);
+    const context = currentRequestContext();
+    return context?.createRequestClient?.()
+      ?? context?.requestClient
+      ?? this.requestFromClient.bind(this);
   }
 
   /**
@@ -1794,7 +1797,9 @@ export class MCPServer {
     for (const resource of this.resources.values()) {
       resources.push(resource);
     }
-    resources.push(...liveResourceDefinitions(this.sessionManager, currentRequestContext()?.tenantId));
+    // List only what the caller can read: stdio requests carry no tenant and
+    // read as the default tenant, so they list that tenant's sessions.
+    resources.push(...liveResourceDefinitions(this.sessionManager, currentRequestContext()?.tenantId ?? DEFAULT_TENANT_ID));
     return { resources };
   }
 
@@ -2244,6 +2249,37 @@ export class MCPServer {
       throw err;
     }
 
+    // Rate limit check — reject before doing any work, including a modern
+    // roots round trip, so unanswered input_required rounds are metered too.
+    // Only switch to tenant-scoped keying in real api-key mode; disabled and
+    // legacy modes synthesize a fixed principal ('anonymous' / 'legacy'), so
+    // keying by their tenantId would collapse every HTTP session into one
+    // bucket and let one noisy client throttle unrelated sessions. Fall back
+    // to per-session keying for stdio callers (no principal) and for the
+    // synthetic disabled/legacy principals.
+    if (this.rateLimiter) {
+      const rateLimitKey =
+        principal && principal.mode === 'api-key'
+          ? SessionRateLimiter.tenantKey(principal.tenantId)
+          : sessionId;
+      const rateResult = this.rateLimiter.check(rateLimitKey);
+      if (!rateResult.allowed) {
+        console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
+        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', withTenantLabel({ tool: toolName })); } catch { /* best-effort */ }
+        const rateLimitResult: MCPResult = {
+          content: [
+            {
+              type: 'text',
+              text: `Rate limit exceeded. Too many requests from this session. Please retry after ${rateResult.retryAfterSec} second(s). Current limit: ${process.env.OPENCHROME_RATE_LIMIT_RPM || DEFAULT_RATE_LIMIT_RPM} requests/minute.`,
+            },
+          ],
+          isError: true,
+        };
+        this.recordToolOutputObservability(toolName, rateLimitResult);
+        return rateLimitResult;
+      }
+    }
+
     const legacyRootsScope = this.rootsScopeId(transportContext);
     const rootsScope = legacyRootsScope ?? sessionId;
     const roots = currentRequestContext()?.protocolEra === 'modern'
@@ -2285,36 +2321,6 @@ export class MCPServer {
     const toolTier = getToolTier(toolName);
     if (toolTier > this.exposedTier) {
       this.expandToolTier(toolTier);
-    }
-
-    // Rate limit check — reject before doing any work.
-    // Only switch to tenant-scoped keying in real api-key mode; disabled and
-    // legacy modes synthesize a fixed principal ('anonymous' / 'legacy'), so
-    // keying by their tenantId would collapse every HTTP session into one
-    // bucket and let one noisy client throttle unrelated sessions. Fall back
-    // to per-session keying for stdio callers (no principal) and for the
-    // synthetic disabled/legacy principals.
-    if (this.rateLimiter) {
-      const rateLimitKey =
-        principal && principal.mode === 'api-key'
-          ? SessionRateLimiter.tenantKey(principal.tenantId)
-          : sessionId;
-      const rateResult = this.rateLimiter.check(rateLimitKey);
-      if (!rateResult.allowed) {
-        console.error(`[MCPServer] Rate limit exceeded for session ${sessionId}, retry after ${rateResult.retryAfterSec}s`);
-        try { getMetricsCollector().inc('openchrome_rate_limit_rejections_total', withTenantLabel({ tool: toolName })); } catch { /* best-effort */ }
-        const rateLimitResult: MCPResult = {
-          content: [
-            {
-              type: 'text',
-              text: `Rate limit exceeded. Too many requests from this session. Please retry after ${rateResult.retryAfterSec} second(s). Current limit: ${process.env.OPENCHROME_RATE_LIMIT_RPM || DEFAULT_RATE_LIMIT_RPM} requests/minute.`,
-            },
-          ],
-          isError: true,
-        };
-        this.recordToolOutputObservability(toolName, rateLimitResult);
-        return rateLimitResult;
-      }
     }
 
     const requiresBrowserSession = shouldInitializeBrowserSession(toolName, substitutedArgs);
@@ -2559,6 +2565,7 @@ export class MCPServer {
               executionDeadline, signal,
             );
           } catch (retryError) {
+            if (isMcpInputRequiredError(retryError)) throw retryError;
             if (retryError instanceof ToolAttemptError) throw retryError;
             throw handlerError; // Preserve the original connection failure otherwise
           }
@@ -2617,6 +2624,7 @@ export class MCPServer {
             );
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
           } catch (retryError) {
+            if (isMcpInputRequiredError(retryError)) throw retryError;
             console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);
             if (retryError instanceof ToolAttemptError) throw retryError;
             // Keep original error result

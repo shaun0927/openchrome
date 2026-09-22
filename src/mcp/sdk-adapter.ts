@@ -320,6 +320,7 @@ export function createSdkServerAdapter(
         ? { clientCapabilities: capabilities as RequestContext['clientCapabilities'] }
         : {}),
       requestClient: requestClientFor(ctx, options.era),
+      createRequestClient: () => requestClientFor(ctx, options.era),
       notifyClient: async (notificationMethod, notificationParams) => {
         await ctx.mcpReq.notify({
           method: notificationMethod,
