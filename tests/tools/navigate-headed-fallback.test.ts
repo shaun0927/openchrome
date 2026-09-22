@@ -164,10 +164,19 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
   });
 
   describe('Tier 3: automatic escalation from Tier 2', () => {
+    test('requests user intervention without launching headed fallback by default', async () => {
+      const handler = await getNavigateHandler();
+      mockDetectBlockingPage.mockResolvedValue({ type: 'access-denied', detail: 'fixture' });
+      const result = await handler(testSessionId, { url: 'https://fixture.example', stealth: true });
+      const parsed = parseResultJSON<Record<string, unknown>>(result as MCPResult);
+      expect(parsed.code).toBe('HEADED_FALLBACK_REQUIRES_USER');
+      expect(parsed.status).toBe('needs_user_input');
+      expect(mockHeadedNavigatePersistent).not.toHaveBeenCalled();
+    });
     test('headless policy requires user input instead of opening a visible fallback', async () => {
       const handler = await getNavigateHandler(true);
       mockDetectBlockingPage.mockResolvedValue({ type: 'access-denied', detail: 'fixture block' });
-      const result = await handler(testSessionId, { url: 'https://fixture.example' }) as MCPResult;
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://fixture.example' }) as MCPResult;
       const parsed = parseResultJSON<NavResult>(result);
       expect((result as MCPResult).isError).toBe(true);
       expect(parsed.code).toBe('HEADED_FALLBACK_REQUIRES_USER');
@@ -183,7 +192,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })  // Tier 1
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' }); // Tier 2
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -201,7 +210,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })
         .mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBe(2);
@@ -218,7 +227,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       // Falls back to Tier 2 result (with blockingPage)
@@ -234,7 +243,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', autoFallback: false });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', autoFallback: false });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       // No fallback at all
@@ -262,7 +271,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         },
       );
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -290,7 +299,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         },
       );
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -306,7 +315,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' });
 
       // autoFallback: false means Tier 2 never happens, so no stealth retry at all
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', autoFallback: false });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', autoFallback: false });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBeUndefined();
@@ -330,7 +339,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         targetId: 'headed-target-blocked',
       });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBe(3);
@@ -343,7 +352,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
     test('headed=true navigates directly in headed Chrome without fake BlockingInfo (#560)', async () => {
       const handler = await getNavigateHandler();
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', headed: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -362,7 +371,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const handler = await getNavigateHandler();
       mockHeadedIsAvailable.mockReturnValue(false);
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', headed: true });
       const mcpResult = result as MCPResult;
 
       expect(mcpResult.isError).toBe(true);
@@ -378,7 +387,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'bot-check', detail: 'Bot Check' })
         .mockResolvedValueOnce({ type: 'bot-check', detail: 'Still Bot Check' });
 
-      const result = await handler(testSessionId, { url: 'https://www.example.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.example.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed).toHaveProperty('headed', true);
@@ -394,7 +403,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const mockPage = createMockPage({ url: 'https://example.test/', targetId: 'headed-target-123' });
       mockHeadedGetPage.mockReturnValue(mockPage);
       (mockSessionManager.registerHeadedPage as jest.Mock).mockResolvedValueOnce(false);
-      const result = await handler(testSessionId, { url: 'https://example.test', headed: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://example.test', headed: true });
       expect((result as MCPResult).isError).toBe(true);
       expect(parseResultJSON(result as MCPResult)).toMatchObject({
         code: 'TARGET_REGISTRATION_FAILED', execution: 'completed', createdTargetClosed: true,
@@ -406,7 +415,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });
       mockHeadedGetPage.mockReturnValue(mockPage);
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', headed: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -424,7 +433,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const handler = await getNavigateHandler();
       mockHeadedGetPage.mockReturnValue(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', headed: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -441,7 +450,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const mockPage = createMockPage({ url: 'https://www.coupang.com/', targetId: 'headed-target-123' });
       mockHeadedGetPage.mockReturnValue(mockPage);
 
-      await handler(testSessionId, { url: 'https://www.coupang.com', headed: true });
+      await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', headed: true });
 
       expect(mockSessionManager.getOrCreateWorker).toHaveBeenCalledWith(
         testSessionId,
@@ -460,7 +469,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const mockPage = createMockPage({ url: 'https://aws.amazon.com/', targetId: 'headed-profile-123' });
       mockHeadedGetPage.mockReturnValue(mockPage);
 
-      const result = await handler(testSessionId, {
+      const result = await handler(testSessionId, { allowHeadedFallback: true,
         url: 'https://aws.amazon.com',
         headed: true,
         profileDirectory: 'Profile 1',
@@ -497,7 +506,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -519,7 +528,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
       const mockPage = createMockPage({ url: 'https://aws.amazon.com/', targetId: 'headed-profile-123' });
       mockHeadedGetPage.mockReturnValue(mockPage);
 
-      const result = await handler(testSessionId, {
+      const result = await handler(testSessionId, { allowHeadedFallback: true,
         url: 'https://aws.amazon.com',
         headed: true,
         profileDirectory: 'Profile 1',
@@ -560,7 +569,7 @@ describe('NavigateTool - Headed Chrome Fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' });
 
-      const result = await handler(testSessionId, {
+      const result = await handler(testSessionId, { allowHeadedFallback: true,
         url: 'https://www.coupang.com',
         profileDirectory: 'Profile 1',
       });

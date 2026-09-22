@@ -18,7 +18,7 @@ async function main() {
   const originalWindow = foreground();
   const browser = await puppeteer.launch({ executablePath: process.env.OPENCHROME_TEST_CHROME, headless: false, defaultViewport: null });
   const port = new URL(browser.wsEndpoint()).port;
-  const client = new MCPClient({ args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_SKIP_COOKIE_BRIDGE: '1' } });
+  const client = new MCPClient({ args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_SKIP_COOKIE_BRIDGE: '1', OPENCHROME_FOCUS_POLICY: 'background-only' } });
   try {
     await client.start();
     assert.equal(foreground(originalWindow), originalWindow, 'Could not restore the previously focused application for QA');
@@ -29,6 +29,10 @@ async function main() {
       const after = foreground();
       rows.push({ scenario: args.isolatedContext ? 'isolated-create' : 'default-create', foregroundPreserved: after === originalWindow });
       assert.equal(after, originalWindow, 'Tab creation stole foreground');
+      const created = result.raw.structuredContent ?? JSON.parse(result.content[0].text);
+      const activation = await client.callTool('tabs_activate', { tabId: created.tabId });
+      assert.equal(activation.raw.isError, true, 'background-only policy allowed activation');
+      assert.equal(foreground(), originalWindow);
     }
     const info = await client.callTool('oc_get_connection_info', { host: 'openchrome' });
     assert.notEqual(info.raw.isError, true);
