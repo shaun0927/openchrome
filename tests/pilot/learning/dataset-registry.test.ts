@@ -23,8 +23,8 @@ test('export excludes invalid, unlabeled, sensitive and heuristic records by def
 });
 
 test('same state stays on the same split despite different event IDs and labels', () => {
-  const base = { id: 'a', task: 'irreversible_policy' as const, state: { retries: 1 }, choices: choicesForLearningTask('irreversible_policy'), label: 'allow', label_source: 'host' as const, deterministic_answer: 'blocked', model_answer: null };
-  const examples = [base, { ...base, id: 'b', label: 'blocked' }];
+  const base = { id: 'a', task: 'irreversible_policy' as const, state: { retries: 1, wall_ms: 10 }, choices: choicesForLearningTask('irreversible_policy'), label: 'allow', label_source: 'host' as const, deterministic_answer: 'blocked', model_answer: null };
+  const examples = [base, { ...base, id: 'b', label: 'blocked', state: { wall_ms: 10, retries: 1 }, choices: [...base.choices].reverse() }];
   const a = splitLearningDataset({ examples, holdoutRatio: 0.5 });
   const b = splitLearningDataset({ examples: [...examples].reverse(), holdoutRatio: 0.5 });
   expect(a.train.length).toBe(b.train.length);
