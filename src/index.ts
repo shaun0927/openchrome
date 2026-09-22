@@ -891,13 +891,10 @@ program
       // Start server with stdio as primary transport (wires JSON-RPC validation, rate-limiter, etc.)
       server.start();
 
-      // Wire HTTP transport through MCPServer.handleMessage() — single source of
-      // truth for JSON-RPC validation, notification handling, and request routing.
-      httpTrans.onMessage(async (msg: Record<string, unknown>, signal?: AbortSignal, context?: import('./transports').TransportMessageContext) =>
-        server.handleMessage(msg, signal, context),
-      );
-      server.wireRateLimiterCleanup(httpTrans);
-      httpTrans.start();
+      // Serve HTTP through the same dispatch and per-client delivery rules, so
+      // a broker client's progress, logs and server->client requests reach
+      // that client instead of the stdio host.
+      server.attachTransport(httpTrans);
 
       console.error(`[openchrome] Dual transport mode: stdio + HTTP on ${httpHost}:${httpPort}`);
       console.error('[openchrome] Infinite reconnection: enabled (daemon mode)');

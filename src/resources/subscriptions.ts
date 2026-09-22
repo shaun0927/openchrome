@@ -3,6 +3,9 @@ import type { MCPTransport } from '../transports';
 import { currentRequestContext } from '../core/observability/request-id';
 import { parseResourceSubscriptionLimit, RESOURCE_SUBSCRIPTION_LIMIT_CODE, ResourceRpcError } from './live-state';
 
+/** Subscription key for the local stdio client, which has no MCP session id. */
+export const LOCAL_SUBSCRIPTION_KEY = 'stdio';
+
 interface SubscriptionSession {
   uris: Set<string>;
   pending: Map<string, ReturnType<typeof setTimeout>>;
@@ -18,7 +21,7 @@ export class ResourceSubscriptionManager {
     this.debounceMs = opts?.debounceMs ?? 100;
   }
 
-  subscribe(uri: string, mcpSessionId = currentRequestContext()?.mcpSessionId ?? 'stdio'): { uri: string; subscriptions: number; limit: number } {
+  subscribe(uri: string, mcpSessionId = currentRequestContext()?.mcpSessionId ?? LOCAL_SUBSCRIPTION_KEY): { uri: string; subscriptions: number; limit: number } {
     const session = this.getOrCreate(mcpSessionId);
     if (!session.uris.has(uri) && session.uris.size >= this.limit) {
       throw new ResourceRpcError(RESOURCE_SUBSCRIPTION_LIMIT_CODE, 'subscription_limit_exceeded', { limit: this.limit });
@@ -27,7 +30,7 @@ export class ResourceSubscriptionManager {
     return { uri, subscriptions: session.uris.size, limit: this.limit };
   }
 
-  unsubscribe(uri: string, mcpSessionId = currentRequestContext()?.mcpSessionId ?? 'stdio'): { uri: string; subscriptions: number } {
+  unsubscribe(uri: string, mcpSessionId = currentRequestContext()?.mcpSessionId ?? LOCAL_SUBSCRIPTION_KEY): { uri: string; subscriptions: number } {
     if (!mcpSessionId) return { uri, subscriptions: 0 };
     const session = this.sessions.get(mcpSessionId);
     if (!session) return { uri, subscriptions: 0 };
@@ -64,7 +67,6 @@ export class ResourceSubscriptionManager {
         session.pending.delete(uri);
         const notification: MCPResponse = {
           jsonrpc: '2.0',
-          id: null,
           method: 'notifications/resources/updated',
           params: { uri },
         } as unknown as MCPResponse;
@@ -84,7 +86,6 @@ export class ResourceSubscriptionManager {
     if (!transport) return;
     const notification: MCPResponse = {
       jsonrpc: '2.0',
-      id: null,
       method: 'notifications/resources/list_changed',
     } as unknown as MCPResponse;
     transport.send(notification);

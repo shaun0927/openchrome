@@ -42,6 +42,31 @@ describe('ResourceSubscriptionManager (#872)', () => {
     ]);
   });
 
+  test('emits JSON-RPC notifications without an id member', async () => {
+    // A notification carrying "id": null is rejected by strict JSON-RPC
+    // parsers (for example the official MCP SDK), so clients would drop it.
+    const manager = new ResourceSubscriptionManager({ limit: 5, debounceMs: 1 });
+    manager.subscribe('oc://session/a/tabs', 's1');
+    const sent: Array<Record<string, unknown>> = [];
+    const transport = {
+      sendToSession: (_sessionId: string, response: any) => { sent.push(response); return true; },
+      send: (response: any) => { sent.push(response); },
+      start: jest.fn(),
+      close: jest.fn(),
+      onMessage: jest.fn(),
+    } as any;
+
+    manager.emitUpdated('oc://session/a/tabs', transport);
+    manager.emitListChanged(transport);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(sent.map((message) => message.method).sort()).toEqual([
+      'notifications/resources/list_changed',
+      'notifications/resources/updated',
+    ]);
+    for (const message of sent) expect(message).not.toHaveProperty('id');
+  });
+
   test('disconnect cleanup removes active subscriptions', () => {
     const manager = new ResourceSubscriptionManager({ limit: 5, debounceMs: 1 });
     manager.subscribe('oc://session/a/tabs', 's1');

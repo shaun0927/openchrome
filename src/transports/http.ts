@@ -759,6 +759,7 @@ export class HTTPTransport implements MCPTransport {
             keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
             mcpSessionId: sessionId,
             brokerClientId,
+            channel: 'http',
           },
           () => this.processBatch(parsed, sessionId, tenantId, signal, principal, brokerClientId),
         );
@@ -814,8 +815,9 @@ export class HTTPTransport implements MCPTransport {
             keyId: principal?.mode === 'api-key' ? principal.keyId : undefined,
             mcpSessionId: sessionId,
             brokerClientId,
+            channel: 'http',
           },
-          () => this.messageHandler!(msg, signal, { mcpSessionId: sessionId, tenantId, brokerClientId }),
+          () => this.messageHandler!(msg, signal, { mcpSessionId: sessionId, tenantId, brokerClientId, channel: 'http' }),
         );
 
         if (sessionId) {
@@ -1017,7 +1019,7 @@ export class HTTPTransport implements MCPTransport {
           (record as Record<PropertyKey, unknown>)[PRINCIPAL_SYM] = principal;
         }
 
-        return await handler(record, signal, { mcpSessionId: sessionId, tenantId, brokerClientId });
+        return await handler(record, signal, { mcpSessionId: sessionId, tenantId, brokerClientId, channel: 'http' });
       } catch (error) {
         const id = record !== null
           ? ((record.id as string | number | undefined) ?? 0)
