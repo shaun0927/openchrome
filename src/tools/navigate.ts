@@ -7,6 +7,7 @@ import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, thro
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
 import { serializeNavigation } from '../session/navigation-lock';
+import { assertForegroundAllowed } from '../chrome/foreground-policy';
 import { pathMetaFor } from './_shared/path-meta';
 import { smartGoto } from '../core/page/smart-goto';
 import { safeTitle } from '../core/page/safe-title';
@@ -158,6 +159,7 @@ async function stealthAutoRetry(
   closeTabId?: string,
   autoFallbackToHeaded: boolean = false,
   context?: ToolContext,
+  allowVisibleFallback = false,
 ): Promise<MCPResult> {
   const sessionManager = getSessionManager();
 
@@ -237,7 +239,7 @@ async function stealthAutoRetry(
     console.error(`[navigate] CAPTCHA solve failed: ${solveResult.error}, escalating to Tier 3`);
   }
   if (autoFallbackToHeaded && (stealthBlocked || stealthBroken)) {
-    const headedResult = await headedAutoRetry(targetUrl, blocking || blockingInfo, sessionId, profileDirectory);
+    const headedResult = await headedAutoRetry(targetUrl, blocking || blockingInfo, sessionId, profileDirectory, allowVisibleFallback);
     if (headedResult) return headedResult;
   }
 
@@ -271,18 +273,20 @@ async function headedAutoRetry(
   blockingInfo: BlockingInfo,
   sessionId?: string,
   profileDirectory?: string,
+  allowVisibleFallback = false,
 ): Promise<MCPResult | null> {
-  if (getGlobalConfig().headless === true) {
+  if (!allowVisibleFallback || getGlobalConfig().headless === true) {
     return {
       isError: true,
       content: [{ type: 'text', text: JSON.stringify({
         action: 'navigate', url: targetUrl, status: 'needs_user_input',
         code: 'HEADED_FALLBACK_REQUIRES_USER', reason: blockingInfo.type,
-        headed: false, visibilityPolicy: 'headless',
-        message: 'Automatic headed fallback was suppressed by the headless policy. Request user interaction before explicitly opening a visible browser.',
+        headed: false, visibilityPolicy: 'explicit-only',
+        message: 'Automatic headed fallback requires explicit permission. Request user interaction before explicitly opening a visible browser.',
       }) }],
     };
   }
+  assertForegroundAllowed();
   const headedFallback = getHeadedFallback(getGlobalConfig().port);
   if (!headedFallback.isAvailable()) {
     console.error('[navigate] Tier 3 skipped: no display available for headed Chrome');
@@ -372,6 +376,7 @@ async function headedNavigateDirect(
   sessionId: string | undefined,
   options: { profileDirectory?: string } = {},
 ): Promise<MCPResult | null> {
+  assertForegroundAllowed();
   const headedFallback = getHeadedFallback(getGlobalConfig().port);
   if (!headedFallback.isAvailable()) {
     return null;
@@ -466,6 +471,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+      allowHeadedFallback: { type: 'boolean', default: false, description: 'Explicit permission to launch a visible fallback browser for this request. May change foreground on first launch. Default false returns a user-interaction checkpoint.' },
       tabId: {
         type: 'string',
         description: 'Tab ID. Omit for new tab',
@@ -674,7 +680,7 @@ const handler: ToolHandler = async (
             // Auto-fallback: if reused tab hit a CDN/WAF block, retry with stealth in a new tab (#459)
             if (reuseBlocking && autoFallback && RETRYABLE_BLOCK_TYPES.has(reuseBlocking.type)) {
               return await withDomainSkillsResult(
-                await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context),
+                await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, reuseBlocking, undefined, autoFallback, context, args.allowHeadedFallback === true),
                 recallArg,
               );
             }
@@ -741,7 +747,7 @@ const handler: ToolHandler = async (
       // Auto-fallback: if new tab hit a CDN/WAF block and stealth wasn't already used, retry with stealth (#459)
       if (newTabBlocking && !stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
         return await withDomainSkillsResult(
-          await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context),
+          await stealthAutoRetry(sessionId, targetUrl, workerId, stealthSettleMs, profileDirectory, newTabBlocking, targetId, autoFallback, context, args.allowHeadedFallback === true),
           recallArg,
         );
       }
@@ -749,7 +755,7 @@ const handler: ToolHandler = async (
       // When explicit stealth hits a block, escalate directly to tier 3 (headed Chrome)
       // since tier 2 (stealth) is already being used. (#453)
       if (newTabBlocking && stealth && autoFallback && RETRYABLE_BLOCK_TYPES.has(newTabBlocking.type)) {
-        const headedResult = await headedAutoRetry(targetUrl, newTabBlocking, sessionId, profileDirectory);
+        const headedResult = await headedAutoRetry(targetUrl, newTabBlocking, sessionId, profileDirectory, args.allowHeadedFallback === true);
         if (headedResult) return await withDomainSkillsResult(headedResult, recallArg);
       }
 

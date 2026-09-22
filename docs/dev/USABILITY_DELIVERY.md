@@ -9,7 +9,7 @@
 | 2 | 연결 대상 식별과 진단 | 구현 및 MCP QA 완료, 검토 대기 |
 | 3 | 기존 탭 발견과 제어권 인계 | 구현 및 MCP QA 완료, 검토 대기 |
 | 4 | 작업 탭 선택과 중복 생성 방지 | 구현 및 MCP QA 완료, 검토 대기 |
-| 5 | 포커스 정책과 사용자 개입 흐름 | 대기 |
+| 5 | 포커스 정책과 사용자 개입 흐름 | 구현 및 MCP QA 완료, 검토 대기 |
 | 6 | headed 회귀 검증과 운영 문서 | 대기 |
 
 각 PR은 빌드, 관련 테스트, 실제 경로 QA, 독립 검토 후 순서대로 병합한다.
@@ -64,3 +64,17 @@ URL인 유일한 탭만 재사용하며, 페이지를 다시 로드하지 않아
 tabId 없는 탐색 요청은 세션/worker/profile/lane별로 직렬화한다.
 실제 MCP QA에서 폼 보존과 동시 요청의 동일 tabId 반환을 확인했다. 관련 테스트 86개 통과.
 기존 main에서도 headed 자동 전환 테스트 2개 실패를 재현했다.
+
+## PR 5 표시 정책
+
+일반 복구 흐름은 새 headed 브라우저를 자동 실행하지 않는다. 대신
+`HEADED_FALLBACK_REQUIRES_USER`와 `needs_user_input`을 반환한다.
+해당 요청에 `allowHeadedFallback: true`를 명시하면 기존 복구를 허용하되
+기존 headless 정책은 유지한다. 사용자가 직접 요청하는 `headed: true`도 유지한다.
+
+`OPENCHROME_FOCUS_POLICY=background-only`이면 `tabs_activate`, `reveal`,
+명시적 headed 실행을 거부한다. 기본값 `explicit-only`는 명시적 표시를 허용한다.
+알 수 없는 설정값은 전면 표시를 허용하지 않는다.
+로그인 개입은 `oc_browser_control`의 pause와 lease/expectedUrl 검증을 이용해 재개한다.
+탐색 응답만으로 로그인 성공을 판단하거나 자동으로 resume하지 않는다.
+관련 테스트 118개 통과. 실제 MCP에서 background-only 활성화 거부와 foreground 유지 확인.

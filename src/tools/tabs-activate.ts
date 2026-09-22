@@ -159,6 +159,7 @@ export async function activatePageWithVerification(options: {
   sleep?: (ms: number) => Promise<void>;
 }): Promise<TabsActivationFacts> {
   const { page, tabId, context } = options;
+  assertForegroundAllowed();
   const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? MAX_ACTIVATION_ATTEMPTS, MAX_ACTIVATION_ATTEMPTS));
   const sleep = options.sleep ?? defaultSleep;
   const fallbackDeadlineAt = Date.now() + DEFAULT_ACTIVATION_DEADLINE_MS;
@@ -375,3 +376,4 @@ export function registerTabsActivateTool(server: MCPServer): void {
   ));
   server.registerTool('tabs_activate', wrapped, definition);
 }
+import { assertForegroundAllowed } from '../chrome/foreground-policy';
