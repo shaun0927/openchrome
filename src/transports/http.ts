@@ -1,10 +1,11 @@
 /**
  * Streamable HTTP transport for MCP server.
  *
- * Implements MCP Streamable HTTP transport (spec 2025-03-26):
- * - POST /mcp: receives JSON-RPC request/notification, returns JSON-RPC response
- * - GET /health: basic health check (separate from the self-healing health endpoint)
- * - DELETE /mcp: session termination
+ * Implements a dual-era MCP Streamable HTTP boundary:
+ * - 2026-07-28: stateless POST requests and subscriptions/listen, served by
+ *   the official MCP SDK
+ * - Legacy: sessionful POST, GET/SSE notifications, and DELETE termination
+ * - GET /health: basic health check (separate from the self-healing endpoint)
  *
  * Key difference from stdio: client disconnect does NOT kill the server.
  * The HTTP server continues to accept new connections.
@@ -12,10 +13,20 @@
 
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
-import { rejectUnsupportedProtocol } from '../mcp/runtime-contract';
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  type McpHttpHandler,
+} from '@modelcontextprotocol/server';
+import {
+  toNodeHandler,
+  toWebRequest,
+  type NodeMcpRequestHandler,
+} from '@modelcontextprotocol/node';
+import { MODERN_PROTOCOL_VERSION, rejectUnsupportedLegacyHttpVersion } from '../mcp/runtime-contract';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { ClientDisconnectError } from '../errors/abort';
-import { MCPTransport, TransportMessageContext } from './index';
+import { MCPTransport, McpServerMetadata, TransportMessageContext } from './index';
 import { BROKER_CLIENT_ID_HEADER } from './broker-proxy';
 import type { SessionManager } from '../session-manager';
 import {
@@ -63,6 +74,14 @@ import {
   handleDashboardSessions,
   handleDashboardToolCalls,
 } from './http/dashboard-routes';
+import {
+  createSdkServerAdapter,
+  toSdkAuthInfo,
+} from '../mcp/sdk-adapter';
+import {
+  runWithSubscriptionTenant,
+  TenantScopedServerEventBus,
+} from './http/tenant-event-bus';
 
 export { HTTP_TIMEOUTS } from './http/config';
 
@@ -90,6 +109,12 @@ export class HTTPTransport implements MCPTransport {
   private messageHandler:
     | ((msg: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) => Promise<MCPResponse | null>)
     | null = null;
+  private modernHandler: McpHttpHandler | null = null;
+  private modernNodeHandler: NodeMcpRequestHandler | null = null;
+  private serverMetadata: McpServerMetadata = {};
+  private readonly modernEventBus = new TenantScopedServerEventBus((error) => {
+    console.error('[HTTPTransport] Modern subscription listener failed:', error);
+  });
   private port: number;
   private host: string;
   private authToken: string | undefined;
@@ -181,6 +206,29 @@ export class HTTPTransport implements MCPTransport {
     handler: (msg: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) => Promise<MCPResponse | null>,
   ): void {
     this.messageHandler = handler;
+    // Modern (2026-07-28) requests are served statelessly by the official SDK,
+    // which dispatches each request into the same OpenChrome core handler.
+    // Legacy traffic keeps the sessionful path below.
+    this.modernHandler = createMcpHandler(
+      ({ era }) => createSdkServerAdapter(handler, { era, channel: 'http', metadata: this.serverMetadata }),
+      {
+        legacy: 'reject',
+        responseMode: 'auto',
+        bus: this.modernEventBus,
+        onerror: (error) => {
+          console.error('[HTTPTransport] MCP SDK error:', error);
+        },
+      },
+    );
+    this.modernNodeHandler = toNodeHandler(this.modernHandler, {
+      onerror: (error) => {
+        console.error('[HTTPTransport] MCP SDK Node adapter error:', error);
+      },
+    });
+  }
+
+  setServerMetadata(metadata: McpServerMetadata): void {
+    this.serverMetadata = metadata;
   }
 
   /**
@@ -196,6 +244,22 @@ export class HTTPTransport implements MCPTransport {
         // Connection may have been closed
       }
     }
+  }
+
+  publishToolsChanged(): void {
+    this.modernHandler?.notify.toolsChanged();
+  }
+
+  publishResourcesChanged(tenantId?: string): void {
+    if (!tenantId) return;
+    this.modernEventBus.publishForTenant({ kind: 'resources_list_changed' }, tenantId);
+  }
+
+  publishResourceUpdated(uri: string, tenantId?: string): void {
+    // Resource payloads and concrete URIs are tenant-scoped. If ownership
+    // cannot be resolved, fail closed rather than broadcasting metadata.
+    if (!tenantId) return;
+    this.modernEventBus.publishForTenant({ kind: 'resource_updated', uri }, tenantId);
   }
 
   sendToSession(sessionId: string, response: MCPResponse): boolean {
@@ -280,6 +344,12 @@ export class HTTPTransport implements MCPTransport {
     }
     this.sseConnections = [];
     this.sessionTenants.clear();
+    const modernHandler = this.modernHandler;
+    this.modernHandler = null;
+    this.modernNodeHandler = null;
+    if (modernHandler) {
+      await modernHandler.close();
+    }
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -308,6 +378,9 @@ export class HTTPTransport implements MCPTransport {
     // proxies) can correlate logs, metrics, and audit entries for this request.
     const requestId = resolveRequestId(req.headers[REQUEST_ID_HEADER_LOWER]);
     res.setHeader(REQUEST_ID_HEADER, requestId);
+    // The modern SDK converts this IncomingMessage into a Fetch Request.
+    // Forward the canonical value so its request context reuses the same ID.
+    req.headers[REQUEST_ID_HEADER_LOWER] = requestId;
     (req as http.IncomingMessage & { requestId?: string }).requestId = requestId;
 
     // Handle CORS preflight
@@ -400,6 +473,10 @@ export class HTTPTransport implements MCPTransport {
       if (req.method === 'GET') {
         const tenantId = this.resolveRequestTenant(req, res);
         if (tenantId === null) return;
+        if (this.hasModernProtocolHeader(req)) {
+          this.forwardModernRequest(req, res, tenantId);
+          return;
+        }
         this.handleSSE(req, res, tenantId);
       } else {
         res.writeHead(405, { 'Allow': 'GET', 'Content-Type': 'application/json' });
@@ -419,10 +496,20 @@ export class HTTPTransport implements MCPTransport {
         case 'GET': {
           const tenantId = this.resolveRequestTenant(req, res);
           if (tenantId === null) return;
+          if (this.hasModernProtocolHeader(req)) {
+            this.forwardModernRequest(req, res, tenantId);
+            return;
+          }
           this.handleSSE(req, res, tenantId);
           return;
         }
         case 'DELETE': {
+          if (this.hasModernProtocolHeader(req)) {
+            const tenantId = this.resolveRequestTenant(req, res);
+            if (tenantId === null) return;
+            this.forwardModernRequest(req, res, tenantId);
+            return;
+          }
           const tenantId = this.resolveRequestTenant(req, res, false);
           if (tenantId === null) return;
           this.handleDelete(req, res, tenantId);
@@ -438,6 +525,57 @@ export class HTTPTransport implements MCPTransport {
     // Unknown path
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
+  }
+
+  private hasModernProtocolHeader(req: http.IncomingMessage): boolean {
+    const value = req.headers['mcp-protocol-version'];
+    const version = Array.isArray(value) ? value[0] : value;
+    return version?.trim() === MODERN_PROTOCOL_VERSION;
+  }
+
+  private forwardModernRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    tenantId: TenantId,
+    parsedBody?: unknown,
+  ): void {
+    if (!this.modernNodeHandler) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        id: 0,
+        error: { code: MCPErrorCodes.INTERNAL_ERROR, message: 'Modern MCP handler is not available' },
+      }));
+      return;
+    }
+    const principal = requestPrincipals.get(req);
+    const brokerClientId = normalizeBrokerClientId(
+      req.headers[BROKER_CLIENT_ID_HEADER.toLowerCase()],
+    );
+    const effectiveTenantId = principal?.mode === 'api-key' || principal?.mode === 'jwt'
+      ? principal.tenantId
+      : tenantId;
+    const authInfo = toSdkAuthInfo(principal, { tenantId, brokerClientId });
+    if (authInfo) {
+      (req as http.IncomingMessage & { auth?: typeof authInfo }).auth = authInfo;
+    }
+    void runWithSubscriptionTenant(
+      effectiveTenantId,
+      () => this.modernNodeHandler!(req, res, parsedBody),
+    ).catch((error) => {
+      console.error('[HTTPTransport] Modern MCP request failed:', error);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 0,
+          error: {
+            code: MCPErrorCodes.INTERNAL_ERROR,
+            message: 'Modern MCP request failed',
+          },
+        }));
+      }
+    });
   }
 
   /**
@@ -480,7 +618,11 @@ export class HTTPTransport implements MCPTransport {
 
     const principal = requestPrincipals.get(req);
     const effectiveTenantId = resolveEffectiveTenantId(principal, tenantId) ?? tenantId;
-    const mcpSessionId = req.headers['mcp-session-id'] as string | undefined;
+    // MCP 2026-07-28 removed protocol sessions. A stale session header on a
+    // modern request must be ignored, including for tenant-binding checks.
+    const mcpSessionId = this.hasModernProtocolHeader(req)
+      ? undefined
+      : req.headers['mcp-session-id'] as string | undefined;
     if (validateSessionBinding && mcpSessionId) {
       const bound = this.sessionTenants.get(mcpSessionId);
       if (bound !== undefined && bound !== effectiveTenantId) {
@@ -705,14 +847,39 @@ export class HTTPTransport implements MCPTransport {
         return;
       }
 
-      const messages: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-      const protocolError = rejectUnsupportedProtocol(undefined, req.headers['mcp-protocol-version'])
-        ?? messages.map(message => {
-          if (!message || typeof message !== 'object') return undefined;
-          const params = (message as Record<string, unknown>).params;
-          return rejectUnsupportedProtocol(params && typeof params === 'object'
-            ? (params as Record<string, unknown>)._meta : undefined);
-        }).find(error => error !== undefined);
+      let legacyRequest: boolean;
+      try {
+        const classificationRequest = await toWebRequest(
+          req,
+          parsed,
+          signal ? { signal } : undefined,
+        );
+        legacyRequest = await isLegacyRequest(classificationRequest, parsed);
+      } catch (error) {
+        console.error('[HTTPTransport] MCP request classification failed:', error);
+        const id = !Array.isArray(parsed) && typeof parsed === 'object' && parsed !== null
+          ? ((parsed as Record<string, unknown>).id ?? 0)
+          : 0;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code: MCPErrorCodes.INTERNAL_ERROR,
+            message: 'MCP request classification failed',
+          },
+        }));
+        return;
+      }
+      if (!legacyRequest) {
+        // The SDK owns modern envelope, header, and version validation.
+        req.setTimeout(0);
+        req.socket.setTimeout(0);
+        this.forwardModernRequest(req, res, tenantId, parsed);
+        return;
+      }
+
+      const protocolError = rejectUnsupportedLegacyHttpVersion(req.headers['mcp-protocol-version']);
       if (protocolError) {
         const rawId = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
           ? (parsed as Record<string, unknown>).id : null;

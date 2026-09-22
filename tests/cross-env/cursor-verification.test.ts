@@ -413,14 +413,20 @@ suiteRunner('Cross-Env: Cursor IDE Verification (Issue #509)', () => {
       }
     });
 
-    test('Unknown client initializes with listChanged=false', async () => {
+    test('Unknown client initializes against the SDK stdio boundary', async () => {
       const { response } = await sendAndReceive(unknownServer, 'initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
         clientInfo: { name: 'unknown-editor', version: '1.0.0' },
       });
 
-      expect(response.result.capabilities.tools.listChanged).toBe(false);
+      // The official SDK answers initialize for stdio. tools.listChanged is the
+      // server's own capability (it can emit the notification, e.g. for
+      // registry changes); whether this client sees progressive disclosure is
+      // decided from its identity and asserted by the tools/list test below.
+      expect(response.result.protocolVersion).toBe('2024-11-05');
+      expect(response.result.capabilities.tools).toBeDefined();
+      expect(response.result.capabilities.experimental['io.openchrome/runtime'].protocolMode).toBe('dual-era');
     });
 
     test('Unknown client gets all tools immediately (no expand_tools)', async () => {
