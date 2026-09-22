@@ -48,6 +48,8 @@ function makeServer(): { server: MCPServer; transport: CapturingTransport } {
   const transport = new CapturingTransport();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (server as any).transport = transport;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server as any).localTransport = transport;
   return { server, transport };
 }
 

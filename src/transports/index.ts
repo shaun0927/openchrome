@@ -11,6 +11,8 @@ export interface TransportMessageContext {
   tenantId?: string;
   /** Broker stdio-proxy identity propagated through HTTP for audit/diagnostics. */
   brokerClientId?: string;
+  /** Set by the HTTP transport; absent for the local stdio client. */
+  channel?: 'http';
 }
 
 /**

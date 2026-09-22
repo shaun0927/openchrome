@@ -43,6 +43,12 @@ function makeServer(): { server: MCPServer; transport: CapturingTransport } {
   const transport = new CapturingTransport();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (server as any).transport = transport;
+  // The capturing transport stands in for both the local stdio client
+  // (sessionless sends) and a session-addressed HTTP transport.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server as any).localTransport = transport;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server as any).sessionTransports.push(transport);
   return { server, transport };
 }
 
