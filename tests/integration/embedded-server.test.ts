@@ -26,12 +26,14 @@ jest.mock('../../src/mcp-server', () => {
   const mockWireRateLimiterCleanup = jest.fn();
   const mockRegisterTool = jest.fn();
   const mockAttachTransport = jest.fn();
+  const mockDrain = jest.fn().mockResolvedValue({ completed: 0, cancelled: 0 });
   const mockServer = {
     start: mockStart,
     stop: mockStop,
     handleMessage: mockHandleMessage,
     wireRateLimiterCleanup: mockWireRateLimiterCleanup,
     attachTransport: mockAttachTransport,
+    drain: mockDrain,
     registerTool: mockRegisterTool,
   };
   return {

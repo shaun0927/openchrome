@@ -582,6 +582,12 @@ class OpenChromeServerImpl implements OpenChromeServer {
 
     this._sessionPersistence?.cancelPendingSave();
 
+    // Refuse new tool calls and let running ones finish before the MCP
+    // server closes its transports.
+    await this.mcp.drain().catch((err) => {
+      console.error(`[openchrome] drain before stop failed (non-fatal): ${err}`);
+    });
+
     // Stop MCP server (closes transport)
     await this.mcp.stop();
 

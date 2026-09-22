@@ -141,6 +141,13 @@ const WORKSPACE_INDEPENDENT_TOOLS = new Set([
   'oc_open_host_settings',
   'oc_totp_generate',
 ]);
+const DEFAULT_DRAIN_DEADLINE_MS = 10_000;
+
+/** How long a replaced process lets running tool calls finish. */
+export function parseDrainDeadlineMs(raw = process.env.OPENCHROME_DRAIN_TIMEOUT_MS): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_DRAIN_DEADLINE_MS;
+}
 /** Roots scope of the single local (stdio) client, which has no MCP session id. */
 const LOCAL_ROOTS_SCOPE = 'stdio';
 
@@ -778,6 +785,39 @@ export class MCPServer {
 
   readonly browserOperations = new BrowserOperations();
   private readonly toolCancellations = new Map<string, AbortController>();
+  /** Set once the process is being replaced: no new tool calls start. */
+  private draining = false;
+
+  /**
+   * Prepare this process for replacement. New tool calls are refused as not
+   * started (safe to retry against the next process); calls already running
+   * get until the deadline to finish and are then cancelled, which reports
+   * their outcome as unknown so clients re-observe instead of replaying.
+   */
+  async drain(options: { deadlineMs?: number } = {}): Promise<{ completed: number; cancelled: number }> {
+    this.draining = true;
+    const deadlineMs = options.deadlineMs ?? parseDrainDeadlineMs();
+    const inFlight = this.toolCancellations.size;
+    const settle = async (limitMs: number): Promise<boolean> => {
+      const until = Date.now() + limitMs;
+      while (this.toolCancellations.size > 0 && Date.now() < until) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      return this.toolCancellations.size === 0;
+    };
+    if (await settle(deadlineMs)) return { completed: inFlight, cancelled: 0 };
+    const cancelled = this.toolCancellations.size;
+    for (const controller of this.toolCancellations.values()) {
+      controller.abort(new ToolAttemptError('TOOL_CANCELLED', 'unknown'));
+    }
+    await settle(2_000);
+    console.error(`[MCPServer] drain: ${inFlight - cancelled} call(s) completed, ${cancelled} cancelled at the ${deadlineMs}ms deadline`);
+    return { completed: inFlight - cancelled, cancelled };
+  }
+
+  get isDraining(): boolean {
+    return this.draining;
+  }
 
   /**
    * Key under which an in-flight request can be cancelled by
@@ -1496,6 +1536,22 @@ export class MCPServer {
           break;
 
         case 'tools/call': {
+          if (this.draining) {
+            result = {
+              content: [{
+                type: 'text',
+                text: 'SERVER_DRAINING: this OpenChrome process is being replaced and did not start the call. Reconnect, rediscover the server (a new runtimeId), open a new workspace, and retry.',
+              }],
+              structuredContent: {
+                execution: 'not_started',
+                code: 'SERVER_DRAINING',
+                retryAllowed: true,
+                runtimeId: this.runtimeContract.runtimeId,
+              },
+              isError: true,
+            };
+            break;
+          }
           const key = this.cancellationKey(id, transportContext);
           if (this.toolCancellations.has(key)) return this.errorResponse(id, MCPErrorCodes.INVALID_REQUEST, 'Duplicate active request id');
           const controller = new AbortController();
@@ -1820,7 +1876,9 @@ export class MCPServer {
       },
     };
     if (typeof args.sessionId === 'string') return required;
-    if (!shouldInitializeBrowserSession(toolName, args)) {
+    // worker's browser use depends on its action, but every action addresses
+    // workers that belong to one workspace, so it always needs the handle.
+    if (!shouldInitializeBrowserSession(toolName, args) && toolName !== 'worker') {
       // Browser-free bookkeeping only: the local stdio client keeps its
       // historical namespace; HTTP callers get a tenant-scoped one.
       return { sessionId: context.channel === 'http' ? `modern:${tenantId}` : 'default' };
@@ -1910,8 +1968,8 @@ export class MCPServer {
   }
 
   private sweepExpiredWorkspaces(): void {
+    // The registry never returns workspaces a person is holding.
     for (const record of this.workspaces.sweepExpired()) {
-      if (this.browserOperations.hasHandoff(record.browserSessionId)) continue;
       void this.disposeWorkspaceSession(record.browserSessionId, 'expiry');
     }
   }

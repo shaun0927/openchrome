@@ -769,6 +769,11 @@ program
     // Register signal handlers for graceful shutdown
     const shutdown = async (signal: string) => {
       console.error(`[openchrome] Received ${signal}, shutting down...`);
+      // Refuse new tool calls and let running ones finish (or report an
+      // unknown outcome) before transports and browser sessions close.
+      await server.drain().catch((error) => {
+        console.error(`[openchrome] drain before shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
       await server.stop();
       process.exit(0);
     };
@@ -1288,6 +1293,11 @@ program
       // the async shutdown work below (issue #644).
       parentWatcher?.stop();
       parentWatcher = null;
+      // Stop admitting tool calls and let running ones finish before
+      // monitors stop and browser state is saved.
+      await server.drain().catch((error) => {
+        console.error(`[openchrome] drain before shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
       processWatchdog.stop();
       tabHealthMonitor.stopAll();
       eventLoopMonitor.stop();

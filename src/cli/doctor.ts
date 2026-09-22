@@ -22,6 +22,7 @@ import { checkNetworkLocal } from './doctor/checks/network-local';
 import { checkNetworkRemote } from './doctor/checks/network-remote';
 import { checkOptionalDeps } from './doctor/checks/optional-deps';
 import { checkDuplicateControllers } from './doctor/checks/duplicate-controllers';
+import { checkRunningVersion } from './doctor/checks/running-version';
 import { collectDoctorDiagnostics, type DoctorDiagnostics } from './doctor/runtime-diagnostics';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
@@ -145,6 +146,7 @@ const ALL_CHECKS: Array<{ id: string; fn: CheckFn }> = [
   { id: 'orphan-chrome', fn: checkOrphanChrome },
   { id: 'profile-lock', fn: checkProfileLock },
   { id: 'duplicate-controllers', fn: checkDuplicateControllers },
+  { id: 'running-version', fn: checkRunningVersion },
   { id: 'disk-space', fn: checkDiskSpace },
   { id: 'macos-perms', fn: checkMacosPerms },
   { id: 'network-local', fn: checkNetworkLocal },
