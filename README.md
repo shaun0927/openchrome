@@ -9,6 +9,8 @@ outside this repository surface.
 
 ## Install
 
+Requires Node.js 20 or newer.
+
 ```bash
 npm install -g openchrome-mcp
 openchrome setup --client codex
@@ -66,6 +68,9 @@ curl -s http://127.0.0.1:3100/health
 Independent stdio clients should use separate `--port` and `--user-data-dir`
 profiles, or connect through broker mode with `--auto-elect`.
 
+Both stdio and HTTP serve the stateless MCP `2026-07-28` revision alongside
+legacy `initialize`-based clients; see [`docs/mcp-2026-07-28.md`](docs/mcp-2026-07-28.md).
+
 ## Capabilities
 
 - Real Chrome control through CDP.
@@ -87,6 +92,7 @@ Full tool catalogue: [`docs/agent/capability-map.md`](docs/agent/capability-map.
 | CLI | [`docs/cli.md`](docs/cli.md) |
 | Playbooks | [`docs/cli/playbook.md`](docs/cli/playbook.md) |
 | MCP topologies | [`docs/mcp/topologies.md`](docs/mcp/topologies.md) |
+| MCP 2026-07-28 support | [`docs/mcp-2026-07-28.md`](docs/mcp-2026-07-28.md) |
 | HTTP daemon | [`docs/getting-started/http-daemon.md`](docs/getting-started/http-daemon.md) |
 | Security model | [`SECURITY.md`](SECURITY.md) |
 | Repository structure | [`docs/dev/project-structure.md`](docs/dev/project-structure.md) |
