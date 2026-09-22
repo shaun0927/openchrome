@@ -18,13 +18,15 @@ const definition: MCPToolDefinition = {
     properties: {
       action: {
         type: 'string',
-        enum: ['create', 'list', 'delete'],
+        enum: ['create', 'list', 'delete', 'borrow_tab', 'release_tab'],
         description: 'Action: create, list, or delete',
       },
       name: {
         type: 'string',
         description: '(create) Worker name',
       },
+      tabId: { type: 'string', description: '(borrow_tab/release_tab) Explicit existing tab ID.' },
+      expectedUrl: { type: 'string', description: '(borrow_tab) Exact URL observed by tabs_context scope=browser. Requires server opt-in; never closes the user tab on cleanup.' },
       id: {
         type: 'string',
         description: '(create) Custom ID. Auto-generated if omitted',
@@ -173,6 +175,16 @@ const handler: ToolHandler = async (
 
   try {
     switch (action) {
+      case 'borrow_tab': {
+        if (typeof args.tabId !== 'string' || typeof args.expectedUrl !== 'string') throw new Error('tabId and expectedUrl are required');
+        const borrowed = await getSessionManager().borrowUserTab(sessionId, args.tabId, args.expectedUrl);
+        return { content: [{ type: 'text', text: JSON.stringify({ borrowed, tabId: args.tabId }) }], isError: !borrowed };
+      }
+      case 'release_tab': {
+        if (typeof args.tabId !== 'string') throw new Error('tabId is required');
+        const released = getSessionManager().releaseBorrowedTarget(sessionId, args.tabId);
+        return { content: [{ type: 'text', text: JSON.stringify({ released, tabId: args.tabId, closed: false }) }], isError: !released };
+      }
       case 'create':
         return await handleCreate(sessionId, args);
       case 'list':
