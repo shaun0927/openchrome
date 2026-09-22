@@ -1431,6 +1431,11 @@ export class MCPServer {
           result = await this.handleInitialize(params);
           break;
 
+        case 'ping':
+          // Legacy liveness check (the SDK answers it on stdio); removed in 2026-07-28.
+          result = {};
+          break;
+
         case 'tools/list':
           result = await this.handleToolsList(params, transportContext, principal);
           break;

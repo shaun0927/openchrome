@@ -14,6 +14,61 @@ export const BROKER_REELECT_EXIT_CODE = 75;
 
 const MCP_SESSION_ID_HEADER = 'Mcp-Session-Id';
 export const BROKER_CLIENT_ID_HEADER = 'X-OpenChrome-Broker-Client-Id';
+const PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';
+const BASE64_SENTINEL_PREFIX = '=?base64?';
+const BASE64_SENTINEL_SUFFIX = '?=';
+
+/** Methods whose Streamable HTTP request must carry an `Mcp-Name` header. */
+const MCP_NAME_SOURCE: Readonly<Record<string, 'name' | 'uri'>> = {
+  'tools/call': 'name',
+  'prompts/get': 'name',
+  'resources/read': 'uri',
+};
+
+/**
+ * The protocol version a 2026-07-28-style request names in its per-request
+ * envelope, or undefined for legacy (initialize-based) traffic.
+ */
+function modernProtocolVersion(message: Record<string, unknown>): string | undefined {
+  const params = message.params;
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return undefined;
+  const meta = (params as Record<string, unknown>)._meta;
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return undefined;
+  const version = (meta as Record<string, unknown>)[PROTOCOL_VERSION_META_KEY];
+  return typeof version === 'string' ? version : undefined;
+}
+
+/**
+ * Encode a header value per the Streamable HTTP value rules: plain visible
+ * ASCII passes through; anything else (or a value that already looks like
+ * the sentinel) is sent as `=?base64?{utf8-base64}?=`.
+ */
+export function encodeMcpHeaderValue(value: string): string {
+  const needsBase64 = value.length === 0
+    || (value.startsWith(BASE64_SENTINEL_PREFIX) && value.endsWith(BASE64_SENTINEL_SUFFIX))
+    || value !== value.trim()
+    // eslint-disable-next-line no-control-regex
+    || /[^\x09\x20-\x7e]/.test(value);
+  return needsBase64
+    ? `${BASE64_SENTINEL_PREFIX}${Buffer.from(value, 'utf8').toString('base64')}${BASE64_SENTINEL_SUFFIX}`
+    : value;
+}
+
+/** Routing headers a modern request needs; they mirror the JSON-RPC body. */
+export function modernRequestHeaders(message: Record<string, unknown>): Record<string, string> | undefined {
+  const version = modernProtocolVersion(message);
+  if (!version || typeof message.method !== 'string') return undefined;
+  const headers: Record<string, string> = {
+    'MCP-Protocol-Version': version,
+    'Mcp-Method': encodeMcpHeaderValue(message.method),
+  };
+  const nameField = MCP_NAME_SOURCE[message.method];
+  const params = message.params as Record<string, unknown>;
+  if (nameField && typeof params[nameField] === 'string') {
+    headers['Mcp-Name'] = encodeMcpHeaderValue(params[nameField] as string);
+  }
+  return headers;
+}
 
 export interface BrokerProxyOptions {
   authToken?: string;
@@ -38,6 +93,12 @@ export interface BrokerProxyOptions {
   readBrokerMetadataImpl?: (port: number, userDataDir: string) => BrokerMetadata | null;
   /** Override process liveness check (tests). */
   isPidAliveImpl?: (pid: number) => boolean;
+  /**
+   * Open the legacy session's GET event stream once initialize assigns an
+   * Mcp-Session-Id, so a legacy host behind the broker receives progress,
+   * list-changed notifications and server->client requests. Default true.
+   */
+  legacyEventStream?: boolean;
 }
 
 export class BrokerProxyStdioBridge {
@@ -53,6 +114,15 @@ export class BrokerProxyStdioBridge {
   private readonly isPidAliveImpl: (pid: number) => boolean;
   private brokerLostHandled = false;
   private mcpSessionId?: string;
+  /**
+   * Modern requests in flight, keyed by JSON-RPC id. Modern Streamable HTTP
+   * cancels a request by closing its response stream, so a host's
+   * notifications/cancelled aborts the matching fetch instead of being posted.
+   */
+  private readonly modernInFlight = new Map<string, AbortController>();
+  private readonly legacyEventStreamEnabled: boolean;
+  private legacyStreamSessionId?: string;
+  private legacyStreamController?: AbortController;
 
   constructor(broker: BrokerMetadata, authTokenOrOptions?: string | BrokerProxyOptions) {
     this.broker = broker;
@@ -68,6 +138,51 @@ export class BrokerProxyStdioBridge {
     this.onBrokerLost = options.onBrokerLost ?? (() => process.exit(BROKER_REELECT_EXIT_CODE));
     this.readBrokerMetadataImpl = options.readBrokerMetadataImpl ?? readBrokerMetadata;
     this.isPidAliveImpl = options.isPidAliveImpl ?? isPidAlive;
+    this.legacyEventStreamEnabled = options.legacyEventStream ?? true;
+  }
+
+  /** Stop the legacy event stream (tests and shutdown). */
+  close(): void {
+    this.legacyStreamController?.abort();
+    this.legacyStreamController = undefined;
+    this.legacyStreamSessionId = undefined;
+  }
+
+  private brokerHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { [BROKER_CLIENT_ID_HEADER]: this.clientId };
+    if (this.tenantId) headers['X-Tenant-Id'] = this.tenantId;
+    if (this.authToken) headers.Authorization = `Bearer ${this.authToken}`;
+    return headers;
+  }
+
+  /**
+   * Legacy Streamable HTTP delivers server-originated messages for a session
+   * on its GET stream. Keep one open per session and relay it to stdout.
+   */
+  private ensureLegacyEventStream(sessionId: string): void {
+    if (!this.legacyEventStreamEnabled || this.legacyStreamSessionId === sessionId) return;
+    this.legacyStreamController?.abort();
+    const controller = new AbortController();
+    this.legacyStreamController = controller;
+    this.legacyStreamSessionId = sessionId;
+    void (async () => {
+      for (let attempt = 0; attempt < 5 && !controller.signal.aborted; attempt++) {
+        try {
+          const response = await this.fetchImpl(this.broker.endpoint, {
+            method: 'GET',
+            headers: { ...this.brokerHeaders(), Accept: 'text/event-stream', [MCP_SESSION_ID_HEADER]: sessionId },
+            signal: controller.signal,
+          });
+          const stream = (response as { body?: ReadableStream<Uint8Array> | null }).body;
+          if (!response.ok || !stream || typeof stream.getReader !== 'function') return;
+          attempt = 0;
+          await this.relayEventStream(stream);
+        } catch {
+          if (controller.signal.aborted) return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    })();
   }
 
   start(): void {
@@ -131,6 +246,16 @@ export class BrokerProxyStdioBridge {
       return;
     }
 
+    const cancelled = this.cancelModernRequest(parsed);
+    if (cancelled) return;
+
+    const modernHeaders = modernRequestHeaders(parsed);
+    const inFlightKey = modernHeaders && parsed.id !== undefined && parsed.id !== null
+      ? JSON.stringify(parsed.id)
+      : undefined;
+    const controller = inFlightKey ? new AbortController() : undefined;
+    if (inFlightKey && controller) this.modernInFlight.set(inFlightKey, controller);
+
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -138,20 +263,29 @@ export class BrokerProxyStdioBridge {
         // response framing. The proxy unwraps SSE below so stdio clients keep
         // receiving plain JSON-RPC lines.
         Accept: 'application/json, text/event-stream',
-        [BROKER_CLIENT_ID_HEADER]: this.clientId,
+        ...this.brokerHeaders(),
       };
-      if (this.tenantId) headers['X-Tenant-Id'] = this.tenantId;
-      if (this.authToken) headers.Authorization = `Bearer ${this.authToken}`;
-      if (this.mcpSessionId) headers[MCP_SESSION_ID_HEADER] = this.mcpSessionId;
+      if (modernHeaders) {
+        // 2026-07-28 has no protocol session: never pin one to modern traffic.
+        Object.assign(headers, modernHeaders);
+      } else if (this.mcpSessionId) {
+        headers[MCP_SESSION_ID_HEADER] = this.mcpSessionId;
+      }
 
       const response = await this.fetchImpl(this.broker.endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(parsed),
+        ...(controller ? { signal: controller.signal } : {}),
       });
 
-      const sessionHeader = readHeader(response.headers, MCP_SESSION_ID_HEADER);
-      if (sessionHeader) this.mcpSessionId = sessionHeader;
+      if (!modernHeaders) {
+        const sessionHeader = readHeader(response.headers, MCP_SESSION_ID_HEADER);
+        if (sessionHeader) {
+          this.mcpSessionId = sessionHeader;
+          this.ensureLegacyEventStream(sessionHeader);
+        }
+      }
 
       if (!response.ok) {
         const text = await response.text();
@@ -166,6 +300,15 @@ export class BrokerProxyStdioBridge {
       // 202 Accepted: notification consumed by the server, no JSON-RPC reply.
       if (response.status === 202) return;
 
+      const contentType = readHeader(response.headers, 'Content-Type') ?? readHeader(response.headers, 'content-type') ?? '';
+      const stream = (response as { body?: ReadableStream<Uint8Array> | null }).body;
+      if (contentType.includes('text/event-stream') && stream && typeof stream.getReader === 'function') {
+        // Relay each event as it arrives: progress for long tool calls and
+        // long-lived subscriptions/listen streams must not wait for the end.
+        await this.relayEventStream(stream);
+        return;
+      }
+
       const rawBody = await response.text();
       if (!rawBody) return;
 
@@ -174,6 +317,7 @@ export class BrokerProxyStdioBridge {
         this.writeOut(payload.trimEnd() + '\n');
       }
     } catch (err) {
+      if (controller?.signal.aborted) return; // cancelled by the host
       // #1480 S4: a forwarding failure can be a transient hiccup or the owner
       // dying. Distinguish via the discovery file: if the broker is gone,
       // re-elect instead of returning errors forever. Otherwise surface the
@@ -187,6 +331,50 @@ export class BrokerProxyStdioBridge {
         id: extractId(parsed),
         error: { code: MCPErrorCodes.INTERNAL_ERROR, message: `Broker forwarding failed: ${err instanceof Error ? err.message : String(err)}` },
       });
+    } finally {
+      if (inFlightKey) this.modernInFlight.delete(inFlightKey);
+    }
+  }
+
+  /**
+   * A host's notifications/cancelled for an in-flight modern request aborts
+   * that request's HTTP stream (the modern cancellation signal) and is not
+   * forwarded. Returns true when it handled the message.
+   */
+  private cancelModernRequest(message: Record<string, unknown>): boolean {
+    if (message.method !== 'notifications/cancelled' || message.id !== undefined) return false;
+    const requestId = (message.params as { requestId?: unknown } | undefined)?.requestId;
+    if (typeof requestId !== 'string' && typeof requestId !== 'number') return false;
+    const controller = this.modernInFlight.get(JSON.stringify(requestId));
+    if (!controller) return false;
+    controller.abort();
+    return true;
+  }
+
+  private async relayEventStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const flushEvents = (): void => {
+      let boundary: RegExpExecArray | null;
+      while ((boundary = /\r?\n\r?\n/.exec(buffer)) !== null) {
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
+        for (const payload of unwrapBody(frame, { 'content-type': 'text/event-stream' })) {
+          this.writeOut(payload.trimEnd() + '\n');
+        }
+      }
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      flushEvents();
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      buffer += '\n\n';
+      flushEvents();
     }
   }
 
