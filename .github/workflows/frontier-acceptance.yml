@@ -45,6 +45,8 @@ jobs:
           echo "CANDIDATE_ENTRY=$INSTALL_DIR/node_modules/openchrome-mcp/dist/index.js" >> "$GITHUB_ENV"
       - name: Run through the installed entrypoint and real headless Chrome
         run: npm run harness:frontier -- --runtime-contract --confirmed-scope --entry "$CANDIDATE_ENTRY" --artifact "$CANDIDATE_PACKAGE" --output artifacts/frontier/installed-acceptance.json
+      - name: MCP 2026-07-28 through the installed entrypoint and real headless Chrome
+        run: npm run harness:modern-installed -- --entry "$CANDIDATE_ENTRY" --output artifacts/frontier/modern-installed-acceptance.json
       - name: Keep reports including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
