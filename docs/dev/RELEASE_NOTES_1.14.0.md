@@ -51,6 +51,8 @@ initialize 응답의 capabilities.experimental.io.openchrome/runtime은 runtimeI
 이전 실행 세대를 참조하는 요청에 STALE_RUNTIME을 받는다.
 이 필드는 인증 토큰이 아니며 기존 권한 검사를 대체하지 않는다. 필드 미전송은 구형 호환 경로다.
 신형 MCP 요청을 구형 세션 규칙으로 오실행하지 않도록 거부한다.
+HTTP의 명시적 MCP-Protocol-Version은 광고하는 2024-11-05만 허용한다.
+다른 버전을 고정한 클라이언트는 initialize의 응답 버전으로 맞춰야 한다.
 
 ## 로컬 bounded learning
 
@@ -91,10 +93,15 @@ npm 설치만으로 이미 실행 중인 MCP 프로세스가 교체되지는 않
 
 1.14.0 tarball 생성, 별도 디렉터리 설치, CLI 버전 확인, npm publish --dry-run을 통과했다.
 설치된 패키지의 headed MCP 포커스·재시작·탭 인계 테스트와 학습 테스트 65개도 통과했다.
-반면 isolated headless 설치 수락 테스트는 Chrome 시작 직후 종료로 실패했다.
-변경 전 main의 1.13.0에서도 동일 증상을 재현했지만 해결되지 않았으므로 배포 차단 항목이다.
-최종 CI와 독립 검토가 통과했다는 주장은 하지 않는다.
-독립 검토 서비스의 429는 승인으로 간주하지 않는다. 승인·병합·CI 통과 전 정식 공개를 보류한다.
+isolated headless 시작 실패는 headless 실행에 --enable-automation을 추가해 수정했다.
+수정 전 실패와 수정 후 실제 Chrome 수락 통과를 확인했으며, headed 실행 옵션은 변경하지 않는다.
+checkout 밖에 설치한 패키지와 Windows/Linux GitHub 설치 수락 테스트도 통과했다.
+전체 Jest에서 발견한 v1.13 도구 목록의 과거 스냅샷 누락은 기존 snapshot을 보존하고
+oc_browser_control 추가를 명시하는 exact 비교로 수정했다.
+독립 검토의 HTTP 지원 버전 불일치 지적도 수정하고 회귀 테스트를 추가했다.
+초기 429는 검토 역할 미지정에 따른 Claude 기본 경로 문제였고 명시적 검토 역할로 복구했다.
+최종 커밋의 검토·CI·main 병합 결과는 릴리스에 첨부하는 검증 기록에서 확인한다.
+승인·병합·CI 통과 전 정식 공개를 보류하며 npm publish는 별도 실행 단계다.
 
 ## 참고
 

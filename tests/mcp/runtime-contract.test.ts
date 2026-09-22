@@ -1,6 +1,14 @@
-import { createRuntimeContract, validateRuntimeRequest, RUNTIME_META_KEY, PROTOCOL_META_KEY } from '../../src/mcp/runtime-contract';
+import { createRuntimeContract, validateRuntimeRequest, rejectUnsupportedProtocol, RUNTIME_META_KEY, PROTOCOL_META_KEY } from '../../src/mcp/runtime-contract';
 
 describe('runtime reconnect contract', () => {
+  test.each(['2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28'])('rejects unadvertised HTTP version %s', version => {
+    expect(rejectUnsupportedProtocol(undefined, version)?.code).toBe(-32600);
+  });
+
+  test('accepts only the advertised HTTP version or an absent legacy header', () => {
+    expect(rejectUnsupportedProtocol(undefined, '2024-11-05')).toBeUndefined();
+    expect(rejectUnsupportedProtocol(undefined)).toBeUndefined();
+  });
   test('keeps legacy calls and progress metadata compatible', () => {
     const runtime = createRuntimeContract();
     expect(validateRuntimeRequest(undefined, runtime)).toBeUndefined();

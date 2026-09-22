@@ -23,8 +23,7 @@ export type RuntimeContract = ReturnType<typeof createRuntimeContract>;
 export function rejectUnsupportedProtocol(meta: unknown, httpVersion?: string | string[]): MCPError | undefined {
   const fields = meta && typeof meta === 'object' && !Array.isArray(meta)
     ? meta as Record<string, unknown> : {};
-  const legacyHeader = httpVersion === undefined || (typeof httpVersion === 'string'
-    && ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'].includes(httpVersion));
+  const legacyHeader = httpVersion === undefined || httpVersion === LEGACY_PROTOCOL_VERSION;
   if (!legacyHeader || PROTOCOL_META_KEY in fields || 'io.modelcontextprotocol/clientCapabilities' in fields) {
     // A legacy error lets dual-era clients fall back to initialize instead of treating us as modern.
     return {
