@@ -15,7 +15,7 @@ async function main() {
   const page = (await browser.pages())[0];
   await page.goto(url);
   const port = new URL(browser.wsEndpoint()).port;
-  const client = new MCPClient({ args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_USER_TABS: '1', OPENCHROME_SKIP_COOKIE_BRIDGE: '1' } });
+  const client = new MCPClient({ entry: process.env.OPENCHROME_TEST_ENTRY, args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_USER_TABS: '1', OPENCHROME_SKIP_COOKIE_BRIDGE: '1' } });
   try {
     await client.start();
     const discovery = await client.callTool('tabs_context', { scope: 'browser' });

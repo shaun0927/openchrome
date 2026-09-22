@@ -19,11 +19,12 @@ async function main() {
   assert.notEqual(originalWindow, '0', 'QA requires an interactive Windows desktop');
   const browser = await puppeteer.launch({ executablePath: process.env.OPENCHROME_TEST_CHROME, headless: false, defaultViewport: null });
   const port = new URL(browser.wsEndpoint()).port;
-  const client = new MCPClient({ args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_SKIP_COOKIE_BRIDGE: '1', OPENCHROME_FOCUS_POLICY: 'background-only' } });
+  const client = new MCPClient({ entry: process.env.OPENCHROME_TEST_ENTRY, args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_SKIP_COOKIE_BRIDGE: '1', OPENCHROME_FOCUS_POLICY: 'background-only' } });
   try {
     await client.start();
     const initialized = await client.send('initialize', {});
     const runtime = initialized.result.capabilities.experimental['io.openchrome/runtime'];
+    if (process.env.OPENCHROME_TEST_VERSION) assert.equal(runtime.packageVersion, process.env.OPENCHROME_TEST_VERSION);
     assert.equal(runtime.protocolMode, 'legacy-stateful');
     const beforeRejected = (await browser.pages()).length;
     const stale = await client.send('tools/call', {
