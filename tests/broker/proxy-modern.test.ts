@@ -125,6 +125,28 @@ describe('BrokerProxyStdioBridge with 2026-07-28 traffic', () => {
     expect(output).toEqual([]);
   });
 
+  test('re-arms the legacy event stream after the owner refuses it', async () => {
+    const methods: string[] = [];
+    let getCalls = 0;
+    const fetchImpl = jest.fn(async (_url: string, init: RequestInit) => {
+      methods.push(init.method ?? 'GET');
+      if (init.method === 'GET') {
+        getCalls += 1;
+        return { ok: false, status: 503, headers: new Headers(), body: null, text: async () => '' } as unknown as Response;
+      }
+      return jsonResponse('{"jsonrpc":"2.0","id":1,"result":{}}', { 'Mcp-Session-Id': 'legacy-9' });
+    });
+    const bridge = new BrokerProxyStdioBridge(broker, { fetchImpl: fetchImpl as unknown as typeof fetch, write: () => undefined });
+
+    await bridge.forwardLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await bridge.forwardLine(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    bridge.close();
+
+    expect(getCalls).toBe(2);
+  });
+
   test('opens the legacy session event stream after initialize and relays it', async () => {
     const encoder = new TextEncoder();
     const calls: Array<{ method?: string; headers: Record<string, string> }> = [];

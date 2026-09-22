@@ -110,6 +110,12 @@ export interface RequestContext {
     params?: Record<string, unknown>,
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ) => Promise<T>;
+  /**
+   * Fresh request bridge with its own input-request numbering. Each tool
+   * attempt takes one, so a retried attempt maps its inputs to the same
+   * multi-round-trip keys as the first attempt.
+   */
+  createRequestClient?: () => NonNullable<RequestContext['requestClient']>;
   /** Request-related notification bridge supplied by the official MCP SDK. */
   notifyClient?: (method: string, params?: Record<string, unknown>) => Promise<void>;
   /** Per-request structured logging bridge; the SDK enforces the requested level. */

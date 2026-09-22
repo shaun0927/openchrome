@@ -165,8 +165,17 @@ export class BrokerProxyStdioBridge {
     const controller = new AbortController();
     this.legacyStreamController = controller;
     this.legacyStreamSessionId = sessionId;
+    const disarm = (reason: string): void => {
+      console.error(`[openchrome] broker event stream for session ${sessionId} stopped: ${reason}`);
+      // Let the next POST that carries this session re-arm the stream.
+      if (this.legacyStreamController === controller) {
+        this.legacyStreamController = undefined;
+        this.legacyStreamSessionId = undefined;
+      }
+    };
     void (async () => {
-      for (let attempt = 0; attempt < 5 && !controller.signal.aborted; attempt++) {
+      let failures = 0;
+      while (!controller.signal.aborted) {
         try {
           const response = await this.fetchImpl(this.broker.endpoint, {
             method: 'GET',
@@ -174,13 +183,22 @@ export class BrokerProxyStdioBridge {
             signal: controller.signal,
           });
           const stream = (response as { body?: ReadableStream<Uint8Array> | null }).body;
-          if (!response.ok || !stream || typeof stream.getReader !== 'function') return;
-          attempt = 0;
+          if (!response.ok || !stream || typeof stream.getReader !== 'function') {
+            disarm(`HTTP ${response.status}`);
+            return;
+          }
+          failures = 0;
           await this.relayEventStream(stream);
-        } catch {
+        } catch (error) {
           if (controller.signal.aborted) return;
+          if (failures === 0) {
+            console.error(`[openchrome] broker event stream for session ${sessionId} failed; reconnecting: ${error instanceof Error ? error.message : String(error)}`);
+          }
         }
-        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+        if (controller.signal.aborted) return;
+        failures++;
+        // Capped exponential backoff; the stream lives as long as the session.
+        await new Promise(resolve => setTimeout(resolve, Math.min(10_000, 250 * 2 ** Math.min(failures, 6))));
       }
     })();
   }
