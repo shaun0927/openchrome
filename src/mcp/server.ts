@@ -2,6 +2,7 @@
  * MCP Server - Implements MCP protocol with pluggable transports (stdio, HTTP)
  */
 
+import { randomUUID } from 'crypto';
 import * as path from 'path';
 import { createRuntimeContract, validateRuntimeRequest } from './runtime-contract';
 import { runToolAttempt, ToolAttemptError, currentAttemptSignal, drainAttemptCommands, runWithCommandScope } from '../core/deadline/tool-attempt';
@@ -745,8 +746,21 @@ export class MCPServer {
   readonly browserOperations = new BrowserOperations();
   private readonly toolCancellations = new Map<string, AbortController>();
 
+  /**
+   * Key under which an in-flight request can be cancelled by
+   * notifications/cancelled: its MCP session, or the local stdio client.
+   * HTTP requests without a session (all 2026-07-28 traffic and sessionless
+   * legacy calls) are cancelled only by closing their own HTTP exchange, so
+   * they get a unique key that no other client's JSON-RPC id can collide
+   * with or cancel.
+   */
   private cancellationKey(id: unknown, context?: TransportMessageContext): string {
-    return JSON.stringify([context?.mcpSessionId ?? currentRequestContext()?.mcpSessionId ?? 'stdio', id]);
+    const current = currentRequestContext();
+    const mcpSessionId = context?.mcpSessionId ?? current?.mcpSessionId;
+    if (!mcpSessionId && (context?.channel ?? current?.channel) === 'http') {
+      return JSON.stringify(['http', randomUUID(), id]);
+    }
+    return JSON.stringify([mcpSessionId ?? 'stdio', id]);
   }
 
   /**
