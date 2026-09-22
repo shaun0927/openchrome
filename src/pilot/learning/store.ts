@@ -4,6 +4,7 @@ import type { LearningEvent } from './types.js';
 import { choicesForLearningTask } from './types.js';
 import { randomUUID } from 'crypto';
 import { redactLearningState } from './redaction.js';
+import { isLearningEvent } from './validation.js';
 
 export interface LearningEventStore {
   append(event: LearningEvent): Promise<void>;
@@ -43,7 +44,7 @@ function sanitizeEvent(event: LearningEvent): LearningEvent {
       abstain: review.abstain === true, disagreement: review.answer !== event.deterministic_answer,
     } : null,
     label: event.label ? { answer: event.label.answer, source: event.label.source, created_at: now } : null,
-    privacy: { redacted: true, contains_sensitive: event.privacy.contains_sensitive || redacted.containsSensitive } };
+    privacy: { redacted: true, contains_sensitive: false } };
 }
 
 export async function readLearningEventsFromJsonl(file: string): Promise<LearningEvent[]> {
@@ -57,7 +58,9 @@ export async function readLearningEventsFromJsonl(file: string): Promise<Learnin
   const events: LearningEvent[] = [];
   for (const line of text.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;
-    events.push(JSON.parse(line) as LearningEvent);
+    const parsed: unknown = JSON.parse(line);
+    if (!isLearningEvent(parsed)) throw new Error('invalid learning event schema');
+    events.push(parsed);
   }
   return events;
 }

@@ -49,6 +49,7 @@
     "harness:decision-fixture": "ts-node tests/harness/decision-fixture.ts",
     "harness:decision-baseline": "ts-node tests/harness/decision-baseline.ts",
     "eval:decisions": "ts-node scripts/eval-decisions.ts",
+    "learning": "node dist/index.js learning",
     "harness:certify": "ts-node tests/harness/certification/run-certification.ts",
     "harness:evaluate-candidates": "ts-node tests/harness/candidates/evaluator.ts",
     "docs:capability-map": "ts-node scripts/gen-capability-map.ts",
