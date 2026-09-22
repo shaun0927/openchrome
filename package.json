@@ -1,6 +1,6 @@
 {
   "name": "openchrome-mcp",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "description": "Open-source browser automation MCP server. Control your real Chrome from any AI agent.",
   "main": "dist/index.js",
   "exports": {
@@ -49,6 +49,7 @@
     "prepare": "npm run build",
     "harness:parallel-smoke": "ts-node tests/harness/parallel-smoke.ts",
     "harness:frontier": "ts-node tests/harness/frontier-acceptance.ts",
+    "harness:modern-installed": "ts-node tests/harness/modern-installed-smoke.ts",
     "harness:decision-fixture": "ts-node tests/harness/decision-fixture.ts",
     "harness:decision-baseline": "ts-node tests/harness/decision-baseline.ts",
     "eval:decisions": "ts-node scripts/eval-decisions.ts",

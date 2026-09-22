@@ -157,6 +157,62 @@ jobs:
         if: steps.changes.outputs.needs_pack == 'true'
         run: npm pack --dry-run --json > /tmp/openchrome-pack.json
 
+  mcp-conformance:
+    name: mcp-conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Protocol contract tests (official SDK v2 client against the real core)
+        run: >-
+          npx jest --config jest.ci.config.js --runInBand
+          tests/mcp/modern-core-integration.test.ts
+          tests/mcp/workspace-handles.test.ts
+          tests/mcp/workspace-handles-integration.test.ts
+          tests/mcp/mrtr-request-state.test.ts
+          tests/mcp/mrtr-retry-propagation.test.ts
+          tests/mcp/runtime-drain.test.ts
+          tests/mcp/client-message-routing.test.ts
+          tests/mcp/runtime-contract.test.ts
+          tests/transports/http-modern-mcp.test.ts
+          tests/transports/stdio-modern-mcp.test.ts
+          tests/transports/http-streamable.test.ts
+          tests/broker
+          tests/docs
+        env:
+          CI: true
+
+      - name: Official MCP conformance scenarios (legacy HTTP)
+        # @modelcontextprotocol/conformance covers 2025-06-18/2025-11-25 and
+        # its tool/prompt scenarios need the reference "everything" server;
+        # these are the scenarios that apply to any server.
+        env:
+          OPENCHROME_ALLOW_UNAUTHENTICATED_HTTP: '1'
+        run: |
+          node dist/index.js serve --http 31877 --port 9555 > /tmp/openchrome-conformance.log 2>&1 &
+          SERVER_PID=$!
+          timeout 60 bash -c 'until curl -sf http://127.0.0.1:31877/health > /dev/null; do sleep 0.5; done'
+          status=0
+          for scenario in server-initialize ping tools-list resources-list logging-set-level dns-rebinding-protection; do
+            npx --yes @modelcontextprotocol/conformance@0.1.16 server --url http://127.0.0.1:31877/mcp --scenario "$scenario" || status=1
+          done
+          kill "$SERVER_PID" || true
+          exit $status
+
   full-test:
     name: full-test
     if: github.event_name == 'workflow_dispatch' && inputs.full
