@@ -16,6 +16,7 @@ async function main() {
   assert.equal(process.platform, 'win32');
   assert.ok(process.env.OPENCHROME_TEST_CHROME, 'Set OPENCHROME_TEST_CHROME');
   const originalWindow = foreground();
+  assert.notEqual(originalWindow, '0', 'QA requires an interactive Windows desktop');
   const browser = await puppeteer.launch({ executablePath: process.env.OPENCHROME_TEST_CHROME, headless: false, defaultViewport: null });
   const port = new URL(browser.wsEndpoint()).port;
   const client = new MCPClient({ args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_SKIP_COOKIE_BRIDGE: '1', OPENCHROME_FOCUS_POLICY: 'background-only' } });
