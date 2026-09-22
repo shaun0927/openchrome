@@ -7,13 +7,14 @@ test('invalid budget values cannot bypass the request limit', () => {
   }
 });
 
-test.each(['invalid', 'throw'])('runner downgrades %s primary responses', async (mode) => {
+test.each(['invalid', 'throw', 'abstain'])('runner bounds %s primary responses', async (mode) => {
   const primary = createHostDecisionProvider(async () => {
     if (mode === 'throw') throw new Error('unavailable');
-    return { answer: 'unlisted', confidence: 1, abstain: false };
+    return { answer: 'unlisted', confidence: 1, abstain: mode === 'abstain' };
   });
   const result = await decideWithBudget({ id: 'test', instructions: '', state: {}, choices: [{ id: 'allowed', label: 'Allowed' }] }, {
     primary, fallback: createNoopDecisionProvider(), budget: new OutboundDecisionBudget(1),
   });
-  expect(result).toMatchObject({ answer: 'none', abstain: true, downgraded: true });
+  expect(result).toMatchObject({ answer: 'none', abstain: true });
+  if (mode !== 'abstain') expect(result.downgraded).toBe(true);
 });
