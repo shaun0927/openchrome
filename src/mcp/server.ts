@@ -3,6 +3,7 @@
  */
 
 import * as path from 'path';
+import { createRuntimeContract, validateRuntimeRequest } from './runtime-contract';
 import { runToolAttempt, ToolAttemptError, currentAttemptSignal, drainAttemptCommands, runWithCommandScope } from '../core/deadline/tool-attempt';
 import { BrowserOperations, BrowserAdmissionError, operationTargets } from '../core/browser-operations';
 import {
@@ -431,6 +432,12 @@ function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>):
 }
 
 export class MCPServer {
+  private readonly runtimeContract = createRuntimeContract();
+
+  getRuntimeContract(): ReturnType<typeof createRuntimeContract> {
+    return this.runtimeContract;
+  }
+
   private tools: Map<string, ToolRegistry> = new Map();
   private resources: Map<string, MCPResourceDefinition> = new Map();
   private resourceSubscriptions = new ResourceSubscriptionManager();
@@ -1248,6 +1255,11 @@ export class MCPServer {
     }
     const { id, method, params } = request;
 
+    const contractError = validateRuntimeRequest(params?._meta, this.runtimeContract);
+    if (contractError) {
+      return this.errorResponse(id, contractError.code, contractError.message, contractError.data);
+    }
+
     try {
       let result: MCPResult;
 
@@ -1447,6 +1459,7 @@ export class MCPServer {
     return {
       protocolVersion: '2024-11-05',
       capabilities: {
+        experimental: { 'io.openchrome/runtime': this.runtimeContract },
         tools: { listChanged: this.clientSupportsListChanged },
         resources: { listChanged: true, subscribe: true },
         // #870 — advertise structured-logging support. Empty object per MCP

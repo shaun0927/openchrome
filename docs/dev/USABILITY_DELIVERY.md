@@ -1,0 +1,80 @@
+# Chrome 사용성 개선 진행 기록
+
+기준 main: `43d99a01ea9a7abba080e20d1f142edafe4fa258`.
+기존 작업 트리는 보존하고 별도 worktree에서 작업한다.
+
+| 순서 | 변경 | 상태 |
+|---|---|---|
+| 1 | 백그라운드 탭 생성 | 구현 및 로컬 headed QA 완료, 검토 대기 |
+| 2 | 연결 대상 식별과 진단 | 구현 및 MCP QA 완료, 검토 대기 |
+| 3 | 기존 탭 발견과 제어권 인계 | 구현 및 MCP QA 완료, 검토 대기 |
+| 4 | 작업 탭 선택과 중복 생성 방지 | 구현 및 MCP QA 완료, 검토 대기 |
+| 5 | 포커스 정책과 사용자 개입 흐름 | 구현 및 MCP QA 완료, 검토 대기 |
+| 6 | headed 회귀 검증과 운영 문서 | 576개 회귀 테스트 및 실제 MCP QA 완료, 검토 대기 |
+
+각 PR은 빌드, 관련 테스트, 실제 경로 QA, 독립 검토 후 순서대로 병합한다.
+일반 Chrome의 디버깅 연결 제한을 우회하거나 사용자 Chrome을 강제로 재시작하지 않는다.
+테스트는 별도 임시 프로필과 로컬 페이지를 사용한다. 사용자 쿠키와 토큰을 수집하지 않는다.
+
+## PR 1 검증
+
+- `npm run build`: 통과.
+- 기존 생성 및 headed fallback 관련 4개 suite / 46개 테스트: 통과.
+- `OPENCHROME_TEST_CHROME`과 `OPENCHROME_TEST_HEADED=1`로 실행한
+  `tests/cdp/background-page.test.ts`: 실제 Chrome에서 4개 테스트 통과.
+- `scripts/verify-background-tabs.cjs`: Windows Chrome 153.0.8010.50,
+  MCP stdio 경유 일반 생성 2회와 격리 context 생성 1회 후 foreground 유지 확인.
+- 증거: 로컬 `artifacts/usability/`의 build.log, headed-tests.log, mcp-foreground.log.
+- 관측은 호출 전후 foreground 창 비교다. 연속 키 입력 무손실이나 모든 OS 대화상자까지
+  검증한 것은 아니며, 최초 Chrome 실행은 별도 창을 띄운다.
+- 기본 context를 유지하고, 닫힌 격리 context 요청을 기본 context로 우회하지 않는다.
+
+## PR 2 범위
+
+일반 explicit attach는 최초 연결한 브라우저 endpoint를 고정한다. 캐시 무효화 후
+같은 포트에 다른 브라우저가 나타나면 `CHROME_IDENTITY_CHANGED`로 거부한다.
+프로필 디렉터리를 검증하는 기존 auto-connect 재연결 정책은 유지한다.
+`oc_get_connection_info(host=openchrome)`의 `browserConnection`이 실제 연결 상태,
+해시 식별자, 프로필 검증 한계, 인증 미검증 상태를 반환한다.
+기존 `mode`는 호환성을 위해 유지하며 브라우저 연결 판정에는 사용하지 않는다.
+단순 포트 연결만으로 프로필이나 사이트 로그인 계정이 확인됐다고 보고하지 않는다.
+
+## PR 3 사용 계약
+
+서버 실행 시 `OPENCHROME_USER_TABS=1`을 명시해야 기존 사용자 탭 접근을 허용한다.
+첨부된 브라우저의 기본 context와 로컬 기본 tenant만 지원한다. 다른 worker의 소유 탭,
+격리 context, 별도 프로필 worker는 자동 인계 대상이 아니다.
+
+1. `tabs_context`에 `scope: "browser"`를 보내 기존 미소유 HTTP(S) 탭을 발견한다.
+2. `worker`에 `action: "borrow_tab"`, `tabId`, 관측한 정확한 `expectedUrl`을 보낸다.
+3. 작업 후 `action: "release_tab"`, `tabId`로 제어권을 반환한다.
+
+인계된 탭은 `tabs_close`로 닫지 않으며 세션 삭제와 TTL 정리 시 제어권만 반환한다.
+opt-in 모드에서는 미소유 tabId를 일반 도구에 보내도 자동 복구 명목으로 인계하지 않는다.
+서로 다른 OpenChrome 서버 프로세스 사이의 전역 잠금은 이 PR의 보장 범위가 아니다.
+`scripts/verify-user-tabs.cjs`로 실제 MCP 발견, stale URL 거부, 인계, 닫기 거부,
+제어권 반환, 서버 종료 후 탭 보존을 확인했다. 관련 session 테스트 107개 통과.
+
+## PR 4 선택 정책
+
+명시적인 tabId와 기존 lane 선택은 유지한다. 자동 선택은 해당 worker의 정확히 같은
+URL인 유일한 탭만 재사용하며, 페이지를 다시 로드하지 않아 폼 입력을 보존한다.
+후보가 둘 이상이면 `AMBIGUOUS_TAB`을 반환하고 tabId 지정을 요구한다.
+다른 URL의 탭을 자동으로 덮어쓰지 않는다. 다른 경로로 이동하려면 tabId를 명시한다.
+tabId 없는 탐색 요청은 세션/worker/profile/lane별로 직렬화한다.
+실제 MCP QA에서 폼 보존과 동시 요청의 동일 tabId 반환을 확인했다. 관련 테스트 86개 통과.
+기존 main에서도 headed 자동 전환 테스트 2개 실패를 재현했다.
+
+## PR 5 표시 정책
+
+일반 복구 흐름은 새 headed 브라우저를 자동 실행하지 않는다. 대신
+`HEADED_FALLBACK_REQUIRES_USER`와 `needs_user_input`을 반환한다.
+해당 요청에 `allowHeadedFallback: true`를 명시하면 기존 복구를 허용하되
+기존 headless 정책은 유지한다. 사용자가 직접 요청하는 `headed: true`도 유지한다.
+
+`OPENCHROME_FOCUS_POLICY=background-only`이면 `tabs_activate`, `reveal`,
+명시적 headed 실행을 거부한다. 기본값 `explicit-only`는 명시적 표시를 허용한다.
+알 수 없는 설정값은 전면 표시를 허용하지 않는다.
+로그인 개입은 `oc_browser_control`의 pause와 lease/expectedUrl 검증을 이용해 재개한다.
+탐색 응답만으로 로그인 성공을 판단하거나 자동으로 resume하지 않는다.
+관련 테스트 118개 통과. 실제 MCP에서 background-only 활성화 거부와 foreground 유지 확인.

@@ -15,6 +15,7 @@ const definition: MCPToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
+      scope: { type: 'string', enum: ['session', 'browser'], description: 'browser discovers unowned user tabs without adopting them; requires server opt-in.' },
       workerId: {
         type: 'string',
         description: 'Filter to a specific worker',
@@ -84,6 +85,11 @@ const handler: ToolHandler = async (
   const summaryMode = args.summary as boolean | undefined;
 
   try {
+    if (args.scope === 'browser') {
+      const tabs = await sessionManager.discoverUserTabs(sessionId);
+      const result = { sessionId, scope: 'browser', workerCount: 0, tabCount: tabs.length, workers: [], tabs, authentication: 'unverified' };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result };
+    }
     const session = await sessionManager.getOrCreateSession(sessionId);
     const workers = sessionManager.getWorkers(sessionId);
 

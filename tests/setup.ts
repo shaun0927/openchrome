@@ -46,6 +46,7 @@ jest.mock('puppeteer-core', () => {
 
 // Block ChromeLauncher from launching real Chrome
 jest.mock('../src/chrome/launcher', () => ({
+  getExistingChromeLauncher: jest.fn().mockReturnValue(null),
   ChromeLauncher: jest.fn().mockImplementation(() => ({
     ensureChrome: jest.fn().mockResolvedValue({
       wsEndpoint: 'ws://mock:9222',

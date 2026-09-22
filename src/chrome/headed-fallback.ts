@@ -20,6 +20,7 @@ import { hasDisplay } from './display-detect';
 import { detectBlockingPage, BlockingInfo } from '../core/page/diagnostics';
 import { safeTitle } from '../core/page/safe-title';
 import { getTargetId } from '../cdp/target-id';
+import { createBackgroundPage } from '../cdp/background-page';
 import { spawnProcessGuardian } from './process-guardian';
 import { writeMarker, removeMarker } from './ownership-marker';
 
@@ -245,7 +246,7 @@ class HeadedFallbackManager {
    */
   async navigate(url: string): Promise<HeadedNavigateResult> {
     const browser = await this.ensureBrowser();
-    const page = await browser.newPage();
+    const page = await createBackgroundPage(browser);
 
     try {
       await page.goto(url, {
@@ -291,7 +292,7 @@ class HeadedFallbackManager {
     }
     this.profileDirectory = profileDirectory;
     const browser = await this.ensureBrowser();
-    const page = await browser.newPage();
+    const page = await createBackgroundPage(browser);
 
     try {
       await page.goto(url, {
