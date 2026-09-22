@@ -22,6 +22,23 @@ async function main() {
   const client = new MCPClient({ args: ['--port', port, '--launch-mode', 'attach'], env: { OPENCHROME_SKIP_COOKIE_BRIDGE: '1', OPENCHROME_FOCUS_POLICY: 'background-only' } });
   try {
     await client.start();
+    const initialized = await client.send('initialize', {});
+    const runtime = initialized.result.capabilities.experimental['io.openchrome/runtime'];
+    assert.equal(runtime.protocolMode, 'legacy-stateful');
+    const beforeRejected = (await browser.pages()).length;
+    const stale = await client.send('tools/call', {
+      name: 'tabs_create', arguments: { url: 'about:blank' },
+      _meta: { 'io.openchrome/runtimeId': 'previous-runtime' },
+    });
+    assert.equal(stale.error.data.reason, 'STALE_RUNTIME');
+    const modern = await client.send('tools/call', {
+      name: 'tabs_create', arguments: { url: 'about:blank' },
+      _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' },
+    });
+    assert.equal(modern.error.code, -32600);
+    assert.equal((await browser.pages()).length, beforeRejected);
+    const valid = await client.send('tools/list', { _meta: { 'io.openchrome/runtimeId': runtime.runtimeId } });
+    assert.ok(valid.result.tools.length > 0);
     assert.equal(foreground(originalWindow), originalWindow, 'Could not restore the previously focused application for QA');
     const rows = [];
     for (const args of [{ url: 'about:blank' }, { url: 'about:blank' }, { url: 'about:blank', isolatedContext: 'focus-qa' }]) {
@@ -35,12 +52,23 @@ async function main() {
       assert.equal(activation.raw.isError, true, 'background-only policy allowed activation');
       assert.equal(foreground(), originalWindow);
     }
+    await client.restart();
+    const restarted = await client.send('initialize', {});
+    const nextRuntime = restarted.result.capabilities.experimental['io.openchrome/runtime'];
+    assert.notEqual(nextRuntime.runtimeId, runtime.runtimeId);
+    const pagesBeforeReplay = (await browser.pages()).length;
+    const replay = await client.send('tools/call', {
+      name: 'tabs_create', arguments: { url: 'about:blank' },
+      _meta: { 'io.openchrome/runtimeId': runtime.runtimeId },
+    });
+    assert.equal(replay.error.data.reason, 'STALE_RUNTIME');
+    assert.equal((await browser.pages()).length, pagesBeforeReplay);
     const info = await client.callTool('oc_get_connection_info', { host: 'openchrome' });
     assert.notEqual(info.raw.isError, true);
-    const connection = JSON.parse(info.text).browserConnection;
+    const connection = (info.raw.structuredContent ?? JSON.parse(info.content[0].text)).browserConnection;
     assert.equal(connection.status, 'attached');
     assert.equal(connection.authentication, 'unverified');
-    console.log(JSON.stringify({ chrome: await browser.version(), transport: 'MCP stdio', rows, connection }, null, 2));
+    console.log(JSON.stringify({ chrome: await browser.version(), transport: 'MCP stdio', rows, connection, restartGuard: 'passed' }, null, 2));
   } finally {
     await client.stop();
     await browser.close();

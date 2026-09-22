@@ -12,6 +12,7 @@
 
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
+import { rejectUnsupportedProtocol } from '../mcp/runtime-contract';
 import { MCPResponse, MCPErrorCodes } from '../types/mcp';
 import { ClientDisconnectError } from '../errors/abort';
 import { MCPTransport, TransportMessageContext } from './index';
@@ -701,6 +702,22 @@ export class HTTPTransport implements MCPTransport {
             message: error instanceof Error ? error.message : 'Parse error',
           },
         }));
+        return;
+      }
+
+      const messages: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+      const protocolError = rejectUnsupportedProtocol(undefined, req.headers['mcp-protocol-version'])
+        ?? messages.map(message => {
+          if (!message || typeof message !== 'object') return undefined;
+          const params = (message as Record<string, unknown>).params;
+          return rejectUnsupportedProtocol(params && typeof params === 'object'
+            ? (params as Record<string, unknown>)._meta : undefined);
+        }).find(error => error !== undefined);
+      if (protocolError) {
+        const rawId = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>).id : null;
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: typeof rawId === 'string' || typeof rawId === 'number' ? rawId : null, error: protocolError }));
         return;
       }
 
