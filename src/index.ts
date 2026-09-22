@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import * as os from 'os';
 import * as path from 'path';
 import { getMCPServer, setMCPServerOptions } from './mcp-server';
+import { parseDrainDeadlineMs } from './mcp/server';
 import { registerAllTools } from './tools';
 import { createTransport } from './transports/index';
 import { getGlobalConfig, setGlobalConfig } from './config/global';
@@ -766,12 +767,18 @@ program
       } catch { /* pool may not be initialized */ }
     });
 
+    // Windows force-kills a console-closed process ~5-10 s after SIGHUP, so
+    // the drain there must leave time for state save and lock release.
+    const drainOptionsFor = (signal: string): { deadlineMs?: number } => (
+      signal === 'SIGHUP' ? { deadlineMs: Math.min(parseDrainDeadlineMs(), 2_000) } : {}
+    );
+
     // Register signal handlers for graceful shutdown
     const shutdown = async (signal: string) => {
       console.error(`[openchrome] Received ${signal}, shutting down...`);
       // Refuse new tool calls and let running ones finish (or report an
       // unknown outcome) before transports and browser sessions close.
-      await server.drain().catch((error) => {
+      await server.drain(drainOptionsFor(signal)).catch((error) => {
         console.error(`[openchrome] drain before shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
       });
       await server.stop();
@@ -1295,7 +1302,7 @@ program
       parentWatcher = null;
       // Stop admitting tool calls and let running ones finish before
       // monitors stop and browser state is saved.
-      await server.drain().catch((error) => {
+      await server.drain(drainOptionsFor(signal)).catch((error) => {
         console.error(`[openchrome] drain before shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
       });
       processWatchdog.stop();
