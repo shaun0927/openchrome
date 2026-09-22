@@ -8,7 +8,7 @@ function payload(result) { return result.raw.structuredContent ?? JSON.parse(res
 
 async function main() {
   assert.ok(process.env.OPENCHROME_TEST_CHROME);
-  const server = createServer((_req, res) => { res.end('<title>Local QA</title><main>Signed in test fixture</main>'); });
+  const server = createServer((_req, res) => { res.end('<title>Local QA</title><main>Signed in test fixture<input id="draft"></main>'); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}/account`;
   const browser = await puppeteer.launch({ executablePath: process.env.OPENCHROME_TEST_CHROME, headless: false });
@@ -26,6 +26,14 @@ async function main() {
     assert.equal(stale.raw.isError, true);
     const borrowed = await client.callTool('worker', { action: 'borrow_tab', tabId: tab.tabId, expectedUrl: url });
     assert.equal(payload(borrowed).borrowed, true);
+    await page.$eval('#draft', input => { input.value = 'qa-draft'; });
+    const reused = await client.callTool('navigate', { url });
+    assert.notEqual(reused.raw.isError, true, reused.text);
+    assert.equal(payload(reused).tabId, tab.tabId);
+    assert.equal(await page.$eval('#draft', input => input.value), 'qa-draft');
+    const concurrent = await Promise.all([client.callTool('navigate', { url: url + '/new' }), client.callTool('navigate', { url: url + '/new' })]);
+    for (const result of concurrent) assert.notEqual(result.raw.isError, true, result.text);
+    assert.equal(payload(concurrent[0]).tabId, payload(concurrent[1]).tabId);
     const context = await client.callTool('tabs_context', {});
     assert.ok(payload(context).workers.some(w => w.tabs.some(t => t.tabId === tab.tabId)));
     const close = await client.callTool('tabs_close', { tabId: tab.tabId });
@@ -37,7 +45,7 @@ async function main() {
     await client.callTool('worker', { action: 'borrow_tab', tabId: tab.tabId, expectedUrl: url });
     await client.stop();
     assert.equal(page.isClosed(), false, 'User tab closed during server shutdown');
-    console.log(JSON.stringify({ discovered: true, staleUrlRejected: true, borrowed: true, explicitCloseRefused: true, releasedWithoutClose: true, shutdownPreserved: true }));
+    console.log(JSON.stringify({ discovered: true, staleUrlRejected: true, borrowed: true, draftPreserved: true, concurrentReuse: true, explicitCloseRefused: true, releasedWithoutClose: true, shutdownPreserved: true }));
   } finally {
     await client.stop();
     await browser.close();
