@@ -28,6 +28,21 @@ const browserProbe: MCPToolDefinition = {
 
 type MockSessionManager = ReturnType<typeof createMockSessionManager>;
 
+const sessionEcho = (name: string): MCPToolDefinition => ({
+  name,
+  description: `${name} stub`,
+  inputSchema: { type: 'object', properties: {} },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+});
+
+function registerSessionEchoes(server: MCPServer): void {
+  for (const name of ['oc_lane_list', 'worker', 'oc_connection_health']) {
+    server.registerTool(name, async (sessionId: string) => ({
+      content: [{ type: 'text', text: JSON.stringify({ sessionId }) }],
+    }), sessionEcho(name));
+  }
+}
+
 function registerProbe(server: MCPServer): void {
   server.registerTool(browserProbe.name, async (sessionId: string, args: Record<string, unknown>, context?: ToolContext) => {
     let answer: unknown = null;
@@ -125,6 +140,53 @@ describe('stateless workspace handles against the real core', () => {
 
     const legacyProbe = (await legacy.listTools()).tools.find(tool => tool.name === browserProbe.name)!;
     expect(Object.keys(legacyProbe.inputSchema.properties ?? {})).not.toContain('workspace');
+  }, 60_000);
+
+  test('session-scoped tools take the workspace so follow-up calls find its state', async () => {
+    const base = await startHttp();
+    registerSessionEchoes(server!);
+    const client = await connectHttp(modernClient('m'), base);
+    clients.push(client);
+    const tools = (await client.listTools()).tools;
+    const schema = (name: string) => tools.find(tool => tool.name === name)!.inputSchema;
+
+    expect(schema('worker').required).toContain('workspace');
+    expect(Object.keys(schema('oc_lane_list').properties ?? {})).toContain('workspace');
+    expect(schema('oc_lane_list').required ?? []).not.toContain('workspace');
+    expect(Object.keys(schema('oc_connection_health').properties ?? {})).not.toContain('workspace');
+
+    const workspace = await openWorkspace(client);
+    const browser = payload(await client.callTool({ name: browserProbe.name, arguments: { workspace } }));
+    const lanes = payload(await client.callTool({ name: 'oc_lane_list', arguments: { workspace } }));
+    expect(lanes.sessionId).toBe(browser.sessionId);
+    expect(payload(await client.callTool({ name: 'worker', arguments: { action: 'list' } })))
+      .toMatchObject({ sessionId: expect.stringMatching(/^modern:/) });
+  }, 60_000);
+
+  test('read-only keys may open and list workspaces but not close them', async () => {
+    const base = await startHttp();
+    void base;
+    const reader = { mode: 'api-key', tenantId: 'tenant-r', keyId: 'k-read', scopes: ['read'] } as never;
+    const writer = { mode: 'api-key', tenantId: 'tenant-r', keyId: 'k-write', scopes: ['write'] } as never;
+    const opened = payload(await server!.handleWorkspaceTool({ action: 'open' }, reader));
+    const denied = await server!.handleWorkspaceTool({ action: 'close', workspace: opened.workspace }, reader);
+    expect(denied.isError).toBe(true);
+    expect(payload(denied)).toMatchObject({ error: { code: 'FORBIDDEN' } });
+    expect(payload(await server!.handleWorkspaceTool({ action: 'close', workspace: opened.workspace }, writer)))
+      .toEqual({ closed: opened.workspace });
+  }, 60_000);
+
+  test('a workspace a person is holding does not expire', async () => {
+    process.env.OPENCHROME_WORKSPACE_IDLE_MS = '150';
+    const base = await startHttp();
+    const client = await connectHttp(modernClient('m'), base);
+    clients.push(client);
+    const workspace = await openWorkspace(client);
+    const used = payload(await client.callTool({ name: browserProbe.name, arguments: { workspace } }));
+    server!.browserOperations.pause(used.sessionId as string, 'target-held');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(payload(await client.callTool({ name: browserProbe.name, arguments: { workspace } })).sessionId)
+      .toBe(used.sessionId);
   }, 60_000);
 
   test('missing, legacy-named, unknown and stale handles are rejected before any browser work', async () => {

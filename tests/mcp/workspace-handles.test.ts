@@ -47,6 +47,25 @@ describe('WorkspaceHandleRegistry', () => {
     expect(registry.list('tenant-a')).toEqual([]);
   });
 
+  test('protected workspaces (a person controls a tab) do not expire', () => {
+    let now = 0;
+    let protectedSession = '';
+    const registry = new WorkspaceHandleRegistry(RUNTIME, {
+      idleTtlMs: 100,
+      now: () => now,
+      isProtected: record => record.browserSessionId === protectedSession,
+    });
+    const held = registry.open('tenant-a');
+    const idle = registry.open('tenant-a');
+    protectedSession = held.browserSessionId;
+    now = 1_000;
+    expect(registry.sweepExpired().map(record => record.handle)).toEqual([idle.handle]);
+    expect(registry.resolve(held.handle, 'tenant-a').ok).toBe(true);
+    protectedSession = '';
+    now = 2_000;
+    expect(registry.resolve(held.handle, 'tenant-a')).toMatchObject({ ok: false, code: 'WORKSPACE_EXPIRED' });
+  });
+
   test('close revokes the handle and lists only the caller tenant', () => {
     const registry = new WorkspaceHandleRegistry(RUNTIME);
     const a = registry.open('tenant-a');

@@ -54,7 +54,16 @@ export class WorkspaceHandleRegistry {
 
   constructor(
     runtimeId: string,
-    private readonly options: { idleTtlMs?: number; now?: () => number } = {},
+    private readonly options: {
+      idleTtlMs?: number;
+      now?: () => number;
+      /**
+       * Workspaces that must not expire while true, for example while a
+       * person controls one of their tabs (idle time is measured from the
+       * agent's last call, not the person's activity).
+       */
+      isProtected?: (record: WorkspaceRecord) => boolean;
+    } = {},
   ) {
     this.runtimeTag = runtimeId.replace(/[^0-9a-f]/gi, '').slice(0, 8).toLowerCase();
   }
@@ -99,7 +108,7 @@ export class WorkspaceHandleRegistry {
     if (record.tenantId !== tenantId) {
       return { ok: false, code: 'WORKSPACE_FORBIDDEN', message: 'WORKSPACE_FORBIDDEN: this workspace is owned by another tenant.' };
     }
-    if (this.now() - record.lastUsedAt > record.idleTtlMs) {
+    if (this.isExpired(record)) {
       this.forget(record);
       return { ok: false, code: 'WORKSPACE_EXPIRED', message: 'WORKSPACE_EXPIRED: the workspace was idle too long; open a new workspace.' };
     }
@@ -124,10 +133,14 @@ export class WorkspaceHandleRegistry {
 
   /** Remove and return workspaces idle past their deadline. */
   sweepExpired(): WorkspaceRecord[] {
-    const now = this.now();
-    const expired = [...this.records.values()].filter(record => now - record.lastUsedAt > record.idleTtlMs);
+    const expired = [...this.records.values()].filter(record => this.isExpired(record));
     for (const record of expired) this.forget(record);
     return expired;
+  }
+
+  private isExpired(record: WorkspaceRecord): boolean {
+    if (this.now() - record.lastUsedAt <= record.idleTtlMs) return false;
+    return !(this.options.isProtected?.(record) ?? false);
   }
 
   clear(): void {

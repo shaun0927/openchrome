@@ -120,6 +120,27 @@ import { DEFAULT_TENANT_ID } from '../tenant/types';
 import { isTenantScopedPrincipal, resolveEffectiveTenantId } from '../auth/tenant-principal';
 
 const MCP_TRANSPORT_SESSION_PREFIX = 'mcp-';
+
+/**
+ * Process-wide tools that never act on a browser session's state, so modern
+ * schemas do not offer them a workspace argument.
+ */
+const WORKSPACE_INDEPENDENT_TOOLS = new Set([
+  'oc_workspace',
+  'expand_tools',
+  'oc_stop',
+  'oc_reap_orphans',
+  'oc_profile_status',
+  'oc_connection_health',
+  'oc_doctor_report',
+  'oc_get_connection_info',
+  'list_profiles',
+  'oc_normalize_action',
+  'oc_policy',
+  'oc_copy_to_clipboard',
+  'oc_open_host_settings',
+  'oc_totp_generate',
+]);
 /** Roots scope of the single local (stdio) client, which has no MCP session id. */
 const LOCAL_ROOTS_SCOPE = 'stdio';
 
@@ -451,7 +472,11 @@ function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>):
 export class MCPServer {
   private readonly runtimeContract = createRuntimeContract();
   /** Server-minted browser workspace handles for stateless requests. */
-  private readonly workspaces = new WorkspaceHandleRegistry(this.runtimeContract.runtimeId);
+  private readonly workspaces = new WorkspaceHandleRegistry(this.runtimeContract.runtimeId, {
+    // A person may hold a tab for longer than the idle window; keep the
+    // agent's way back into that workspace while they do.
+    isProtected: record => this.browserOperations.hasHandoff(record.browserSessionId),
+  });
   private workspaceSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   getRuntimeContract(): ReturnType<typeof createRuntimeContract> {
@@ -1728,11 +1753,14 @@ export class MCPServer {
   }
 
   /**
-   * Browser tools on the modern era require the `workspace` handle; the
-   * schema says so, so models pass it without guessing.
+   * On the modern era every session-scoped tool takes the `workspace`
+   * handle, so lanes, workflows, workers, journals and tabs created in a
+   * workspace are found again on follow-up calls. Browser tools (including
+   * argument-dependent ones such as worker and crawl_status) require it.
    */
   private withWorkspaceArgument(tool: MCPToolDefinition): MCPToolDefinition {
-    if (!shouldInitializeBrowserSession(tool.name, {})) return tool;
+    if (WORKSPACE_INDEPENDENT_TOOLS.has(tool.name)) return tool;
+    const required = shouldInitializeBrowserSession(tool.name, {}) || tool.name === 'worker';
     const schema = tool.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
     return {
       ...tool,
@@ -1742,10 +1770,12 @@ export class MCPServer {
           ...(schema.properties ?? {}),
           workspace: {
             type: 'string',
-            description: 'Workspace handle from oc_workspace (action "open"). Required for browser tools.',
+            description: required
+              ? 'Workspace handle from oc_workspace (action "open"). Required.'
+              : 'Workspace handle from oc_workspace; pass the one the lane/workflow/worker/task belongs to.',
           },
         },
-        required: [...new Set([...(schema.required ?? []), 'workspace'])],
+        ...(required ? { required: [...new Set([...(schema.required ?? []), 'workspace'])] } : {}),
       },
     };
   }
@@ -1842,6 +1872,11 @@ export class MCPServer {
       });
     }
     if (action === 'close') {
+      // Closing disposes of a browser session: a write operation even though
+      // opening and listing are available to read-only keys.
+      if (principal && !this.hasScope(principal, 'write')) {
+        return reply({ error: { code: 'FORBIDDEN', message: "oc_workspace action \"close\" requires scope 'write'" } }, true);
+      }
       if (typeof args.workspace !== 'string') {
         return reply({ error: { code: 'WORKSPACE_REQUIRED', message: 'workspace is required for action "close"' } }, true);
       }
