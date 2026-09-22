@@ -7,7 +7,7 @@
  */
 
 import { MCPServer } from '../../src/mcp-server';
-import { _resetMrtrStateForTesting } from '../../src/mcp/sdk-adapter';
+import { _resetMrtrStateForTesting, mrtrPrincipal, toSdkAuthInfo } from '../../src/mcp/sdk-adapter';
 import { HTTPTransport } from '../../src/transports/http';
 import type { MCPToolDefinition, ToolContext } from '../../src/types/mcp';
 import { createMockSessionManager } from '../utils/mock-session';
@@ -35,14 +35,18 @@ describe('signed multi-round-trip state', () => {
   let server: MCPServer | null = null;
   let base = '';
   let sideEffects: Array<{ target: unknown; answers: unknown[] }> = [];
+  let liveCount = 5;
   let nextId = 1;
 
   beforeEach(async () => {
     _resetMrtrStateForTesting();
     sideEffects = [];
+    liveCount = 5;
     server = new MCPServer(createMockSessionManager() as never);
     server.registerTool(confirmTool.name, async (_sessionId: string, args: Record<string, unknown>, context?: ToolContext) => {
-      const answers = [await context!.requestClient!('elicitation/create', { message: `clear ${String(args.target)}?`, requestedSchema: { type: 'object', properties: {} } })];
+      // Like cookies clear: the question is computed from live state.
+      const question = args.target === 'live' ? `clear ${liveCount} cookies?` : `clear ${String(args.target)}?`;
+      const answers = [await context!.requestClient!('elicitation/create', { message: question, requestedSchema: { type: 'object', properties: {} } })];
       if (args.twice === true) {
         answers.push(await context!.requestClient!('elicitation/create', { message: 'really?', requestedSchema: { type: 'object', properties: {} } }));
       }
@@ -148,6 +152,28 @@ describe('signed multi-round-trip state', () => {
     expect(expired.body.error?.code).toBe(-32602);
     expect(sideEffects).toEqual([]);
   }, 20_000);
+
+  test('an answer is reused only for the same question, not for changed live content', async () => {
+    const { key, state } = await ask({ target: 'live' });
+    liveCount = 12;
+    const changed = await call({ target: 'live' }, { inputResponses: { [key]: accept }, requestState: state });
+    expect(changed.body.result?.resultType).toBe('input_required');
+    expect(JSON.stringify(changed.body.result?.inputRequests)).toContain('clear 12 cookies?');
+    expect(sideEffects).toEqual([]);
+
+    const [key2] = Object.keys(changed.body.result!.inputRequests!);
+    const done = await call({ target: 'live' }, { inputResponses: { [key2]: accept }, requestState: changed.body.result!.requestState });
+    expect(done.body.result?.resultType).toBe('complete');
+    expect(sideEffects).toEqual([{ target: 'live', answers: [accept] }]);
+  });
+
+  test('binds JWT states to the token subject, not only the signing key', () => {
+    const ctxFor = (subject: string) => ({
+      http: { authInfo: toSdkAuthInfo({ mode: 'jwt', tenantId: 'org', keyId: 'kid-1', subject, scopes: ['write'] }, { tenantId: 'org' }) },
+    }) as never;
+    expect(mrtrPrincipal(ctxFor('alice'))).not.toBe(mrtrPrincipal(ctxFor('bob')));
+    expect(mrtrPrincipal(ctxFor('alice'))).toBe(mrtrPrincipal(ctxFor('alice')));
+  });
 
   test('carries earlier answers across rounds in the signed state', async () => {
     const round1 = await ask({ target: 'a', twice: true });

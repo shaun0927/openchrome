@@ -75,6 +75,9 @@ export function createJwtVerifier(config: JwtConfig): JwtVerifier {
         if (typeof protectedHeader.kid === 'string' && protectedHeader.kid.length > 0) {
           principal.keyId = protectedHeader.kid;
         }
+        if (typeof payload.sub === 'string' && payload.sub.length > 0) {
+          principal.subject = payload.sub;
+        }
         return principal;
       } catch {
         // Intentionally swallow — never log raw token.

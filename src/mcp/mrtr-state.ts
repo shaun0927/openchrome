@@ -16,7 +16,11 @@ import { createRequestStateCodec, type ServerContext } from '@modelcontextprotoc
  * - single use, so a replayed retry asks again instead of reusing an
  *   earlier confirmation;
  * - the carrier of answers from earlier rounds, because a stateless server
- *   re-runs the tool from its original arguments on every round.
+ *   re-runs the tool from its original arguments on every round;
+ * - bound to the content of each question: every answer is stored with a
+ *   digest of the input request it answered, and is reused only when the
+ *   re-run asks exactly the same thing (a confirmation computed from live
+ *   state, such as "clear 5 cookies", does not carry over to "clear 12").
  *
  * Only responses to input requests the state itself lists are accepted;
  * `inputResponses` a client sends without being asked are ignored.
@@ -29,6 +33,8 @@ export interface MrtrState {
   nonce: string;
   pending: string[];
   answers: Record<string, unknown>;
+  /** Digest of the input request each pending or answered key stood for. */
+  digests: Record<string, string>;
 }
 
 export interface MrtrRound {
@@ -36,6 +42,12 @@ export interface MrtrRound {
   argsHash: string;
   /** Answers collected in earlier rounds and verified for this request. */
   answers: Record<string, unknown>;
+  digests: Record<string, string>;
+}
+
+/** Digest of one input request (method and parameters) as the tool asked it. */
+export function inputRequestDigest(method: string, params: Record<string, unknown> | undefined): string {
+  return createHash('sha256').update(canonicalJson({ method, params: params ?? {} })).digest('base64url');
 }
 
 const MAX_STATE_ANSWER_BYTES = 256 * 1024;
@@ -99,21 +111,34 @@ export class MrtrStateManager {
    */
   begin(ctx: ServerContext, method: string, params: Record<string, unknown> | undefined): MrtrRound {
     const { target, argsHash } = mrtrTarget(method, params);
-    const round: MrtrRound = { target, argsHash, answers: {} };
+    const round: MrtrRound = { target, argsHash, answers: {}, digests: {} };
     const state = ctx.mcpReq.requestState<MrtrState>();
     if (!state || typeof state !== 'object' || state.v !== 1) return round;
     if (state.target !== target || state.argsHash !== argsHash) return round;
     if (!this.consume(state.nonce)) return round;
     const responses = ctx.mcpReq.inputResponses ?? {};
     round.answers = { ...state.answers };
+    round.digests = { ...(state.digests ?? {}) };
     for (const key of state.pending) {
       if (Object.prototype.hasOwnProperty.call(responses, key)) round.answers[key] = responses[key];
     }
     return round;
   }
 
+  /**
+   * The answer the client gave to exactly this question, if any. An answer
+   * recorded for different content is dropped so the question is asked
+   * again.
+   */
+  answerFor(round: MrtrRound, key: string, digest: string): { value: unknown } | undefined {
+    if (!Object.prototype.hasOwnProperty.call(round.answers, key)) return undefined;
+    if (round.digests[key] === digest) return { value: round.answers[key] };
+    delete round.answers[key];
+    return undefined;
+  }
+
   /** Seal the state that must accompany the next round's responses. */
-  async mint(ctx: ServerContext, round: MrtrRound, pending: string[]): Promise<string> {
+  async mint(ctx: ServerContext, round: MrtrRound, pending: Record<string, string>): Promise<string> {
     if (canonicalJson(round.answers).length > MAX_STATE_ANSWER_BYTES) {
       throw new Error('multi-round-trip answers exceed the requestState size limit');
     }
@@ -122,8 +147,9 @@ export class MrtrStateManager {
       target: round.target,
       argsHash: round.argsHash,
       nonce: randomUUID(),
-      pending,
+      pending: Object.keys(pending),
       answers: round.answers,
+      digests: { ...round.digests, ...pending },
     }, ctx);
   }
 
