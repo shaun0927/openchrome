@@ -44,7 +44,10 @@ stacked PR은 main 대상이 아니어서 자동 트리거되지 않으므로 `w
 | feat/mcp-workspace-handles (#1676) | c580ad5d | [35778555889](https://github.com/shaun0927/openchrome/actions/runs/35778555889) 통과 | [35778559277](https://github.com/shaun0927/openchrome/actions/runs/35778559277) 통과 |
 | feat/mcp-mrtr-request-state (#1677) | a88187df | [35778562654](https://github.com/shaun0927/openchrome/actions/runs/35778562654) 통과 | [35778566669](https://github.com/shaun0927/openchrome/actions/runs/35778566669) 통과 |
 | feat/runtime-drain-contract (#1678) | d8ebf4e8 | [35781274096](https://github.com/shaun0927/openchrome/actions/runs/35781274096) 통과 | [35781278734](https://github.com/shaun0927/openchrome/actions/runs/35781278734) 통과 |
-| release/1.15.0-prepublish | 릴리스 PR 참조 | mcp-conformance job 포함 | modern 설치본 단계 포함 |
+| release/1.15.0-prepublish (#1679) | 7c256bba | [35784361708](https://github.com/shaun0927/openchrome/actions/runs/35784361708) 통과(build-and-test, full-test, mcp-conformance) | [35785288066](https://github.com/shaun0927/openchrome/actions/runs/35785288066) 통과(legacy·modern 설치본 단계 모두) |
+
+릴리스 브랜치의 mcp-conformance job은 처음에 Node 20에서 실패했다(conformance CLI가 Node 22 API 사용). job을 Node 22로 옮겼다.
+같은 단계에서 full-test의 `tabs-activate` 타이밍 테스트 1건이 한 번 실패했고, 재실행과 로컬 3회에서 통과했다(해당 도구는 이 스택에서 변경하지 않음).
 
 설치본 수락은 이식 직후 한 번 실패했다. SDK stdio가 취소된 요청에 응답하지 않는데(MCP 규약), harness가 응답을 60초 기다렸기 때문이다.
 harness가 규약상 무응답을 허용하도록 고쳤고 동작 변경은 문서화했다.
