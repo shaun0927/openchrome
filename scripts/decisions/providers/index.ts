@@ -6,11 +6,12 @@ import { createFileProvider } from './file';
 import { createNoopProvider } from './noop';
 import { createRegexProvider } from './regex';
 import { createTypeSafeProvider } from './typesafe';
+import { createLayaLocalProvider } from './laya-local';
 import type { DecisionProvider, ProviderOptions } from './types';
 
 export type { DecisionProvider, ProviderAnswer, ProviderInit, ProviderOptions } from './types';
 
-export const PROVIDER_NAMES = ['noop', 'regex', 'file', 'typesafe'] as const;
+export const PROVIDER_NAMES = ['noop', 'regex', 'file', 'typesafe', 'laya-local'] as const;
 export type ProviderName = typeof PROVIDER_NAMES[number];
 
 export function createProvider(name: string, opts: ProviderOptions = {}): DecisionProvider {
@@ -19,6 +20,7 @@ export function createProvider(name: string, opts: ProviderOptions = {}): Decisi
     case 'regex': return createRegexProvider();
     case 'file': return createFileProvider(opts.answersFile);
     case 'typesafe': return createTypeSafeProvider(opts);
+    case 'laya-local': return createLayaLocalProvider(opts);
     default: throw new Error(`unknown provider "${name}" (known: ${PROVIDER_NAMES.join(', ')})`);
   }
 }
