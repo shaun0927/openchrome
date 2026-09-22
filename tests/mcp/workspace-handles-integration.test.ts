@@ -159,8 +159,12 @@ describe('stateless workspace handles against the real core', () => {
     const browser = payload(await client.callTool({ name: browserProbe.name, arguments: { workspace } }));
     const lanes = payload(await client.callTool({ name: 'oc_lane_list', arguments: { workspace } }));
     expect(lanes.sessionId).toBe(browser.sessionId);
+    // Every worker action addresses a workspace's workers, so the schema's
+    // `required` is enforced for all of them, not only action "create".
     expect(payload(await client.callTool({ name: 'worker', arguments: { action: 'list' } })))
-      .toMatchObject({ sessionId: expect.stringMatching(/^modern:/) });
+      .toMatchObject({ error: { code: 'WORKSPACE_REQUIRED' } });
+    expect(payload(await client.callTool({ name: 'worker', arguments: { action: 'list', workspace } })).sessionId)
+      .toBe(browser.sessionId);
   }, 60_000);
 
   test('read-only keys may open and list workspaces but not close them', async () => {
