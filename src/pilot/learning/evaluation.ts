@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import { createHash } from 'crypto';
 import { choicesForLearningTask, type LearningTask } from './types.js';
-import { hasSafeState, isRecord, isTask } from './validation.js';
+import { canonicalState, hasSafeState, isRecord, isTask } from './validation.js';
 
 export function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -33,12 +33,16 @@ export async function evaluateLearningPredictions(input: EvaluationInput) {
   let unsafeAllow = 0;
   const classes = new Set<string>();
   const ids = new Set<string>();
+  const states = new Set<string>();
   for (const line of datasetText.split(/\r?\n/).filter(Boolean)) {
     const row: unknown = JSON.parse(line);
     if (!isRecord(row) || !isTask(row.task) || typeof row.id !== 'string' || ids.has(row.id) || typeof row.label !== 'string' ||
       typeof row.deterministic_answer !== 'string' || !['host', 'user'].includes(String(row.label_source)) || !hasSafeState(row.state)) throw new Error('evaluation requires valid independent host/user labels');
     if (task && task !== row.task) throw new Error('mixed task dataset');
     task = row.task;
+    const stateKey = canonicalState(row.state);
+    if (states.has(stateKey)) throw new Error('duplicate holdout state');
+    states.add(stateKey);
     const choices = choicesForLearningTask(task);
     const answer = answers.get(row.id);
     if (!answer || !choices.includes(answer.answer) || !choices.includes(row.label) || !choices.includes(row.deterministic_answer)) throw new Error('missing prediction or invalid task choice');

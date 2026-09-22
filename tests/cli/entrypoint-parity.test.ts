@@ -35,6 +35,8 @@ describe('CLI entrypoint parity', () => {
     [['help', 'check'], ['--port']],
     [['serve', '--help'], ['--broker', '--connect-broker', '--auto-elect']],
     [['help', 'serve'], ['--broker', '--connect-broker', '--auto-elect']],
+    [['learning', '--help'], ['--dataset', '--predictions']],
+    [['help', 'learning'], ['--dataset', '--predictions']],
   ])('bin wrapper forwards %j to the full CLI help surface', (args, expectedFlags) => {
     const result = runWrapper(args);
     expect(result.status).toBe(0);

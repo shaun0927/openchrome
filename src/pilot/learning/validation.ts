@@ -33,3 +33,9 @@ export function hasTaskChoices(event: LearningEvent): boolean {
 export function hasSafeState(state: unknown): boolean {
   return JSON.stringify(redactLearningState(state).state) === JSON.stringify(state);
 }
+
+export function canonicalState(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalState).join(',')}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalState(value[key])}`).join(',')}}`;
+  return JSON.stringify(value) ?? 'null';
+}
