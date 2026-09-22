@@ -46,6 +46,7 @@ import { isContractRuntimeEnabled } from '../../harness/flags.js';
 import { getLifecycleBus } from '../../core/lifecycle/index.js';
 import type { StateHashVersion } from '../state-graph/node-hash.js';
 import { getBeforeIrreversibleHook } from './before-irreversible.js';
+import { recordIrreversiblePolicyLearning, recordOutcomeFailureLearning } from '../learning/runtime-recorder.js';
 import { contractRuntimeEvents } from './events.js';
 import { DEFAULT_CACHE_TTL_MS } from './idempotency.js';
 import type {
@@ -378,6 +379,12 @@ export async function runWithContract(args: ContractRuntimeArgs): Promise<Transa
         action,
         evidence: pre_evidence,
       });
+      void recordIrreversiblePolicyLearning({
+        contractId: args.contract.id,
+        action,
+        decision,
+        evidence: pre_evidence,
+      }).catch(() => undefined);
     } catch (e) {
       // The runtime contract is "always settles". A throwing operator
       // hook must never let an irreversible action execute by accident,
@@ -670,6 +677,7 @@ function settle(
   } catch {
     // best-effort — listener throw must not change the verdict
   }
+  void recordOutcomeFailureLearning({ record }).catch(() => undefined);
   return record;
 }
 
