@@ -31,7 +31,7 @@ export function buildLearningDataset(input: BuildLearningDatasetInput): Learning
       skippedUnlabeled += 1;
       continue;
     }
-    if (!event.privacy.redacted || !hasSafeState(event.state)) {
+    if (!event.privacy.redacted || event.privacy.contains_sensitive || !hasSafeState(event.state)) {
       skippedSensitive += 1;
       continue;
     }
