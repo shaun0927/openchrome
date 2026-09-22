@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import type { DatasetSplit, LearningDataset, LearningDatasetExample, LearningEvent, LearningLabelSource, LearningTask } from './types.js';
-import { hasSafeState, hasTaskChoices } from './validation.js';
+import { canonicalState, hasSafeState, hasTaskChoices } from './validation.js';
+import { choicesForLearningTask } from './types.js';
 
 export interface BuildLearningDatasetInput {
   readonly events: readonly LearningEvent[];
@@ -48,7 +49,7 @@ export function buildLearningDataset(input: BuildLearningDatasetInput): Learning
       id: crypto.createHash('sha256').update(event.id).digest('hex'),
       task: event.task,
       state: event.state,
-      choices: event.choices,
+      choices: choicesForLearningTask(event.task),
       label: event.label.answer,
       label_source: event.label.source,
       deterministic_answer: event.deterministic_answer,
@@ -77,7 +78,7 @@ export function splitLearningDataset(input: SplitLearningDatasetInput): DatasetS
   const train: LearningDatasetExample[] = [];
   const holdout: LearningDatasetExample[] = [];
   for (const example of input.examples) {
-    if (hashBucket(JSON.stringify([example.task, example.state, example.choices])) < holdoutRatio) holdout.push(example);
+    if (hashBucket(canonicalState([example.task, example.state, choicesForLearningTask(example.task)])) < holdoutRatio) holdout.push(example);
     else train.push(example);
   }
   return { train, holdout };
