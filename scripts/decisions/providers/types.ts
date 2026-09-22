@@ -45,6 +45,8 @@ export interface ProviderOptions {
   /** `typesafe` provider: injectable sleep for tests. */
   sleep?: (ms: number) => Promise<void>;
   layaPython?: string;
+  layaWorkerPath?: string;
+  layaTimeoutMs?: number;
 }
 
 export const NONE = 'none';
