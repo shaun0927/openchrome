@@ -34,6 +34,7 @@ import { TabHealthMonitor } from './cdp/tab-health-monitor';
 import { EventLoopMonitor, setGlobalEventLoopMonitor } from './watchdog/event-loop-monitor';
 import { HealthEndpoint, HealthData } from './watchdog/health-endpoint';
 import { resolveHealthEndpointEnabled } from './core/health-endpoint-gating';
+import { registerLearningCommand } from './pilot/learning/cli';
 import { DiskMonitor } from './watchdog/disk-monitor';
 import { ChromeProcessMonitor, monitorChromeConnection } from './watchdog/chrome-monitor';
 import { SessionStatePersistence } from './session/state-persistence';
@@ -89,6 +90,8 @@ program
   .name('openchrome')
   .description('MCP server for parallel Claude Code browser sessions')
   .version(getVersion());
+
+registerLearningCommand(program);
 
 function resolveControllerLockUserDataDir(userDataDir: string | undefined, useHeadlessShell: boolean): string {
   if (userDataDir) return userDataDir;

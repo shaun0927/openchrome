@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { LearningEvent } from './types.js';
 import { redactLearningState } from './redaction.js';
+import { isLearningEvent } from './validation.js';
 
 export interface LearningEventStore {
   append(event: LearningEvent): Promise<void>;
@@ -44,7 +45,9 @@ export async function readLearningEventsFromJsonl(file: string): Promise<Learnin
   const events: LearningEvent[] = [];
   for (const line of text.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;
-    events.push(JSON.parse(line) as LearningEvent);
+    const parsed: unknown = JSON.parse(line);
+    if (!isLearningEvent(parsed)) throw new Error('invalid learning event schema');
+    events.push(parsed);
   }
   return events;
 }
