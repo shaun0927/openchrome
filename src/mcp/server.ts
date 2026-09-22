@@ -458,6 +458,12 @@ export class MCPServer {
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private readonly defaultDisclosure = { tier: 1 as ToolTier, listChanged: true, detected: false };
+  /**
+   * Shared by HTTP requests that carry no Mcp-Session-Id. They cannot receive
+   * tools/list_changed, so they start from the configured tier (or all tools)
+   * and never touch the local stdio client's disclosure state.
+   */
+  private sessionlessHttpDisclosure: { tier: ToolTier; listChanged: boolean; detected: boolean } | null = null;
   private readonly disclosureBySession = new Map<string, { tier: ToolTier; listChanged: boolean; detected: boolean }>();
   private disclosureState(): { tier: ToolTier; listChanged: boolean; detected: boolean } {
     const context = currentRequestContext();
@@ -465,7 +471,8 @@ export class MCPServer {
     // An HTTP request without a transport session has no channel for
     // tools/list_changed and must not mutate the local client's disclosure.
     if (!id && context?.channel === 'http') {
-      return { tier: this.options?.initialToolTier ?? 3, listChanged: false, detected: true };
+      this.sessionlessHttpDisclosure ??= { tier: this.options?.initialToolTier ?? 3, listChanged: false, detected: true };
+      return this.sessionlessHttpDisclosure;
     }
     if (!id) return this.defaultDisclosure;
     let state = this.disclosureBySession.get(id);
@@ -3379,6 +3386,7 @@ export class MCPServer {
 
   private async _stopInternal(): Promise<void> {
     this.disclosureBySession.clear();
+    this.sessionlessHttpDisclosure = null;
     this.clientCapabilitiesBySession.clear();
     // #960 — reject every in-flight server→client request before the
     // transport tears down so callers don't hang forever on Promises that

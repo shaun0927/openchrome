@@ -25,11 +25,13 @@ jest.mock('../../src/mcp-server', () => {
   const mockHandleMessage = jest.fn().mockResolvedValue(null);
   const mockWireRateLimiterCleanup = jest.fn();
   const mockRegisterTool = jest.fn();
+  const mockAttachTransport = jest.fn();
   const mockServer = {
     start: mockStart,
     stop: mockStop,
     handleMessage: mockHandleMessage,
     wireRateLimiterCleanup: mockWireRateLimiterCleanup,
+    attachTransport: mockAttachTransport,
     registerTool: mockRegisterTool,
   };
   return {
@@ -296,6 +298,30 @@ describe('createOpenChromeServer() — HTTP transport with port:0', () => {
       expect(result.httpUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       const port = parseInt(result.httpUrl!.split(':')[2], 10);
       expect(port).toBeGreaterThan(0);
+    } finally {
+      await server.stop('caller');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('createOpenChromeServer() — dual stdio+HTTP transport', () => {
+  test('attaches the HTTP leg through MCPServer so it shares per-client delivery', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getMCPServer } = require('../../src/mcp-server');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { HTTPTransport } = require('../../src/transports/http');
+    const mcp = getMCPServer();
+    mcp.attachTransport.mockClear();
+    const server = await createOpenChromeServer({
+      transport: { both: { httpPort: 0, httpHost: '127.0.0.1', allowUnauthenticated: true } },
+    } as CreateServerOptions);
+    try {
+      await server.start();
+      const httpInstance = HTTPTransport.mock.results[HTTPTransport.mock.results.length - 1].value;
+      expect(mcp.start).toHaveBeenCalledWith();
+      expect(mcp.attachTransport).toHaveBeenCalledWith(httpInstance);
+      expect(httpInstance.onMessage).not.toHaveBeenCalled();
     } finally {
       await server.stop('caller');
     }
