@@ -566,7 +566,7 @@ export class ChromeLauncher {
     //   --disable-crash-reporter         (automation fingerprint signal)
 
     if (headless) {
-      args.push('--headless=new', '--disable-gpu', '--disable-dev-shm-usage');
+      args.push('--headless=new', '--enable-automation', '--disable-gpu', '--disable-dev-shm-usage');
       console.error('[ChromeLauncher] Running in headless mode (no visible window)');
     }
 

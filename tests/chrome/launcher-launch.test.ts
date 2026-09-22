@@ -353,6 +353,7 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
 
         const args = mockSpawn.mock.calls[0][1] as string[];
         expect(args).toContain('--use-mock-keychain');
+        expect(args).toContain('--enable-automation');
       } finally {
         await fakeChrome.close();
       }
