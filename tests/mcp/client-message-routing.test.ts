@@ -251,6 +251,38 @@ describe('server-originated message routing', () => {
     expect(streamH.messages).toEqual([]);
   });
 
+  test('sessionless HTTP requests cannot collide with or cancel other clients by JSON-RPC id', async () => {
+    const local = new RecordingLocalTransport();
+    const outcomes: ProbeOutcome[] = [];
+    server = new MCPServer(createMockSessionManager() as never);
+    const slow: MCPToolDefinition = { ...probeTool, name: 'oc_doctor_report' };
+    server.registerTool(slow.name, async (sessionId: string, _args: Record<string, unknown>, context?: ToolContext) => {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      outcomes.push({ sessionId, answer: context?.signal?.aborted ? 'aborted' : 'finished', capabilities: undefined });
+      return { content: [{ type: 'text', text: 'done' }] };
+    }, slow);
+    const port = 20000 + Math.floor(Math.random() * 20000);
+    const http = new HTTPTransport(port, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
+    server.start(local);
+    server.attachTransport(http);
+    const base = `http://127.0.0.1:${port}/mcp`;
+    await waitForListening(base);
+
+    const call = { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: slow.name, arguments: {} } };
+    const stdioCall = local.handler!(call as never);
+    const [first, second] = await Promise.all([post(base, call), post(base, call), (async () => {
+      await settle(50);
+      await post(base, { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 5 } });
+    })()]);
+    const stdioResult = await stdioCall;
+
+    for (const response of [first, second]) {
+      expect((response.json as { error?: unknown }).error).toBeUndefined();
+    }
+    expect((stdioResult as { error?: unknown }).error).toBeUndefined();
+    expect(outcomes.map(outcome => outcome.answer)).toEqual(['finished', 'finished', 'finished']);
+  });
+
   test('background log events never broadcast to HTTP clients', async () => {
     const { base } = await startHttp();
     const sessionA = await initialize(base, 'client-a');
