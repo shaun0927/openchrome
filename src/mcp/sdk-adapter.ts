@@ -27,7 +27,7 @@ import {
 import type { MCPResponse } from '../types/mcp';
 import type { McpServerMetadata, TransportMessageContext } from '../transports';
 import { getVersion } from '../core/version';
-import { MrtrStateManager, type MrtrRound } from './mrtr-state';
+import { MrtrStateManager, inputRequestDigest, type MrtrRound } from './mrtr-state';
 
 export const MODERN_MCP_PROTOCOL_VERSION = '2026-07-28';
 
@@ -101,16 +101,18 @@ export function toSdkAuthInfo(
 }
 
 /**
- * Identity a multi-round-trip state is bound to: the authenticated tenant
- * and key for api-key/JWT principals, otherwise the transport tenant.
+ * Identity a multi-round-trip state is bound to: transport, tenant, API key
+ * (api-key mode) and token subject (JWT mode, where the key id only names
+ * the issuer's signing key), otherwise the transport tenant.
  */
-function mrtrPrincipal(ctx: ServerContext): string {
+export function mrtrPrincipal(ctx: ServerContext): string {
   const principal = sdkPrincipal(ctx.http?.authInfo);
   const transport = sdkTransportContext(ctx.http?.authInfo);
   const tenant = principal?.mode === 'api-key' || principal?.mode === 'jwt'
     ? principal.tenantId
     : transport.tenantId ?? principal?.tenantId;
-  return `${ctx.http ? 'http' : 'stdio'}|${tenant ?? ''}|${principal?.keyId ?? ''}`;
+  const caller = principal?.mode === 'jwt' ? principal.subject : principal?.keyId;
+  return `${ctx.http ? 'http' : 'stdio'}|${tenant ?? ''}|${principal?.mode ?? ''}|${caller ?? ''}`;
 }
 
 let mrtrManager: MrtrStateManager | null = null;
@@ -219,15 +221,16 @@ function requestClientFor(
     }
     ordinal++;
     const key = `openchrome_${ordinal}_${method.replace(/[^A-Za-z0-9]+/g, '_')}`;
-    // Only answers carried by this request's verified requestState count;
-    // responses the client sent without being asked are ignored.
-    if (Object.prototype.hasOwnProperty.call(mrtr.answers, key)) {
-      return mrtr.answers[key] as T;
-    }
+    // Only answers carried by this request's verified requestState count,
+    // and only for the same question; responses the client sent without
+    // being asked are ignored.
+    const digest = inputRequestDigest(method, params);
+    const answered = mrtrStates().answerFor(mrtr, key, digest);
+    if (answered) return answered.value as T;
 
     throw new McpInputRequiredError(inputRequired({
       inputRequests: { [key]: inputRequestFor(method, params) },
-      requestState: await mrtrStates().mint(ctx, mrtr, [key]),
+      requestState: await mrtrStates().mint(ctx, mrtr, { [key]: digest }),
     }));
   };
 }
@@ -463,9 +466,16 @@ export function createSdkServerAdapter(
       ctx,
     ) as unknown as ListResourceTemplatesResult,
   );
-  server.setRequestHandler('resources/read', async (request, ctx) =>
-    await dispatch('resources/read', paramsWithMeta(request.params, ctx), ctx) as unknown as ReadResourceResult,
-  );
+  server.setRequestHandler('resources/read', async (request, ctx) => {
+    try {
+      return await dispatch('resources/read', paramsWithMeta(request.params, ctx), ctx) as unknown as ReadResourceResult;
+    } catch (error) {
+      if (isMcpInputRequiredError(error)) {
+        return error.result as InputRequiredResult;
+      }
+      throw error;
+    }
+  });
   if (options.era === 'legacy') {
     server.setRequestHandler('resources/subscribe', async (request, ctx) =>
       await dispatch(

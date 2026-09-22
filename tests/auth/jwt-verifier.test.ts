@@ -92,12 +92,14 @@ describe('createJwtVerifier', () => {
     const token = await signToken(key.privateKey, key.kid, {
       tenantId: 'acme',
       scope: 'read write',
+      sub: 'user-42',
     }, { issuer: ISSUER, audience: AUDIENCE, expiresIn: '5m' });
 
     const principal = await verifier.verify(token);
     expect(principal).not.toBeNull();
     expect(principal!.tenantId).toBe('acme');
     expect(principal!.scopes).toEqual(['read', 'write']);
+    expect(principal!.subject).toBe('user-42');
     expect(principal!.mode).toBe('jwt');
     expect(principal!.keyId).toBe(key.kid);
   });
