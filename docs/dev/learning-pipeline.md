@@ -4,6 +4,8 @@
 `export --store <events.jsonl> --out-dir <dir> --task irreversible_policy`는 host/user 라벨만 기본 포함한다.
 `--label-sources host,user,test,heuristic`는 출처를 명시적으로 확장한다. heuristic 라벨은 독립 정답이 아니다.
 라벨 없음·비식별 미적용·허용되지 않은 상태·task 선택지 오류·파싱 오류는 제외하며 보고서에 집계한다.
+`contains_sensitive`는 저장된 이벤트의 잔존 민감 정보 표시다. true인 외부 자료는 제외한다.
+제품 저장 경로는 허용 필드만 새로 구성한 뒤 false로 기록한다.
 동일한 task/state/choices는 같은 split으로 묶는다. id나 라벨을 바꿔도 같은 상태가 train/holdout 양쪽에 들어가지 않는다.
 
 `eval`은 사용자가 별도로 생성한 예측 파일을 채점한다. 모델 실행이나 training은 하지 않는다.

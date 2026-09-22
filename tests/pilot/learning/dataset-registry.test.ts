@@ -16,9 +16,10 @@ test('export excludes invalid, unlabeled, sensitive and heuristic records by def
   const file = path.join(dir, 'events.jsonl');
   await fs.writeFile(file, [base, labeled, { ...labeled, privacy: { redacted: false } },
     { ...labeled, choices: ['forged'], label: { ...labeled.label, answer: 'forged' } },
+    { ...labeled, privacy: { redacted: true, contains_sensitive: true } },
     { ...labeled, state: { rawDOM: 'secret' } }, { ...labeled, label: { ...labeled.label, source: 'heuristic' } }].map((row) => JSON.stringify(row)).join('\n') + '\nbad json\n');
   const result = await exportLearningDataset({ inputPath: file, outDir: dir, task: 'irreversible_policy', holdoutRatio: 0.2 });
-  expect(result.report).toMatchObject({ total_events: 7, labeled_examples: 1, skipped_unlabeled: 1, skipped_invalid_choice: 1, skipped_sensitive: 1, skipped_label_source: 1, skipped_invalid_record: 2 });
+  expect(result.report).toMatchObject({ total_events: 8, labeled_examples: 1, skipped_unlabeled: 1, skipped_invalid_choice: 1, skipped_sensitive: 2, skipped_label_source: 1, skipped_invalid_record: 2 });
 });
 
 test('same state stays on the same split despite different event IDs and labels', () => {
