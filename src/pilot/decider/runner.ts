@@ -63,6 +63,7 @@ async function recordShadow(question: DecisionQuestion, opts: DecisionRunnerOpti
 }
 
 function validateAnswer(question: DecisionQuestion, answer: DecisionAnswer): DecisionAnswer {
-  if (answer.abstain || question.choices.some((choice) => choice.id === answer.answer)) return answer;
+  if (answer.abstain) return { ...answer, answer: 'none' };
+  if (question.choices.some((choice) => choice.id === answer.answer)) return answer;
   return { ...answer, answer: 'none', confidence: 0, abstain: true, downgraded: true, reason: 'invalid_choice' };
 }

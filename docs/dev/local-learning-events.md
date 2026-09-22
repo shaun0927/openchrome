@@ -1,6 +1,7 @@
 # 로컬 학습 이벤트
 
-기본값은 비활성이다. `OPENCHROME_LEARNING=1`과 `OPENCHROME_LEARNING_MODE=local_only`로 수집에 동의한다.
+기본값은 비활성이다. `OPENCHROME_LEARNING=1`로 로컬 수집에 동의한다.
+mode를 생략하면 `local_only`이며, `OPENCHROME_LEARNING_MODE=disabled`는 수집을 비활성화한다.
 기본 저장소는 홈 디렉터리의 `.openchrome/learning/events.jsonl`이다.
 `OPENCHROME_LEARNING_DIR`, `OPENCHROME_LEARNING_STORE`로 위치를 바꿀 수 있다.
 `OPENCHROME_LEARNING_TASKS`는 `irreversible_policy,outcome_failure_triage`만 허용한다.
