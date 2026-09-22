@@ -70,6 +70,7 @@ export interface LearningDatasetReport {
   readonly skipped_task: number;
   readonly skipped_label_source: number;
   readonly skipped_invalid_choice: number;
+  readonly skipped_invalid_record?: number;
   readonly class_counts: Readonly<Record<string, number>>;
 }
 
@@ -96,6 +97,7 @@ export interface AdapterRegistryEntry {
   readonly status: AdapterStatus;
   readonly metrics: AdapterMetrics;
   readonly created_at: string;
+  readonly artifact_sha256?: string;
 }
 
 export function choicesForLearningTask(task: LearningTask): readonly string[] {
