@@ -10,6 +10,7 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { MCPServer } from '../../src/mcp-server';
 import { RUNTIME_META_KEY } from '../../src/mcp/runtime-contract';
+import { runWithRequestContext } from '../../src/core/observability/request-id';
 import { SdkStdioTransport } from '../../src/transports/sdk-stdio';
 import { registerOcWorkspaceTool } from '../../src/tools/oc-workspace';
 import type { MCPResponse, MCPToolDefinition, ToolContext } from '../../src/types/mcp';
@@ -103,6 +104,75 @@ describe('runtime drain and replacement', () => {
     expect(outcome.result.structuredContent).toMatchObject({ execution: 'unknown', retryAllowed: false });
     // The side effect ran at most once and the client is told not to replay it.
     expect(h.committed).toBe(0);
+  });
+
+  test('background task calls are tracked by drain and refused once it starts', async () => {
+    const h = createHarness();
+    servers.push(h.server);
+    const background = h.server.invokeRegisteredToolForTask('default', slowTool.name, {});
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(h.started).toBe(1);
+
+    const first = h.server.drain({ deadlineMs: 100 });
+    expect(h.server.drain({ deadlineMs: 60_000 })).toBe(first);
+    await expect(first).resolves.toEqual({ completed: 0, cancelled: 1 });
+    const outcome = await background;
+    expect(outcome.structuredContent).toMatchObject({ execution: 'unknown', retryAllowed: false });
+
+    const refused = await h.server.invokeRegisteredToolForTask('default', slowTool.name, {});
+    expect(refused.structuredContent).toMatchObject({ code: 'SERVER_DRAINING', execution: 'not_started' });
+    expect(h.started).toBe(1);
+    expect(h.committed).toBe(0);
+  });
+
+  test('background work keeps the resolved session and cannot ask the finished client for input', async () => {
+    const server = new MCPServer(createMockSessionManager() as never);
+    servers.push(server);
+    let seen: { sessionId: string; answer: string } | undefined;
+    server.registerTool(browserTool.name, async (sessionId: string, _args: Record<string, unknown>, context?: ToolContext) => {
+      let answer = 'none';
+      try {
+        await context!.requestClient!('elicitation/create', { message: 'confirm', requestedSchema: { type: 'object', properties: {} } });
+      } catch (error) {
+        answer = (error as Error).message;
+      }
+      seen = { sessionId, answer };
+      return { content: [{ type: 'text', text: 'ran' }] };
+    }, browserTool);
+
+    // As if oc_task_start had been called by a stateless HTTP request.
+    const result = await runWithRequestContext(
+      { requestId: 'r1', channel: 'http', protocolEra: 'modern', tenantId: 'tenant-a' },
+      () => server.invokeRegisteredToolForTask('ws-resolved', browserTool.name, {}),
+    );
+    expect(result.isError).not.toBe(true);
+    expect(seen).toEqual({ sessionId: 'ws-resolved', answer: 's2c_unavailable:background_task:elicitation/create' });
+  });
+
+  test('oc_task_start of a browser tool needs a workspace on the stateless era', async () => {
+    const server = new MCPServer(createMockSessionManager() as never);
+    servers.push(server);
+    registerOcWorkspaceTool(server);
+    server.registerTool(browserTool.name, async () => ({ content: [{ type: 'text', text: 'ran' }] }), browserTool);
+    server.registerTool('oc_task_start', async (sessionId: string) => ({ content: [{ type: 'text', text: JSON.stringify({ sessionId }) }] }), {
+      ...slowTool, name: 'oc_task_start', description: 'task start stub',
+      inputSchema: { type: 'object', properties: { kind: { type: 'string' }, args: { type: 'object' } } },
+    });
+    const [clientWire, serverWire] = InMemoryTransport.createLinkedPair();
+    server.start(new SdkStdioTransport(serverWire));
+    const client = new Client({ name: 'modern', version: '1' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+    await client.connect(clientWire);
+    try {
+      const missing = await client.callTool({ name: 'oc_task_start', arguments: { kind: browserTool.name } });
+      expect(missing.structuredContent).toMatchObject({ error: { code: 'WORKSPACE_REQUIRED' } });
+      const workspace = ((await client.callTool({ name: 'oc_workspace', arguments: { action: 'open' } })).structuredContent as { workspace: string }).workspace;
+      const started = await client.callTool({ name: 'oc_task_start', arguments: { kind: browserTool.name, workspace } });
+      expect(JSON.parse((started.content as Array<{ text: string }>)[0].text).sessionId).toMatch(/^ws-/);
+      const envelope = await client.callTool({ name: 'oc_task_start', arguments: { objective: 'browser-free envelope' } });
+      expect(envelope.isError).not.toBe(true);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   });
 
   test('the replacement process rejects old workspaces and runtime ids before browser work', async () => {

@@ -787,6 +787,7 @@ export class MCPServer {
   private readonly toolCancellations = new Map<string, AbortController>();
   /** Set once the process is being replaced: no new tool calls start. */
   private draining = false;
+  private drainPromise: Promise<{ completed: number; cancelled: number }> | null = null;
 
   /**
    * Prepare this process for replacement. New tool calls are refused as not
@@ -794,7 +795,13 @@ export class MCPServer {
    * get until the deadline to finish and are then cancelled, which reports
    * their outcome as unknown so clients re-observe instead of replaying.
    */
-  async drain(options: { deadlineMs?: number } = {}): Promise<{ completed: number; cancelled: number }> {
+  drain(options: { deadlineMs?: number } = {}): Promise<{ completed: number; cancelled: number }> {
+    // Every shutdown path may call this; the first call decides the deadline.
+    this.drainPromise ??= this.drainInFlight(options);
+    return this.drainPromise;
+  }
+
+  private async drainInFlight(options: { deadlineMs?: number }): Promise<{ completed: number; cancelled: number }> {
     this.draining = true;
     const deadlineMs = options.deadlineMs ?? parseDrainDeadlineMs();
     const inFlight = this.toolCancellations.size;
@@ -817,6 +824,22 @@ export class MCPServer {
 
   get isDraining(): boolean {
     return this.draining;
+  }
+
+  private drainingResult(): MCPResult {
+    return {
+      content: [{
+        type: 'text',
+        text: 'SERVER_DRAINING: this OpenChrome process is being replaced and did not start the call. Reconnect, rediscover the server (a new runtimeId), open a new workspace, and retry.',
+      }],
+      structuredContent: {
+        execution: 'not_started',
+        code: 'SERVER_DRAINING',
+        retryAllowed: true,
+        runtimeId: this.runtimeContract.runtimeId,
+      },
+      isError: true,
+    };
   }
 
   /**
@@ -1027,6 +1050,11 @@ export class MCPServer {
    */
   private getCurrentRequestClient(): NonNullable<ToolContext['requestClient']> {
     const context = currentRequestContext();
+    if (context?.backgroundTask) {
+      return async (method: string) => {
+        throw new Error(`s2c_unavailable:background_task:${method}`);
+      };
+    }
     return context?.createRequestClient?.()
       ?? context?.requestClient
       ?? this.requestFromClient.bind(this);
@@ -1537,19 +1565,7 @@ export class MCPServer {
 
         case 'tools/call': {
           if (this.draining) {
-            result = {
-              content: [{
-                type: 'text',
-                text: 'SERVER_DRAINING: this OpenChrome process is being replaced and did not start the call. Reconnect, rediscover the server (a new runtimeId), open a new workspace, and retry.',
-              }],
-              structuredContent: {
-                execution: 'not_started',
-                code: 'SERVER_DRAINING',
-                retryAllowed: true,
-                runtimeId: this.runtimeContract.runtimeId,
-              },
-              isError: true,
-            };
+            result = this.drainingResult();
             break;
           }
           const key = this.cancellationKey(id, transportContext);
@@ -1877,8 +1893,13 @@ export class MCPServer {
     };
     if (typeof args.sessionId === 'string') return required;
     // worker's browser use depends on its action, but every action addresses
-    // workers that belong to one workspace, so it always needs the handle.
-    if (!shouldInitializeBrowserSession(toolName, args) && toolName !== 'worker') {
+    // workers that belong to one workspace, so it always needs the handle;
+    // oc_task_start runs its `kind` tool in the background against the
+    // session resolved here, so a browser kind needs one too.
+    const backgroundBrowserTask = toolName === 'oc_task_start'
+      && typeof args.kind === 'string'
+      && shouldInitializeBrowserSession(args.kind, (args.args ?? {}) as Record<string, unknown>);
+    if (!shouldInitializeBrowserSession(toolName, args) && toolName !== 'worker' && !backgroundBrowserTask) {
       // Browser-free bookkeeping only: the local stdio client keeps its
       // historical namespace; HTTP callers get a tenant-scoped one.
       return { sessionId: context.channel === 'http' ? `modern:${tenantId}` : 'default' };
@@ -2798,12 +2819,25 @@ export class MCPServer {
       // Wait at gate if paused
       if (this.operationController) {
         let gateTid: ReturnType<typeof setTimeout>;
-        await Promise.race([
-          this.operationController.gate(callId).finally(() => clearTimeout(gateTid)),
-          new Promise<never>((_, reject) => {
-            gateTid = setTimeout(() => reject(new Error(`Operation gate timed out after ${DEFAULT_OPERATION_GATE_TIMEOUT_MS}ms`)), DEFAULT_OPERATION_GATE_TIMEOUT_MS);
-          }),
-        ]);
+        let onGateAbort: (() => void) | undefined;
+        try {
+          await Promise.race([
+            this.operationController.gate(callId).finally(() => clearTimeout(gateTid)),
+            new Promise<never>((_, reject) => {
+              gateTid = setTimeout(() => reject(new Error(`Operation gate timed out after ${DEFAULT_OPERATION_GATE_TIMEOUT_MS}ms`)), DEFAULT_OPERATION_GATE_TIMEOUT_MS);
+            }),
+            // A call paused at the dashboard gate has not started: cancelling
+            // it (including drain) releases it immediately.
+            new Promise<never>((_, reject) => {
+              onGateAbort = () => reject(new ToolAttemptError('TOOL_CANCELLED', 'not_started'));
+              if (signal?.aborted) onGateAbort();
+              else signal?.addEventListener('abort', onGateAbort, { once: true });
+            }),
+          ]);
+        } finally {
+          clearTimeout(gateTid!);
+          if (onGateAbort) signal?.removeEventListener('abort', onGateAbort);
+        }
       }
 
       // Identify heavy tools that may block the event loop legitimately
@@ -3628,12 +3662,40 @@ export class MCPServer {
     signal?: AbortSignal,
     principal?: Principal,
   ): Promise<MCPResult> {
-    return this.handleToolsCall(
-      { name: toolName, arguments: { ...args, sessionId } },
-      undefined,
-      principal,
-      signal,
-    );
+    // Background work (oc_task_start) is tracked like a request so drain()
+    // waits for it and cancels it at the deadline, and none starts while
+    // the process is being replaced.
+    if (this.draining) return this.drainingResult();
+    const controller = new AbortController();
+    const forward = (): void => controller.abort(signal?.reason);
+    if (signal?.aborted) forward();
+    else signal?.addEventListener('abort', forward, { once: true });
+    const key = JSON.stringify(['task', randomUUID()]);
+    this.toolCancellations.set(key, controller);
+    // The starting call already resolved the browser session (and, on the
+    // stateless era, its workspace). The request that started the task has
+    // finished, so the nested call carries no protocol era and no bridge to
+    // that client: client input is unavailable to background work.
+    const current = currentRequestContext();
+    const backgroundContext = {
+      requestId: current?.requestId ?? generateRequestId(),
+      ...(current?.tenantId ? { tenantId: current.tenantId } : {}),
+      ...(current?.keyId ? { keyId: current.keyId } : {}),
+      ...(current?.brokerClientId ? { brokerClientId: current.brokerClientId } : {}),
+      ...(current?.channel ? { channel: current.channel } : {}),
+      backgroundTask: true as const,
+    };
+    try {
+      return await runWithRequestContext(backgroundContext, () => this.handleToolsCall(
+        { name: toolName, arguments: { ...args, sessionId } },
+        undefined,
+        principal,
+        controller.signal,
+      ));
+    } finally {
+      signal?.removeEventListener('abort', forward);
+      this.toolCancellations.delete(key);
+    }
   }
 
   /**
