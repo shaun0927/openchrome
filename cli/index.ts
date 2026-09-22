@@ -59,7 +59,7 @@ const SIGNAL_EXIT_CODES: Partial<Record<NodeJS.Signals, number>> = {
 
 function fullCliArgs(): string[] {
   const args = process.argv.slice(2);
-  if (args[0] === 'help' && ['serve', 'check', 'doctor'].includes(args[1] ?? '')) {
+  if (args[0] === 'help' && ['serve', 'check', 'doctor', 'learning'].includes(args[1] ?? '')) {
     return [args[1], '--help', ...args.slice(2)];
   }
   return args;
@@ -511,11 +511,19 @@ program
   .action(() => runFullCliCommand());
 
 program
+  .command('learning [action]')
+  .description('Manage opt-in local learning data')
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .helpOption(false)
+  .action(() => runFullCliCommand());
+
+program
   .command('help [command]')
   .description('Display help for command')
   .allowUnknownOption()
   .action((commandName?: string) => {
-    if (['serve', 'check', 'doctor'].includes(commandName ?? '')) {
+    if (['serve', 'check', 'doctor', 'learning'].includes(commandName ?? '')) {
       runFullCliCommand();
       return;
     }
