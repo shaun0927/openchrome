@@ -26,6 +26,7 @@ const SESSION_INIT_EXEMPT_TOOLS = new Set([
   'list_profiles',
   'oc_normalize_action',
   'oc_policy',
+  'oc_workspace',
   'oc_copy_to_clipboard',
   'oc_open_host_settings',
 
