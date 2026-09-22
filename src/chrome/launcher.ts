@@ -6,6 +6,7 @@ import { spawn, ChildProcess, execSync, execFileSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { createHash } from 'crypto';
 import { getGlobalConfig } from '../config/global';
 import { writeChromePid, removeChromePid, getChromePidFilePath, killProcessTree } from './pid-manager';
 import { spawnProcessGuardian } from './process-guardian';
@@ -115,6 +116,7 @@ async function refreshKnownAutoConnectWsEndpoint(port: number): Promise<string |
 }
 
 export class ChromeLauncher {
+  private attachEndpoint: string | null = null;
   private instance: ChromeInstance | null = null;
   private pendingProcess: ChildProcess | null = null;
   private launchInFlight: Promise<ChromeInstance> | null = null;
@@ -270,6 +272,12 @@ export class ChromeLauncher {
     }
 
     if (existingWs) {
+      if (launchMode === 'attach' && getAutoConnectState()?.port !== port) {
+        if (this.attachEndpoint && this.attachEndpoint !== existingWs) {
+          throw new Error('CHROME_IDENTITY_CHANGED: The selected debug port now belongs to a different browser. Restart the OpenChrome connection explicitly to select it; no replacement browser was attached.');
+        }
+        this.attachEndpoint = existingWs;
+      }
       const pendingProc = this.pendingProcess;
       this.pendingProcess = null;
       // codex P1 review on #670: when our prior spawn left a still-running
@@ -778,6 +786,19 @@ export class ChromeLauncher {
    */
   getInstance(): ChromeInstance | null {
     return this.instance;
+  }
+
+  async getConnectionInfo() {
+    const instance = this.instance;
+    const endpoint = instance ? await checkDebugPort(Number(new URL(instance.httpEndpoint).port)) : null;
+    const reachable = instance !== null && endpoint === instance.wsEndpoint;
+    return {
+      status: !instance ? 'not_connected' : !reachable ? 'unavailable' : instance.launchMode === 'attach' ? 'attached' : 'managed',
+      browserIdentity: instance ? createHash('sha256').update(instance.wsEndpoint).digest('hex').slice(0, 16) : null,
+      profileType: instance?.profileType ?? 'unverified',
+      authentication: 'unverified',
+      replacementAllowed: this.attachEndpoint === null,
+    };
   }
 
   /**

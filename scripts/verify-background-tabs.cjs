@@ -30,7 +30,12 @@ async function main() {
       rows.push({ scenario: args.isolatedContext ? 'isolated-create' : 'default-create', foregroundPreserved: after === originalWindow });
       assert.equal(after, originalWindow, 'Tab creation stole foreground');
     }
-    console.log(JSON.stringify({ chrome: await browser.version(), transport: 'MCP stdio', rows }, null, 2));
+    const info = await client.callTool('oc_get_connection_info', { host: 'openchrome' });
+    assert.notEqual(info.raw.isError, true);
+    const connection = JSON.parse(info.text).browserConnection;
+    assert.equal(connection.status, 'attached');
+    assert.equal(connection.authentication, 'unverified');
+    console.log(JSON.stringify({ chrome: await browser.version(), transport: 'MCP stdio', rows, connection }, null, 2));
   } finally {
     await client.stop();
     await browser.close();

@@ -16,6 +16,7 @@ import { getChromePool } from '../chrome/pool';
 import { getDevToolsInstanceInfo } from '../chrome/devtools-info';
 import { getGlobalConfig } from '../config/global';
 import { getRuntimeProfile } from '../config/runtime-profile';
+import { getExistingChromeLauncher } from '../chrome/launcher';
 
 function getServerState(): ServerConnectionState {
   const httpPort = process.env.OPENCHROME_HTTP_PORT || '3100';
@@ -107,10 +108,13 @@ const getConnectionInfoHandler: ToolHandler = async (
     // Issue #849: surface the auto-connect state so MCP clients can verify
     // they are talking to an externally-launched Chrome.
     const autoConnect = getAutoConnectState();
+    const browserConnection = await getExistingChromeLauncher(getGlobalConfig().port)?.getConnectionInfo()
+      ?? { status: 'not_connected', browserIdentity: null, profileType: 'unverified', authentication: 'unverified' };
     const devtools = await devToolsPromise;
     if (autoConnect) {
       const response = {
         mode: autoConnect.mode,
+        browserConnection,
         userDataDir: autoConnect.userDataDir,
         port: autoConnect.port,
         wsEndpoint: autoConnect.wsEndpoint,
@@ -127,7 +131,7 @@ const getConnectionInfoHandler: ToolHandler = async (
         ],
       };
     }
-    const response = { mode: 'managed', runtimeProfile: getRuntimeProfile(), ...(devtools ? { devtools } : {}) };
+    const response = { mode: 'managed', browserConnection, runtimeProfile: getRuntimeProfile(), ...(devtools ? { devtools } : {}) };
     return {
       content: [
         {
