@@ -207,13 +207,17 @@ jobs:
         run: |
           node dist/index.js serve --http 31877 --port 9555 > /tmp/openchrome-conformance.log 2>&1 &
           SERVER_PID=$!
-          timeout 60 bash -c 'until curl -sf http://127.0.0.1:31877/health > /dev/null; do sleep 0.5; done'
+          timeout 60 bash -c 'until curl -sf http://127.0.0.1:31877/health > /dev/null; do sleep 0.5; done'             || { echo "server did not become healthy"; kill "$SERVER_PID" || true; exit 1; }
           status=0
           for scenario in server-initialize ping tools-list resources-list logging-set-level dns-rebinding-protection; do
             npx --yes @modelcontextprotocol/conformance@0.1.16 server --url http://127.0.0.1:31877/mcp --scenario "$scenario" || status=1
           done
           kill "$SERVER_PID" || true
           exit $status
+
+      - name: Show the conformance server log
+        if: failure()
+        run: cat /tmp/openchrome-conformance.log || true
 
   full-test:
     name: full-test
