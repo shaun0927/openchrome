@@ -19,6 +19,7 @@
 export * as runtime from './runtime/index.js';
 
 export * as handoff from './handoff/index.js';
+export * as learning from './learning/index.js';
 
 // Gated by isPerceptionVotingEnabled() inside orchestrator.runVote().
 // LLM-backed voter HTTP wrappers ship in openchrome-perception-voters (#775).
