@@ -8,6 +8,7 @@ import { getChromeLauncher } from '../chrome/launcher';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../core/page/smart-goto';
 import { getTargetId } from './target-id';
+import { createBackgroundPage } from './background-page';
 import { getRefIdManager } from '../core/perception/ref-id-manager';
 import { safeAsyncListener } from '../utils/safe-listener';
 import {
@@ -1774,7 +1775,7 @@ export class CDPClient {
       // Create page in isolated context (for worker isolation)
       let newPageTid1: ReturnType<typeof setTimeout>;
       page = await Promise.race([
-        context.newPage().finally(() => clearTimeout(newPageTid1)),
+        createBackgroundPage(browser, context).finally(() => clearTimeout(newPageTid1)),
         new Promise<never>((_, reject) => {
           newPageTid1 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
         }),
@@ -1789,7 +1790,7 @@ export class CDPClient {
         // Create page in Chrome's default context
         let newPageTid2: ReturnType<typeof setTimeout>;
         page = await Promise.race([
-          browser.newPage().finally(() => clearTimeout(newPageTid2)),
+          createBackgroundPage(browser).finally(() => clearTimeout(newPageTid2)),
           new Promise<never>((_, reject) => {
             newPageTid2 = setTimeout(() => reject(new Error(`newPage() timed out after ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`)), DEFAULT_NEW_PAGE_TIMEOUT_MS);
           }),
@@ -1926,7 +1927,7 @@ export class CDPClient {
     const cdp = await browser.target().createCDPSession();
     let targetId: string;
     try {
-      const result = await cdp.send('Target.createTarget', { url: 'about:blank' }) as { targetId: string };
+      const result = await cdp.send('Target.createTarget', { url: 'about:blank', background: true }) as { targetId: string };
       targetId = result.targetId;
     } catch (createErr) {
       await cdp.detach().catch(() => {});

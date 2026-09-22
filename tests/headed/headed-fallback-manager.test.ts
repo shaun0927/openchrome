@@ -352,3 +352,6 @@ describe('HeadedFallbackManager', () => {
     });
   });
 });
+jest.mock('../../src/cdp/background-page', () => ({
+  createBackgroundPage: (browser: { newPage(): Promise<unknown> }) => browser.newPage(),
+}));

@@ -117,7 +117,7 @@ describe('CDPClient createTargetStealth contracts', () => {
     await jest.advanceTimersByTimeAsync(2000);
     const result = await promise;
 
-    expect(cdp.send).toHaveBeenNthCalledWith(1, 'Target.createTarget', { url: 'about:blank' });
+    expect(cdp.send).toHaveBeenNthCalledWith(1, 'Target.createTarget', { url: 'about:blank', background: true });
     expect(cdp.send).toHaveBeenCalledWith('Target.attachToTarget', { targetId: 'target-ok', flatten: true });
     expect(browser.waitForTarget).toHaveBeenCalledWith(expect.any(Function), { timeout: 5000 });
     expect(cdp.detach).toHaveBeenCalledTimes(1);
