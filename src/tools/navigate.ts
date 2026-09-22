@@ -6,6 +6,7 @@ import { MCPServer } from '../mcp-server';
 import { MCPToolDefinition, MCPResult, ToolHandler, ToolContext, hasBudget, throwIfAborted } from '../types/mcp';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
 import { getSessionManager } from '../session-manager';
+import { serializeNavigation } from '../session/navigation-lock';
 import { pathMetaFor } from './_shared/path-meta';
 import { smartGoto } from '../core/page/smart-goto';
 import { safeTitle } from '../core/page/safe-title';
@@ -633,42 +634,25 @@ const handler: ToolHandler = async (
         };
       }
 
-      // Tab reuse: if worker has exactly 1 existing tab, reuse it instead of creating new
       const resolvedWorkerId = workerId || 'default';
       const existingTargets = sessionManager.getWorkerTargetIds(sessionId, resolvedWorkerId);
-      if (existingTargets.length === 1 && !stealth) {
-        const existingTabId = existingTargets[0];
+      const matchingTargets: string[] = [];
+      if (!stealth) {
+        for (const target of existingTargets) {
+          if (!await sessionManager.isTargetValid(target)) continue;
+          const candidate = await sessionManager.getPage(sessionId, target, resolvedWorkerId, 'tabs_context');
+          if (candidate?.url() === targetUrl) matchingTargets.push(target);
+        }
+      }
+      if (matchingTargets.length > 1) {
+        return { content: [{ type: 'text', text: JSON.stringify({ code: 'AMBIGUOUS_TAB', tabIds: matchingTargets, message: 'Specify tabId; multiple authorized tabs match this URL.' }) }], isError: true };
+      }
+      if (matchingTargets.length === 1) {
+        const existingTabId = matchingTargets[0];
         if (await sessionManager.isTargetValid(existingTabId)) {
           const page = await sessionManager.getPage(sessionId, existingTabId, undefined, 'navigate');
           if (page) {
-            const { authRedirect } = await withTimeout(
-              smartGoto(page, targetUrl, { timeout: DEFAULT_NAVIGATION_TIMEOUT_MS }),
-              DEFAULT_NAVIGATION_TIMEOUT_MS + 5000,
-              `navigate to ${targetUrl}`
-            , context);
-            if (authRedirect) {
-              AdaptiveScreenshot.getInstance().reset(existingTabId);
-              return await withDomainSkillsResult({
-                content: [{
-                  type: 'text',
-                  text: JSON.stringify({
-                    action: 'navigate',
-                    url: page.url(),
-                    title: await safeTitle(page),
-                    tabId: existingTabId,
-                    workerId: resolvedWorkerId,
-                    authRedirect: true,
-                    redirectedFrom: authRedirect.from,
-                    authRedirectHost: authRedirect.host,
-                    message: 'ACTION_REQUIRED: Authentication redirect detected — page redirected from ' + authRedirect.from + ' to ' + authRedirect.host +
-                      '. The user must log in manually in their Chrome browser. ' +
-                      'Inform the user and wait for confirmation before retrying navigation. ' +
-                      'Do NOT attempt to authenticate programmatically.',
-                  }),
-                }],
-                isError: false,
-              }, recallArg);
-            }
+            if (page.url() !== targetUrl) throw new Error('TAB_CHANGED: Select the tab again before navigating.');
             AdaptiveScreenshot.getInstance().reset(existingTabId);
             const [summary, reuseBlockingDetection] = await Promise.all([
               (context && !hasBudget(context, 5_000)) ? Promise.resolve(null) : generateVisualSummary(page),
@@ -1107,7 +1091,9 @@ const handler: ToolHandler = async (
  * operator explicitly opts in (portability-harness P2).
  */
 const wrappedHandler: ToolHandler = async (sessionId, args, context) => {
-  const result = await handler(sessionId, args, context);
+  const key = JSON.stringify([sessionId, args.workerId ?? 'default', args.profileDirectory ?? null, args.taskId ?? null, args.laneId ?? null]);
+  const result = args.tabId ? await handler(sessionId, args, context)
+    : await serializeNavigation(key, () => handler(sessionId, args, context));
   const captureArtifact = shouldCaptureReplayArtifact(args.capture_artifact);
   const dynamicSkillsEnabled = isDynamicSkillsEnabled();
   if (result.isError !== true && (captureArtifact || dynamicSkillsEnabled)) {

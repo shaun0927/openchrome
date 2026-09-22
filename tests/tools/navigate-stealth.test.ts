@@ -257,22 +257,26 @@ describe('NavigateTool - Stealth Mode', () => {
       expect(mockSmartGotoFn).not.toHaveBeenCalled();
     });
 
-    test('stealth=false still reuses existing tab (tab reuse unchanged)', async () => {
-      // Setup: create a session with an existing tab in the default worker
-      await mockSessionManager.createTarget(testSessionId, 'https://already-open.com');
+    test('reuses the exact URL without reloading existing page state', async () => {
+      await mockSessionManager.createTarget(testSessionId, 'https://normal-page.com/');
 
       const handler = await getNavigateHandler();
 
       await handler(testSessionId, {
-        url: 'https://normal-page.com',
-        // stealth not set — should reuse existing tab
+        url: 'https://normal-page.com/',
       });
 
-      // Should reuse tab via smartGoto, NOT create new target
-      expect(mockSmartGotoFn).toHaveBeenCalledTimes(1);
+      expect(mockSmartGotoFn).not.toHaveBeenCalled();
       expect((mockSessionManager as any).createTargetStealth).not.toHaveBeenCalled();
-      // createTarget should NOT be called again (reuse path)
-      expect(mockSessionManager.createTarget).toHaveBeenCalledTimes(1); // only the setup call
+      expect(mockSessionManager.createTarget).toHaveBeenCalledTimes(1);
+    });
+
+    test('does not replace an unrelated existing tab', async () => {
+      await mockSessionManager.createTarget(testSessionId, 'https://already-open.com/');
+      const handler = await getNavigateHandler();
+      await handler(testSessionId, { url: 'https://normal-page.com/' });
+      expect(mockSmartGotoFn).not.toHaveBeenCalled();
+      expect(mockSessionManager.createTarget).toHaveBeenCalledTimes(2);
     });
 
     test('stealth=true with custom settleMs skips tab reuse', async () => {

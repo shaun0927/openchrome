@@ -1526,6 +1526,7 @@ export class SessionManager {
    * @param toolName Optional MCP tool name for hybrid BrowserRouter routing
    */
   async getPage(sessionId: string, targetId: string, workerId?: string, toolName?: string): Promise<Page | null> {
+    if (toolName === 'navigate' && this.humanHeldTargets.has(targetId)) throw new Error('HUMAN_CONTROL_REQUIRED: Resume the paused tab before navigating.');
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo) {
