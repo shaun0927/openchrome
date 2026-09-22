@@ -466,6 +466,30 @@ describe('MCP 2026-07-28 HTTP boundary', () => {
     }
   });
 
+  test('stops delivering to a subscription once its stream closes', async () => {
+    const uri = 'oc://session/closing/state';
+    const bus = (transport as unknown as { modernEventBus: { listenerCount: number } }).modernEventBus;
+    const settled = async (count: number): Promise<void> => {
+      for (let i = 0; i < 100 && bus.listenerCount !== count; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(bus.listenerCount).toBe(count);
+    };
+    // Earlier tests' streams detach asynchronously; start from none.
+    await settled(0);
+    const subscription = await openResourceSubscription('tenant-a', uri);
+    await subscription.waitFor((message) => message.method === 'notifications/subscriptions/acknowledged');
+    expect(bus.listenerCount).toBe(1);
+
+    subscription.close();
+    await settled(0);
+
+    const received = subscription.messages.length;
+    transport.publishResourceUpdated(uri, 'tenant-a');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(subscription.messages).toHaveLength(received);
+  });
+
   test('rejects removed methods and legacy HTTP verbs on the modern path', async () => {
     const removed = await request(
       {
