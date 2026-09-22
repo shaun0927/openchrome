@@ -111,6 +111,7 @@ export interface SessionManagerStats {
 }
 
 export interface ExternalTargetRegistrationOptions {
+  borrowedUrl?: string;
   inheritContextFromTargetId?: string;
   openerTargetId?: string;
 }
@@ -137,6 +138,7 @@ const DEFAULT_CONFIG: Required<Omit<SessionManagerConfig, 'tenantManager' | 'str
 };
 
 export class SessionManager {
+  private borrowedTargets = new Set<string>();
   private sessions: Map<string, Session> = new Map();
   private targetToWorker = new TargetOwnershipRegistry();
   private humanHeldTargets = new Set<string>();
@@ -727,6 +729,9 @@ export class SessionManager {
       return;
     }
     this.deletingSessions.add(sessionId);
+    for (const targetId of this.getSessionTargetIds(sessionId)) {
+      if (this.borrowedTargets.has(targetId)) this.releaseBorrowedTarget(sessionId, targetId);
+    }
 
     // Save storage state before cleanup (save first, then stop watchdog).
     // #848: flush ONE representative tab per named context so per-context
@@ -822,7 +827,8 @@ export class SessionManager {
       // anything already gone.
       if (lease.cleanupPolicy !== 'preserve') {
         try {
-          await this.closeTarget(lease.sessionId, lease.targetId);
+          if (this.borrowedTargets.has(lease.targetId)) this.releaseBorrowedTarget(lease.sessionId, lease.targetId);
+          else await this.closeTarget(lease.sessionId, lease.targetId);
           console.error(
             `[SessionManager] Reclaimed idle target ${lease.targetId.slice(0, 8)} ` +
             `(lease expired; owner session=${lease.sessionId} silent > TTL)`,
@@ -1109,6 +1115,10 @@ export class SessionManager {
 
     // Close all pages in this worker (return to pool if available)
     for (const targetId of worker.targets) {
+      if (this.borrowedTargets.has(targetId)) {
+        this.releaseBorrowedTarget(session.id, targetId);
+        continue;
+      }
       try {
         if (this.connectionPool && this.config.useConnectionPool) {
           const page = await workerCdpClient.getPageByTargetId(targetId);
@@ -1516,6 +1526,7 @@ export class SessionManager {
    * @param toolName Optional MCP tool name for hybrid BrowserRouter routing
    */
   async getPage(sessionId: string, targetId: string, workerId?: string, toolName?: string): Promise<Page | null> {
+    if (toolName === 'navigate' && this.humanHeldTargets.has(targetId)) throw new Error('HUMAN_CONTROL_REQUIRED: Resume the paused tab before navigating.');
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo) {
@@ -1594,6 +1605,7 @@ export class SessionManager {
    * prevent ghost tabs). This fallback re-registers valid targets.
    */
   private async tryRecoverTarget(sessionId: string, targetId: string, workerId?: string): Promise<Page | null> {
+    if (process.env.OPENCHROME_USER_TABS === '1') return null;
     try {
       const page = await this.cdpClient.getPageByTargetId(targetId);
       if (!page || page.isClosed()) return null;
@@ -1702,6 +1714,41 @@ export class SessionManager {
    */
   getTargetOwner(targetId: string): { sessionId: string; workerId: string } | undefined {
     return this.targetToWorker.get(targetId);
+  }
+
+  private assertUserTabAccess(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    const worker = session?.workers.get(session.defaultWorkerId);
+    if (process.env.OPENCHROME_USER_TABS !== '1' || !session || session.tenantId !== DEFAULT_TENANT_ID
+      || !worker || worker.context || worker.port || this.cdpClient.getChromeLifecycleMode() !== 'attach') {
+      throw new Error('USER_TAB_ACCESS_DISABLED: Requires OPENCHROME_USER_TABS=1 and an attached default-profile local session.');
+    }
+  }
+
+  async discoverUserTabs(sessionId: string): Promise<Array<{ tabId: string; url: string }>> {
+    await this.getOrCreateSession(sessionId);
+    this.assertUserTabAccess(sessionId);
+    const browser = this.cdpClient.getBrowser();
+    return browser.targets().filter(target => target.type() === 'page'
+      && target.browserContext() === browser.defaultBrowserContext()
+      && !this.targetToWorker.has(getTargetId(target))
+      && /^https?:\/\//.test(target.url()))
+      .map(target => ({ tabId: getTargetId(target), url: target.url() }));
+  }
+
+  async borrowUserTab(sessionId: string, targetId: string, expectedUrl: string): Promise<boolean> {
+    const session = await this.getOrCreateSession(sessionId);
+    this.assertUserTabAccess(sessionId);
+    assertDomainAllowed(expectedUrl);
+    return this.registerExternalTarget(targetId, sessionId, session.defaultWorkerId, { borrowedUrl: expectedUrl });
+  }
+
+  isBorrowedTarget(targetId: string): boolean { return this.borrowedTargets.has(targetId); }
+
+  releaseBorrowedTarget(sessionId: string, targetId: string): boolean {
+    if (!this.borrowedTargets.has(targetId) || !this.validateTargetOwnership(sessionId, targetId)) return false;
+    this.onTargetClosed(targetId);
+    return true;
   }
 
   /**
@@ -1821,7 +1868,8 @@ export class SessionManager {
     // Don't overwrite existing entries
     const existingOwner = this.targetToWorker.get(targetId);
     if (existingOwner) {
-      return existingOwner.sessionId === sessionId && existingOwner.workerId === workerId;
+      return existingOwner.sessionId === sessionId && existingOwner.workerId === workerId
+        && (opts?.borrowedUrl === undefined || this.borrowedTargets.has(targetId));
     }
 
     const session = this.sessions.get(sessionId);
@@ -1829,6 +1877,15 @@ export class SessionManager {
 
     const worker = session.workers.get(workerId);
     if (!worker) return false;
+
+    if (opts?.borrowedUrl !== undefined) {
+      this.assertUserTabAccess(sessionId);
+      const browser = this.cdpClient.getBrowser();
+      const target = browser.targets().find(candidate => getTargetId(candidate) === targetId);
+      if (workerId !== session.defaultWorkerId || !target || target.type() !== 'page'
+        || target.browserContext() !== browser.defaultBrowserContext()
+        || !/^https?:\/\//.test(target.url()) || target.url() !== opts.borrowedUrl) return false;
+    }
 
     if (opts?.openerTargetId) {
       const openerOwner = this.targetToWorker.get(opts.openerTargetId);
@@ -1858,6 +1915,7 @@ export class SessionManager {
     worker.targets.add(targetId);
     worker.lastActivityAt = Date.now();
     this.targetToWorker.set(targetId, { sessionId, workerId });
+    if (opts?.borrowedUrl !== undefined) this.borrowedTargets.add(targetId);
     this.acquireTargetLease(targetId, sessionId, workerId, undefined, opts?.inheritContextFromTargetId);
 
     // #848 Codex P1: inherit named-context mapping from the opener so popup
@@ -1889,6 +1947,7 @@ export class SessionManager {
    * @returns true if closed, false if not found
    */
   async closeTarget(sessionId: string, targetId: string): Promise<boolean> {
+    if (this.borrowedTargets.has(targetId)) return false;
     const ownerInfo = this.targetToWorker.get(targetId);
 
     if (!ownerInfo || ownerInfo.sessionId !== sessionId) {
@@ -2034,6 +2093,7 @@ export class SessionManager {
    * Handle target closed event
    */
   onTargetClosed(targetId: string): void {
+    this.borrowedTargets.delete(targetId);
     this.humanHeldTargets.delete(targetId);
     flushRecorderBuffer(targetId);
     this.targetCreationLedger.markClosed(targetId);
@@ -2259,6 +2319,11 @@ export class SessionManager {
     for (const targetId of trackedTargetIds) {
       if (!this.targetToWorker.has(targetId)) continue; // Already cleaned by targetdestroyed
       if (aliveTargetIds.has(targetId)) continue; // Still alive, no action needed
+
+      if (this.borrowedTargets.has(targetId)) {
+        this.onTargetClosed(targetId);
+        continue;
+      }
 
       // Target is dead — try to find a live replacement by URL
       const ownerInfo = this.targetToWorker.get(targetId);

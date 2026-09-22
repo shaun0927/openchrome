@@ -102,6 +102,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
           blockingPage: null,
         }),
         getPort: jest.fn().mockReturnValue(9322),
+        getPage: jest.fn().mockReturnValue(null),
       }),
     }));
     jest.doMock('../../src/config/global', () => ({
@@ -155,7 +156,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' })
         .mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.stealth).toBe(true);
@@ -175,7 +176,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'bot-check', detail: 'Security Check' })
         .mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.example.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.example.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBe(2);
@@ -190,7 +191,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'captcha', detail: 'Turnstile' })
         .mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.example.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.example.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBe(2);
@@ -203,7 +204,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'js-required', detail: 'Page requires JavaScript' });
 
-      const result = await handler(testSessionId, { url: 'https://www.example.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.example.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       // Should return the original result with blockingPage, no fallback
@@ -220,7 +221,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', stealth: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       // Stealth was already used — stealth-to-stealth should NOT be triggered.
@@ -238,7 +239,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', autoFallback: false });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', autoFallback: false });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.blockingPage).toBeDefined();
@@ -251,7 +252,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
 
       mockDetectBlockingPage.mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.naver.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.naver.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBeUndefined();
@@ -268,7 +269,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' })
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Still Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       // Should return the stealth result WITH blockingPage (not loop)
@@ -285,7 +286,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' })
         .mockResolvedValueOnce(null);
 
-      await handler(testSessionId, { url: 'https://www.coupang.com' });
+      await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
 
       expect((mockSessionManager as any).closeTarget).toHaveBeenCalledWith(
         testSessionId,
@@ -300,7 +301,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'bot-check', detail: 'Bot Check' })
         .mockResolvedValueOnce(null);
 
-      await handler(testSessionId, { url: 'https://www.example.com' });
+      await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.example.com' });
 
       expect(mockSimulatePresence).toHaveBeenCalled();
     });
@@ -322,7 +323,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' })
         .mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBe(2);
@@ -344,7 +345,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', autoFallback: false });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', autoFallback: false });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.blockingPage).toBeDefined();
@@ -360,7 +361,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', stealth: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -374,7 +375,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'bot-check', detail: 'Security Check' });
 
-      const result = await handler(testSessionId, { url: 'https://www.example.com', stealth: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.example.com', stealth: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.headed).toBe(true);
@@ -388,7 +389,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true, autoFallback: false });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', stealth: true, autoFallback: false });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.blockingPage).toBeDefined();
@@ -403,7 +404,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Access Denied' });
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com', stealth: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com', stealth: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.stealth).toBe(true);
@@ -418,7 +419,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
       mockDetectBlockingPage
         .mockResolvedValueOnce({ type: 'js-required', detail: 'Page requires JavaScript' });
 
-      const result = await handler(testSessionId, { url: 'https://www.example.com', stealth: true });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.example.com', stealth: true });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.blockingPage).toBeDefined();
@@ -436,7 +437,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
         .mockResolvedValueOnce({ type: 'access-denied', detail: 'Akamai CDN' })
         .mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.coupang.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.coupang.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed).toHaveProperty('fallbackTier', 2);
@@ -451,7 +452,7 @@ describe('NavigateTool - Auto-fallback (#459)', () => {
 
       mockDetectBlockingPage.mockResolvedValueOnce(null);
 
-      const result = await handler(testSessionId, { url: 'https://www.naver.com' });
+      const result = await handler(testSessionId, { allowHeadedFallback: true, url: 'https://www.naver.com' });
       const parsed = parseResultJSON<NavResult>(result as MCPResult);
 
       expect(parsed.fallbackTier).toBeUndefined();

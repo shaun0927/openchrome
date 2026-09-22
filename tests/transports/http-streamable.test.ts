@@ -77,6 +77,22 @@ describe('Streamable HTTP - POST with Accept: text/event-stream', () => {
     expect(data.result).toBeDefined();
   });
 
+  it.each(['header', 'body', 'batch'])('rejects modern %s before dispatch and session allocation', async mode => {
+    const handler = jest.fn();
+    transport.onMessage(handler);
+    const message = { jsonrpc: '2.0', id: 91, method: 'initialize', params: {
+      ...(mode !== 'header' ? { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } : {}),
+    } };
+    const res = await request('/mcp', 'POST', {
+      'Content-Type': 'application/json',
+      ...(mode === 'header' ? { 'MCP-Protocol-Version': '2026-07-28' } : {}),
+    }, JSON.stringify(mode === 'batch' ? [message] : message));
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error.code).toBe(-32600);
+    expect(res.headers['mcp-session-id']).toBeUndefined();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('returns SSE stream when Accept: text/event-stream', async () => {
     const res = await request('/mcp', 'POST', {
       'Content-Type': 'application/json',

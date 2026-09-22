@@ -5,6 +5,7 @@ import { getRefIdManager } from '../core/perception/ref-id-manager';
 import { markFrameDirty } from '../core/perception/snapshot-cache-helper';
 import { getGlobalConfig } from '../config/global';
 import { TOOL_ANNOTATIONS } from '../types/tool-annotations';
+import { assertForegroundAllowed, ForegroundPolicyError } from '../chrome/foreground-policy';
 
 const definition: MCPToolDefinition = {
   name: 'oc_browser_control',
@@ -33,6 +34,7 @@ export function registerBrowserControlTool(server: MCPServer): void {
   server.registerTool(definition.name, async (sessionId, args, context) => {
     try {
       const { action, tabId } = args;
+      if (args.reveal === true) assertForegroundAllowed();
       if (typeof tabId !== 'string' || !['status', 'verify', 'pause', 'resume'].includes(String(action))) throw new Error('Invalid control request');
       const manager = getSessionManager();
       if (!manager.validateTargetOwnership(sessionId, tabId)) throw new Error('Target unavailable in this session');
@@ -82,7 +84,8 @@ export function registerBrowserControlTool(server: MCPServer): void {
         ...(args.reveal === true && getGlobalConfig().headless ? { visibilityRecovery: 'Headless cannot reveal this window. Keep the lease paused; use a deliberately configured visible browser and revalidate state.' } : {}),
         ...(action === 'verify' || action === 'resume' ? { conditionPassed: verified, authentication: 'unverified', verificationSource: 'caller_supplied_page_condition' } : {}),
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof ForegroundPolicyError) return json({ code: error.code, message: error.message }, true);
       return json({ code: 'BROWSER_CONTROL_FAILED', message: 'Control or page verification failed. Query status and check target, lease and expected page; no automatic resume was performed.' }, true);
     }
   }, definition);

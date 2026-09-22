@@ -3,6 +3,7 @@
 const pages = new Map<string, { isClosed: jest.Mock<boolean, []>; url: jest.Mock<string, []> }>();
 
 const mockCdpClientInstance = {
+  getChromeLifecycleMode: jest.fn().mockReturnValue('attach'),
   connect: jest.fn().mockResolvedValue(undefined),
   isConnected: jest.fn().mockReturnValue(true),
   addConnectionListener: jest.fn(),
@@ -55,6 +56,16 @@ function page(url: string) {
 
 describe('SessionManager ownership and stale-target contracts (#687 Wave 3 prereq)', () => {
   let sm: SessionManager;
+  const originalOptIn = process.env.OPENCHROME_USER_TABS;
+
+  function enableUserTabs() {
+    process.env.OPENCHROME_USER_TABS = '1';
+    const context = {};
+    mockCdpClientInstance.getBrowser.mockReturnValue({
+      defaultBrowserContext: () => context,
+      targets: () => [{ _targetId: 'user-tab', type: () => 'page', browserContext: () => context, url: () => 'https://example.test/account' }],
+    });
+  }
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -68,7 +79,42 @@ describe('SessionManager ownership and stale-target contracts (#687 Wave 3 prere
   });
 
   afterEach(() => {
+    if (originalOptIn === undefined) delete process.env.OPENCHROME_USER_TABS;
+    else process.env.OPENCHROME_USER_TABS = originalOptIn;
     jest.restoreAllMocks();
+  });
+
+  it('does not discover user tabs without server opt-in', async () => {
+    delete process.env.OPENCHROME_USER_TABS;
+    await expect(sm.discoverUserTabs('local')).rejects.toThrow('USER_TAB_ACCESS_DISABLED');
+  });
+
+  it('refuses stale URLs and cross-session ownership', async () => {
+    enableUserTabs();
+    expect(await sm.borrowUserTab('one', 'user-tab', 'https://example.test/wrong')).toBe(false);
+    expect(await sm.borrowUserTab('one', 'user-tab', 'https://example.test/account')).toBe(true);
+    expect(await sm.borrowUserTab('two', 'user-tab', 'https://example.test/account')).toBe(false);
+    expect(await sm.discoverUserTabs('two')).toEqual([]);
+  });
+
+  it('releases user tabs without closing or implicitly recovering them', async () => {
+    enableUserTabs();
+    await sm.borrowUserTab('one', 'user-tab', 'https://example.test/account');
+    expect(await sm.closeTarget('one', 'user-tab')).toBe(false);
+    expect(sm.releaseBorrowedTarget('two', 'user-tab')).toBe(false);
+    expect(sm.releaseBorrowedTarget('one', 'user-tab')).toBe(true);
+    pages.set('user-tab', page('https://example.test/account'));
+    await sm.registerExternalTarget('other-tab', 'one', 'default');
+    await expect(sm.getPage('one', 'user-tab')).rejects.toThrow();
+    expect(mockCdpClientInstance.closePage).not.toHaveBeenCalled();
+  });
+
+  it('preserves borrowed tabs when deleting their session', async () => {
+    enableUserTabs();
+    await sm.borrowUserTab('one', 'user-tab', 'https://example.test/account');
+    await sm.deleteSession('one');
+    expect(mockCdpClientInstance.closePage).not.toHaveBeenCalled();
+    expect(sm.getTargetOwner('user-tab')).toBeUndefined();
   });
 
   it('does not recover or reassign a target already owned by another session', async () => {
