@@ -1,6 +1,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { LearningEvent } from './types.js';
+import { choicesForLearningTask } from './types.js';
+import { randomUUID } from 'crypto';
 import { redactLearningState } from './redaction.js';
 
 export interface LearningEventStore {
@@ -27,9 +29,20 @@ export class JsonlLearningEventStore implements LearningEventStore {
 
 function sanitizeEvent(event: LearningEvent): LearningEvent {
   if (!event.privacy.redacted) throw new Error('unredacted events cannot be stored');
+  const choices = choicesForLearningTask(event.task);
+  if (!choices.includes(event.deterministic_answer) || !choices.includes(event.final_answer)) throw new Error('invalid task answer');
+  if (event.label && (!choices.includes(event.label.answer) || !['host', 'user', 'test', 'heuristic'].includes(event.label.source))) throw new Error('invalid task label');
   const redacted = redactLearningState(event.state);
-  const { actual_result: _actual, ...safe } = event;
-  return { ...safe, question_id: event.task, state: redacted.state,
+  const now = new Date().toISOString();
+  const review = event.model_review;
+  return { id: randomUUID(), task: event.task, question_id: event.task, created_at: now,
+    choices, deterministic_answer: event.deterministic_answer, final_answer: event.final_answer,
+    state: redacted.state,
+    model_review: review && choices.includes(review.answer) && Number.isFinite(review.confidence) ? {
+      provider: 'bounded-reviewer', answer: review.answer, confidence: Math.max(0, Math.min(1, review.confidence)),
+      abstain: review.abstain === true, disagreement: review.answer !== event.deterministic_answer,
+    } : null,
+    label: event.label ? { answer: event.label.answer, source: event.label.source, created_at: now } : null,
     privacy: { redacted: true, contains_sensitive: event.privacy.contains_sensitive || redacted.containsSensitive } };
 }
 

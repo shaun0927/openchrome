@@ -39,6 +39,12 @@ test('all persistence paths omit browser payloads and arbitrary strings', async 
     expect(text).not.toContain('secret-');
     expect(JSON.parse(text).state).toEqual({ verdict: '[redacted]', retries: 1, pre_evidence: { passed: true } });
     await expect(new JsonlLearningEventStore(file).append({ ...event, privacy: { redacted: false, contains_sensitive: true } })).rejects.toThrow('unredacted');
+    const direct = path.join(dir, 'direct.jsonl');
+    await new JsonlLearningEventStore(direct).append({ ...event, id: 'secret-id', created_at: 'secret-time', choices: ['secret-dom'],
+      model_review: { provider: 'secret-url', answer: 'allow', confidence: 1, abstain: false, disagreement: false, reason: 'secret-form' },
+      label: { answer: 'blocked', source: 'host', created_at: 'secret-time' }, actual_result: 'secret-pixels' });
+    expect(await fs.readFile(direct, 'utf8')).not.toContain('secret-');
+    await expect(new JsonlLearningEventStore(direct).append({ ...event, final_answer: 'secret-value' })).rejects.toThrow('invalid task answer');
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
