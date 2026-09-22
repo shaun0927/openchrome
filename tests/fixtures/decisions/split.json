@@ -1,0 +1,12 @@
+{
+  "seed": "openchrome-decision-corpus-g0-2026-09-20",
+  "counts": {
+    "A": 94,
+    "B": 89,
+    "total": 183
+  },
+  "sha256": {
+    "A": "d867ac8b1453da32a0a7abcb0c0180ee3ab1b429d707608a17b2ed55b630fbaa",
+    "B": "6cfb82ff391a7e5caeffde5f7f1baf0685e3b6351f853fac00bf0018da433318"
+  }
+}
