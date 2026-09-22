@@ -2,7 +2,7 @@
 
 > Generated from `src/tools/index.ts`. Do not edit by hand; run `npm run docs:capability-map`.
 
-Total tools: 121
+Total tools: 122
 
 ## core
 
@@ -85,6 +85,7 @@ Total tools: 121
 - `oc_task_update` — Update a task envelope phase or note.
 - `oc_task_wait` — Block until the task reaches a terminal state (COMPLETED / FAILED / CANCELLED) or timeout_ms elapses.
 - `oc_vitals` — Collect a read-only Web Vitals snapshot from the current page without adding page scripts or package dependencies.
+- `oc_workspace` — Open, list, or close a browser workspace.
 - `page_content` — Get HTML content from page or element.
 - `page_pdf` — Generate PDF from page.
 - `page_reload` — Reload the current page.

@@ -5,6 +5,11 @@
 import { randomUUID } from 'crypto';
 import * as path from 'path';
 import { createRuntimeContract, validateRuntimeRequest } from './runtime-contract';
+import {
+  WorkspaceHandleRegistry,
+  isWorkspaceHandle,
+  type WorkspaceErrorCode,
+} from './workspace-handles';
 import { runToolAttempt, ToolAttemptError, currentAttemptSignal, drainAttemptCommands, runWithCommandScope } from '../core/deadline/tool-attempt';
 import { BrowserOperations, BrowserAdmissionError, operationTargets } from '../core/browser-operations';
 import {
@@ -445,6 +450,9 @@ function taskEnvelopeIdForTool(toolName: string, args: Record<string, unknown>):
 
 export class MCPServer {
   private readonly runtimeContract = createRuntimeContract();
+  /** Server-minted browser workspace handles for stateless requests. */
+  private readonly workspaces = new WorkspaceHandleRegistry(this.runtimeContract.runtimeId);
+  private workspaceSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   getRuntimeContract(): ReturnType<typeof createRuntimeContract> {
     return this.runtimeContract;
@@ -1362,6 +1370,11 @@ export class MCPServer {
 
     console.error('[MCPServer] Starting server...');
 
+    if (!this.workspaceSweepTimer) {
+      this.workspaceSweepTimer = setInterval(() => this.sweepExpiredWorkspaces(), 60_000);
+      this.workspaceSweepTimer.unref();
+    }
+
     // Start dashboard if enabled
     if (this.dashboard) {
       const started = this.dashboard.start();
@@ -1714,6 +1727,160 @@ export class MCPServer {
     console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" supports tool list changes (${source}) — progressive disclosure enabled`);
   }
 
+  /**
+   * Browser tools on the modern era require the `workspace` handle; the
+   * schema says so, so models pass it without guessing.
+   */
+  private withWorkspaceArgument(tool: MCPToolDefinition): MCPToolDefinition {
+    if (!shouldInitializeBrowserSession(tool.name, {})) return tool;
+    const schema = tool.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+    return {
+      ...tool,
+      inputSchema: {
+        ...tool.inputSchema,
+        properties: {
+          ...(schema.properties ?? {}),
+          workspace: {
+            type: 'string',
+            description: 'Workspace handle from oc_workspace (action "open"). Required for browser tools.',
+          },
+        },
+        required: [...new Set([...(schema.required ?? []), 'workspace'])],
+      },
+    };
+  }
+
+  private workspaceTenant(effectiveTenantId: string | undefined): string {
+    return effectiveTenantId ?? currentRequestContext()?.tenantId ?? DEFAULT_TENANT_ID;
+  }
+
+  /**
+   * Map a tool call to the browser session it addresses.
+   * - An explicit workspace handle (the `workspace` argument, or a handle in
+   *   `sessionId`) is honoured on every era and checked for tenant, expiry
+   *   and runtime generation.
+   * - Legacy requests without a handle keep their existing session rules.
+   * - Modern requests without a handle may only run browser-free tools, or
+   *   name a tab that belongs to one of the caller's workspaces.
+   */
+  private resolveWorkspaceSession(
+    toolName: string,
+    args: Record<string, unknown>,
+    workspaceArg: unknown,
+    effectiveTenantId: string | undefined,
+  ): { sessionId: string } | { error: { code: WorkspaceErrorCode; message: string } } | undefined {
+    const tenantId = this.workspaceTenant(effectiveTenantId);
+    const handle = typeof workspaceArg === 'string'
+      ? workspaceArg
+      : isWorkspaceHandle(args.sessionId) ? args.sessionId : undefined;
+    if (handle !== undefined) {
+      const resolution = this.workspaces.resolve(handle, tenantId);
+      return resolution.ok
+        ? { sessionId: resolution.record.browserSessionId }
+        : { error: { code: resolution.code, message: resolution.message } };
+    }
+
+    const context = currentRequestContext();
+    if (context?.protocolEra !== 'modern') return undefined;
+
+    const required = {
+      error: {
+        code: 'WORKSPACE_REQUIRED' as const,
+        message: 'WORKSPACE_REQUIRED: on MCP 2026-07-28 browser tools need a workspace handle. Call oc_workspace with action "open" and pass the returned handle as `workspace`.',
+      },
+    };
+    if (typeof args.sessionId === 'string') return required;
+    if (!shouldInitializeBrowserSession(toolName, args)) {
+      // Browser-free bookkeeping only: the local stdio client keeps its
+      // historical namespace; HTTP callers get a tenant-scoped one.
+      return { sessionId: context.channel === 'http' ? `modern:${tenantId}` : 'default' };
+    }
+    if (typeof args.tabId === 'string') {
+      const owner = typeof this.sessionManager.getTargetOwner === 'function'
+        ? this.sessionManager.getTargetOwner(args.tabId)
+        : undefined;
+      const record = owner ? this.workspaces.findByBrowserSession(owner.sessionId) : undefined;
+      if (record) {
+        const resolution = this.workspaces.resolve(record.handle, tenantId);
+        if (resolution.ok) return { sessionId: resolution.record.browserSessionId };
+        if (resolution.code !== 'WORKSPACE_FORBIDDEN') {
+          return { error: { code: resolution.code, message: resolution.message } };
+        }
+      }
+    }
+    return required;
+  }
+
+  /** oc_workspace: open, list or close caller-owned workspaces. */
+  async handleWorkspaceTool(args: Record<string, unknown>, principal?: Principal): Promise<MCPResult> {
+    const tenantId = this.workspaceTenant(resolveEffectiveTenantId(principal, currentRequestContext()?.tenantId));
+    const action = typeof args.action === 'string' ? args.action : 'open';
+    const reply = (payload: Record<string, unknown>, isError = false): MCPResult => ({
+      content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+      structuredContent: payload,
+      ...(isError ? { isError: true } : {}),
+    });
+
+    if (action === 'open') {
+      const record = this.workspaces.open(tenantId);
+      this.sessionTenants.set(record.browserSessionId, tenantId);
+      return reply({
+        workspace: record.handle,
+        idleTtlMs: record.idleTtlMs,
+        runtimeId: this.runtimeContract.runtimeId,
+        usage: 'Pass this value as `workspace` on every browser tool call.',
+      });
+    }
+    if (action === 'list') {
+      return reply({
+        workspaces: this.workspaces.list(tenantId).map(record => ({
+          workspace: record.handle,
+          createdAt: new Date(record.createdAt).toISOString(),
+          lastUsedAt: new Date(record.lastUsedAt).toISOString(),
+          idleTtlMs: record.idleTtlMs,
+        })),
+      });
+    }
+    if (action === 'close') {
+      if (typeof args.workspace !== 'string') {
+        return reply({ error: { code: 'WORKSPACE_REQUIRED', message: 'workspace is required for action "close"' } }, true);
+      }
+      const resolution = this.workspaces.resolve(args.workspace, tenantId);
+      if (!resolution.ok) return reply({ error: { code: resolution.code, message: resolution.message } }, true);
+      const { browserSessionId } = resolution.record;
+      if (this.browserOperations.hasHandoff(browserSessionId)) {
+        return reply({
+          error: {
+            code: 'HUMAN_CONTROL_PENDING',
+            message: 'A person currently controls a tab in this workspace; resume or release it before closing.',
+          },
+        }, true);
+      }
+      this.workspaces.close(args.workspace, tenantId);
+      await this.disposeWorkspaceSession(browserSessionId, 'close');
+      return reply({ closed: args.workspace });
+    }
+    return reply({ error: { code: 'INVALID_ACTION', message: `Unknown action: ${action}` } }, true);
+  }
+
+  private async disposeWorkspaceSession(browserSessionId: string, reason: string): Promise<void> {
+    this.sessionTenants.delete(browserSessionId);
+    if (typeof this.sessionManager.getSession === 'function' && !this.sessionManager.getSession(browserSessionId)) return;
+    if (typeof this.sessionManager.deleteSession !== 'function') return;
+    try {
+      await this.sessionManager.deleteSession(browserSessionId);
+    } catch (error) {
+      console.error(`[MCPServer] workspace session ${browserSessionId} ${reason} cleanup failed: ${formatError(error)}`);
+    }
+  }
+
+  private sweepExpiredWorkspaces(): void {
+    for (const record of this.workspaces.sweepExpired()) {
+      if (this.browserOperations.hasHandoff(record.browserSessionId)) continue;
+      void this.disposeWorkspaceSession(record.browserSessionId, 'expiry');
+    }
+  }
+
   private isToolAllowedForPrincipal(toolName: string, principal?: Principal): boolean {
     return !principal || isAllowed(toolName, principal.scopes);
   }
@@ -1800,7 +1967,12 @@ export class MCPServer {
       this.hintEngine.markToolsListServed(sessionId);
     }
 
-    return { tools: this.getVisibleToolDefinitions(principal) };
+    const tools = this.getVisibleToolDefinitions(principal);
+    return {
+      tools: requestContext?.protocolEra === 'modern'
+        ? tools.map(tool => this.withWorkspaceArgument(tool))
+        : tools,
+    };
   }
 
   /**
@@ -2039,13 +2211,18 @@ export class MCPServer {
     }
 
     const toolName = params.name as string;
-    const toolArgs = (params.arguments || {}) as Record<string, unknown>;
+    // `workspace` addresses browser state; it is consumed here and never
+    // reaches tool handlers, except oc_workspace, which manages the handles.
+    const rawToolArgs = (params.arguments || {}) as Record<string, unknown>;
+    const managesWorkspaces = toolName === 'oc_workspace';
+    const { workspace: workspaceArg, ...argsWithoutWorkspace } = rawToolArgs;
+    const toolArgs = managesWorkspaces ? rawToolArgs : argsWithoutWorkspace;
     const telemetryToolArgs = redactToolArgsForTelemetry(toolName, toolArgs);
     const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
     // HTTP/broker clients get one implicit browser session per MCP transport
     // session. Explicit logical session IDs remain an opt-in sharing surface;
     // stdio callers retain the historical "default" session.
-    const sessionId = (
+    let sessionId = (
       toolArgs.sessionId
       || params.sessionId
       || implicitBrowserSessionId(mcpSessionId)
@@ -2058,6 +2235,27 @@ export class MCPServer {
     if (!toolName) {
       throw new Error('Missing tool name');
     }
+
+    // Stateless (2026-07-28) requests must name browser state explicitly with
+    // a server-minted workspace handle; nothing is inferred from the
+    // connection. Invalid, expired, foreign or stale handles are rejected
+    // here, before any browser session is created or touched.
+    const workspaceSession = this.resolveWorkspaceSession(
+      toolName,
+      toolArgs,
+      managesWorkspaces ? undefined : workspaceArg,
+      effectiveTenantId,
+    );
+    if (workspaceSession && 'error' in workspaceSession) {
+      const deniedResult: MCPResult = {
+        content: [{ type: 'text', text: workspaceSession.error.message }],
+        structuredContent: { error: { code: workspaceSession.error.code, message: workspaceSession.error.message } },
+        isError: true,
+      };
+      this.recordToolOutputObservability(toolName, deniedResult);
+      return deniedResult;
+    }
+    if (workspaceSession) sessionId = workspaceSession.sessionId;
 
     // Session-tenant binding: reject if the session was already claimed by a
     // different authenticated or explicit transport/header tenant. The first caller to COMPLETE
@@ -3582,6 +3780,11 @@ export class MCPServer {
   private async _stopInternal(): Promise<void> {
     this.disclosureBySession.clear();
     this.sessionlessHttpDisclosure = null;
+    if (this.workspaceSweepTimer) {
+      clearInterval(this.workspaceSweepTimer);
+      this.workspaceSweepTimer = null;
+    }
+    this.workspaces.clear();
     this.clientCapabilitiesBySession.clear();
     // #960 — reject every in-flight server→client request before the
     // transport tears down so callers don't hang forever on Promises that
