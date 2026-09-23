@@ -121,7 +121,7 @@ describe('HttpMCPClient lifecycle', () => {
     await startup;
 
     expect(mockSpawn.mock.calls[0][1]).toEqual([
-      expect.stringMatching(/dist\/index\.js$/),
+      expect.stringMatching(/dist[\\/]index\.js$/),
       'serve',
       '--http', '31001',
       '--http-host', '127.0.0.1',
