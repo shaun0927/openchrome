@@ -27,6 +27,15 @@ export interface TwoFAHandlerResult {
   message: string;
 }
 
+function hasPageChanged(page: any, originalUrl: string): boolean {
+  try {
+    return page.url() !== originalUrl;
+  } catch {
+    // Page may have navigated away (frame detached)
+    return true;
+  }
+}
+
 /**
  * Wait for page URL or content to change (indicates 2FA success).
  */
@@ -39,19 +48,15 @@ async function waitForPageChange(
   const pollIntervalMs = Math.min(500, Math.max(1, Math.floor(timeoutMs / 2) || 1));
 
   while (Date.now() < deadline) {
-    try {
-      const currentUrl = page.url();
-      if (currentUrl !== originalUrl) {
-        return true;
-      }
-    } catch {
-      // Page may have navigated away (frame detached)
+    if (hasPageChanged(page, originalUrl)) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  return false;
+  // The last sleep can end past the deadline (timers overshoot, by ~15 ms on
+  // Windows), so check once more: a change made during that sleep still counts.
+  return hasPageChanged(page, originalUrl);
 }
 
 /**
