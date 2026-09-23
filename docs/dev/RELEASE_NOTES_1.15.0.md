@@ -1,75 +1,337 @@
-# OpenChrome MCP 1.15.0 릴리스 후보
+# OpenChrome MCP 1.15.0
 
-상태: 게시 전 초안. npm publish와 정식 GitHub release 공개를 실행하지 않았다.
-스택 PR(#1674~#1679)이 main에 병합되기 전에는 정식 배포용으로 승인된 패키지가 아니다.
+OpenChrome 1.15.0 serves the stateless MCP `2026-07-28` revision next to
+existing (initialize-based) MCP clients, on stdio and on HTTP. The official
+MCP TypeScript SDK 2.x now owns the protocol boundary; OpenChrome keeps
+owning browser sessions, tools, authorization and policy. Browser state is
+referenced through server-minted workspace handles instead of being inferred
+from the connection.
 
-비교 기준은 main에 병합된 1.14.0(`86ebc6b`)이다. 1.14.0과 1.13.0은 GitHub에만 있고
-2026-09-23 확인 시 npm latest는 1.12.9다. npm 사용자는 1.12.9에서 바로 1.15.0으로 올라온다.
-추적 이슈: #1673.
+**Which changes are new to you depends on what you run today:**
 
-## 요약
+| You run | Last public version | New to you in this release |
+| --- | --- | --- |
+| npm `openchrome-mcp@latest` | 1.12.9 | Everything below, including the 1.13.0 and 1.14.0 changes |
+| GitHub release tarball | v1.13.0 | The 1.14.0 and 1.15.0 changes |
 
-MCP 2026-07-28(stateless) 규약을 stdio와 HTTP 모두에서 legacy(initialize 기반) 클라이언트와 함께 제공한다.
-프로토콜 경계는 공식 TypeScript SDK 2.x가 맡고, OpenChrome 코어는 브라우저 상태·도구·권한을 그대로 담당한다.
-modern 요청은 연결에서 어떤 상태도 추론하지 않으며, 브라우저 상태는 서버가 발급한 workspace handle로만 참조한다.
+1.13.0 was published only as a GitHub release, and 1.14.0 was prepared but
+never published. This is the first npm release since 1.12.9. Tracking issue:
+[#1673](https://github.com/shaun0927/openchrome/issues/1673).
 
-## 업그레이드 시 달라지는 동작
+## Before you upgrade
 
-- **Node.js 20 이상이 필요하다**(SDK 2.x 요구사항). Node 18에서는 설치·실행되지 않는다.
-- **stdio는 공식 SDK가 처리한다.** legacy 클라이언트는 SDK가 2024-10-07~2025-11-25 중에서 버전을 협상한다.
-  stdio 클라이언트는 여전히 로컬 클라이언트이며 `default` 브라우저 세션을 쓴다.
-- **stdio에서 취소한 요청에는 응답하지 않는다.** MCP 규약(2025 세대 SHOULD NOT, 2026-07-28 MUST NOT)을 따른 변경이다.
-  이전에는 `execution: "unknown"` 결과를 보냈다. 세션형 legacy HTTP는 계속 그 결과를 보낸다.
-- **세션 없는 HTTP 요청**(`Mcp-Session-Id` 없음)은 서버발 알림·요청을 받지 않는다. 다른 클라이언트의 SSE 스트림으로 새지 않는다.
-  resources/subscribe도 거부한다.
-- **legacy HTTP는 `ping`에 응답**하고, 협상 버전(2024-11-05) 외의 `MCP-Protocol-Version`은 `-32600`으로 거부한다.
-- **tools/list는 호출자의 scope로 거른다**(legacy·modern 공통). 알 수 없는 리소스 읽기는 `-32602`다.
-- runtime 계약(`io.openchrome/runtime`)이 `contractVersion: 2`, `protocolMode: "dual-era"`, 전송별 `protocolSupport`로 바뀐다.
-- 종료 시 drain한다. 새 도구 호출은 `SERVER_DRAINING`으로 거부하고, 실행 중 호출은 `OPENCHROME_DRAIN_TIMEOUT_MS`(기본 10초)까지 기다린다.
+These changes can affect existing setups. Items marked (1.14.0) are new to
+everyone, because 1.14.0 was never released.
 
-## MCP 2026-07-28
+- **Node.js 20 or newer is required** (was 18.17). The MCP SDK 2.x does not
+  support Node 18; OpenChrome will not install or start there.
+  `openchrome doctor` checks the new minimum.
+- **stdio is served by the official SDK.** Legacy clients negotiate any
+  version from `2024-10-07` through `2025-11-25`. The stdio client is still
+  the local client and still uses the `default` browser session.
+- **A cancelled request on stdio gets no response.** Earlier versions answered
+  with `execution: "unknown"`. The MCP specification recommends silence for
+  2025 revisions and requires it for `2026-07-28`. Sessionful legacy HTTP
+  still answers with `execution: "unknown"` and `retryAllowed: false`.
+- **HTTP requests without an `Mcp-Session-Id` receive no server-originated
+  messages** (progress, logging, elicitation, list changes). Previously they
+  could leak to another client's notification stream. `resources/subscribe`
+  is rejected on such requests because they have no stream.
+- **Legacy HTTP pins `MCP-Protocol-Version`.** A request may omit the header
+  or send `2024-11-05`; any other value is rejected with `-32600` listing the
+  supported versions. Legacy HTTP now answers `ping`.
+- **`tools/list` is filtered by the caller's scopes** for legacy and modern
+  clients: tools the caller cannot call are no longer listed. Reading an
+  unknown resource returns `-32602`.
+- **The runtime contract changed.** `capabilities.experimental["io.openchrome/runtime"]`
+  now reports `contractVersion: 2`, `protocolMode: "dual-era"` and the
+  supported versions per transport (`protocolSupport`). Clients that compared
+  against the 1.14.0 values must accept the new ones.
+- **Shutdown drains running tool calls** for up to 10 seconds (see
+  [Shutdown and upgrades](#shutdown-and-upgrades)).
+- (1.14.0) **Navigation without a `tabId` reuses an existing task tab only on
+  an exact URL match, and does not reload it**, so text typed into the page is
+  kept. Several matching tabs return `AMBIGUOUS_TAB`; pass `tabId` to choose.
+  To send a tab to a different URL, pass its `tabId`.
+- (1.14.0) **Recovery never opens a visible (headed) Chrome window on its
+  own.** Navigation returns `HEADED_FALLBACK_REQUIRES_USER`; ask the user and
+  retry with `allowHeadedFallback: true`.
+- (1.14.0) **An attachment that silently changes to another browser endpoint
+  is refused** with `CHROME_IDENTITY_CHANGED`.
+- **New runtime dependencies:** `@modelcontextprotocol/server` 2.x and
+  `@modelcontextprotocol/node` 2.x (which bring `zod` 4 and `hono`).
 
-자세한 내용은 [docs/mcp-2026-07-28.md](../mcp-2026-07-28.md)에 있다.
+## MCP 2026-07-28 support
 
-- `server/discover`, 요청별 `_meta` envelope, `resultType`, 목록·읽기 cache hint를 제공한다.
-  오류 코드는 -32020(헤더 불일치), -32021(capability 누락), -32022(미지원 버전)이다.
-- HTTP modern 요청은 `MCP-Protocol-Version`·`Mcp-Method`·`Mcp-Name`을 본문과 대조해 검증하고,
-  `Mcp-Session-Id`를 발급·반사·해석하지 않는다. GET/DELETE는 legacy 전용이다.
-- 변경 알림은 `subscriptions/listen`으로 받는다(HTTP는 tenant 한정). 진행·로그는 요청 스트림에만 흐르며,
-  로그는 요청에 `logLevel`이 있을 때만 보낸다.
-- **workspace handle**: 브라우저 도구는 `oc_workspace`(open/list/close)가 발급한 `workspace` 인자를 요구한다.
-  누락·만료·타 tenant·이전 프로세스 handle은 브라우저 동작 전에 거부한다.
-  close는 write scope가 필요하고, 사람이 제어 중인 workspace는 만료되지 않는다.
-- **서버→클라이언트 입력(MRTR)**: elicitation·sampling·roots는 `input_required`로 바뀐다.
-  `requestState`는 HMAC 서명·만료·호출 주체(JWT는 subject) 바인딩, 도구·인자 해시 바인딩, 질문 내용 바인딩, 1회 사용이다.
-  요청하지 않은 응답은 무시한다.
-- **broker**: stdio 호스트가 broker를 거쳐도 modern 헤더를 붙이고, SSE를 도착 즉시 중계하며, 취소를 스트림 종료로 바꾼다.
-  legacy 호스트는 세션 GET 스트림을 받아, broker 뒤에서도 진행 알림과 elicitation이 전달된다(이전에는 전달되지 않았다).
+Full reference: [docs/mcp-2026-07-28.md](https://github.com/shaun0927/openchrome/blob/v1.15.0/docs/mcp-2026-07-28.md).
 
-## 격리 수정
+### Protocol
 
-- 세션 없는 HTTP 요청의 progress·elicitation이 다른 클라이언트 SSE로 broadcast되고, 다른 클라이언트의 응답이 수락되던 문제(재현됨)를 고쳤다.
-- dual stdio+HTTP owner(기본 auto-elect broker owner)에서 HTTP 클라이언트의 메시지가 stdio 호스트로 가던 문제를 고쳤다.
-  공개 API `openchrome/server`의 `both` 모드도 같은 경로를 쓰고, stop() 시 HTTP listener를 닫는다.
-- `notifications/resources/*`에서 `"id": null`을 제거했다. 공식 SDK 파서가 이 알림을 거부하고 있었다.
-- 세션 없는 HTTP 요청의 취소 키가 stdio 클라이언트와 겹쳐, 같은 JSON-RPC id가 충돌하거나 다른 클라이언트를 취소할 수 있던 문제를 고쳤다.
+- Both eras are served on the same stdio process and the same HTTP endpoint.
+  The SDK classifies each request as legacy or modern; `both` mode lets each
+  transport negotiate independently.
+- `server/discover`, the per-request `_meta` envelope (protocol version,
+  client capabilities, client info, log level), `resultType` on results and
+  cache hints on list and read results.
+- Modern HTTP requests are stateless POSTs. `MCP-Protocol-Version`,
+  `Mcp-Method` and `Mcp-Name` are checked against the JSON-RPC body before
+  dispatch. Header values outside ASCII use the base64 sentinel form.
+  `Mcp-Session-Id` is never issued, echoed or honoured, and modern `GET` and
+  `DELETE` are rejected.
+- Errors: `-32020` header mismatch, `-32021` missing client capability,
+  `-32022` unsupported protocol version.
+- `ping`, `logging/setLevel` and `resources/subscribe` are legacy-only.
+  Modern clients use `subscriptions/listen` and the per-request log level.
+- The supported methods per era are listed in the reference page. A test
+  keeps that table in sync with `src/mcp/protocol-matrix.ts`.
 
-## 운영
+| Method | `ttlMs` | Scope |
+| --- | ---: | --- |
+| `server/discover` | 300000 | public |
+| `tools/list` | 30000 | private |
+| `resources/templates/list` | 60000 | private |
+| `resources/list`, `resources/read` | 0 | private |
 
-- `openchrome doctor`의 `running-version`은 실행 중 owner와 설치 버전이 다르면 경고한다.
-  npm 업데이트만으로 실행 중인 서버는 바뀌지 않는다.
-- 호스트별 재연결 절차(Claude Code, Codex CLI, OpenCode, HTTP daemon, broker)는
-  [docs/mcp-2026-07-28.md](../mcp-2026-07-28.md#reconnecting-a-host)에 있다.
+### Workspace handles (new tool `oc_workspace`)
 
-## 범위 밖
+Modern requests carry no connection state, so browser state is referenced
+explicitly:
 
-- 무중단 업그레이드와 프로세스 간 handle 영속성은 제공하지 않는다. 재시작하면 workspace를 다시 연다.
-- 여러 daemon 간 round-robin 브라우저 제어는 지원하지 않는다. 브라우저 세션은 한 프로세스에 속한다.
-- Tasks 확장과 MCP Apps는 채택하지 않았다.
-- 공식 conformance 스위트(0.1.16)에는 아직 2026-07-28 시나리오가 없다. modern 규약은 공식 SDK v2 클라이언트 기반 테스트로 검증했다.
+1. `oc_workspace` with `action: "open"` returns a handle
+   (`ocw_<runtime>_<random>`) bound to the caller's tenant.
+2. Pass it as the `workspace` argument on browser tools. Modern `tools/list`
+   marks it required on browser tools, on `worker` and on `crawl_status`, and
+   offers it on other session-scoped tools. A `tabId` that belongs to one of
+   the caller's workspaces also identifies it.
+3. `list` shows the caller's workspaces. `close` needs the `write` scope and
+   disposes of the browser session. A workspace is never closed or expired
+   while a person controls one of its tabs.
 
-## 관련 문서
+Handles are checked before any browser session is created or touched:
 
-- [MCP 2026-07-28 지원](https://github.com/shaun0927/openchrome/blob/release/1.15.0-prepublish/docs/mcp-2026-07-28.md)
-- [Stateless 전환 상태](https://github.com/shaun0927/openchrome/blob/release/1.15.0-prepublish/docs/dev/STATELESS_MIGRATION.md)
-- [게시 전 검증](https://github.com/shaun0927/openchrome/blob/release/1.15.0-prepublish/docs/dev/PREPUBLISH_1.15.0.md)
+| Code | Meaning |
+| --- | --- |
+| `WORKSPACE_REQUIRED` | A modern browser call has no handle, or names a legacy `sessionId` such as `default` |
+| `WORKSPACE_UNKNOWN` | Not issued by this process, or already closed |
+| `WORKSPACE_FORBIDDEN` | Issued to another tenant |
+| `WORKSPACE_EXPIRED` | Idle longer than `OPENCHROME_WORKSPACE_IDLE_MS` (default 30 minutes) |
+| `STALE_RUNTIME` | Issued by a previous OpenChrome process |
+
+A handle names state; it is not a credential. Every call is still checked
+against the authenticated tenant and the tool's scope. Legacy clients keep
+their existing model (`default` on stdio, one session per `Mcp-Session-Id` on
+HTTP) and may also pass a handle. `oc_task_start` of a browser tool needs a
+handle on modern requests, like the tool itself.
+
+### Client input during a tool call (MRTR)
+
+Modern MCP does not let a server send requests to the client mid-call.
+Elicitation, sampling and roots requests made by tools now return
+`resultType: "input_required"` with `inputRequests` and a `requestState`.
+The client retries the same call with the answers. Because answers gate side
+effects (for example the confirmation before clearing cookies),
+`requestState` is treated as attacker-controlled:
+
+- It is HMAC-SHA256 signed with a per-process key and expires after
+  `OPENCHROME_MRTR_STATE_TTL_SECONDS` (default 600).
+- It is bound to the method, transport, tenant and API key (the token
+  subject for JWT), and to the tool and a hash of its exact arguments.
+- It can be used once. Replaying a retry asks again.
+- Each answer is bound to the exact question. If the tool asks a different
+  question on retry (for example 12 cookies instead of 5), the old answer is
+  discarded.
+- Answers that no input request asked for are ignored.
+
+A tampered, expired or rebound state is rejected with `-32602` before the
+tool runs. A server restart starts the flow over. Roots returned this way
+apply to that request only and are never cached.
+
+### Notifications
+
+- `subscriptions/listen` delivers `toolsListChanged`, `resourcesListChanged`
+  and resource updates. On HTTP, resource events reach only streams opened by
+  the tenant that owns the resource.
+- Progress and log messages flow only on the stream of the request that
+  produced them. Log messages are sent only when the request sets a log level.
+
+### Broker
+
+Stdio hosts that connect through the broker (the default auto-elected owner)
+get the same behaviour:
+
+- Modern requests are forwarded with the modern headers.
+- Streamed responses are relayed as they arrive.
+- A cancellation closes the upstream stream.
+- Legacy hosts behind the broker now receive progress notifications and
+  elicitation requests; earlier versions dropped them. The broker's
+  notification stream reconnects with capped backoff and logs failures.
+
+## Isolation fixes
+
+- Progress and elicitation from HTTP requests without a session were
+  broadcast to other clients' notification streams, and a response from
+  another client could be accepted. Each server-originated message now goes
+  only to the client whose request produced it.
+- With a combined stdio and HTTP owner (the default broker owner), messages
+  for HTTP clients could be sent to the stdio host. The embedded API
+  (`openchrome-mcp/server`, `both` mode) uses the same routing, and `stop()`
+  now closes the HTTP listener.
+- A sessionless HTTP request could share a cancellation key with the stdio
+  client, so the same JSON-RPC id could collide or cancel another client's
+  call. Each request now gets its own key.
+- `notifications/resources/*` no longer carry `"id": null`; the official SDK
+  rejected those messages.
+
+## Shutdown and upgrades
+
+- On SIGTERM, SIGINT, idle timeout or embedded `stop()`, new `tools/call`
+  requests are refused with `SERVER_DRAINING` (`execution: "not_started"`,
+  `retryAllowed: true`).
+- Calls already running get up to `OPENCHROME_DRAIN_TIMEOUT_MS` (default
+  10000) to finish. Calls still running at the deadline are cancelled and
+  reported with `execution: "unknown"` and `retryAllowed: false`.
+- OpenChrome never replays a mutation whose outcome is unknown. Check the page
+  before repeating it.
+- Background tasks from `oc_task_start` are drained the same way. On Windows,
+  closing the console drains for at most 2 seconds before the OS ends the
+  process.
+- Tabs a person controls and borrowed user tabs stay open.
+- Handles and requests that name a previous process (`STALE_RUNTIME`) are
+  rejected before any browser action.
+- **New doctor check:** `openchrome doctor` reports `running-version` as a
+  warning when a running OpenChrome owner is older or newer than the installed
+  package. Installing a package does not replace a running server.
+- **Reconnecting a host:** the reference page has the steps for Claude Code,
+  Codex CLI, OpenCode, the HTTP daemon and broker clients. After reconnecting,
+  reload the tool list and open a new workspace. Rediscover tabs and re-verify
+  borrowed user tabs.
+
+## Chrome workflow changes (1.14.0)
+
+- **Background automation tabs.** Automation tabs in the default and isolated
+  contexts are created in the background through CDP. If that fails,
+  OpenChrome does not fall back to a foreground tab, and it does not replace
+  a closed isolated context with the default one. First launch, OS dialogs and
+  explicit user requests may still show the window.
+- **Borrowing existing user tabs.** With `OPENCHROME_USER_TABS=1` on an attach
+  server, `tabs_context` with `scope: "browser"` lists the user's tabs.
+  `worker` with `action: "borrow_tab"`, a `tabId` and the observed
+  `expectedUrl` takes one over. `release_tab` returns it. Borrowed tabs are
+  never closed by close, session end or TTL cleanup. This covers the default
+  context and the local default tenant; there is no global lock between
+  separate server processes. Seeing a tab does not verify the site login.
+- **Serialized navigation.** Navigation without a `tabId` is serialized per
+  session, worker, profile and lane, so concurrent requests for the same URL
+  share one task tab.
+- **Focus policy.** `OPENCHROME_FOCUS_POLICY=background-only` refuses even
+  explicit `tabs_activate`, reveal and headed launch
+  (`FOREGROUND_NOT_ALLOWED`). The default, `explicit-only`, allows display
+  when the user asks. Unknown values allow no foreground display.
+- **Connection diagnostics.** `oc_get_connection_info` with
+  `host: "openchrome"` returns `browserConnection` with the connection state
+  and hashed identifiers. `authentication: "unverified"` means login was not
+  checked.
+- **Runtime generations.** The runtime contract exposes `runtimeId` and the
+  running package version. Clients that send `_meta["io.openchrome/runtimeId"]`
+  get `STALE_RUNTIME` for requests aimed at a previous process. The field is
+  not a credential and does not replace authorization.
+- **Headless startup fix.** Managed headless Chrome now launches with the
+  automation flag, which fixes isolated headless start failures. Headed launch
+  options are unchanged.
+
+## Opt-in local learning (1.14.0)
+
+From PRs #1667 to #1671:
+
+- Local events are stored only when `OPENCHROME_LEARNING=1` is set; learning
+  is off by default. Events go to `~/.openchrome/learning/events.jsonl`
+  (`OPENCHROME_LEARNING_DIR` and `OPENCHROME_LEARNING_STORE` override the
+  location).
+- Only two pilot decision types are recorded: `irreversible_policy` and
+  `outcome_failure_triage`. General browser tool use is not collected.
+- Only allow-listed fields are stored. No raw DOM, screenshots, form values,
+  URLs or credentials.
+- `openchrome learning <status|export|validate|eval|finetune|registry-list|registry-promote>`
+  manages the store:
+  - `export` drops unlabelled, non-anonymized, sensitive and invalid-choice
+    records, and keeps identical task, state and choices in the same
+    train/holdout split.
+  - `eval` scores predictions produced elsewhere.
+  - The adapter registry states are `candidate`, `shadow`, `assist` and
+    `disabled`. No state grants authority.
+  - `finetune` only writes a `blocked_scaffold` report.
+- There is no online training and no remote upload. Promoting an adapter does
+  not run a model inside the browser tools. No accuracy or speed gain is
+  claimed.
+- The Laya local provider is a development evaluation path for up to 20
+  choices and needs a separately installed model. The G3 and Laya evaluation
+  scripts are for source checkouts and are not part of the npm package.
+
+## Changes since npm 1.12.9 (1.13.0)
+
+npm users also receive the 1.13.0 changes
+([release](https://github.com/shaun0927/openchrome/releases/tag/v1.13.0)):
+
+- `oc_browser_control` shows active and recent operations. It lets you pause,
+  drain, verify and explicitly resume a managed tab for manual input.
+- Saved state is restored per browser context and does not overwrite newer
+  live cookies or local storage.
+- Active tabs are preserved at capacity. Target, screenshot and operation
+  admission are bounded. Tabs a person holds survive idle and pressure
+  cleanup.
+- MCP cancellation is tracked per client session, recovery has deadlines, and
+  writes with an uncertain outcome are not replayed.
+- Explicit headless policy and lazy browser startup are kept. Startup
+  blank-tab cleanup only touches the owned target.
+- Tab metadata is read in bounded parallel batches. An early return in
+  same-line JavaScript statements was fixed.
+
+## New and changed configuration
+
+| Variable | Default | Since | Purpose |
+| --- | --- | --- | --- |
+| `OPENCHROME_WORKSPACE_IDLE_MS` | 1800000 | 1.15.0 | Idle time before a workspace handle expires |
+| `OPENCHROME_MRTR_STATE_TTL_SECONDS` | 600 | 1.15.0 | Lifetime of a signed `requestState` |
+| `OPENCHROME_DRAIN_TIMEOUT_MS` | 10000 | 1.15.0 | How long shutdown waits for running calls |
+| `OPENCHROME_USER_TABS` | off | 1.14.0 | `1` allows listing and borrowing user tabs on attach servers |
+| `OPENCHROME_FOCUS_POLICY` | `explicit-only` | 1.14.0 | `background-only` refuses all foreground display |
+| `OPENCHROME_LEARNING` | off | 1.14.0 | `1` enables local learning events |
+| `OPENCHROME_LEARNING_DIR`, `_STORE`, `_REGISTRY`, `_TASKS`, `_MODE` | see docs | 1.14.0 | Learning storage and scope |
+
+## Not in this release
+
+- Zero-downtime upgrades and workspace handles that survive a restart. After a
+  restart, open a new workspace.
+- Browser control spread across several daemons. A browser session belongs to
+  one process.
+- The MCP Tasks extension and MCP Apps.
+- A `404` for an unknown legacy `Mcp-Session-Id`. The legacy behaviour is kept
+  so broker re-election keeps working.
+- The official conformance suite (0.1.16) has no `2026-07-28` scenarios yet.
+  Modern behaviour is tested with the official SDK 2.x client against the real
+  server.
+
+## Verification
+
+- Every pull request in the stack was reviewed independently, and each review
+  finding was fixed and approved on re-review. The review log and the
+  per-branch CI runs are in
+  [PREPUBLISH_1.15.0.md](https://github.com/shaun0927/openchrome/blob/v1.15.0/docs/dev/PREPUBLISH_1.15.0.md).
+- CI runs the full Jest suite and a new `mcp-conformance` job (Node 22). That
+  job runs the six applicable scenarios of `@modelcontextprotocol/conformance`
+  0.1.16 against the built server.
+- The installed-package acceptance workflow runs the package outside the
+  checkout, with real headless Chrome, on Ubuntu and Windows. It covers legacy
+  clients and an SDK 2.x client pinned to `2026-07-28`: negotiation, the
+  runtime contract, workspace handles and a browser round trip.
+- `npm publish --dry-run` passed on the release candidate.
+
+Not certified by these tests: site SSO/MFA flows, long-running memory
+stability and every host configuration.
+
+## Pull requests
+
+- 1.14.0: #1667, #1668, #1669, #1670, #1671, #1672
+- 1.15.0: #1674 (message isolation), #1675 (MCP 2026-07-28 through SDK 2.x),
+  #1676 (workspace handles), #1677 (MRTR request state), #1678 (drain and
+  upgrade contract), #1679 (release preparation)
