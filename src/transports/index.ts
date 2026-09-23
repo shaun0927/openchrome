@@ -45,6 +45,17 @@ export interface MCPTransport {
   /** Send to one logical MCP session when the transport supports it. */
   sendToSession?(sessionId: string, response: MCPResponse): boolean;
 
+  /** Publish modern subscription events without broadcasting to legacy SSE clients. */
+  publishToolsChanged?(): void;
+  publishResourcesChanged?(tenantId?: string): void;
+  publishResourceUpdated?(uri: string, tenantId?: string): void;
+
+  /**
+   * Server metadata the SDK boundary advertises in initialize and
+   * server/discover (for example the OpenChrome runtime contract).
+   */
+  setServerMetadata?(metadata: McpServerMetadata): void;
+
   /** Register cleanup for logical MCP session close/disconnect when supported. */
   onSessionClose?(handler: (sessionId: string) => void): void;
 
@@ -56,6 +67,11 @@ export interface MCPTransport {
 
   /** Graceful shutdown. */
   close(): Promise<void>;
+}
+
+export interface McpServerMetadata {
+  /** Entries for capabilities.experimental, keyed by reverse-DNS name. */
+  experimental?: Record<string, object>;
 }
 
 export type TransportMode = 'stdio' | 'http' | 'both';
@@ -104,6 +120,6 @@ export function createTransport(mode: TransportMode, options?: TransportOptions)
     );
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { StdioTransport } = require('./stdio');
-  return new StdioTransport();
+  const { SdkStdioTransport } = require('./sdk-stdio');
+  return new SdkStdioTransport();
 }

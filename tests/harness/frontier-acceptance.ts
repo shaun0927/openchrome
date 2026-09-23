@@ -276,15 +276,23 @@ async function main(): Promise<void> {
       assert.equal(wrongResume.raw.isError, true);
       assert.equal((await control({ action: 'status', tabId: tabs[0] })).phase, 'human');
       await control({ action: 'resume', tabId: tabs[0], lease: paused.lease, expectedUrl, selector: '#account', expectedText: 'a0' });
-      const running = client.callTool('javascript_tool', { tabId: tabs[2], code: "await fetch('/probe?account=a2&phase=started'); await new Promise(r=>setTimeout(r,1500)); await fetch('/probe?account=a2&phase=settled');" });
+      const running = client.callTool('javascript_tool', { tabId: tabs[2], code: "await fetch('/probe?account=a2&phase=started'); await new Promise(r=>setTimeout(r,1500)); await fetch('/probe?account=a2&phase=settled');" }, 8_000)
+        .then(result => ({ result }), (error: Error) => ({ error }));
       const requestId = client.getLastRequestId();
       await waitFor(() => probes.has('a2:started'));
       client.notify('notifications/cancelled', { requestId });
-      const cancelled = await running;
-      assert.equal(cancelled.raw.isError, true, 'cancel result: ' + JSON.stringify(cancelled.raw));
-      assert.equal((cancelled.raw.structuredContent as { execution?: string }).execution, 'unknown');
       const draining = await control({ action: 'pause', tabId: tabs[2] });
       assert.equal(draining.phase, 'draining');
+      // MCP: a receiver should not answer a cancelled request (the SDK stdio
+      // boundary does not); if an answer does arrive it must not claim the
+      // in-flight side effect stopped.
+      const cancelled = await running;
+      if ('result' in cancelled) {
+        assert.equal(cancelled.result.raw.isError, true, 'cancel result: ' + JSON.stringify(cancelled.result.raw));
+        assert.equal((cancelled.result.raw.structuredContent as { execution?: string }).execution, 'unknown');
+      } else {
+        assert.match(cancelled.error.message, /^Timeout: tools\/call/, String(cancelled.error));
+      }
       await waitFor(() => probes.has('a2:settled'));
       for (let i = 0; i < 30; i++) {
         if ((await control({ action: 'status', tabId: tabs[2] })).phase === 'human') break;

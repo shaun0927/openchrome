@@ -8,13 +8,13 @@ import { join } from 'path';
 import type { CheckFn } from '../../doctor';
 
 function parseMinVersion(range: string): number | null {
-  // Handles ">=18.0.0", "^18", "18", etc.
+  // Handles ">=20.0.0", "^20", "20", etc.
   const match = range.match(/(\d+)/);
   return match ? parseInt(match[1], 10) : null;
 }
 
 export const checkNodeVersion: CheckFn = async () => {
-  let engineRange = '>=18.0.0';
+  let engineRange = '>=20.0.0';
   try {
     const pkg = JSON.parse(readFileSync(join(__dirname, '../../../../package.json'), 'utf8'));
     engineRange = pkg?.engines?.node ?? engineRange;
@@ -24,7 +24,7 @@ export const checkNodeVersion: CheckFn = async () => {
 
   const current = process.versions.node;
   const currentMajor = parseInt(current.split('.')[0], 10);
-  const minMajor = parseMinVersion(engineRange) ?? 18;
+  const minMajor = parseMinVersion(engineRange) ?? 20;
 
   if (currentMajor >= minMajor) {
     return {

@@ -2,6 +2,7 @@
  * MCP Server - Implements MCP protocol with pluggable transports (stdio, HTTP)
  */
 
+import { randomUUID } from 'crypto';
 import * as path from 'path';
 import { createRuntimeContract, validateRuntimeRequest } from './runtime-contract';
 import { runToolAttempt, ToolAttemptError, currentAttemptSignal, drainAttemptCommands, runWithCommandScope } from '../core/deadline/tool-attempt';
@@ -51,7 +52,15 @@ import { getGlobalConfig } from '../config/global';
 import { getToolTier, ToolTier } from '../config/tool-tiers';
 import { getMetricsCollector, withTenantLabel } from '../core/metrics/collector';
 import { logAuditEntry } from '../security/audit-logger';
-import { assertFilePathAllowedBySessionRoots, assertUrlAllowedBySessionRoots, setSessionMcpRoots } from '../security/mcp-roots';
+import {
+  assertFilePathAllowedByMcpRoots,
+  assertUrlAllowedByMcpRoots,
+  getSessionMcpRoots,
+  parseMcpRoots,
+  setSessionMcpRoots,
+  type ParsedMcpRoots,
+} from '../security/mcp-roots';
+import { isMcpInputRequiredError } from '../errors/mcp-input-required';
 import { isClientDisconnect } from '../errors/abort';
 import { setLogSender, type LogLevel, logLevelSetErrorOrNull } from '../utils/log';
 import { isAllowed, requiredScope } from '../auth/scope-policy';
@@ -72,7 +81,7 @@ import {
 } from '../core/secrets';
 import { isCodegenEnabled, recordCodegenStep } from '../core/codegen';
 import { currentRequestContext, runWithRequestContext, generateRequestId } from '../core/observability/request-id';
-import type { TransportMessageContext } from '../transports';
+import type { McpServerMetadata, TransportMessageContext } from '../transports';
 import { RecoveryTrajectoryLedger, scoreFromToolResult, summarizeResult, type RecoveryResultStatus } from '../recovery';
 import { redactPredicateSource } from '../core/trace/redactor';
 import { getLifecycleBus, type LifecycleEvent, type Unsubscribe } from '../core/lifecycle';
@@ -86,6 +95,7 @@ import {
   sessionTabsUri,
   journalUri,
   recordingUri,
+  parseLiveResourceUri,
 } from '../resources/live-state';
 import { LOCAL_SUBSCRIPTION_KEY, ResourceSubscriptionManager } from '../resources/subscriptions';
 import {
@@ -105,6 +115,8 @@ import { DEFAULT_TENANT_ID } from '../tenant/types';
 import { isTenantScopedPrincipal, resolveEffectiveTenantId } from '../auth/tenant-principal';
 
 const MCP_TRANSPORT_SESSION_PREFIX = 'mcp-';
+/** Roots scope of the single local (stdio) client, which has no MCP session id. */
+const LOCAL_ROOTS_SCOPE = 'stdio';
 
 function implicitBrowserSessionId(mcpSessionId: string | undefined): string | undefined {
   return mcpSessionId ? `${MCP_TRANSPORT_SESSION_PREFIX}${mcpSessionId}` : undefined;
@@ -468,6 +480,12 @@ export class MCPServer {
   private disclosureState(): { tier: ToolTier; listChanged: boolean; detected: boolean } {
     const context = currentRequestContext();
     const id = context?.mcpSessionId;
+    // The modern protocol has no session in which hidden tool-list history can
+    // live: tools/list MUST NOT vary per connection. Expose the complete
+    // capability- and authorization-filtered registry on every request.
+    if (context?.protocolEra === 'modern') {
+      return { tier: 3, listChanged: false, detected: true };
+    }
     // An HTTP request without a transport session has no channel for
     // tools/list_changed and must not mutate the local client's disclosure.
     if (!id && context?.channel === 'http') {
@@ -635,6 +653,15 @@ export class MCPServer {
     // codebase will emit `notifications/message` to connected clients (at or
     // above the active level) AND mirror error-level events to stderr.
     setLogSender((level: LogLevel, logger: string, data: Record<string, unknown>) => {
+      // SDK-served requests log through the request context; the SDK applies
+      // the request's own log level (modern) or logging/setLevel (legacy).
+      const sdkLogger = currentRequestContext()?.logClient;
+      if (sdkLogger) {
+        void sdkLogger(level, logger, data).catch((error) => {
+          console.error('[MCPServer] request-scoped log notification failed:', error);
+        });
+        return;
+      }
       this.sendNotification('notifications/message', { level, logger, data });
     });
   }
@@ -719,8 +746,21 @@ export class MCPServer {
   readonly browserOperations = new BrowserOperations();
   private readonly toolCancellations = new Map<string, AbortController>();
 
+  /**
+   * Key under which an in-flight request can be cancelled by
+   * notifications/cancelled: its MCP session, or the local stdio client.
+   * HTTP requests without a session (all 2026-07-28 traffic and sessionless
+   * legacy calls) are cancelled only by closing their own HTTP exchange, so
+   * they get a unique key that no other client's JSON-RPC id can collide
+   * with or cancel.
+   */
   private cancellationKey(id: unknown, context?: TransportMessageContext): string {
-    return JSON.stringify([context?.mcpSessionId ?? currentRequestContext()?.mcpSessionId ?? 'stdio', id]);
+    const current = currentRequestContext();
+    const mcpSessionId = context?.mcpSessionId ?? current?.mcpSessionId;
+    if (!mcpSessionId && (context?.channel ?? current?.channel) === 'http') {
+      return JSON.stringify(['http', randomUUID(), id]);
+    }
+    return JSON.stringify([mcpSessionId ?? 'stdio', id]);
   }
 
   /**
@@ -891,12 +931,32 @@ export class MCPServer {
 
   private getCurrentClientCapabilities(): { roots?: object; sampling?: object; elicitation?: object } {
     const context = currentRequestContext();
+    const requestCapabilities = context?.clientCapabilities;
+    if (requestCapabilities) {
+      return {
+        ...(requestCapabilities.roots !== undefined ? { roots: requestCapabilities.roots } : {}),
+        ...(requestCapabilities.sampling !== undefined ? { sampling: requestCapabilities.sampling } : {}),
+        ...(requestCapabilities.elicitation !== undefined ? { elicitation: requestCapabilities.elicitation } : {}),
+      };
+    }
     if (context?.mcpSessionId) {
       return this.clientCapabilitiesBySession.get(context.mcpSessionId) ?? {};
     }
     // The process-wide cache belongs to the local stdio client only.
     if (context?.channel === 'http') return {};
     return this.clientCapabilities;
+  }
+
+  /**
+   * The client-request bridge for the active request: the SDK boundary
+   * supplies one per request (legacy server->client request or modern MRTR);
+   * the sessionful legacy HTTP path uses the server's own primitive.
+   */
+  private getCurrentRequestClient(): NonNullable<ToolContext['requestClient']> {
+    const context = currentRequestContext();
+    return context?.createRequestClient?.()
+      ?? context?.requestClient
+      ?? this.requestFromClient.bind(this);
   }
 
   /**
@@ -959,12 +1019,20 @@ export class MCPServer {
     const send = (update: ToolProgress): void => {
       if (closed) return;
       try {
-        this.sendNotification('notifications/progress', {
+        const params = {
           progressToken,
           progress: update.progress,
           ...(update.total !== undefined ? { total: update.total } : {}),
           ...(update.message !== undefined ? { message: update.message } : {}),
-        });
+        };
+        const sdkNotifier = currentRequestContext()?.notifyClient;
+        if (sdkNotifier) {
+          void sdkNotifier('notifications/progress', params).catch((error) => {
+            console.error('[MCPServer] request-scoped progress notification failed:', error);
+          });
+        } else {
+          this.sendNotification('notifications/progress', params);
+        }
         lastEmittedAt = Date.now();
       } catch (err) {
         // Best-effort: a wedged transport must not break the parent tool call.
@@ -1017,6 +1085,30 @@ export class MCPServer {
     };
 
     return { reporter, flush };
+  }
+
+  /** Transition from heavy back to active after a tool call, then idle later. */
+  private settleHeartbeatAfterToolCall(): void {
+    try {
+      const cdpClient = getCDPClient();
+      cdpClient.setHeartbeatMode?.('active');
+    } catch {
+      // CDP client may not be initialized
+    }
+
+    if (this.heartbeatIdleTimer) {
+      clearTimeout(this.heartbeatIdleTimer);
+    }
+    this.heartbeatIdleTimer = setTimeout(() => {
+      try {
+        const cdpClient = getCDPClient();
+        cdpClient.setHeartbeatMode?.('idle');
+      } catch {
+        // CDP client may be disconnected
+      }
+      this.heartbeatIdleTimer = null;
+    }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
+    this.heartbeatIdleTimer.unref?.();
   }
 
   /**
@@ -1180,17 +1272,17 @@ export class MCPServer {
       }
       if (isInitializedNotification(method)) {
         console.error(`[MCPServer] Received notification: ${method}`);
-        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
-        if (mcpSessionId) {
-          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
-            console.error(`[MCPServer] initial roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+        const rootsScope = this.rootsScopeId(transportContext);
+        if (rootsScope) {
+          void this.refreshSessionRoots(rootsScope).catch((err) => {
+            console.error(`[MCPServer] initial roots/list refresh failed for session ${rootsScope}: ${formatError(err)}`);
           });
         }
       } else if (method === 'notifications/roots/list_changed' || method === 'roots/list_changed') {
-        const mcpSessionId = transportContext?.mcpSessionId ?? currentRequestContext()?.mcpSessionId;
-        if (mcpSessionId) {
-          void this.refreshSessionRoots(mcpSessionId).catch((err) => {
-            console.error(`[MCPServer] roots/list refresh failed for session ${mcpSessionId}: ${formatError(err)}`);
+        const rootsScope = this.rootsScopeId(transportContext);
+        if (rootsScope) {
+          void this.refreshSessionRoots(rootsScope).catch((err) => {
+            console.error(`[MCPServer] roots/list refresh failed for session ${rootsScope}: ${formatError(err)}`);
           });
         }
       }
@@ -1203,6 +1295,7 @@ export class MCPServer {
     try {
       return await this.handleRequest(request, principal, signal, transportContext);
     } catch (error) {
+      if (isMcpInputRequiredError(error)) throw error;
       return {
         jsonrpc: '2.0' as const,
         id: request.id,
@@ -1225,6 +1318,7 @@ export class MCPServer {
       this.transport = createTransport('stdio');
     }
     this.registerDeliveryTransport(this.transport);
+    this.transport.setServerMetadata?.(this.serverMetadata());
 
     // Wire rate-limiter session cleanup into the transport
     this.wireRateLimiterCleanup(this.transport);
@@ -1298,12 +1392,17 @@ export class MCPServer {
       throw new Error('attachTransport requires a session-addressed transport');
     }
     this.registerDeliveryTransport(transport);
+    transport.setServerMetadata?.(this.serverMetadata());
     this.attachedTransports.push(transport);
     transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) =>
       this.handleMessage(parsed, signal, context),
     );
     this.wireRateLimiterCleanup(transport);
     transport.start();
+  }
+
+  private serverMetadata(): McpServerMetadata {
+    return { experimental: { 'io.openchrome/runtime': this.runtimeContract } };
   }
 
   private registerDeliveryTransport(transport: MCPTransport): void {
@@ -1349,8 +1448,13 @@ export class MCPServer {
           result = await this.handleInitialize(params);
           break;
 
+        case 'ping':
+          // Legacy liveness check (the SDK answers it on stdio); removed in 2026-07-28.
+          result = {};
+          break;
+
         case 'tools/list':
-          result = await this.handleToolsList(params, transportContext);
+          result = await this.handleToolsList(params, transportContext, principal);
           break;
 
         case 'tools/call': {
@@ -1426,6 +1530,7 @@ export class MCPServer {
         result,
       };
     } catch (error) {
+      if (isMcpInputRequiredError(error)) throw error;
       if (error instanceof ResourceRpcError) {
         return this.errorResponse(id, error.code, error.message, error.data);
       }
@@ -1435,15 +1540,52 @@ export class MCPServer {
   }
 
 
-  private async refreshSessionRoots(mcpSessionId: string): Promise<void> {
-    const caps = this.clientCapabilitiesBySession.get(mcpSessionId) ?? {};
-    if (!caps.roots) return;
-    const roots = await this.requestFromClient<unknown>('roots/list', undefined, { timeoutMs: 250 });
-    setSessionMcpRoots(mcpSessionId, roots);
+  /**
+   * Scope that legacy roots are cached under: the MCP session for HTTP, the
+   * local stdio client otherwise. Sessionless HTTP requests have no channel
+   * to answer roots/list and no scope. Modern requests never use this cache.
+   */
+  private rootsScopeId(transportContext?: TransportMessageContext): string | undefined {
+    const context = currentRequestContext();
+    const mcpSessionId = transportContext?.mcpSessionId ?? context?.mcpSessionId;
+    if (mcpSessionId) return mcpSessionId;
+    if ((transportContext?.channel ?? context?.channel) === 'http') return undefined;
+    return LOCAL_ROOTS_SCOPE;
+  }
+
+  private async listCurrentClientRoots(): Promise<unknown | undefined> {
+    const caps = this.getCurrentClientCapabilities();
+    if (!caps.roots) return undefined;
+    return await this.getCurrentRequestClient()<unknown>('roots/list', undefined, { timeoutMs: 250 });
+  }
+
+  private async refreshSessionRoots(rootsScope: string): Promise<void> {
+    const roots = await this.listCurrentClientRoots();
+    if (roots === undefined) return;
+    setSessionMcpRoots(rootsScope, roots);
+  }
+
+  /**
+   * Modern requests have no session to cache roots in. Tools with a URL or
+   * file-output candidate ask for roots as part of the same request (an MRTR
+   * round when the client declared the roots capability) and enforce them
+   * before any browser side effect.
+   */
+  private async modernRootsForTool(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<ParsedMcpRoots | undefined> {
+    const hasEgressCandidate =
+      extractNetworkRootCandidateUrls(toolName, args).length > 0
+      || extractFileRootCandidatePaths(toolName, args).length > 0;
+    if (!hasEgressCandidate) return undefined;
+    const roots = await this.listCurrentClientRoots();
+    return roots === undefined ? undefined : parseMcpRoots(roots);
   }
 
   private enforceNetworkRootsForTool(
-    mcpSessionId: string,
+    rootsScope: string,
+    roots: ParsedMcpRoots | undefined,
     toolName: string,
     args: Record<string, unknown>,
   ): MCPResult | null {
@@ -1451,7 +1593,7 @@ export class MCPServer {
     if (urls.length === 0) return null;
     try {
       for (const url of urls) {
-        assertUrlAllowedBySessionRoots(mcpSessionId, url);
+        assertUrlAllowedByMcpRoots(roots, url, rootsScope);
       }
       return null;
     } catch (error) {
@@ -1463,7 +1605,8 @@ export class MCPServer {
   }
 
   private enforceFileRootsForTool(
-    mcpSessionId: string,
+    rootsScope: string,
+    roots: ParsedMcpRoots | undefined,
     toolName: string,
     args: Record<string, unknown>,
   ): MCPResult | null {
@@ -1471,7 +1614,7 @@ export class MCPServer {
     if (paths.length === 0) return null;
     try {
       for (const filePath of paths) {
-        assertFilePathAllowedBySessionRoots(mcpSessionId, filePath);
+        assertFilePathAllowedByMcpRoots(roots, filePath, rootsScope);
       }
       return null;
     } catch (error) {
@@ -1508,34 +1651,7 @@ export class MCPServer {
     // Detect client identity for progressive disclosure decisions
     const clientInfo = params?.clientInfo as { name?: string; version?: string } | undefined;
     const clientCapabilities = params?.capabilities as { tools?: { listChanged?: boolean }; notifications?: { tools?: { listChanged?: boolean } } } | undefined;
-    const rawName = clientInfo?.name ?? '';
-    const nameLower = rawName.toLowerCase();
-    const supportsToolListChanged = clientCapabilities?.tools?.listChanged === true
-      || clientCapabilities?.notifications?.tools?.listChanged === true;
-
-    // Idempotency: only detect client on first initialize (reconnects preserve state)
-    if (!this.clientDetected) {
-      this.clientDetected = true;
-
-      if (this.options.initialToolTier) {
-        console.error(`[openchrome] Tool tier override: initialToolTier=${this.options.initialToolTier}, skipping client detection`);
-      } else {
-        const isKnownClient = rawName !== '' && Array.from(PROGRESSIVE_DISCLOSURE_CLIENTS).some(known =>
-          nameLower.includes(known)
-        );
-
-        if (!isKnownClient && !supportsToolListChanged) {
-          // Unknown or absent client: expose all tools immediately (no progressive disclosure)
-          this.exposedTier = 3;
-          this.clientSupportsListChanged = false;
-          console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" — progressive disclosure disabled, exposing all tools`);
-        } else {
-          // Known/capable client: keep progressive disclosure enabled.
-          const source = supportsToolListChanged && !isKnownClient ? 'capability' : 'known-client';
-          console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" supports tool list changes (${source}) — progressive disclosure enabled`);
-        }
-      }
-    }
+    this.configureDisclosureForClient(clientInfo, clientCapabilities);
 
     return {
       protocolVersion: '2024-11-05',
@@ -1561,6 +1677,48 @@ export class MCPServer {
   }
 
   /**
+   * Decide progressive disclosure once per client from its identity and
+   * tools.listChanged support. Legacy HTTP calls this from initialize; SDK
+   * served legacy clients (stdio) from tools/list, where the SDK exposes the
+   * negotiated client info on the request context.
+   */
+  private configureDisclosureForClient(
+    clientInfo?: { name?: string; version?: string },
+    clientCapabilities?: { tools?: { listChanged?: boolean }; notifications?: { tools?: { listChanged?: boolean } } },
+  ): void {
+    // Idempotency: only detect client once (reconnects preserve state)
+    if (this.clientDetected) return;
+    this.clientDetected = true;
+
+    const rawName = clientInfo?.name ?? '';
+    const nameLower = rawName.toLowerCase();
+    const supportsToolListChanged = clientCapabilities?.tools?.listChanged === true
+      || clientCapabilities?.notifications?.tools?.listChanged === true;
+
+    if (this.options.initialToolTier) {
+      console.error(`[openchrome] Tool tier override: initialToolTier=${this.options.initialToolTier}, skipping client detection`);
+      return;
+    }
+    const isKnownClient = rawName !== '' && Array.from(PROGRESSIVE_DISCLOSURE_CLIENTS).some(known =>
+      nameLower.includes(known)
+    );
+    if (!isKnownClient && !supportsToolListChanged) {
+      // Unknown or absent client: expose all tools immediately (no progressive disclosure)
+      this.exposedTier = 3;
+      this.clientSupportsListChanged = false;
+      console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" — progressive disclosure disabled, exposing all tools`);
+      return;
+    }
+    // Known/capable client: keep progressive disclosure enabled.
+    const source = supportsToolListChanged && !isKnownClient ? 'capability' : 'known-client';
+    console.error(`[openchrome] Client "${rawName || '(no clientInfo)'}" supports tool list changes (${source}) — progressive disclosure enabled`);
+  }
+
+  private isToolAllowedForPrincipal(toolName: string, principal?: Principal): boolean {
+    return !principal || isAllowed(toolName, principal.scopes);
+  }
+
+  /**
    * Returns true if a tool with the given capability is allowed by the active filter.
    * When no filter is set, all tools are allowed (P2 default behaviour).
    */
@@ -1569,20 +1727,33 @@ export class MCPServer {
     return this.capabilityFilter.has(capability ?? 'core');
   }
 
-  /** Return the tool definitions visible at the current configured tier. */
-  getVisibleToolDefinitions(): MCPToolDefinition[] {
+  /**
+   * Return the tool definitions visible at the current configured tier,
+   * limited to tools the authenticated principal may call.
+   */
+  getVisibleToolDefinitions(principal?: Principal): MCPToolDefinition[] {
     const tools: MCPToolDefinition[] = [];
     for (const registry of this.tools.values()) {
       const tier = getToolTier(registry.definition.name);
-      if (tier <= this.exposedTier && this.isCapabilityAllowed(registry.definition.capability)) {
+      if (
+        tier <= this.exposedTier
+        && this.isCapabilityAllowed(registry.definition.capability)
+        && this.isToolAllowedForPrincipal(registry.definition.name, principal)
+      ) {
         tools.push(registry.definition);
       }
     }
 
-    if (this.exposedTier < 3 && this.clientSupportsListChanged && this.isCapabilityAllowed('core')) {
+    if (
+      this.exposedTier < 3
+      && this.clientSupportsListChanged
+      && this.isCapabilityAllowed('core')
+      && this.isToolAllowedForPrincipal('expand_tools', principal)
+    ) {
       const hiddenCount = Array.from(this.tools.values()).filter(
         r => getToolTier(r.definition.name) > this.exposedTier &&
-          this.isCapabilityAllowed(r.definition.capability)
+          this.isCapabilityAllowed(r.definition.capability) &&
+          this.isToolAllowedForPrincipal(r.definition.name, principal)
       ).length;
       if (hiddenCount > 0) {
         tools.push({
@@ -1613,7 +1784,12 @@ export class MCPServer {
   private async handleToolsList(
     params?: Record<string, unknown>,
     transportContext?: TransportMessageContext,
+    principal?: Principal,
   ): Promise<MCPResult> {
+    const requestContext = currentRequestContext();
+    if (requestContext?.protocolEra === 'legacy' && requestContext.clientInfo !== undefined) {
+      this.configureDisclosureForClient(requestContext.clientInfo, requestContext.clientCapabilities);
+    }
     // Signal the hint engine that this session has consumed tool descriptions,
     // so rules whose guidance is already embedded in description "When to
     // use / When NOT to use" blocks can suppress themselves without affecting
@@ -1624,7 +1800,7 @@ export class MCPServer {
       this.hintEngine.markToolsListServed(sessionId);
     }
 
-    return { tools: this.getVisibleToolDefinitions() };
+    return { tools: this.getVisibleToolDefinitions(principal) };
   }
 
   /**
@@ -1635,7 +1811,9 @@ export class MCPServer {
     for (const resource of this.resources.values()) {
       resources.push(resource);
     }
-    resources.push(...liveResourceDefinitions(this.sessionManager));
+    // List only what the caller can read: stdio requests carry no tenant and
+    // read as the default tenant, so they list that tenant's sessions.
+    resources.push(...liveResourceDefinitions(this.sessionManager, currentRequestContext()?.tenantId ?? DEFAULT_TENANT_ID));
     return { resources };
   }
 
@@ -1693,7 +1871,7 @@ export class MCPServer {
 
     const resource = this.resources.get(uri);
     if (!resource) {
-      throw new Error(`Unknown resource: ${uri}`);
+      throw new ResourceRpcError(MCPErrorCodes.INVALID_PARAMS, `Unknown resource: ${uri}`, { uri });
     }
 
     // Get content based on resource type
@@ -1719,7 +1897,14 @@ export class MCPServer {
 
   private async tryReadLiveResource(uri: string): Promise<{ mimeType: string; text: string } | null> {
     if (!uri.startsWith('oc://')) return null;
-    return readLiveResource(this.sessionManager, uri);
+    try {
+      return await readLiveResource(this.sessionManager, uri);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Unknown resource:')) {
+        throw new ResourceRpcError(MCPErrorCodes.INVALID_PARAMS, error.message, { uri });
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1767,8 +1952,10 @@ export class MCPServer {
           this.emitResourceUpdated(sessionStateUri(event.sessionId));
         }
         if (event.type === 'session:created' || event.type === 'session:deleted') {
-          this.emitResourceUpdated(sessionStateUri(event.sessionId));
-          this.emitResourcesListChanged();
+          const uri = sessionStateUri(event.sessionId);
+          const tenantId = this.resourceNotificationTenant(uri);
+          this.emitResourceUpdated(uri);
+          this.emitResourcesListChanged(tenantId);
         }
       });
     }
@@ -1780,19 +1967,61 @@ export class MCPServer {
           this.emitResourceUpdated(sessionStateUri(event.sessionId));
         }
         if (event.kind.startsWith('session:')) {
-          this.emitResourceUpdated(sessionStateUri(event.sessionId));
-          this.emitResourcesListChanged();
+          const uri = sessionStateUri(event.sessionId);
+          const tenantId = this.resourceNotificationTenant(uri);
+          this.emitResourceUpdated(uri);
+          this.emitResourcesListChanged(tenantId);
         }
       }
     });
   }
 
-  private emitResourceUpdated(uri: string): void {
-    this.resourceSubscriptions.emitUpdated(uri, this.resourceEventTransport);
+  private deliveryTransports(): MCPTransport[] {
+    return [...(this.localTransport ? [this.localTransport] : []), ...this.sessionTransports];
   }
 
-  private emitResourcesListChanged(): void {
+  private emitResourceUpdated(uri: string): void {
+    this.resourceSubscriptions.emitUpdated(uri, this.resourceEventTransport);
+    const tenantId = this.resourceNotificationTenant(uri);
+    for (const transport of this.deliveryTransports()) {
+      transport.publishResourceUpdated?.(uri, tenantId);
+    }
+  }
+
+  private emitResourcesListChanged(tenantId = currentRequestContext()?.tenantId): void {
     this.resourceSubscriptions.emitListChanged(this.resourceEventTransport);
+    for (const transport of this.deliveryTransports()) {
+      transport.publishResourcesChanged?.(tenantId);
+    }
+  }
+
+  /**
+   * Tenant that owns a live resource URI, so modern change streams stay
+   * inside the tenant that opened them. Unresolved ownership yields
+   * undefined and the HTTP transport then publishes nothing.
+   */
+  private resourceNotificationTenant(uri: string): string | undefined {
+    const parsed = parseLiveResourceUri(uri);
+    if (
+      parsed?.id &&
+      (parsed.kind === 'session-tabs' || parsed.kind === 'session-state' || parsed.kind === 'journal')
+    ) {
+      const session = typeof this.sessionManager.getSession === 'function'
+        ? this.sessionManager.getSession(parsed.id)
+        : undefined;
+      return session?.tenantId
+        ?? this.sessionTenants.get(parsed.id)
+        ?? currentRequestContext()?.tenantId;
+    }
+    return currentRequestContext()?.tenantId;
+  }
+
+  /** Publish a tool registry change to legacy clients and modern subscriptions. */
+  public emitListChanged(): void {
+    this.broadcast({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' } as unknown as MCPResponse);
+    for (const transport of this.deliveryTransports()) {
+      transport.publishToolsChanged?.();
+    }
   }
 
   /**
@@ -2034,42 +2263,8 @@ export class MCPServer {
       throw err;
     }
 
-    const rootsDenial = this.enforceNetworkRootsForTool(
-      mcpSessionId ?? sessionId,
-      toolName,
-      substitutedArgs,
-    );
-    if (rootsDenial) {
-      this.recordToolOutputObservability(toolName, rootsDenial);
-      return rootsDenial;
-    }
-
-    const fileRootsDenial = this.enforceFileRootsForTool(
-      mcpSessionId ?? sessionId,
-      toolName,
-      substitutedArgs,
-    );
-    if (fileRootsDenial) {
-      this.recordToolOutputObservability(toolName, fileRootsDenial);
-      return fileRootsDenial;
-    }
-
-    // All static gates passed (scope, tool existence, required args). Only
-    // now do we claim the session for the caller's tenant — a denied or
-    // invalid call must NOT be able to lock a sessionId that would then
-    // block other tenants. (Codex round-6 P1.)
-    if (shouldBindTenant && effectiveTenantId && !this.sessionTenants.has(sessionId)) {
-      this.sessionTenants.set(sessionId, effectiveTenantId);
-    }
-
-    // Auto-expand tier if a higher-tier tool is called directly
-    // This handles the case where the AI learned about the tool from documentation
-    const toolTier = getToolTier(toolName);
-    if (toolTier > this.exposedTier) {
-      this.expandToolTier(toolTier);
-    }
-
-    // Rate limit check — reject before doing any work.
+    // Rate limit check — reject before doing any work, including a modern
+    // roots round trip, so unanswered input_required rounds are metered too.
     // Only switch to tenant-scoped keying in real api-key mode; disabled and
     // legacy modes synthesize a fixed principal ('anonymous' / 'legacy'), so
     // keying by their tenantId would collapse every HTTP session into one
@@ -2097,6 +2292,49 @@ export class MCPServer {
         this.recordToolOutputObservability(toolName, rateLimitResult);
         return rateLimitResult;
       }
+    }
+
+    const legacyRootsScope = this.rootsScopeId(transportContext);
+    const rootsScope = legacyRootsScope ?? sessionId;
+    const roots = currentRequestContext()?.protocolEra === 'modern'
+      ? await this.modernRootsForTool(toolName, substitutedArgs)
+      : legacyRootsScope ? getSessionMcpRoots(legacyRootsScope) : undefined;
+
+    const rootsDenial = this.enforceNetworkRootsForTool(
+      rootsScope,
+      roots,
+      toolName,
+      substitutedArgs,
+    );
+    if (rootsDenial) {
+      this.recordToolOutputObservability(toolName, rootsDenial);
+      return rootsDenial;
+    }
+
+    const fileRootsDenial = this.enforceFileRootsForTool(
+      rootsScope,
+      roots,
+      toolName,
+      substitutedArgs,
+    );
+    if (fileRootsDenial) {
+      this.recordToolOutputObservability(toolName, fileRootsDenial);
+      return fileRootsDenial;
+    }
+
+    // All static gates passed (scope, tool existence, required args). Only
+    // now do we claim the session for the caller's tenant — a denied or
+    // invalid call must NOT be able to lock a sessionId that would then
+    // block other tenants. (Codex round-6 P1.)
+    if (shouldBindTenant && effectiveTenantId && !this.sessionTenants.has(sessionId)) {
+      this.sessionTenants.set(sessionId, effectiveTenantId);
+    }
+
+    // Auto-expand tier if a higher-tier tool is called directly
+    // This handles the case where the AI learned about the tool from documentation
+    const toolTier = getToolTier(toolName);
+    if (toolTier > this.exposedTier) {
+      this.expandToolTier(toolTier);
     }
 
     const requiresBrowserSession = shouldInitializeBrowserSession(toolName, substitutedArgs);
@@ -2309,7 +2547,7 @@ export class MCPServer {
           signal,
           principal,
           clientCapabilities: this.getCurrentClientCapabilities(),
-          requestClient: this.requestFromClient.bind(this),
+          requestClient: this.getCurrentRequestClient(),
           reportProgress,
         };
         result = await runToolAttempt(
@@ -2333,7 +2571,7 @@ export class MCPServer {
               signal,
               principal,
               clientCapabilities: this.getCurrentClientCapabilities(),
-              requestClient: this.requestFromClient.bind(this),
+              requestClient: this.getCurrentRequestClient(),
               reportProgress,
             };
             result = await runToolAttempt(
@@ -2341,6 +2579,7 @@ export class MCPServer {
               executionDeadline, signal,
             );
           } catch (retryError) {
+            if (isMcpInputRequiredError(retryError)) throw retryError;
             if (retryError instanceof ToolAttemptError) throw retryError;
             throw handlerError; // Preserve the original connection failure otherwise
           }
@@ -2386,7 +2625,7 @@ export class MCPServer {
               signal,
               principal,
               clientCapabilities: this.getCurrentClientCapabilities(),
-              requestClient: this.requestFromClient.bind(this),
+              requestClient: this.getCurrentRequestClient(),
               reportProgress,
             };
             // Race the retry against the tool-execution timeout, exactly like the
@@ -2399,6 +2638,7 @@ export class MCPServer {
             );
             console.error(`[MCPServer] Retry after swallowed connection error succeeded for "${toolName}"`);
           } catch (retryError) {
+            if (isMcpInputRequiredError(retryError)) throw retryError;
             console.error(`[MCPServer] Retry after swallowed connection error failed for "${toolName}":`, retryError);
             if (retryError instanceof ToolAttemptError) throw retryError;
             // Keep original error result
@@ -2464,34 +2704,7 @@ export class MCPServer {
         // Best-effort recording
       }
 
-      // Transition from heavy back to active after tool completes
-      try {
-        const cdpClient = getCDPClient();
-        if (cdpClient.setHeartbeatMode) {
-          cdpClient.setHeartbeatMode('active');
-        }
-      } catch {
-        // CDP client may not be initialized
-      }
-
-      // Schedule heartbeat idle mode transition
-      if (this.heartbeatIdleTimer) {
-        clearTimeout(this.heartbeatIdleTimer);
-      }
-      this.heartbeatIdleTimer = setTimeout(() => {
-        try {
-          const cdpClient = getCDPClient();
-          if (cdpClient.setHeartbeatMode) {
-            cdpClient.setHeartbeatMode('idle');
-          }
-        } catch {
-          // CDP client may be disconnected
-        }
-        this.heartbeatIdleTimer = null;
-      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
-      if (this.heartbeatIdleTimer.unref) {
-        this.heartbeatIdleTimer.unref();
-      }
+      this.settleHeartbeatAfterToolCall();
 
       const compressionConfig = getGlobalConfig().compression;
       const verbosity = compressionConfig?.verbosity ?? 'normal';
@@ -2639,6 +2852,15 @@ export class MCPServer {
       this.recordToolOutputObservability(toolName, finalResult);
       return finalResult;
     } catch (error) {
+      if (isMcpInputRequiredError(error)) {
+        // One MRTR round is complete; the client retries with its input as a
+        // new request. This is neither a tool success nor a tool failure.
+        this.activityTracker!.endCall(callId, 'input_required');
+        getDashboardState().recordToolEnd(callId, 'input_required');
+        this.emitResourceUpdated('oc://dashboard/state');
+        this.settleHeartbeatAfterToolCall();
+        throw error;
+      }
       const message = formatError(error);
       const redactedMessage = redactSecretString(message);
       const abortReason = isClientDisconnect(error) ? 'client_disconnect' : null;
@@ -2701,34 +2923,7 @@ export class MCPServer {
         // Best-effort recording
       }
 
-      // Transition from heavy back to active after tool completes
-      try {
-        const cdpClient = getCDPClient();
-        if (cdpClient.setHeartbeatMode) {
-          cdpClient.setHeartbeatMode('active');
-        }
-      } catch {
-        // CDP client may not be initialized
-      }
-
-      // Schedule heartbeat idle mode transition
-      if (this.heartbeatIdleTimer) {
-        clearTimeout(this.heartbeatIdleTimer);
-      }
-      this.heartbeatIdleTimer = setTimeout(() => {
-        try {
-          const cdpClient = getCDPClient();
-          if (cdpClient.setHeartbeatMode) {
-            cdpClient.setHeartbeatMode('idle');
-          }
-        } catch {
-          // CDP client may be disconnected
-        }
-        this.heartbeatIdleTimer = null;
-      }, DEFAULT_HEARTBEAT_IDLE_TIMEOUT_MS);
-      if (this.heartbeatIdleTimer.unref) {
-        this.heartbeatIdleTimer.unref();
-      }
+      this.settleHeartbeatAfterToolCall();
 
       // Append reconnection guidance for connection errors
       const displayMessage = isConnectionError(error)

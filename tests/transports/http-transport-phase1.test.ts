@@ -147,9 +147,9 @@ describe('Transport mode types', () => {
   });
 
   it('can create both stdio and HTTP transports for dual mode', () => {
-    const { StdioTransport } = require('../../src/transports/stdio');
+    const { SdkStdioTransport } = require('../../src/transports/sdk-stdio');
     const { HTTPTransport: HTTP } = require('../../src/transports/http');
-    const stdio = new StdioTransport();
+    const stdio = new SdkStdioTransport();
     const httpT = new HTTP(19997, '127.0.0.1', undefined, { allowUnauthenticatedHttp: true });
     expect(stdio).toBeDefined();
     expect(httpT).toBeDefined();

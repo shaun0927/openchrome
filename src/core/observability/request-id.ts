@@ -91,6 +91,35 @@ export interface RequestContext {
    * messages, so they must never fall back to another client's channel.
    */
   channel?: 'http';
+  /** MCP protocol era selected by the SDK boundary for this request. */
+  protocolEra?: 'legacy' | 'modern';
+  /** Client identity carried by initialize (legacy) or the per-request envelope (modern). */
+  clientInfo?: { name?: string; version?: string };
+  /** Capabilities carried by initialize (legacy) or the per-request envelope (modern). */
+  clientCapabilities?: {
+    roots?: object;
+    sampling?: object;
+    elicitation?: object;
+    tools?: { listChanged?: boolean };
+    notifications?: { tools?: { listChanged?: boolean } };
+    [key: string]: unknown;
+  };
+  /** Request-related client call bridge supplied by the official MCP SDK. */
+  requestClient?: <T = unknown>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ) => Promise<T>;
+  /**
+   * Fresh request bridge with its own input-request numbering. Each tool
+   * attempt takes one, so a retried attempt maps its inputs to the same
+   * multi-round-trip keys as the first attempt.
+   */
+  createRequestClient?: () => NonNullable<RequestContext['requestClient']>;
+  /** Request-related notification bridge supplied by the official MCP SDK. */
+  notifyClient?: (method: string, params?: Record<string, unknown>) => Promise<void>;
+  /** Per-request structured logging bridge; the SDK enforces the requested level. */
+  logClient?: (level: string, logger: string, data: Record<string, unknown>) => Promise<void>;
 }
 
 const requestStore = new AsyncLocalStorage<RequestContext>();

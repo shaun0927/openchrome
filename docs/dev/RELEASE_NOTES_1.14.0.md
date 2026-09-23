@@ -105,7 +105,7 @@ oc_browser_control 추가를 명시하는 exact 비교로 수정했다.
 
 ## 참고
 
-- [사용성 운영 절차](https://github.com/shaun0927/openchrome/blob/release/1.14.0-prepublish/docs/dev/USABILITY_RELEASE.md)
-- [Stateless 전환 범위와 미완료 항목](https://github.com/shaun0927/openchrome/blob/release/1.14.0-prepublish/docs/dev/STATELESS_MIGRATION.md)
-- [학습 운영 절차](https://github.com/shaun0927/openchrome/blob/release/1.14.0-prepublish/docs/dev/RUNBOOK.md)
-- [학습 데이터 관리](https://github.com/shaun0927/openchrome/blob/release/1.14.0-prepublish/docs/dev/learning-pipeline.md)
+- [사용성 운영 절차](https://github.com/shaun0927/openchrome/blob/86ebc6b1e46e7cacf0d17b03e0d8832ccc7ae218/docs/dev/USABILITY_RELEASE.md)
+- [Stateless 전환 범위와 미완료 항목](https://github.com/shaun0927/openchrome/blob/86ebc6b1e46e7cacf0d17b03e0d8832ccc7ae218/docs/dev/STATELESS_MIGRATION.md)
+- [학습 운영 절차](https://github.com/shaun0927/openchrome/blob/86ebc6b1e46e7cacf0d17b03e0d8832ccc7ae218/docs/dev/RUNBOOK.md)
+- [학습 데이터 관리](https://github.com/shaun0927/openchrome/blob/86ebc6b1e46e7cacf0d17b03e0d8832ccc7ae218/docs/dev/learning-pipeline.md)

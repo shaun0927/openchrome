@@ -51,7 +51,7 @@ describe('E2E-13: HTTP transport independence', () => {
     console.error('[e2e-13] Step 2 OK: Cookie set');
 
     // Step 3: Verify server stays alive — "disconnect" simulated by just waiting
-    // (HTTP transport is stateless per request, so there's no persistent connection to drop)
+    // (each POST is an independent HTTP exchange; the server keeps browser state between them)
     console.error('[e2e-13] Step 3: Verify server survives between requests (simulated disconnect)');
     await sleep(2000);
 

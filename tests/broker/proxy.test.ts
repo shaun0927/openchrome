@@ -28,6 +28,7 @@ describe('BrokerProxyStdioBridge', () => {
     const output: string[] = [];
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: (chunk) => { output.push(chunk); },
     });
 
@@ -44,6 +45,7 @@ describe('BrokerProxyStdioBridge', () => {
     const output: string[] = [];
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: (chunk) => { output.push(chunk); },
     });
 
@@ -62,6 +64,7 @@ describe('BrokerProxyStdioBridge', () => {
       .mockResolvedValueOnce(createMockResponse({ body: '{"jsonrpc":"2.0","id":2,"result":{}}' }));
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: () => undefined,
     });
 
@@ -83,6 +86,7 @@ describe('BrokerProxyStdioBridge', () => {
       }));
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: () => undefined,
     });
 
@@ -107,6 +111,7 @@ describe('BrokerProxyStdioBridge', () => {
     const output: string[] = [];
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: (chunk) => { output.push(chunk); },
     });
 
@@ -124,6 +129,7 @@ describe('BrokerProxyStdioBridge', () => {
     const output: string[] = [];
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: (chunk) => { output.push(chunk); },
     });
 
@@ -142,6 +148,7 @@ describe('BrokerProxyStdioBridge', () => {
     const output: string[] = [];
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: (chunk) => { output.push(chunk); },
     });
 
@@ -158,6 +165,7 @@ describe('BrokerProxyStdioBridge', () => {
     const output: string[] = [];
     const bridge = new BrokerProxyStdioBridge(broker, {
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: (chunk) => { output.push(chunk); },
     });
 
@@ -180,11 +188,13 @@ describe('BrokerProxyStdioBridge multi-client broker forwarding', () => {
     const clientA = new BrokerProxyStdioBridge(broker, {
       clientId: 'codex-a',
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: () => undefined,
     });
     const clientB = new BrokerProxyStdioBridge(broker, {
       clientId: 'claude-b',
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: () => undefined,
     });
 
@@ -207,6 +217,7 @@ describe('BrokerProxyStdioBridge multi-client broker forwarding', () => {
       clientId: 'client-with-tenant',
       tenantId: 'tenant-alpha',
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      legacyEventStream: false,
       write: () => undefined,
     });
 
