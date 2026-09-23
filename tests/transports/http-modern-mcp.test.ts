@@ -403,10 +403,12 @@ describe('MCP 2026-07-28 HTTP boundary', () => {
     const firstResult = first.body.result as {
       resultType: string;
       inputRequests: Record<string, unknown>;
+      requestState: string;
     };
     expect(firstResult.resultType).toBe('input_required');
     const [responseKey] = Object.keys(firstResult.inputRequests);
     expect(responseKey).toBe('openchrome_1_elicitation_create');
+    expect(typeof firstResult.requestState).toBe('string');
 
     const second = await request(
       {
@@ -419,6 +421,7 @@ describe('MCP 2026-07-28 HTTP boundary', () => {
           inputResponses: {
             [responseKey]: { action: 'accept', content: { confirm: true } },
           },
+          requestState: firstResult.requestState,
           _meta: envelope(capabilities),
         },
       },

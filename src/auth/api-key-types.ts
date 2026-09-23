@@ -32,5 +32,7 @@ export interface Principal {
   tenantId: string;
   scopes: Scope[];
   keyId?: string;
+  /** Token subject (`sub`) for JWT principals; identifies the caller within its tenant. */
+  subject?: string;
   mode: 'disabled' | 'legacy' | 'api-key' | 'jwt';
 }

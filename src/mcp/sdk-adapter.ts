@@ -27,6 +27,7 @@ import {
 import type { MCPResponse } from '../types/mcp';
 import type { McpServerMetadata, TransportMessageContext } from '../transports';
 import { getVersion } from '../core/version';
+import { MrtrStateManager, inputRequestDigest, type MrtrRound } from './mrtr-state';
 
 export const MODERN_MCP_PROTOCOL_VERSION = '2026-07-28';
 
@@ -99,6 +100,33 @@ export function toSdkAuthInfo(
   };
 }
 
+/**
+ * Identity a multi-round-trip state is bound to: transport, tenant, API key
+ * (api-key mode) and token subject (JWT mode, where the key id only names
+ * the issuer's signing key), otherwise the transport tenant.
+ */
+export function mrtrPrincipal(ctx: ServerContext): string {
+  const principal = sdkPrincipal(ctx.http?.authInfo);
+  const transport = sdkTransportContext(ctx.http?.authInfo);
+  const tenant = principal?.mode === 'api-key' || principal?.mode === 'jwt'
+    ? principal.tenantId
+    : transport.tenantId ?? principal?.tenantId;
+  const caller = principal?.mode === 'jwt' ? principal.subject : principal?.keyId;
+  return `${ctx.http ? 'http' : 'stdio'}|${tenant ?? ''}|${principal?.mode ?? ''}|${caller ?? ''}`;
+}
+
+let mrtrManager: MrtrStateManager | null = null;
+
+function mrtrStates(): MrtrStateManager {
+  mrtrManager ??= new MrtrStateManager(mrtrPrincipal);
+  return mrtrManager;
+}
+
+/** Tests: drop the per-process state key and consumed-nonce set. */
+export function _resetMrtrStateForTesting(): void {
+  mrtrManager = null;
+}
+
 function clientCapabilitiesFor(
   server: Server,
   ctx: ServerContext,
@@ -153,6 +181,7 @@ function inputRequestFor(method: string, params?: Record<string, unknown>) {
 function requestClientFor(
   ctx: ServerContext,
   era: 'legacy' | 'modern',
+  mrtr?: MrtrRound,
 ): NonNullable<RequestContext['requestClient']> {
   let ordinal = 0;
   return async <T>(
@@ -186,17 +215,22 @@ function requestClientFor(
       }
     }
 
+    if (!mrtr) {
+      // Only tools/call and resources/read may answer with input_required.
+      throw new ProtocolError(-32603, `Client input is not available for ${ctx.mcpReq.method}`);
+    }
     ordinal++;
     const key = `openchrome_${ordinal}_${method.replace(/[^A-Za-z0-9]+/g, '_')}`;
-    if (
-      ctx.mcpReq.inputResponses &&
-      Object.prototype.hasOwnProperty.call(ctx.mcpReq.inputResponses, key)
-    ) {
-      return ctx.mcpReq.inputResponses[key] as T;
-    }
+    // Only answers carried by this request's verified requestState count,
+    // and only for the same question; responses the client sent without
+    // being asked are ignored.
+    const digest = inputRequestDigest(method, params);
+    const answered = mrtrStates().answerFor(mrtr, key, digest);
+    if (answered) return answered.value as T;
 
     throw new McpInputRequiredError(inputRequired({
       inputRequests: { [key]: inputRequestFor(method, params) },
+      requestState: await mrtrStates().mint(ctx, mrtr, { [key]: digest }),
     }));
   };
 }
@@ -277,6 +311,11 @@ export function createSdkServerAdapter(
       instructions:
         'Control Chrome with explicit OpenChrome sessionId and tabId handles. ' +
         'Use tools/list for the available browser operations and resources/list for live state.',
+      // Every echoed requestState is verified (HMAC, expiry, principal and
+      // method binding) before a handler runs; failures answer -32602.
+      requestState: {
+        verify: (state: string, ctx: ServerContext) => mrtrStates().codec.verify(state, ctx),
+      },
       cacheHints: {
         'server/discover': { ttlMs: 300_000, cacheScope: 'public' },
         'tools/list': { ttlMs: 30_000, cacheScope: 'private' },
@@ -298,6 +337,11 @@ export function createSdkServerAdapter(
       ? principal.tenantId
       : inheritedTransportContext.tenantId ?? principal?.tenantId;
     const capabilities = clientCapabilitiesFor(server, ctx, options.era);
+    // Verified once per request (the nonce is single use), then shared by
+    // every tool attempt's request bridge.
+    const mrtr = options.era === 'modern' && (method === 'tools/call' || method === 'resources/read')
+      ? mrtrStates().begin(ctx, method, params)
+      : undefined;
     const clientInfo = clientInfoFor(server, ctx, options.era);
     const transportContext: TransportMessageContext = {
       ...(options.channel ? { channel: options.channel } : {}),
@@ -319,8 +363,8 @@ export function createSdkServerAdapter(
       ...(capabilities
         ? { clientCapabilities: capabilities as RequestContext['clientCapabilities'] }
         : {}),
-      requestClient: requestClientFor(ctx, options.era),
-      createRequestClient: () => requestClientFor(ctx, options.era),
+      requestClient: requestClientFor(ctx, options.era, mrtr),
+      createRequestClient: () => requestClientFor(ctx, options.era, mrtr),
       notifyClient: async (notificationMethod, notificationParams) => {
         await ctx.mcpReq.notify({
           method: notificationMethod,
@@ -422,9 +466,16 @@ export function createSdkServerAdapter(
       ctx,
     ) as unknown as ListResourceTemplatesResult,
   );
-  server.setRequestHandler('resources/read', async (request, ctx) =>
-    await dispatch('resources/read', paramsWithMeta(request.params, ctx), ctx) as unknown as ReadResourceResult,
-  );
+  server.setRequestHandler('resources/read', async (request, ctx) => {
+    try {
+      return await dispatch('resources/read', paramsWithMeta(request.params, ctx), ctx) as unknown as ReadResourceResult;
+    } catch (error) {
+      if (isMcpInputRequiredError(error)) {
+        return error.result as InputRequiredResult;
+      }
+      throw error;
+    }
+  });
   if (options.era === 'legacy') {
     server.setRequestHandler('resources/subscribe', async (request, ctx) =>
       await dispatch(
