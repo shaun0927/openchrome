@@ -333,11 +333,9 @@ class OpenChromeServerImpl implements OpenChromeServer {
       );
       this._httpTransport = httpTrans;
       server.start();
-      httpTrans.onMessage(async (msg: Record<string, unknown>, signal?: AbortSignal) =>
-        server.handleMessage(msg, signal),
-      );
-      server.wireRateLimiterCleanup(httpTrans);
-      httpTrans.start();
+      // Same dispatch and per-client delivery rules as the CLI dual owner;
+      // the server also owns closing the HTTP leg on stop().
+      server.attachTransport(httpTrans);
       resolvedHttpUrl = `http://${resolvedHost}:${resolvedPort}`;
     } else if (useHttp) {
       const resolvedPort = httpPort ?? 3100;

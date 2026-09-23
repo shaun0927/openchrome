@@ -85,6 +85,12 @@ export interface RequestContext {
   mcpSessionId?: string;
   /** Broker stdio-proxy identity when this request arrived via --connect-broker. */
   brokerClientId?: string;
+  /**
+   * Set to 'http' for requests received over the HTTP transport. A request
+   * with this channel but no mcpSessionId has no stream for server-originated
+   * messages, so they must never fall back to another client's channel.
+   */
+  channel?: 'http';
 }
 
 const requestStore = new AsyncLocalStorage<RequestContext>();

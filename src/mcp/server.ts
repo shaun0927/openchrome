@@ -87,7 +87,7 @@ import {
   journalUri,
   recordingUri,
 } from '../resources/live-state';
-import { ResourceSubscriptionManager } from '../resources/subscriptions';
+import { LOCAL_SUBSCRIPTION_KEY, ResourceSubscriptionManager } from '../resources/subscriptions';
 import {
   buildInvalidJsonRpcRequestResponse,
   extractPrincipalAndScrub,
@@ -445,6 +445,11 @@ export class MCPServer {
   private manifestVersion: number = 1;
   private sessionManager: SessionManager;
   private transport: MCPTransport | null = null;
+  private readonly attachedTransports: MCPTransport[] = [];
+  /** The single local client (stdio), when this process serves one. */
+  private localTransport: MCPTransport | null = null;
+  /** Transports that address clients by MCP session (HTTP). */
+  private readonly sessionTransports: MCPTransport[] = [];
   private dashboard: Dashboard | null = null;
   private activityTracker: ActivityTracker | null = null;
   private operationController: OperationController | null = null;
@@ -453,9 +458,22 @@ export class MCPServer {
   private options: MCPServerOptions;
   private profileWarningShown = false;
   private readonly defaultDisclosure = { tier: 1 as ToolTier, listChanged: true, detected: false };
+  /**
+   * Shared by HTTP requests that carry no Mcp-Session-Id. They cannot receive
+   * tools/list_changed, so they start from the configured tier (or all tools)
+   * and never touch the local stdio client's disclosure state.
+   */
+  private sessionlessHttpDisclosure: { tier: ToolTier; listChanged: boolean; detected: boolean } | null = null;
   private readonly disclosureBySession = new Map<string, { tier: ToolTier; listChanged: boolean; detected: boolean }>();
   private disclosureState(): { tier: ToolTier; listChanged: boolean; detected: boolean } {
-    const id = currentRequestContext()?.mcpSessionId;
+    const context = currentRequestContext();
+    const id = context?.mcpSessionId;
+    // An HTTP request without a transport session has no channel for
+    // tools/list_changed and must not mutate the local client's disclosure.
+    if (!id && context?.channel === 'http') {
+      this.sessionlessHttpDisclosure ??= { tier: this.options?.initialToolTier ?? 3, listChanged: false, detected: true };
+      return this.sessionlessHttpDisclosure;
+    }
     if (!id) return this.defaultDisclosure;
     let state = this.disclosureBySession.get(id);
     if (!state) {
@@ -728,13 +746,51 @@ export class MCPServer {
       method,
       ...(params ? { params } : {}),
     };
-    const sessionId = currentRequestContext()?.mcpSessionId;
-    if (sessionId && this.transport?.sendToSession) {
-      this.transport.sendToSession(sessionId, notification as unknown as MCPResponse);
-    } else if (!sessionId) {
-      this.sendResponse(notification as unknown as MCPResponse);
-    }
+    this.deliverToRequester(notification as unknown as MCPResponse);
   }
+
+  /**
+   * Deliver a server-originated message to the client that issued the active
+   * request. HTTP requests without an MCP session have no stream, and
+   * messages outside any request belong only to the local stdio client; in
+   * neither case may a message fall back to another client's channel.
+   */
+  private deliverToRequester(message: MCPResponse): boolean {
+    const context = currentRequestContext();
+    if (context?.mcpSessionId) return this.deliverToSession(context.mcpSessionId, message);
+    if (context?.channel === 'http') return false;
+    return this.deliverLocal(message);
+  }
+
+  private deliverToSession(mcpSessionId: string, message: MCPResponse): boolean {
+    let delivered = false;
+    for (const transport of this.sessionTransports) {
+      if (transport.sendToSession?.(mcpSessionId, message)) delivered = true;
+    }
+    return delivered;
+  }
+
+  private deliverLocal(message: MCPResponse): boolean {
+    if (!this.localTransport) return false;
+    this.localTransport.send(message);
+    return true;
+  }
+
+  /** Content-free change events are the only messages sent to every client. */
+  private broadcast(message: MCPResponse): void {
+    this.localTransport?.send(message);
+    for (const transport of this.sessionTransports) transport.send(message);
+  }
+
+  /** Routes resource events through the same per-client delivery rules. */
+  private readonly resourceEventTransport = {
+    send: (message: MCPResponse): void => this.broadcast(message),
+    sendToSession: (sessionKey: string, message: MCPResponse): boolean => (
+      sessionKey === LOCAL_SUBSCRIPTION_KEY
+        ? this.deliverLocal(message)
+        : this.deliverToSession(sessionKey, message)
+    ),
+  } as unknown as MCPTransport;
 
   /**
    * Server→client request/response primitive (#960).
@@ -760,9 +816,15 @@ export class MCPServer {
     params?: Record<string, unknown>,
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<T> {
+    const context = currentRequestContext();
+    const mcpSessionId = context?.mcpSessionId;
+    if (!mcpSessionId && context?.channel === 'http') {
+      // Without an MCP session there is no stream to carry the request, and
+      // broadcasting it would let another client read and answer it.
+      return Promise.reject(new Error(`s2c_unavailable:no_session:${method}`));
+    }
     const id = `oc-s2c-${this.nextS2cRequestId++}`;
     const timeoutMs = options?.timeoutMs ?? 30_000;
-    const mcpSessionId = currentRequestContext()?.mcpSessionId;
     return new Promise<T>((resolve, reject) => {
       const cleanup = (): void => {
         const entry = this.pendingClientRequests.get(id);
@@ -815,16 +877,10 @@ export class MCPServer {
         ...(params ? { params } : {}),
       };
       try {
-        const transport = this.transport;
-        if (mcpSessionId && transport && typeof transport.sendToSession === 'function') {
-          const sent = transport.sendToSession(mcpSessionId, request as unknown as MCPResponse);
-          if (!sent) {
-            cleanup();
-            reject(new Error('s2c_aborted:connection_closed'));
-            return;
-          }
-        } else {
-          this.sendResponse(request as unknown as MCPResponse);
+        if (!this.deliverToRequester(request as unknown as MCPResponse)) {
+          cleanup();
+          reject(new Error(mcpSessionId ? 's2c_aborted:connection_closed' : `s2c_unavailable:no_client:${method}`));
+          return;
         }
       } catch (sendErr) {
         cleanup();
@@ -834,10 +890,12 @@ export class MCPServer {
   }
 
   private getCurrentClientCapabilities(): { roots?: object; sampling?: object; elicitation?: object } {
-    const mcpSessionId = currentRequestContext()?.mcpSessionId;
-    if (mcpSessionId) {
-      return this.clientCapabilitiesBySession.get(mcpSessionId) ?? {};
+    const context = currentRequestContext();
+    if (context?.mcpSessionId) {
+      return this.clientCapabilitiesBySession.get(context.mcpSessionId) ?? {};
     }
+    // The process-wide cache belongs to the local stdio client only.
+    if (context?.channel === 'http') return {};
     return this.clientCapabilities;
   }
 
@@ -1078,7 +1136,11 @@ export class MCPServer {
       const idKey = String(parsed.id);
       const entry = this.pendingClientRequests.get(idKey);
       if (entry) {
-        if (entry.mcpSessionId && transportContext?.mcpSessionId !== entry.mcpSessionId) {
+        const responderSession = transportContext?.mcpSessionId;
+        const fromOwner = entry.mcpSessionId
+          ? responderSession === entry.mcpSessionId
+          : !responderSession && transportContext?.channel !== 'http';
+        if (!fromOwner) {
           console.error(`[MCPServer] dropping client response for id=${idKey} from non-owner session`);
           return null;
         }
@@ -1162,6 +1224,7 @@ export class MCPServer {
     } else {
       this.transport = createTransport('stdio');
     }
+    this.registerDeliveryTransport(this.transport);
 
     // Wire rate-limiter session cleanup into the transport
     this.wireRateLimiterCleanup(this.transport);
@@ -1226,14 +1289,28 @@ export class MCPServer {
   }
 
   /**
-   * Send response via the active transport
+   * Serve an additional session-addressed transport (the HTTP leg of a dual
+   * stdio+HTTP owner) through the same dispatch and delivery rules as the
+   * primary transport. The server owns and closes it on stop().
    */
-  private sendResponse(response: MCPResponse): void {
-    if (this.transport) {
-      this.transport.send(response);
+  attachTransport(transport: MCPTransport): void {
+    if (typeof transport.sendToSession !== 'function') {
+      throw new Error('attachTransport requires a session-addressed transport');
+    }
+    this.registerDeliveryTransport(transport);
+    this.attachedTransports.push(transport);
+    transport.onMessage(async (parsed: Record<string, unknown>, signal?: AbortSignal, context?: TransportMessageContext) =>
+      this.handleMessage(parsed, signal, context),
+    );
+    this.wireRateLimiterCleanup(transport);
+    transport.start();
+  }
+
+  private registerDeliveryTransport(transport: MCPTransport): void {
+    if (typeof transport.sendToSession === 'function') {
+      if (!this.sessionTransports.includes(transport)) this.sessionTransports.push(transport);
     } else {
-      // Fallback: should not happen after start(), but safe guard
-      console.log(JSON.stringify(response));
+      this.localTransport = transport;
     }
   }
 
@@ -1247,10 +1324,14 @@ export class MCPServer {
     transportContext?: TransportMessageContext,
   ): Promise<MCPResponse> {
     const current = currentRequestContext();
-    if (transportContext?.mcpSessionId && current?.mcpSessionId !== transportContext.mcpSessionId) {
+    if (
+      (transportContext?.mcpSessionId && current?.mcpSessionId !== transportContext.mcpSessionId)
+      || (transportContext?.channel && current?.channel !== transportContext.channel)
+    ) {
       return runWithRequestContext({
         ...current, requestId: current?.requestId ?? generateRequestId(),
-        mcpSessionId: transportContext.mcpSessionId,
+        ...(transportContext.mcpSessionId ? { mcpSessionId: transportContext.mcpSessionId } : {}),
+        ...(transportContext.channel ? { channel: transportContext.channel } : {}),
       }, () => this.handleRequest(request, principal, signal, transportContext));
     }
     const { id, method, params } = request;
@@ -1416,10 +1497,10 @@ export class MCPServer {
         ...(caps.sampling !== undefined ? { sampling: caps.sampling } : {}),
         ...(caps.elicitation !== undefined ? { elicitation: caps.elicitation } : {}),
       };
-      const mcpSessionId = currentRequestContext()?.mcpSessionId;
-      if (mcpSessionId) {
-        this.clientCapabilitiesBySession.set(mcpSessionId, captured);
-      } else {
+      const context = currentRequestContext();
+      if (context?.mcpSessionId) {
+        this.clientCapabilitiesBySession.set(context.mcpSessionId, captured);
+      } else if (context?.channel !== 'http') {
         this.clientCapabilities = captured;
       }
     }
@@ -1647,6 +1728,13 @@ export class MCPServer {
   private async handleResourcesSubscribe(params?: Record<string, unknown>): Promise<MCPResult> {
     const uri = this.requireResourceUri(params, 'resources/subscribe');
     assertLiveResourceAccess(this.sessionManager, uri);
+    const context = currentRequestContext();
+    if (!context?.mcpSessionId && context?.channel === 'http') {
+      throw new ResourceRpcError(
+        MCPErrorCodes.INVALID_REQUEST,
+        'resources/subscribe over HTTP requires an Mcp-Session-Id from initialize',
+      );
+    }
     const result = this.resourceSubscriptions.subscribe(uri);
     return { ...result };
   }
@@ -1700,11 +1788,11 @@ export class MCPServer {
   }
 
   private emitResourceUpdated(uri: string): void {
-    this.resourceSubscriptions.emitUpdated(uri, this.transport);
+    this.resourceSubscriptions.emitUpdated(uri, this.resourceEventTransport);
   }
 
   private emitResourcesListChanged(): void {
-    this.resourceSubscriptions.emitListChanged(this.transport);
+    this.resourceSubscriptions.emitListChanged(this.resourceEventTransport);
   }
 
   /**
@@ -3298,6 +3386,7 @@ export class MCPServer {
 
   private async _stopInternal(): Promise<void> {
     this.disclosureBySession.clear();
+    this.sessionlessHttpDisclosure = null;
     this.clientCapabilitiesBySession.clear();
     // #960 — reject every in-flight server→client request before the
     // transport tears down so callers don't hang forever on Promises that
@@ -3325,6 +3414,13 @@ export class MCPServer {
       await this.transport.close();
       this.transport = null;
     }
+    for (const attached of this.attachedTransports.splice(0)) {
+      await attached.close().catch((error) => {
+        console.error(`[MCPServer] attached transport close failed: ${formatError(error)}`);
+      });
+    }
+    this.localTransport = null;
+    this.sessionTransports.length = 0;
 
     // Scale timeout based on number of Chrome pool instances.
     // Each launcher.close() needs up to 5s for SIGTERM->SIGKILL escalation,
