@@ -235,6 +235,35 @@ describe('handleTwoFA', () => {
       expect(result.handled).toBe(true);
       expect(result.method).toBe('auto-fill');
     }, 10000);
+
+    test('counts an approval that lands during the final poll interval', async () => {
+      jest.useFakeTimers();
+      try {
+        const detection = makeDetection({ type: TwoFAType.PUSH, inputSelector: undefined });
+        const start = Date.now();
+        // Approved at 7 ms: after the poll at 5 ms, before the 10 ms deadline.
+        const page = {
+          url: jest.fn().mockImplementation(() => (Date.now() - start >= 7
+            ? 'https://example.com/dashboard'
+            : 'https://example.com/2fa')),
+          evaluate: jest.fn().mockResolvedValue(''),
+          click: jest.fn().mockResolvedValue(undefined),
+          type: jest.fn().mockResolvedValue(undefined),
+          keyboard: { press: jest.fn().mockResolvedValue(undefined) },
+        };
+        const options: TwoFAHandlerOptions = { domain: 'example.com', timeoutMs: 10 };
+
+        const pending = handleTwoFA(page, detection, options);
+        await jest.advanceTimersByTimeAsync(10);
+        const result = await pending;
+
+        expect(page.url).toHaveBeenCalledTimes(4);
+        expect(result.handled).toBe(true);
+        expect(result.method).toBe('auto-fill');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe('Recovery handling', () => {
