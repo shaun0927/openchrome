@@ -91,6 +91,8 @@ export interface RequestContext {
    * messages, so they must never fall back to another client's channel.
    */
   channel?: 'http';
+  /** Work started by a finished request (oc_task_start); it has no client to ask. */
+  backgroundTask?: true;
   /** MCP protocol era selected by the SDK boundary for this request. */
   protocolEra?: 'legacy' | 'modern';
   /** Client identity carried by initialize (legacy) or the per-request envelope (modern). */

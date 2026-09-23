@@ -565,6 +565,12 @@ class OpenChromeServerImpl implements OpenChromeServer {
     this._chromeProcessMonitor?.stop();
     await this._healthEndpoint?.stop();
 
+    // Refuse new tool calls and let running ones finish before browser state
+    // is saved and the MCP server closes its transports.
+    await this.mcp.drain().catch((err) => {
+      console.error(`[openchrome] drain before stop failed (non-fatal): ${err}`);
+    });
+
     // Save storage state
     try {
       const sessionManager = getSessionManager();
