@@ -1,7 +1,8 @@
 # 1.15.0 게시 전 검증
 
 확인일: 2026-09-23. npm publish 직전까지의 검증 기록이다. npm publish와 정식 GitHub release 공개는 실행하지 않았다.
-후보 커밋: `release/1.15.0-prepublish`의 `1c79070c`(이 문서를 추가하는 커밋 직전). 문서만 바뀌므로 패키지 내용은 같다.
+아래 tarball은 `release/1.15.0-prepublish`의 `1c79070c`에서 만든 후보다. 이후 `43495e97`(2FA 대기 수정)이 패키지 내용을 바꿨으므로,
+게시용 tarball은 main 병합 커밋에서 다시 만들고 최종 해시와 검증 실행은 GitHub release v1.15.0에 기록한다.
 
 ## 패키지
 
@@ -53,6 +54,7 @@ stacked PR은 main 대상이 아니어서 자동 트리거되지 않으므로 `w
 | feat/mcp-mrtr-request-state (#1677) | a88187df | [35778562654](https://github.com/shaun0927/openchrome/actions/runs/35778562654) 통과 | [35778566669](https://github.com/shaun0927/openchrome/actions/runs/35778566669) 통과 |
 | feat/runtime-drain-contract (#1678) | d8ebf4e8 | [35781274096](https://github.com/shaun0927/openchrome/actions/runs/35781274096) 통과 | [35781278734](https://github.com/shaun0927/openchrome/actions/runs/35781278734) 통과 |
 | release/1.15.0-prepublish (#1679) | 7c256bba | [35784361708](https://github.com/shaun0927/openchrome/actions/runs/35784361708) 통과(build-and-test, full-test, mcp-conformance) | [35785288066](https://github.com/shaun0927/openchrome/actions/runs/35785288066) 통과(legacy·modern 설치본 단계 모두) |
+| release/1.15.0-prepublish (#1679) | d2e426f7 | [35805293352](https://github.com/shaun0927/openchrome/actions/runs/35805293352) 통과(Windows 테스트 수정 포함) | main 병합 후 실행 |
 
 릴리스 브랜치의 mcp-conformance job은 처음에 Node 20에서 실패했다(conformance CLI가 Node 22 API 사용). job을 Node 22로 옮겼다.
 같은 단계에서 full-test의 `tabs-activate` 타이밍 테스트 1건이 한 번 실패했고, 재실행과 로컬 3회에서 통과했다(해당 도구는 이 스택에서 변경하지 않음).
