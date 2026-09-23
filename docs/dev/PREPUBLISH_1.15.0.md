@@ -28,10 +28,18 @@
 | 설치본 legacy 수락(`harness:frontier --runtime-contract --confirmed-scope`, 실제 headless Chrome) | 통과. lazy startup, 탭 용량 거부, 사람 제어·재개, 취소 결과 불명, drain 확인 |
 | 설치본 modern 수락(`harness:modern-installed`, SDK v2 클라이언트 2026-07-28 고정, 실제 headless Chrome) | 통과. modern 협상, runtime 계약, workspace 요구, 브라우저 왕복, 닫힌 handle 거부 |
 | 공식 conformance(`@modelcontextprotocol/conformance` 0.1.16) | server-initialize, ping, tools-list, resources-list, logging-set-level 각 1/1, dns-rebinding-protection 2/2 |
-| 전체 Jest(스택 상단) | 586+ suites 통과. Windows 전용으로 main에서도 실패하는 2개(twofa-handler, e2e harness 경로)와 부하 민감 테스트(단독 재실행 통과) 제외 |
+| 전체 Jest(스택 상단) | 586+ suites 통과. 부하 민감 테스트는 단독 재실행에서 통과 |
+| Windows에서만 실패하던 2개(main에도 존재) | 수정 후 통과. 아래 참고 |
 
 conformance 0.1.16에는 2026-07-28 시나리오가 없고, 도구·프롬프트 시나리오는 공식 참조 서버의 고정 도구를 전제로 한다.
 modern 규약은 공식 SDK v2 클라이언트로 실제 코어를 구동하는 테스트로 검증한다.
+
+CI의 Jest는 ubuntu에서만 돌고, Windows 설치본 수락은 Jest를 실행하지 않는다. 그래서 Windows에서만 실패하던 두 테스트가 main에 남아 있었다.
+
+- `tests/auth/twofa-handler.test.ts`: 제품 결함이다. `waitForPageChange`가 마지막 대기 후 URL을 다시 확인하지 않아,
+  마지막 poll 간격 중의 승인을 시간 초과로 보고했다. Windows 타이머 해상도(약 15 ms)에서 드러났다.
+  마지막 확인을 추가했고, fake timer 회귀 테스트는 수정 전 코드에서 실패한다(OS 무관). 이 모듈은 아직 어떤 도구에도 연결되지 않았다.
+- `tests/e2e/harness/http-mcp-client.test.ts`: 테스트 결함이다. `path.join` 결과를 `/` 고정 정규식으로 비교했다.
 
 ## CI (GitHub Actions, 현재 head 기준)
 
