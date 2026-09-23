@@ -99,7 +99,7 @@ describe('capability-filter: default surface (P2 compliance)', () => {
     jest.clearAllMocks();
   });
 
-  test('tools/list matches v1.11.0 baseline plus the v1.13 browser control tool', async () => {
+  test('tools/list matches v1.11.0 baseline plus the v1.13 browser control and workspace tools', async () => {
     const snapshotPath = path.join(
       __dirname,
       '../../src/tools/__tests__/__snapshots__/tools-list.v1.11.snap.json',
@@ -107,7 +107,7 @@ describe('capability-filter: default surface (P2 compliance)', () => {
     const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8')) as {
       tools: Array<{ name: string }>;
     };
-    const expected = [...snapshot.tools.map(t => t.name), 'oc_browser_control'].sort();
+    const expected = [...snapshot.tools.map(t => t.name), 'oc_browser_control', 'oc_workspace'].sort();
     const actual = await getToolNames(server);
     expect(actual).toEqual(expected);
   });

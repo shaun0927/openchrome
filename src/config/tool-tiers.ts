@@ -64,6 +64,9 @@ export const TOOL_TIERS: Record<string, ToolTier> = {
   oc_journal: 2,
   oc_reflect: 2,
   oc_policy: 2,
+  // Modern (2026-07-28) tools/list always exposes every tier, so this stays
+  // off the small legacy startup surface.
+  oc_workspace: 2,
   oc_checkpoint: 2,
   oc_get_connection_info: 2,
   oc_copy_to_clipboard: 2,

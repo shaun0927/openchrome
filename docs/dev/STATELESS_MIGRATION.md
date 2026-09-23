@@ -36,7 +36,7 @@ SDK v2라는 패키지 이름, MCP 프로토콜 버전, OpenChrome 패키지 버
 | 알림 | 구현 | modern은 `subscriptions/listen`(HTTP는 tenant 한정), legacy는 세션별 SSE |
 | 브로커 | 구현 | modern 요청 헤더 생성, 세션 비고정, SSE 증분 중계, 취소 시 스트림 종료, legacy 세션 GET 스트림 중계 |
 | 사용자 개입 | 부분 | 서버→클라이언트 요청을 `input_required`로 변환. 서명된 `requestState`와 1회 사용 보장은 후속 PR |
-| 브라우저 작업 | 미완료 | modern에서 서버 발급 handle 요구와 `default`/transport 추론 금지는 후속 PR |
+| 브라우저 작업 | 구현 | `oc_workspace`가 발급한 handle만 modern 브라우저 도구에 사용. 누락·만료·타 tenant·이전 runtime handle은 브라우저 동작 전 거부, 연결과 무관하게 같은 handle 재사용 |
 | 배포·교체 | 미완료 | drain, 제어권 반환, 오래된 handle 거부, 재연결 절차는 후속 PR |
 
 ## 클라이언트 재연결 계약

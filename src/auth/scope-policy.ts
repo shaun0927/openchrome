@@ -40,6 +40,9 @@ export const READ_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>([
   'oc_get_connection_info',
   'oc_connection_health',
   'oc_policy',
+  // Opens/lists/closes the caller's own browser workspace handles; browser
+  // tools called through a workspace are still scope-checked individually.
+  'oc_workspace',
   'oc_journal',
   'oc_devtools_url',
   'oc_evidence_get',
