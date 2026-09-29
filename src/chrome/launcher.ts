@@ -13,7 +13,12 @@ import { spawnProcessGuardian } from './process-guardian';
 import { DEFAULT_VIEWPORT, DEFAULT_CHROME_LAUNCH_TIMEOUT_MS, DEFAULT_RESTORE_LAST_SESSION } from '../config/defaults';
 import type { WindowBoundsConfig } from '../config/window-bounds';
 import { getHeadedWindowArgs } from './launcher-window-args';
-import { findChromeHeadlessShell, findChromePath } from './launcher-chrome-paths';
+import {
+  findChromeHeadlessShell,
+  findChromePath,
+  findIsolatedMacHeadlessChrome,
+  MAC_STABLE_CHROME_PATH,
+} from './launcher-chrome-paths';
 import { checkDebugPort, DebugPortTimeoutError, waitForDebugPort } from './launcher-debug-port';
 import { ProfileManager } from './profile-manager';
 import type { ProfileType } from './profile-manager';
@@ -420,6 +425,26 @@ export class ChromeLauncher {
       }
     } else {
       chromePath = findChromePath();
+      // macOS: keep headless Chrome out of the user's Chrome.app bundle so it can't
+      // capture Dock/link activations (#613). Opt out with OPENCHROME_ISOLATE_HEADLESS=0.
+      const headlessRequested = options.headless ?? globalConfig.headless ?? false;
+      if (
+        process.platform === 'darwin' &&
+        headlessRequested &&
+        chromePath === MAC_STABLE_CHROME_PATH &&
+        process.env.OPENCHROME_ISOLATE_HEADLESS !== '0'
+      ) {
+        const isolated = findIsolatedMacHeadlessChrome();
+        if (isolated) {
+          chromePath = isolated;
+          console.error(`[ChromeLauncher] Using Chrome for Testing for headless (separate app from user Chrome): ${chromePath}`);
+        } else {
+          console.error(
+            '[ChromeLauncher] Headless Chrome shares the user Chrome app bundle; install Chrome for Testing ' +
+            '>= the installed Chrome major (npx @puppeteer/browsers install chrome@stable) to isolate it.',
+          );
+        }
+      }
     }
 
     if (!chromePath) {

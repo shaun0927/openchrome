@@ -221,6 +221,16 @@ export CHROME_PATH=/path/to/chrome
 openchrome doctor
 ```
 
+**macOS: your own Chrome won't open while OpenChrome runs headless**
+
+A headless Chrome launched from `/Applications/Google Chrome.app` shares your browser's app identity, so the Dock icon and links get routed to the windowless instance. OpenChrome avoids this by launching headless from Chrome for Testing when one is installed at or above your Chrome's major version (in `/Applications`, the Playwright cache, or the Puppeteer cache):
+
+```bash
+npx @puppeteer/browsers install chrome@stable --path ~/.cache/puppeteer
+```
+
+Without it, OpenChrome keeps using your installed Chrome and logs a hint. Set `OPENCHROME_ISOLATE_HEADLESS=0` to opt out.
+
 **Stale PID lock from a crashed session**
 
 ```
