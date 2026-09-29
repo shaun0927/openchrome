@@ -10,6 +10,7 @@
 jest.unmock('../../src/chrome/launcher');
 
 import { ChromeLauncher } from '../../src/chrome/launcher';
+import * as chromePaths from '../../src/chrome/launcher-chrome-paths';
 import * as child_process from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
@@ -358,6 +359,52 @@ describe('ChromeLauncher launch timeout fix (issue #171)', () => {
         await fakeChrome.close();
       }
     }, 15000);
+  });
+
+  describe('macOS headless bundle isolation (#613)', () => {
+    const CFT = '/fake/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+    let isolatedSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      isolatedSpy = jest.spyOn(chromePaths, 'findIsolatedMacHeadlessChrome').mockReturnValue(CFT);
+    });
+    afterEach(() => {
+      isolatedSpy.mockRestore();
+      delete process.env.OPENCHROME_ISOLATE_HEADLESS;
+    });
+
+    async function spawnedBinary(headless: boolean): Promise<string> {
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      process.env.OPENCHROME_LAUNCH_MODE = 'isolated';
+      process.env.CHROME_LAUNCH_TIMEOUT_MS = '1';
+      mockSpawn.mockReturnValue(createMockProcess() as any);
+      const launcher = new ChromeLauncher(19993);
+      await expect(launcher.ensureChrome({
+        autoLaunch: true,
+        headless,
+        userDataDir: '/tmp/openchrome-isolation-profile',
+      })).rejects.toThrow();
+      return mockSpawn.mock.calls[0][0] as string;
+    }
+
+    it('launches headless Chrome from Chrome for Testing', async () => {
+      expect(await spawnedBinary(true)).toBe(CFT);
+    });
+
+    it('keeps the stable Chrome app for headed launches', async () => {
+      expect(await spawnedBinary(false)).toBe(chromePaths.MAC_STABLE_CHROME_PATH);
+      expect(isolatedSpy).not.toHaveBeenCalled();
+    });
+
+    it('honours OPENCHROME_ISOLATE_HEADLESS=0', async () => {
+      process.env.OPENCHROME_ISOLATE_HEADLESS = '0';
+      expect(await spawnedBinary(true)).toBe(chromePaths.MAC_STABLE_CHROME_PATH);
+    });
+
+    it('falls back to stable Chrome when no safe Chrome for Testing exists', async () => {
+      isolatedSpy.mockReturnValue(null);
+      expect(await spawnedBinary(true)).toBe(chromePaths.MAC_STABLE_CHROME_PATH);
+    });
   });
 
   describe('close() cleanup', () => {
