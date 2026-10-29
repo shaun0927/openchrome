@@ -110,6 +110,18 @@ function parseEnvInt(name: string, fallback: number): number {
   return parsed;
 }
 
+/**
+ * Which CDPClient owns each connected browser. Tools reach the primary client,
+ * but a page can live on another one (a profile worker on its own port); calls
+ * for such a page are routed to the client that indexed it.
+ */
+const clientsByBrowser = new WeakMap<Browser, CDPClient>();
+
+/** Record `client` as the owner of `browser` (exported for tests). */
+export function registerClientBrowser(browser: Browser, client: CDPClient): void {
+  clientsByBrowser.set(browser, client);
+}
+
 export class CDPClient {
   private browser: Browser | null = null;
   private sessions: Map<string, CDPSession> = new Map();
@@ -846,6 +858,7 @@ export class CDPClient {
         }
 
         this.browser = connectedBrowser;
+        registerClientBrowser(connectedBrowser, this);
 
         if (attempt > 1) {
           const remainingStr = budgetDriven ? `, budget remaining=${budget!.remaining()}ms` : `/${maxConnectRetries}`;
@@ -2488,10 +2501,25 @@ export class CDPClient {
     });
   }
 
+  /** The client connected to the browser `page` belongs to (this one if unknown). */
+  private ownerOf(page: Page): CDPClient {
+    let browser: Browser;
+    try {
+      browser = page.browser();
+    } catch {
+      return this;
+    }
+    if (browser === this.browser) return this;
+    const owner = clientsByBrowser.get(browser);
+    return owner && owner.browser === browser ? owner : this;
+  }
+
   /**
    * Get CDP session for a page
    */
   async getCDPSession(page: Page): Promise<CDPSession> {
+    const owner = this.ownerOf(page);
+    if (owner !== this) return owner.getCDPSession(page);
     const target = page.target();
     const targetId = getTargetId(target);
 
@@ -2524,6 +2552,8 @@ export class CDPClient {
     params?: Record<string, unknown>
   ): Promise<T> {
     assertToolAttemptActive();
+    const owner = this.ownerOf(page);
+    if (owner !== this) return owner.send<T>(page, method, params);
     // Fail fast if the target is no longer valid (browser may have reconnected)
     const targetId = getTargetId(page.target());
     if (targetId && !this.targetIdIndex.has(targetId)) {

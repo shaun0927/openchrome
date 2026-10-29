@@ -30,7 +30,7 @@ jest.mock('../../src/core/perception/ref-id-manager', () => ({
   })),
 }));
 
-import { CDPClient } from '../../src/cdp/client';
+import { CDPClient, registerClientBrowser } from '../../src/cdp/client';
 
 type MockPage = {
   target: jest.Mock;
@@ -139,6 +139,19 @@ describe('CDPClient target/page contracts (#687 Wave 4 prereq)', () => {
 
     await expect(client.getCDPSession(page as never)).rejects.toThrow(/stale-target.*no longer valid/);
     await expect(client.send(page as never, 'Runtime.evaluate', {})).rejects.toThrow(/stale-target.*no longer valid/);
+  });
+
+  it('send and getCDPSession route a page on another client\'s browser to that client', async () => {
+    const workerBrowser = makeBrowser();
+    const worker = connectedClient(workerBrowser);
+    registerClientBrowser(workerBrowser as never, worker);
+    const page = makePage('profile-tab') as MockPage & { browser: jest.Mock };
+    page.browser = jest.fn(() => workerBrowser);
+    worker.indexExternalPage('profile-tab', page as never);
+
+    const primary = connectedClient(makeBrowser());
+    await expect(primary.send(page as never, 'Runtime.evaluate', { expression: '1' })).resolves.toEqual({});
+    await expect(primary.getCDPSession(page as never)).resolves.toBe(await worker.getCDPSession(page as never));
   });
 
   it('createPage indexes new pages, configures defenses, and removes the index on navigation failure', async () => {
