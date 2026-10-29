@@ -60,7 +60,9 @@ function classifyVariant(cmdline: string): ChromeVariant {
 
 function extractFlag(cmdline: string, flag: string): string | null {
   // Match either `--flag=value` (with value possibly quoted) or `--flag value`.
-  const eqRe = new RegExp(`--${flag}=("([^"]*)"|'([^']*)'|\\S+)`);
+  // `ps` drops quoting, so an unquoted `=` value runs up to the next ` --flag`
+  // — otherwise "--profile-directory=Profile 62" would read as "Profile".
+  const eqRe = new RegExp(`--${flag}=("([^"]*)"|'([^']*)'|.+?(?=\\s+--|$))`);
   const m = cmdline.match(eqRe);
   if (m) {
     return m[2] || m[3] || m[1].replace(/^['"]|['"]$/g, '');
@@ -71,7 +73,7 @@ function extractFlag(cmdline: string, flag: string): string | null {
   return null;
 }
 
-function parseCmdline(pid: number, cmdline: string): DetectedChrome {
+export function parseCmdline(pid: number, cmdline: string): DetectedChrome {
   return {
     pid,
     cmdline,
