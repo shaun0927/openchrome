@@ -3,8 +3,14 @@ import { assertToolAttemptActive, trackAttemptCommand } from '../core/deadline/t
  * CDP Client - Wrapper around puppeteer-core for Chrome DevTools Protocol
  */
 
+import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import puppeteer, { Browser, BrowserContext, Page, Target, CDPSession } from 'puppeteer-core';
 import { getChromeLauncher } from '../chrome/launcher';
+import { getPinnedAttachUserDataDir } from '../chrome/auto-connect-state';
+import { findChromePath } from '../chrome/launcher-chrome-paths';
+import { defaultUserDataDir, pathsEqual } from '../chrome/auto-connect';
+import { trackHostProfileTab, untrackHostProfileTab } from '../chrome/host-profile-tabs';
 import { getGlobalConfig } from '../config/global';
 import { smartGoto } from '../core/page/smart-goto';
 import { getTargetId } from './target-id';
@@ -22,6 +28,7 @@ import {
   DEFAULT_NEW_PAGE_TIMEOUT_MS,
   DEFAULT_PAGE_CONFIG_TIMEOUT_MS,
   DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS,
+  DEFAULT_HOST_CHROME_CONSENT_TIMEOUT_MS,
   DEFAULT_HEARTBEAT_PING_TIMEOUT_MS,
   DEFAULT_CONNECT_VERIFY_STALENESS_MS,
   DEFAULT_CDP_SEND_TIMEOUT_MS,
@@ -101,6 +108,18 @@ function parseEnvInt(name: string, fallback: number): number {
     return Infinity;
   }
   return parsed;
+}
+
+/**
+ * Which CDPClient owns each connected browser. Tools reach the primary client,
+ * but a page can live on another one (a profile worker on its own port); calls
+ * for such a page are routed to the client that indexed it.
+ */
+const clientsByBrowser = new WeakMap<Browser, CDPClient>();
+
+/** Record `client` as the owner of `browser` (exported for tests). */
+export function registerClientBrowser(browser: Browser, client: CDPClient): void {
+  clientsByBrowser.set(browser, client);
 }
 
 export class CDPClient {
@@ -779,7 +798,13 @@ export class CDPClient {
     // half-open TCP state. The HTTP endpoint (/json/version) works because it's
     // stateless, but the WebSocket handshake hangs. The first failed attempt sends
     // a TCP RST that clears Chrome's stale state, so the second attempt succeeds.
-    const maxConnectRetries = 3;
+    // The user's everyday Chrome holds each new connection until they click
+    // "Allow" — wait for that once instead of timing out and re-prompting.
+    const awaitsConsent = getPinnedAttachUserDataDir(this.port) !== undefined;
+    const connectTimeoutMs = awaitsConsent
+      ? parseInt(process.env.OPENCHROME_CONSENT_TIMEOUT_MS || '', 10) || DEFAULT_HOST_CHROME_CONSENT_TIMEOUT_MS
+      : DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS;
+    const maxConnectRetries = awaitsConsent ? 1 : 3;
     let lastError: Error | null = null;
     let attempt = 0;
 
@@ -798,8 +823,14 @@ export class CDPClient {
       }
 
       const wsTimeoutMs = budgetDriven
-        ? Math.max(1, Math.min(DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS, budget!.remaining()))
-        : DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS;
+        ? Math.max(1, Math.min(connectTimeoutMs, budget!.remaining()))
+        : connectTimeoutMs;
+      if (awaitsConsent) {
+        console.error(
+          `[CDPClient] Connecting to your Chrome on port ${this.port} — click "Allow" in its ` +
+            `"Allow remote debugging?" dialog (waiting up to ${Math.round(wsTimeoutMs / 1000)}s).`,
+        );
+      }
 
       try {
         let wsConnectTid: ReturnType<typeof setTimeout>;
@@ -827,6 +858,7 @@ export class CDPClient {
         }
 
         this.browser = connectedBrowser;
+        registerClientBrowser(connectedBrowser, this);
 
         if (attempt > 1) {
           const remainingStr = budgetDriven ? `, budget remaining=${budget!.remaining()}ms` : `/${maxConnectRetries}`;
@@ -870,6 +902,11 @@ export class CDPClient {
           // endpoint on the next attempt and refreshes it if Chrome restarted.
           // Brief pause: TCP RST from the timeout needs time to reach Chrome's listener.
           await new Promise(resolve => setTimeout(resolve, 1000));
+        } else if (awaitsConsent) {
+          throw new Error(
+            `Your Chrome did not accept the remote-debugging connection on port ${this.port}. ` +
+              `Click "Allow" in Chrome's "Allow remote debugging?" dialog, then retry. (${lastError.message})`,
+          );
         } else {
           throw lastError;
         }
@@ -1825,6 +1862,56 @@ export class CDPClient {
       }
     }
 
+    return this.prepareNewPage(page, url, { setViewport: true });
+  }
+
+  /**
+   * Open a tab in `profileDirectory` of a running Chrome that hosts several
+   * profiles (the user's everyday browser). CDP's Target.createTarget only
+   * reaches that browser's default profile, so the tab is requested through
+   * Chrome's process singleton — the same path as opening a profile from the
+   * Dock — and picked out by a one-off URL fragment. No cookie bridging: the
+   * tab already lives in the profile's own cookie jar.
+   */
+  async createProfilePage(userDataDir: string, profileDirectory: string, url?: string): Promise<Page> {
+    const browser = this.getBrowser();
+    const chromePath = findChromePath();
+    if (!chromePath) {
+      throw new Error(`Chrome executable not found; cannot open a tab for profile "${profileDirectory}"`);
+    }
+
+    const marker = `openchrome-${randomUUID()}`;
+    const targetPromise = browser.waitForTarget(
+      (target) => target.type() === 'page' && target.url().includes(marker),
+      { timeout: DEFAULT_NEW_PAGE_TIMEOUT_MS },
+    );
+    // Chrome swaps command-line about: URLs for the New Tab page, so the marker
+    // rides on a data: URL (no network request).
+    const args = [`--profile-directory=${profileDirectory}`, `data:text/plain,${marker}`];
+    if (!pathsEqual(userDataDir, defaultUserDataDir() ?? '')) args.unshift(`--user-data-dir=${userDataDir}`);
+    const opener = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
+    opener.on('error', (err) => console.error(`[CDPClient] Profile tab opener failed: ${err.message}`));
+    opener.unref();
+
+    let target: Target;
+    try {
+      target = await targetPromise;
+    } catch {
+      throw new Error(
+        `Chrome did not open a tab for profile "${profileDirectory}" within ${DEFAULT_NEW_PAGE_TIMEOUT_MS}ms`,
+      );
+    }
+    const page = await target.page();
+    if (!page) throw new Error(`Opened tab for profile "${profileDirectory}" is not a page`);
+    const targetId = getTargetId(target);
+    console.error(`[CDPClient] Opened tab ${targetId} in profile "${profileDirectory}"`);
+    trackHostProfileTab(targetId, () => page.close());
+    page.once('close', () => untrackHostProfileTab(targetId));
+    // The window is the user's own; leave its size alone.
+    return this.prepareNewPage(page, url, { setViewport: false });
+  }
+
+  private async prepareNewPage(page: Page, url: string | undefined, options: { setViewport: boolean }): Promise<Page> {
     // Index page for O(1) target-to-page lookups (replaces eager targetcreated indexing)
     {
       const pageTargetId = getTargetId(page.target());
@@ -1835,16 +1922,18 @@ export class CDPClient {
     this.configurePageDefenses(page);
     await applyRegisteredPreloads(page);
 
-    // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
-    let pageConfigTid: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      page.setViewport(CDPClient.DEFAULT_VIEWPORT),
-      new Promise<void>((resolve) => {
-        pageConfigTid = setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS);
-      }),
-    ]).finally(() => {
-      if (pageConfigTid) clearTimeout(pageConfigTid);
-    });
+    if (options.setViewport) {
+      // Set default viewport for consistent debugging experience (non-critical; swallow timeout)
+      let pageConfigTid: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        page.setViewport(CDPClient.DEFAULT_VIEWPORT),
+        new Promise<void>((resolve) => {
+          pageConfigTid = setTimeout(resolve, DEFAULT_PAGE_CONFIG_TIMEOUT_MS);
+        }),
+      ]).finally(() => {
+        if (pageConfigTid) clearTimeout(pageConfigTid);
+      });
+    }
 
     if (url) {
       try {
@@ -2412,10 +2501,25 @@ export class CDPClient {
     });
   }
 
+  /** The client connected to the browser `page` belongs to (this one if unknown). */
+  private ownerOf(page: Page): CDPClient {
+    let browser: Browser;
+    try {
+      browser = page.browser();
+    } catch {
+      return this;
+    }
+    if (browser === this.browser) return this;
+    const owner = clientsByBrowser.get(browser);
+    return owner && owner.browser === browser ? owner : this;
+  }
+
   /**
    * Get CDP session for a page
    */
   async getCDPSession(page: Page): Promise<CDPSession> {
+    const owner = this.ownerOf(page);
+    if (owner !== this) return owner.getCDPSession(page);
     const target = page.target();
     const targetId = getTargetId(target);
 
@@ -2448,6 +2552,8 @@ export class CDPClient {
     params?: Record<string, unknown>
   ): Promise<T> {
     assertToolAttemptActive();
+    const owner = this.ownerOf(page);
+    if (owner !== this) return owner.send<T>(page, method, params);
     // Fail fast if the target is no longer valid (browser may have reconnected)
     const targetId = getTargetId(page.target());
     if (targetId && !this.targetIdIndex.has(targetId)) {

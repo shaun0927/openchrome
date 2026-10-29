@@ -908,6 +908,7 @@ export class SessionManager {
     let workerPort: number | undefined;
     let workerPoolOrigin: string | undefined;
     let workerProfileDirectory: string | undefined;
+    let workerProfileHostUserDataDir: string | undefined;
 
     if (options.profileDirectory && !options.port) {
       // Multi-profile: lazily enable pool and acquire profile-specific instance
@@ -918,6 +919,7 @@ export class SessionManager {
         workerPort = poolInstance.port;
         workerPoolOrigin = origin;
         workerProfileDirectory = options.profileDirectory;
+        workerProfileHostUserDataDir = poolInstance.hostUserDataDir;
 
         const workerCdpClient = this.cdpFactory.getOrCreate(workerPort, {
           autoLaunch: getGlobalConfig().autoLaunch,
@@ -978,7 +980,10 @@ export class SessionManager {
     const effectiveCdpClient = workerPort
       ? (this.cdpFactory.get(workerPort) ?? this.cdpClient)
       : this.cdpClient;
-    const context = options.shareCookies
+    // A profile worker exists to act as that signed-in profile, so it uses the
+    // profile Chrome's own (default) context instead of an isolated one.
+    const shareCookies = options.shareCookies ?? Boolean(workerProfileDirectory);
+    const context = shareCookies
       ? null
       : await effectiveCdpClient.createBrowserContext();
 
@@ -992,6 +997,7 @@ export class SessionManager {
       port: workerPort,
       poolOrigin: workerPoolOrigin,
       profileDirectory: workerProfileDirectory,
+      ...(workerProfileHostUserDataDir && { profileHostUserDataDir: workerProfileHostUserDataDir }),
     };
 
     session.workers.set(workerId, worker);
@@ -1256,6 +1262,10 @@ export class SessionManager {
         // Named-context path: bypass the pool (which serves the default
         // context) and create directly inside the named BrowserContext.
         page = await cdpClient.createPage(url, namedContext);
+      } else if (worker.profileHostUserDataDir && worker.profileDirectory) {
+        // The everyday Chrome hosts every profile, but CDP can only create
+        // tabs in its default one — open the tab through Chrome itself.
+        page = await cdpClient.createProfilePage(worker.profileHostUserDataDir, worker.profileDirectory, url);
       } else if (this.connectionPool && this.config.useConnectionPool) {
         let poolPage: Page | null = null;
         try {

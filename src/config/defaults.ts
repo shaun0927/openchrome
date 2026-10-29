@@ -106,6 +106,11 @@ export const DEFAULT_OPERATION_GATE_TIMEOUT_MS = 300000;
  *  Without this, a listening but unresponsive Chrome can block for OS TCP timeout (60-120s). */
 export const DEFAULT_PUPPETEER_CONNECT_TIMEOUT_MS = 15000;
 
+/** How long to hold a connection to the user's everyday Chrome open while it
+ *  shows "Allow remote debugging?" (Chrome 144+ asks on every new connection).
+ *  Override with OPENCHROME_CONSENT_TIMEOUT_MS. */
+export const DEFAULT_HOST_CHROME_CONSENT_TIMEOUT_MS = 60000;
+
 /** Chrome launch timeout in milliseconds. How long to wait for debug port after spawning Chrome.
  *  Override with CHROME_LAUNCH_TIMEOUT_MS environment variable. */
 export const DEFAULT_CHROME_LAUNCH_TIMEOUT_MS = 60000;

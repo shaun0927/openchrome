@@ -44,6 +44,13 @@ export interface ChromeProfileInfo {
   isActive?: boolean;
 }
 
+export class ProfileNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProfileNotFoundError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ProfileManager
 // ---------------------------------------------------------------------------
@@ -142,6 +149,47 @@ export class ProfileManager {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Resolve a user-supplied profile reference to its directory name.
+   *
+   * Accepts, in order of precedence: the directory itself ("Profile 62"), the
+   * display name ("Work", case-insensitive), the signed-in email, or a unique
+   * case-insensitive substring of the display name. Throws with the list of
+   * available profiles when nothing (or more than one profile) matches, so the
+   * caller never silently opens the wrong account.
+   */
+  resolveProfileDirectory(query: string, userDataDir?: string): string {
+    const needle = query.trim();
+    const profiles = this.listProfiles(userDataDir);
+    const lower = needle.toLowerCase();
+
+    const exactDir = profiles.find(p => p.directory === needle);
+    if (exactDir) return exactDir.directory;
+
+    const tiers: Array<(p: ChromeProfileInfo) => boolean> = [
+      p => p.directory.toLowerCase() === lower,
+      p => p.name.toLowerCase() === lower,
+      p => (p.userName || '').toLowerCase() === lower,
+      p => p.name.toLowerCase().includes(lower),
+    ];
+    for (const matches of tiers) {
+      const hits = profiles.filter(matches);
+      if (hits.length === 1) return hits[0].directory;
+      if (hits.length > 1) {
+        throw new Error(
+          `Profile "${needle}" is ambiguous: ${hits.map(p => `"${p.directory}" (${p.name})`).join(', ')}. ` +
+          'Use the exact directory name.'
+        );
+      }
+    }
+
+    const available = profiles.map(p => `"${p.directory}" (${p.name})`).join(', ');
+    throw new ProfileNotFoundError(
+      `Profile "${needle}" not found. Available profiles: ${available || 'none'}. ` +
+      'Use list_profiles to see all available profiles.'
+    );
   }
 
   /**
@@ -247,7 +295,8 @@ export class ProfileManager {
   syncProfileData(
     sourceDir: string,
     destDir: string,
-    profileSubdir: string = 'Default'
+    profileSubdir: string = 'Default',
+    options: { updateMetadata?: boolean } = {}
   ): { atomic: boolean; success: boolean } {
     try {
       const destDefault = path.join(destDir, profileSubdir);
@@ -354,7 +403,9 @@ export class ProfileManager {
       }
 
       // --- 4. Update cookie sync metadata -----------------------------------
-      if (atomic) {
+      // Callers syncing between two OpenChrome-owned profiles opt out so the
+      // real-profile freshness record is not overwritten.
+      if (atomic && options.updateMetadata !== false) {
         this.updateSyncMetadata(sourceDir, profileSubdir);
       }
 
@@ -643,5 +694,21 @@ export class ProfileManager {
     } catch {
       return false;
     }
+  }
+}
+
+/**
+ * Tool-argument helper: map a profile reference (directory, display name or
+ * email) to its directory. Returns undefined when no profile was requested.
+ */
+export function resolveProfileArg(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  try {
+    return new ProfileManager().resolveProfileDirectory(value);
+  } catch (err) {
+    // Unknown names pass through unchanged; the pool rejects them with the
+    // available-profile list. Ambiguous names must not guess an account.
+    if (err instanceof ProfileNotFoundError) return value;
+    throw err;
   }
 }
