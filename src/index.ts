@@ -56,6 +56,7 @@ import {
   type ControllerHeartbeatHandle,
   type ControllerLockHandle,
 } from './chrome/controller-lock';
+import { claimOverflowSlot, OnBusyMode, resolveOnBusyMode, seedOverflowProfile } from './chrome/overflow-session';
 import { fetchJsonVersion } from './chrome/devtools-info';
 import { getCurrentControllerTopology } from './chrome/duplicate-controller-diagnostics';
 import { isAutoElectEnabled, shouldElectBrokerOwner, shouldClientAutoConnect, defaultBrokerHttpPort } from './broker/auto-elect';
@@ -134,6 +135,7 @@ program
   .option('--broker', 'Run as the shared-profile broker owner (HTTP daemon plus broker discovery metadata)')
   .option('--connect-broker', 'Proxy stdio MCP requests to the discovered broker instead of attaching to Chrome directly')
   .option('--auto-elect', 'Coordinated sharing (#1480): force-enable auto-election for compatible serve paths (also: OPENCHROME_AUTO_ELECT=1).')
+  .option('--on-busy <mode>', 'When another OpenChrome session already owns this port/profile: "broker" shares it (auto-elect), "new-port" launches a separate Chrome on the next free port, closed when this session ends (also: OPENCHROME_ON_BUSY).')
   .option('--no-auto-elect', 'Disable coordinated auto-election and preserve fail-fast duplicate-controller behavior (also: OPENCHROME_AUTO_ELECT=0).')
   .option('--idle-timeout <duration>', 'Self-exit (code 0) after idle window with zero sessions. Format: <number>(ms|s|m|h), e.g. 30m, 90s, 500ms. Bare numbers are rejected. Also: OPENCHROME_IDLE_TIMEOUT_MS env var (integer ms). Default: disabled.')
   .option('--pilot', 'Enable experimental pilot tier. Off by default; lazy-loads src/pilot/ modules when set. Also: OPENCHROME_PILOT=1 env var.')
@@ -145,7 +147,7 @@ program
   .option('--launch-mode <mode>', 'Chrome launch mode: auto | attach | isolated (#659). Also: OPENCHROME_LAUNCH_MODE env var.')
   .option('--secrets <path>', 'Load a dotenv-format secrets file (KEY=value per line). Tokens "${SECRET:NAME}" in tool arguments are substituted to the real value at MCP request deserialization; the same values are redacted from every LLM-visible artifact (responses, trace, skill records, journal). Default: no secrets loaded. P3: no OS keychain integration.')
   .option('--codegen <mode>', 'Opt-in replay artifact generation: off, puppeteer, playwright, or mcp-replay. Default: off (no response shape changes). Also: OPENCHROME_CODEGEN.')
-  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; minimal?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; autoElect?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string }) => {
+  .action(async (options: { port: string; autoLaunch?: boolean; allowUnsafeSharedAttach?: boolean; userDataDir?: string; profileDirectory?: string; chromeBinary?: string; headlessShell?: boolean; headless?: boolean; visible?: boolean; windowSize?: string; windowPosition?: string; windowBounds?: string; startMaximized?: boolean; restartChrome?: boolean; hybrid?: boolean; lpPort?: string; blockedDomains?: string; auditLog?: boolean; sanitizeContent?: boolean; allTools?: boolean; minimal?: boolean; serverMode?: boolean; http?: string | boolean; authToken?: string; transport?: string; broker?: boolean; connectBroker?: boolean; autoElect?: boolean; idleTimeout?: string; allowUnauthenticatedHttp?: boolean; pilot?: boolean; slim?: boolean; toolsOnly?: string; disableTools?: string; introspectToolsList?: boolean; autoConnect?: string | boolean; launchMode?: string; secrets?: string; codegen?: string; onBusy?: string }) => {
     const { normalizeCodegenMode, setCodegenMode } = await import('./core/codegen');
     const codegenMode = normalizeCodegenMode(options.codegen ?? process.env.OPENCHROME_CODEGEN);
     setCodegenMode(codegenMode);
@@ -272,7 +274,7 @@ program
       options.headless = true;
       console.error('[openchrome] Server mode: enabled (headless, no cookie bridge)');
     }
-    const userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
+    let userDataDir = options.userDataDir || process.env.CHROME_USER_DATA_DIR || undefined;
     const profileDirectory = options.profileDirectory || process.env.CHROME_PROFILE_DIRECTORY || undefined;
     const chromeBinary = options.chromeBinary || process.env.CHROME_BINARY || undefined;
     const useHeadlessShell = options.headlessShell || false;
@@ -334,7 +336,14 @@ program
       // contract that Chrome is available before traffic is admitted.
       eagerStartup: Boolean(options.serverMode) || (useHttp && !brokerOwner),
     });
-    const lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
+    let lockUserDataDir = resolveControllerLockUserDataDir(userDataDir, useHeadlessShell);
+    let onBusy: OnBusyMode | undefined;
+    try {
+      onBusy = resolveOnBusyMode(options.onBusy);
+    } catch (err) {
+      console.error(`[openchrome] Error: ${(err as Error).message}`);
+      process.exit(2);
+    }
 
     // #1359 P3a: the broker is the single CDP owner for a (port, userDataDir).
     // Refuse to publish broker metadata when this process did not take Chrome
@@ -388,13 +397,34 @@ program
             // Always emit the full diagnostic to stderr (CLI/operator path).
             console.error(formatDuplicateControllerMessage(err));
 
+            // --on-busy new-port: this host gets its own Chrome on the next free
+            // port instead of sharing the owner's. It is owned (and killed on
+            // exit) by this process exactly like the default auto-launch.
+            if (onBusy === 'new-port') {
+              const slot = await claimOverflowSlot({
+                basePort: port,
+                lifecycleMode: options.launchMode || 'auto',
+                transportMode,
+              });
+              if (slot) {
+                console.error(`[openchrome] on-busy=new-port: port ${port} is in use; using port ${slot.port} with profile ${slot.userDataDir}`);
+                seedOverflowProfile(slot.userDataDir);
+                port = slot.port;
+                userDataDir = slot.userDataDir;
+                lockUserDataDir = slot.userDataDir;
+                controllerLock = slot.lock;
+              } else {
+                console.error('[openchrome] on-busy=new-port: no free overflow port; falling back to duplicate-controller handling.');
+              }
+            }
+
             // #1480 S3: auto-elect loser attaches to the healthy owner's broker
             // instead of failing fast. The owner may have only just won the lock
             // (this collision is the race), so poll briefly for its broker
             // discovery metadata before giving up. If a broker is found, become a
             // coordinated --connect-broker client; the previously-rejected surplus
             // session now works.
-            if (autoElect) {
+            if (!controllerLock && autoElect) {
               const { resolveLiveBrokerMetadata } = await import('./broker/discovery');
               const { BrokerProxyStdioBridge } = await import('./transports/broker-proxy');
               let broker = await resolveLiveBrokerMetadata(port, lockUserDataDir);
@@ -424,14 +454,17 @@ program
             // An auto-elect loser that found no broker is also a stdio host
             // session (the elected owner serves stdio to its own host); surface
             // the MCP error to it too rather than a bare exit(2).
-            if ((transportMode === 'stdio' || autoElect) && !process.stdin.isTTY) {
-              const { DuplicateControllerErrorServer } = await import('./transports/duplicate-controller-error-server');
-              new DuplicateControllerErrorServer(err).start();
-              return;
+            if (!controllerLock) {
+              if ((transportMode === 'stdio' || autoElect) && !process.stdin.isTTY) {
+                const { DuplicateControllerErrorServer } = await import('./transports/duplicate-controller-error-server');
+                new DuplicateControllerErrorServer(err).start();
+                return;
+              }
+              process.exit(2);
             }
-            process.exit(2);
+          } else {
+            throw err;
           }
-          throw err;
         }
       }
     }
@@ -753,16 +786,13 @@ program
         }
       } catch { /* launcher may not be initialized */ }
 
-      // Also kill any pool Chrome instances (skipping attach-mode entries).
+      // Also kill pool Chrome instances this process is responsible for: never
+      // a user-started Chrome, and a shared profile Chrome only when this is
+      // its last live session.
       try {
         const { getChromePool } = require('./chrome/pool');
-        const pool = getChromePool();
-        for (const [, instance] of pool.getInstances()) {
-          if (instance.launcher.getInstance?.()?.launchMode === 'attach') continue;
-          const pid = instance.launcher.getChromePid();
-          if (pid) {
-            killChromeTree(pid);
-          }
+        for (const pid of getChromePool().releaseAllForExit()) {
+          killChromeTree(pid);
         }
       } catch { /* pool may not be initialized */ }
     });

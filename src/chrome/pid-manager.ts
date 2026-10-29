@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { listMarkers, deleteMarkerFile, verifyChromePidIdentity, OwnershipMarker } from "./ownership-marker";
 import { listAllTokens } from "../core/process/session-resume-token";
+import { hasLiveProfileUsers } from "./profile-users";
 import { getLifecycleBus } from "../core/lifecycle";
 import { cleanupAllStaleSessionsSync as cleanupNetworkBodiesSync } from "../core/network-capture/body-store";
 
@@ -374,8 +375,9 @@ export function classifyMarker(marker: OwnershipMarker): MarkerDecision {
     return 'identity-mismatch';
   }
 
-  // 3. Is the parent MCP still alive?
-  if (isPidAlive(marker.ppid)) {
+  // 3. Is the parent MCP still alive? A shared profile Chrome stays managed
+  //    while any other OpenChrome session still uses it.
+  if (isPidAlive(marker.ppid) || hasLiveProfileUsers(marker.userDataDir)) {
     // Parent alive → still managed. Could be a quiesced Chrome (#660) or in-flight startup.
     return 'parent-alive';
   }

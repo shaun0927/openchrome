@@ -28,6 +28,7 @@ import type { Page } from 'puppeteer-core';
 import { wrapMutatingHandler } from '../core/perception/snapshot-cache-helper';
 import { captureNavigationReplayStep, shouldCaptureReplayArtifact } from './_shared/replay-recorder';
 import { getBrowserLane, recordLaneToolCall, resolveLaneForTool } from '../core/browser-lanes';
+import { resolveProfileArg } from '../chrome/profile-manager';
 
 /** Blocking types that warrant automatic stealth retry (#459) */
 const RETRYABLE_BLOCK_TYPES: ReadonlySet<string> = new Set(['access-denied', 'bot-check', 'captcha']);
@@ -504,7 +505,7 @@ const definition: MCPToolDefinition = {
       },
       profileDirectory: {
         type: 'string',
-        description: 'Chrome profile directory name (e.g., "Profile 1"). Use list_profiles to see available profiles. Launches a separate Chrome instance for each profile. If omitted, uses the server default. Cannot be combined with workerId.',
+        description: 'Chrome profile: directory ("Profile 1"), display name ("Work"), or signed-in email. Use list_profiles to see available profiles. Reuses a Chrome already running that profile, otherwise launches one. If omitted, uses the server default. Cannot be combined with workerId.',
       },
       recall: {
         type: 'boolean',
@@ -529,7 +530,12 @@ const handler: ToolHandler = async (
   throwIfAborted(context);
   let tabId = args.tabId as string | undefined;
   const url = args.url as string;
-  const profileDirectory = args.profileDirectory as string | undefined;
+  let profileDirectory: string | undefined;
+  try {
+    profileDirectory = resolveProfileArg(args.profileDirectory);
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Error: ${(err as Error).message}` }], isError: true };
+  }
   const recallArg = args.recall as boolean | undefined;
   // P1-6: reject workerId + profileDirectory combination
   if (args.workerId && profileDirectory) {

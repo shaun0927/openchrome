@@ -20,6 +20,7 @@ import {
 import type { MCPResponse } from '../types/mcp';
 import type { MCPTransport, McpServerMetadata } from './index';
 import { shutdownSyncBestEffort } from '../core/process/sync-shutdown';
+import { closeHostProfileTabs } from '../chrome/host-profile-tabs';
 
 export class SdkStdioTransport implements MCPTransport {
   private messageHandler: CoreMcpMessageHandler | null = null;
@@ -32,8 +33,11 @@ export class SdkStdioTransport implements MCPTransport {
 
   private readonly onStdinEnd = (): void => {
     console.error('[SdkStdioTransport] stdin ended, shutting down...');
-    try { shutdownSyncBestEffort(); } catch { /* never throw at exit */ }
-    process.exit(0);
+    // Tabs opened in the user's own Chrome outlive a process kill; close them first.
+    void closeHostProfileTabs().catch(() => 0).finally(() => {
+      try { shutdownSyncBestEffort(); } catch { /* never throw at exit */ }
+      process.exit(0);
+    });
   };
 
   private readonly onStdinError = (): void => {

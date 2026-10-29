@@ -51,7 +51,24 @@ export function getAutoConnectState(): AutoConnectState | null {
   return current;
 }
 
+/**
+ * Browsers attached through `<userDataDir>/DevToolsActivePort` outside the
+ * global `--auto-connect` mode (e.g. the user's everyday Chrome serving a
+ * profile session). Such browsers may answer 404 on `/json/version`, so the
+ * launcher re-reads the file instead of probing HTTP.
+ */
+const pinnedAttachDirs = new Map<number, string>();
+
+export function pinAttachUserDataDir(port: number, userDataDir: string): void {
+  pinnedAttachDirs.set(port, userDataDir);
+}
+
+export function getPinnedAttachUserDataDir(port: number): string | undefined {
+  return pinnedAttachDirs.get(port);
+}
+
 /** Test-only — clears the singleton so tests can run in isolation. */
 export function __resetAutoConnectStateForTests(): void {
   current = null;
+  pinnedAttachDirs.clear();
 }

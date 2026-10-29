@@ -20,6 +20,7 @@ export interface Worker {
   port?: number;              // Chrome instance port (when using pool)
   poolOrigin?: string;        // Origin used for pool allocation
   profileDirectory?: string;  // Chrome profile directory (when using multi-profile)
+  profileHostUserDataDir?: string;  // Everyday Chrome hosting every profile; tabs open per profile
 }
 
 export interface WorkerInfo {

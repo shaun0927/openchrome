@@ -9,6 +9,17 @@ import * as os from 'os';
 import * as path from 'path';
 import { ChromeLauncher, LaunchOptions } from './launcher';
 import { ProfileManager } from './profile-manager';
+import { detectRunningChromes } from './process-detector';
+import { killProcessTree } from './pid-manager';
+import { defaultUserDataDir } from './auto-connect';
+import { pinAttachUserDataDir } from './auto-connect-state';
+import { probeDebugPort } from './launcher-debug-port';
+import {
+  readDevToolsActivePort,
+  readSingletonLockPid,
+  registerProfileUser,
+  releaseProfileUser,
+} from './profile-users';
 
 export interface ChromePoolConfig {
   maxInstances: number; // default: 5
@@ -24,6 +35,73 @@ export interface PooledInstance {
   isPreExisting: boolean; // was it already running when we found it?
   profileDirectory?: string; // Chrome profile directory (e.g., "Profile 1", "Default")
   lastActiveAt: number; // timestamp of last tab activity (used by idle reaper)
+  /**
+   * OpenChrome-managed per-profile user-data-dir. Set when the Chrome may be
+   * shared with other OpenChrome sessions; the last user closes it.
+   */
+  managedUserDataDir?: string;
+  /**
+   * The user's everyday Chrome, reached through `<dir>/DevToolsActivePort`
+   * (chrome://inspect "Allow remote debugging"). One browser serves every
+   * profile in it; tabs are opened per profile and the browser is never closed.
+   */
+  hostUserDataDir?: string;
+}
+
+/** Stable per-profile user-data-dir shared by every OpenChrome session. */
+export function profileUserDataDir(profileDirectory: string): string {
+  return path.join(os.homedir(), '.openchrome', 'profiles', profileDirectory.replace(/[^a-zA-Z0-9_\- ]/g, '_'));
+}
+
+interface RunningProfileChrome {
+  port: number;
+  managed: boolean;
+  hostUserDataDir?: string;
+}
+
+/**
+ * The user's everyday Chrome when remote debugging was allowed for it at
+ * chrome://inspect/#remote-debugging. Its `/json/version` may answer 404, so
+ * any HTTP answer (or a WebSocket-only listener) counts as alive.
+ */
+async function findDebuggableEverydayChrome(): Promise<RunningProfileChrome | null> {
+  const dir = defaultUserDataDir();
+  if (!dir) return null;
+  const port = readDevToolsActivePort(dir);
+  if (!port) return null;
+  const probe = await probeDebugPort(port, 1500);
+  if (probe.kind === 'network-error' || probe.kind === 'timeout') return null;
+  return { port, managed: false, hostUserDataDir: dir };
+}
+
+/**
+ * Find a Chrome already serving `profileDirectory` on a debug port: one an
+ * OpenChrome session launched (any process), or one the user started with
+ * `--profile-directory=<dir> --remote-debugging-port=<port>`.
+ */
+async function findRunningProfileChrome(profileDirectory: string): Promise<RunningProfileChrome | null> {
+  const managedDir = profileUserDataDir(profileDirectory);
+  const managedPort = readDevToolsActivePort(managedDir);
+  if (managedPort && await checkDebugPort(managedPort)) {
+    return { port: managedPort, managed: true };
+  }
+
+  let detected: ReturnType<typeof detectRunningChromes> = [];
+  try {
+    detected = detectRunningChromes();
+  } catch {
+    return null;
+  }
+  for (const chrome of detected) {
+    if (chrome.profileDirectory !== profileDirectory || !chrome.hasDebugPort) continue;
+    const match = /--remote-debugging-port=(\d+)/.exec(chrome.cmdline);
+    const port = match ? parseInt(match[1], 10) : 0;
+    if (port > 0 && await checkDebugPort(port)) {
+      const managed = !!chrome.userDataDir && path.resolve(chrome.userDataDir) === path.resolve(managedDir);
+      return { port, managed };
+    }
+  }
+  return null;
 }
 
 const DEFAULT_POOL_CONFIG: ChromePoolConfig = {
@@ -140,7 +218,7 @@ export class ChromePool {
   async acquireInstanceForProfile(profileDirectory: string, origin?: string): Promise<PooledInstance> {
     // 1. Find an existing instance already running this profile
     for (const [, instance] of this.instances) {
-      if (instance.profileDirectory === profileDirectory) {
+      if (instance.profileDirectory === profileDirectory || instance.hostUserDataDir) {
         if (origin) instance.origins.add(origin);
         instance.tabCount++;
         instance.lastActiveAt = Date.now();
@@ -175,17 +253,10 @@ export class ChromePool {
       );
     }
 
-    // 4. No instance with this profile — launch a new one
-    if (this.instances.size >= this.config.maxInstances) {
-      throw new Error(
-        `[ChromePool] Cannot launch Chrome for profile "${profileDirectory}": ` +
-        `pool is at max capacity (${this.config.maxInstances} instances). ` +
-        `Close unused profiles first.`
-      );
-    }
-
-    // Set in-flight guard before async launch
-    const launchPromise = this.launchNewInstance(profileDirectory).finally(() => {
+    // 4. Attach to a Chrome already running this profile (another session's, or
+    //    one the user started and signed into); otherwise launch a new one.
+    //    Both happen under the in-flight guard so concurrent calls share one result.
+    const launchPromise = this.attachOrLaunchProfile(profileDirectory).finally(() => {
       this.profileLaunchInFlight.delete(profileDirectory);
     });
     this.profileLaunchInFlight.set(profileDirectory, launchPromise);
@@ -195,9 +266,25 @@ export class ChromePool {
     newInstance.tabCount++;
     newInstance.lastActiveAt = Date.now();
     console.error(
-      `[ChromePool] Launched new instance on port ${newInstance.port} for profile "${profileDirectory}"`
+      `[ChromePool] Using instance on port ${newInstance.port} for profile "${profileDirectory}"`
     );
     return newInstance;
+  }
+
+  private async attachOrLaunchProfile(profileDirectory: string): Promise<PooledInstance> {
+    const running = await findDebuggableEverydayChrome() ?? await findRunningProfileChrome(profileDirectory);
+    if (running && !this.instances.has(running.port)) {
+      console.error(`[ChromePool] Found running Chrome on port ${running.port} for profile "${profileDirectory}"`);
+      return this.attachRunningInstance(profileDirectory, running);
+    }
+    if (this.instances.size >= this.config.maxInstances) {
+      throw new Error(
+        `[ChromePool] Cannot launch Chrome for profile "${profileDirectory}": ` +
+        `pool is at max capacity (${this.config.maxInstances} instances). ` +
+        `Close unused profiles first.`
+      );
+    }
+    return this.launchNewInstance(profileDirectory);
   }
 
   /**
@@ -243,7 +330,9 @@ export class ChromePool {
     const closurePromises: Promise<void>[] = [];
 
     for (const [port, instance] of this.instances) {
-      if (!instance.isPreExisting) {
+      if (instance.managedUserDataDir) {
+        this.releaseManagedInstance(port, instance, closurePromises);
+      } else if (!instance.isPreExisting) {
         console.error(`[ChromePool] Closing launched instance on port ${port}`);
         closurePromises.push(
           instance.launcher.close().catch((err) => {
@@ -315,10 +404,16 @@ export class ChromePool {
           `[ChromePool] Reaping idle profile instance "${instance.profileDirectory}" on port ${port} ` +
           `(idle for ${Math.round((now - instance.lastActiveAt) / 1000)}s)`
         );
-        try {
-          await instance.launcher.close();
-        } catch (err) {
-          console.error(`[ChromePool] Failed to close idle instance on port ${port}:`, err);
+        if (instance.managedUserDataDir) {
+          const closures: Promise<void>[] = [];
+          this.releaseManagedInstance(port, instance, closures);
+          await Promise.allSettled(closures);
+        } else {
+          try {
+            await instance.launcher.close();
+          } catch (err) {
+            console.error(`[ChromePool] Failed to close idle instance on port ${port}:`, err);
+          }
         }
         this.instances.delete(port);
         reaped++;
@@ -333,6 +428,26 @@ export class ChromePool {
   }
 
   /**
+   * Synchronous exit path: release this process's claim on every instance and
+   * return the Chrome PIDs this process must kill. Never includes Chromes the
+   * user started, nor shared profile Chromes another live session still uses.
+   */
+  releaseAllForExit(): number[] {
+    const pids: number[] = [];
+    for (const [, instance] of this.instances) {
+      if (instance.managedUserDataDir) {
+        if (!releaseProfileUser(instance.managedUserDataDir)) continue;
+        const pid = instance.launcher.getChromePid() ?? readSingletonLockPid(instance.managedUserDataDir);
+        if (pid) pids.push(pid);
+      } else if (!instance.isPreExisting && instance.launcher.getInstance?.()?.launchMode !== 'attach') {
+        const pid = instance.launcher.getChromePid();
+        if (pid) pids.push(pid);
+      }
+    }
+    return pids;
+  }
+
+  /**
    * Get all current pool instances (read-only snapshot).
    */
   getInstances(): ReadonlyMap<number, PooledInstance> {
@@ -343,26 +458,70 @@ export class ChromePool {
   // Private helpers
   // ---------------------------------------------------------------------------
 
+  private async attachRunningInstance(profileDirectory: string, running: RunningProfileChrome): Promise<PooledInstance> {
+    if (running.hostUserDataDir) pinAttachUserDataDir(running.port, running.hostUserDataDir);
+    const launcher = new ChromeLauncher(running.port);
+    await launcher.ensureChrome({ port: running.port, autoLaunch: false });
+    const managedUserDataDir = running.managed ? profileUserDataDir(profileDirectory) : undefined;
+    if (managedUserDataDir) registerProfileUser(managedUserDataDir);
+    const pooled: PooledInstance = {
+      port: running.port,
+      launcher,
+      origins: new Set(),
+      tabCount: 0,
+      isPreExisting: true,
+      profileDirectory,
+      lastActiveAt: Date.now(),
+      ...(managedUserDataDir && { managedUserDataDir }),
+      ...(running.hostUserDataDir && { hostUserDataDir: running.hostUserDataDir }),
+    };
+    this.instances.set(running.port, pooled);
+    return pooled;
+  }
+
+  /**
+   * Drop this process's claim on a shared profile Chrome; close it only when no
+   * other live session uses it.
+   */
+  private releaseManagedInstance(port: number, instance: PooledInstance, closures: Promise<void>[]): void {
+    const dir = instance.managedUserDataDir!;
+    if (!releaseProfileUser(dir)) {
+      console.error(`[ChromePool] Leaving shared profile instance on port ${port} running for other sessions`);
+      return;
+    }
+    if (!instance.isPreExisting) {
+      console.error(`[ChromePool] Closing launched instance on port ${port}`);
+      closures.push(instance.launcher.close().catch((err) => {
+        console.error(`[ChromePool] Failed to close instance on port ${port}:`, err);
+      }));
+      return;
+    }
+    // Attached to a Chrome another (now gone) session launched: we are the last user.
+    const pid = readSingletonLockPid(dir);
+    if (pid) {
+      console.error(`[ChromePool] Closing shared profile instance on port ${port} (last user)`);
+      try { killProcessTree(pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+  }
+
   private async launchNewInstance(profileDirectory?: string): Promise<PooledInstance> {
-    const port = this.nextAvailablePort();
+    const port = await this.nextAvailablePort();
     const launcher = new ChromeLauncher(port);
 
     // SingletonLock isolation: Chrome's SingletonLock is per --user-data-dir,
     // NOT per --profile-directory. Two Chrome processes sharing the same
     // --user-data-dir will conflict even with different --profile-directory.
     // Each profile instance gets its own isolated user-data-dir.
-    const profileUserDataDir = profileDirectory
-      ? path.join(os.homedir(), '.openchrome', 'profiles', profileDirectory.replace(/[^a-zA-Z0-9_\- ]/g, '_'))
-      : undefined;
+    const managedUserDataDir = profileDirectory ? profileUserDataDir(profileDirectory) : undefined;
 
     // Sync cookies from the real Chrome profile into the isolated user-data-dir
     // so that profile instances start with up-to-date session data.
-    if (profileDirectory && profileUserDataDir) {
+    if (profileDirectory && managedUserDataDir) {
       try {
         const profileManager = new ProfileManager();
         const realProfileDir = profileManager.getDefaultUserDataDir();
         if (realProfileDir && profileManager.needsSync(realProfileDir, profileDirectory)) {
-          const result = profileManager.syncProfileData(realProfileDir, profileUserDataDir, profileDirectory);
+          const result = profileManager.syncProfileData(realProfileDir, managedUserDataDir, profileDirectory);
           console.error(
             `[ChromePool] Cookie sync for profile "${profileDirectory}": ` +
             `success=${result.success}, atomic=${result.atomic}`
@@ -380,7 +539,7 @@ export class ChromePool {
       port,
       autoLaunch: profileDirectory ? true : this.config.autoLaunch,
       ...(profileDirectory && { profileDirectory }),
-      ...(profileUserDataDir && { userDataDir: profileUserDataDir }),
+      ...(managedUserDataDir && { userDataDir: managedUserDataDir }),
     };
 
     let isPreExisting = false;
@@ -406,17 +565,21 @@ export class ChromePool {
       isPreExisting,
       profileDirectory,
       lastActiveAt: Date.now(),
+      ...(managedUserDataDir && { managedUserDataDir }),
     };
+    if (managedUserDataDir) registerProfileUser(managedUserDataDir);
 
     this.instances.set(port, pooled);
     return pooled;
   }
 
-  private nextAvailablePort(): number {
-    // Find the next port not already in use by our pool
+  private async nextAvailablePort(): Promise<number> {
+    // Skip ports used by our pool AND ports another process's Chrome already
+    // serves (the main instance, other sessions' pools) so a new profile never
+    // lands on someone else's browser.
     for (let offset = 0; offset < this.config.maxInstances + 10; offset++) {
       const candidate = this.config.basePort + offset;
-      if (!this.instances.has(candidate)) {
+      if (!this.instances.has(candidate) && !(await checkDebugPort(candidate))) {
         return candidate;
       }
     }
