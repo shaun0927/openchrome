@@ -4,7 +4,9 @@
  * Also supports profile-aware instance routing for multi-profile workflows.
  */
 
+import * as fs from 'fs';
 import * as http from 'http';
+import { execFileSync } from 'child_process';
 import * as os from 'os';
 import * as path from 'path';
 import { ChromeLauncher, LaunchOptions } from './launcher';
@@ -94,6 +96,7 @@ async function findRunningProfileChrome(profileDirectory: string): Promise<Runni
   }
   for (const chrome of detected) {
     if (chrome.profileDirectory !== profileDirectory || !chrome.hasDebugPort) continue;
+    if (!isOwnedByCurrentUser(chrome.pid, chrome.userDataDir)) continue;
     const match = /--remote-debugging-port=(\d+)/.exec(chrome.cmdline);
     const port = match ? parseInt(match[1], 10) : 0;
     if (port > 0 && await checkDebugPort(port)) {
@@ -102,6 +105,27 @@ async function findRunningProfileChrome(profileDirectory: string): Promise<Runni
     }
   }
   return null;
+}
+
+/**
+ * A debug-port Chrome found by scanning the process table is trusted only when
+ * this user owns both the process and its user-data-dir: another local user's
+ * process (or a crafted command line) must not receive this user's session.
+ * Windows has no uid; there the scan is left as before.
+ */
+function isOwnedByCurrentUser(pid: number, userDataDir: string | null): boolean {
+  if (typeof process.getuid !== 'function') return true;
+  const uid = process.getuid();
+  try {
+    const owner = parseInt(execFileSync('ps', ['-o', 'uid=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim(), 10);
+    if (owner !== uid) return false;
+    return !userDataDir || fs.statSync(userDataDir).uid === uid;
+  } catch {
+    return false;
+  }
 }
 
 const DEFAULT_POOL_CONFIG: ChromePoolConfig = {
@@ -216,6 +240,20 @@ export class ChromePool {
    * Uses in-flight deduplication to prevent concurrent launches for the same profile.
    */
   async acquireInstanceForProfile(profileDirectory: string, origin?: string): Promise<PooledInstance> {
+    // 0. Only a directory listed in Chrome's Local State is accepted — it ends
+    //    up in --profile-directory of a spawned or singleton-forwarded Chrome.
+    const profileManager = new ProfileManager();
+    const knownProfiles = profileManager.listProfiles();
+    const profileExists = knownProfiles.some(p => p.directory === profileDirectory);
+    if (!profileExists) {
+      const available = knownProfiles.map(p => `"${p.directory}" (${p.name})`).join(', ');
+      throw new Error(
+        `[ChromePool] Profile "${profileDirectory}" not found. ` +
+        `Available profiles: ${available || 'none'}. ` +
+        `Use list_profiles to see all available profiles.`
+      );
+    }
+
     // 1. Find an existing instance already running this profile
     for (const [, instance] of this.instances) {
       if (instance.profileDirectory === profileDirectory || instance.hostUserDataDir) {
@@ -240,20 +278,7 @@ export class ChromePool {
       return inst;
     }
 
-    // 3. Validate that the profile exists in Chrome's Local State
-    const profileManager = new ProfileManager();
-    const knownProfiles = profileManager.listProfiles();
-    const profileExists = knownProfiles.some(p => p.directory === profileDirectory);
-    if (!profileExists) {
-      const available = knownProfiles.map(p => `"${p.directory}" (${p.name})`).join(', ');
-      throw new Error(
-        `[ChromePool] Profile "${profileDirectory}" not found. ` +
-        `Available profiles: ${available || 'none'}. ` +
-        `Use list_profiles to see all available profiles.`
-      );
-    }
-
-    // 4. Attach to a Chrome already running this profile (another session's, or
+    // 3. Attach to a Chrome already running this profile (another session's, or
     //    one the user started and signed into); otherwise launch a new one.
     //    Both happen under the in-flight guard so concurrent calls share one result.
     const launchPromise = this.attachOrLaunchProfile(profileDirectory).finally(() => {
